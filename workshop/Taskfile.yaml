@@ -986,11 +986,21 @@ tasks:
           cd "$TMP"
           git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
           git remote add origin "$REMOTE_URL"
-          REMOTE_EMPTY=$(git ls-remote "$REMOTE_URL" HEAD 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$REMOTE_EMPTY" = "0" ]; then
-            git push -f origin HEAD:main
+          # Idempotency / --force safety: a plain `git ls-remote … 2>/dev/null | wc -l` MASKS a
+          # transient auth/connection failure as "0 refs" → the old code then force-pushed, and on
+          # a --force rerun against an already-populated repo that `git push -f` fails with 128,
+          # aborting the whole task under `set -e` BEFORE the aiops-agent bot block runs. Instead,
+          # capture ls-remote's exit status via an `if` condition (set -e does not abort on a
+          # failing condition) so we can tell "unreachable" (leave as-is) from genuinely "empty"
+          # (seed), and guard the push so a push failure logs-and-continues instead of killing init.
+          if REMOTE_REFS=$(git ls-remote "$REMOTE_URL" 2>/dev/null); then
+            if [ -z "$REMOTE_REFS" ]; then
+              git push -f origin HEAD:main || echo "  ⚠ push failed (leaving as-is): $REPO"
+            else
+              echo "  skipped (already populated): $REPO"
+            fi
           else
-            echo "  skipped (already populated): $REPO"
+            echo "  skipped (remote unreachable — not forcing): $REPO"
           fi
           cd - >/dev/null; rm -rf "$TMP"
           echo "  seeded: $REPO"
@@ -1012,28 +1022,47 @@ tasks:
         # agent's gitlab-mcp ExternalSecret and the real PAT can never diverge.
         BOT_USERNAME="aiops-agent"
         BOT_TOKEN="aiops-{{.GIT_PASSWORD}}"
+        # GitLab's NoWeakPasswordValidator rejects a LOGIN password that contains the username
+        # ("aiops" ⊂ "aiops-agent") → user creation fails with "Password must not contain commonly
+        # used combinations of words and letters" and the bot is never created (silently, on a
+        # fresh deploy too). So the deterministic PAT value must NOT double as the login password:
+        # create the user with the plain git password (the same value user1 is created with →
+        # passes the validator), and set the deterministic PAT token separately via set_token
+        # (which bypasses the password validator). The bot never logs in interactively — only its
+        # PAT is used by gitlab-mcp — so the login password value is immaterial beyond being valid.
+        BOT_LOGIN_PW="{{.GIT_PASSWORD}}"
         printf '  Ensuring %s bot user + deterministic PAT...\n' "$BOT_USERNAME"
-        docker exec gitlab-gitlab-1 env BOTUSER="$BOT_USERNAME" BOTPW="$BOT_TOKEN" gitlab-rails runner '
+        docker exec gitlab-gitlab-1 env BOTUSER="$BOT_USERNAME" BOTLOGINPW="$BOT_LOGIN_PW" BOTPW="$BOT_TOKEN" gitlab-rails runner '
           u = User.find_by_username(ENV["BOTUSER"])
           if u.nil?
             Users::CreateService.new(User.find(1), {
               name: "AIOps Agent", username: ENV["BOTUSER"],
               email: ENV["BOTUSER"] + "@workshop.local",
-              password: ENV["BOTPW"], password_confirmation: ENV["BOTPW"],
+              password: ENV["BOTLOGINPW"], password_confirmation: ENV["BOTLOGINPW"],
               skip_confirmation: true,
               organization_id: (Organizations::Organization.find_by(id: 1)&.id || 1)
             }).execute
             u = User.find_by_username(ENV["BOTUSER"])
           end
-          if u
+          if u && u.persisted?
             # Scopes are api + read/write_repository ONLY — no sudo, no admin (unlike root/user1).
             u.personal_access_tokens.where(name: "aiops-agent token").delete_all
             t = u.personal_access_tokens.create!(name: "aiops-agent token",
               scopes: ["api","read_repository","write_repository"], expires_at: 365.days.from_now)
             t.set_token(ENV["BOTPW"]); t.save!
             puts "aiops-agent bot ready id=" + u.id.to_s
+          else
+            # Fail loud: a silent creation failure (e.g. weak-password rejection) must be visible
+            # in the init log instead of a dangling SM token with no bot behind it.
+            STDERR.puts "aiops-agent bot creation FAILED: " + (u ? u.errors.full_messages.join("; ") : "user not persisted")
           end
         ' 2>&1 | tail -3 || true
+        # ROOT_TOKEN can be empty on a re-run: find_or_initialize_by('root-api').token returns nil
+        # for an already-existing (hashed) token, so the protection/membership calls below would
+        # silently skip. Recreate root-api to force a usable plaintext token when that happens.
+        if [ -z "$ROOT_TOKEN" ]; then
+          ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "User.find(1).personal_access_tokens.where(name: 'root-api').delete_all; puts User.find(1).personal_access_tokens.create!(name: 'root-api', scopes: ['api','sudo'], expires_at: 365.days.from_now).token" 2>/dev/null | tail -1)
+        fi
         # Resolve the bot id, add it as Developer on every repo, and PROTECT fleet-config main.
         if [ -n "{{.GIT_DOMAIN}}" ] && [ -n "$ROOT_TOKEN" ]; then
           BOT_ID=$(curl -s "https://{{.GIT_DOMAIN}}/api/v4/users?username=$BOT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_TOKEN" | jq -r 'if type=="array" then (.[0].id // "") else "" end')

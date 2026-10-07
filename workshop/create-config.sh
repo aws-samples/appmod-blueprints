@@ -344,7 +344,7 @@ printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 # it was "gitops/"). Overridable via AGENTIC_REPO_URL / AGENTIC_REPO_REVISION /
 # AGENTIC_REPO_BASEPATH; defaults target the awslabs OAP repo on the configured branch.
 AGENTIC_REPO_URL="${AGENTIC_REPO_URL:-https://github.com/awslabs/open-agentic-platform}"
-AGENTIC_REPO_REVISION="${AGENTIC_REPO_REVISION:-61412bb9}"   # pinned OAP build (tip of integration/peeks-e2e). The workshop CFN bakes AGENTIC_REPO_REVISION as an env override, so this default only applies to manual/local runs; bump to a release tag before re:Invent.
+AGENTIC_REPO_REVISION="${AGENTIC_REPO_REVISION:-main}"   # default for manual/local runs only. The workshop CFN bakes AGENTIC_REPO_REVISION (currently integration/peeks-e2e) as an env override, which wins for the live event. Switch this default to a validated OAP release tag once one is cut.
 AGENTIC_REPO_BASEPATH="${AGENTIC_REPO_BASEPATH:-gitops/addons/}"
 printf 'agenticRepo:\n'                                          >> "$OUTPUT_FILE"
 printf '  url: "%s"\n'      "$AGENTIC_REPO_URL"                  >> "$OUTPUT_FILE"
