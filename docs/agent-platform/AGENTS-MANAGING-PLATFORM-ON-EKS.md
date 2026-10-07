@@ -13,13 +13,17 @@
 > individual PRs.
 >
 > **Naming note.** This document uses **`aiops-agent`** — the functional name for
-> the reference agent. The implementation currently ships it under the legacy
-> name `peeks-agent` (chart directory, registry key `enable_peeks_agent`, OAM
-> app/component); that rename is tracked in
-> [appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954) and
-> lands with the implementation PR (#926). Where this doc cites a concrete
-> current repo path or key it is shown as-is with the rename flagged, so every
-> path named here still resolves today.
+> the reference agent — matching the implementation. In
+> [#926](https://github.com/aws-samples/appmod-blueprints/pull/926) the agent was
+> renamed `peeks-agent` → `aiops-agent`
+> ([appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954))
+> **and relocated under `workshop/aiops-agent/`** (chart at
+> `workshop/aiops-agent/chart`, sources under `workshop/aiops-agent/src/`). This
+> keeps the generic `gitops/addons/` tree **agent-free**: the agent is introduced
+> as a **workshop-overlay** addon (§6.3/§7), not a base-platform registry entry.
+> The `workshop/` path is the interim home for the workshop deployment. The
+> enablement/registry key is `aiops_agent` / `enable_aiops_agent` — this design is
+> the source implementation PRs copy the key from (§6.4, §13).
 
 ---
 
@@ -161,7 +165,7 @@ rough edges · ⏳ Planned, not yet implemented.
 
 | Repository | Role | Contents (relevant to this design) |
 |---|---|---|
-| **`appmod-blueprints`** (this repo) | Platform + generator + the agent | `platform-charts/appset-chart` (the ApplicationSet generator, Source B); `gitops/addons/charts/peeks-agent` (the agent chart + OAM app — **→ `aiops-agent`, [#954](https://github.com/aws-samples/appmod-blueprints/issues/954)**); `gitops/addons/registry/platform.yaml` (agent registry entry); `gitops/overlays/environments/<env>/enabled-addons.yaml` (feature flags) |
+| **`appmod-blueprints`** (this repo) | Platform + generator + the agent | `platform-charts/appset-chart` (the ApplicationSet generator, Source B); `workshop/aiops-agent/chart` (the agent chart + OAM app, sources under `workshop/aiops-agent/src/` — moved under `workshop/` in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**; base `gitops/addons/` tree stays agent-free); `workshop/overlay/overlays/environments/<env>/overrides.yaml` (agent registry entry — workshop overlay, **not** base `platform.yaml`); `workshop/overlay/overlays/environments/<env>/enabled-addons.yaml` (feature flags, incl. `aiops_agent`) |
 | **`open-agentic-platform`** (OAP) | Agentic components (Source A) | `gitops/addons/charts/{bifrost,agent-gateway,oam-agent-components,langfuse,otel-collector,agent-sandbox*,litellm,crossplane-agentcore,gateway-api-crds,kata-nodepool}`; `gitops/addons/registry/{_defaults,gateway,observability,agentcore,sandbox}.yaml`; `gitops/bootstrap/agent-platform-app.yaml` (the two-source Application); `gitops/addons/configs/bifrost/values.yaml` (the model route) |
 | **`platform-engineering-on-eks`** (internal, GitLab) | Workshop content + IDE/CFN provisioning | Bakes the OAP git coordinates into the CFN, clones OAP on the IDE at runtime, runs `task install` → `agentic:install`. Also carries the **Bedrock model-access pre-activation** CFN custom resource (see §9). |
 
@@ -191,8 +195,7 @@ rough edges · ⏳ Planned, not yet implemented.
                         │   │  Bedrock)│             │  agent/mcp/…) │  postgres)│                 │ │
                         │   └─────────┴──────────────┴───────────────┴───────────┴─────────────────┘ │
                         │                                   │                                         │
-                        │   enable_peeks_agent ▼            │ (ComponentDefinitions consumed by)      │
-                        │   (→ enable_aiops_agent, #954)    │                                         │
+                        │   enable_aiops_agent ▼            │ (ComponentDefinitions consumed by)      │
                         │   ┌──────────────────────────────────────────────────────────────────────┐ │
                         │   │ aiops-agent  (KubeVela OAM Application, appmod chart)                  │ │
                         │   │  ├─ aiops-agent (type: agent, Strands)  ── LLM ─▶ bifrost ─▶ Bedrock   │ │
@@ -247,7 +250,7 @@ $values/${BASEPATH}registry/sandbox.yaml          # agent-sandbox (+ operator / 
 > **Not all pairs are independently toggleable.** The gating model presents addons
 > as free toggles, but some have hard dependencies that must be expressed as
 > `dependsOn` in the registry (not left to prose or human convention):
-> `peeks_agent` → `agent_platform` (+ `bifrost`, `agent_gateway`, `oam_components`),
+> `aiops_agent` → `agent_platform` (+ `bifrost`, `agent_gateway`, `oam_components`),
 > and **`otel_collector` → `langfuse`** (the tracing-auth ExternalSecret only
 > renders when langfuse is on and configured — see §8.3 and
 > [OAP #53](https://github.com/awslabs/open-agentic-platform/issues/53)).
@@ -338,14 +341,13 @@ $overlay/overlays/clusters/<cluster>/<addon>/values.yaml      # per-cluster
 
 `enabled-addons.yaml` (per environment, e.g. `overlays/environments/control-plane/`)
 holds `snake_case` booleans (`agent_platform: true`, `bifrost: true`,
-`langfuse: true`, `otel_collector: true`, `peeks_agent: true` [→ `aiops_agent`,
-[#954](https://github.com/aws-samples/appmod-blueprints/issues/954)], …). The hub
+`langfuse: true`, `otel_collector: true`, `aiops_agent: true`, …). The hub
 fleet-secret **ExternalSecret** (ESO, `creationPolicy: Owner`) emits the
 corresponding `enable_*` labels/annotations onto the hub **cluster-secret**, which
 the ApplicationSet selectors and the agent registry entry read.
 
-> **Consistency rule.** `peeks_agent: true` **requires** `agent_platform`
-> (+ `bifrost`, `agent_gateway`, `oam_components`) `true`. Enabling `peeks_agent`
+> **Consistency rule.** `aiops_agent: true` **requires** `agent_platform`
+> (+ `bifrost`, `agent_gateway`, `oam_components`) `true`. Enabling `aiops_agent`
 > alone while the umbrella is off leaves the OAM ComponentDefinitions
 > (`mcp-server`, `agent`, `agentcore-memory`) uninstalled → the KubeVela admission
 > webhook rejects the agent OAM Application (`… not found`). Enable them together.
@@ -365,11 +367,16 @@ the ApplicationSet selectors and the agent registry entry read.
 ## 7. The `aiops-agent`
 
 `aiops-agent` is the reference platform-ops agent. Its **chart lives in this repo**
-(`gitops/addons/charts/peeks-agent` → `aiops-agent`,
-[#954](https://github.com/aws-samples/appmod-blueprints/issues/954)), gated by
-`enable_peeks_agent` in the registry (`gitops/addons/registry/platform.yaml`,
-wave ~8, `dependsOn` KubeVela + the OAP `agent-platform-addons` bundle). The chart's
-Argo CD Application renders a single **KubeVela OAM Application**.
+at `workshop/aiops-agent/chart` (moved under `workshop/` in
+[#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim** — the
+generic `gitops/addons/` tree stays **agent-free**). It is introduced as a
+**workshop-overlay** addon: the registry entry lives in
+`workshop/overlay/overlays/environments/control-plane/overrides.yaml` (a last-merged
+valueFile of the `cluster-addons` appset-chart, so it adds the app only when the
+fleet-config overlay is wired), gated by `enable_aiops_agent`, **sync-wave 9**,
+`dependsOn` KubeVela + the OAP `agent-platform-addons` bundle — **not** a base
+`gitops/addons/registry/platform.yaml` entry. The chart's Argo CD Application
+renders a single **KubeVela OAM Application**.
 
 ### 7.0 Purpose & operating modes
 
@@ -449,8 +456,8 @@ trust models** — a distinction that matters for the sections below:
 Images default to the public workshop registry (`public.ecr.aws/seb-demo`), pinned
 by tag. Per-component overrides are supported (`images.<comp>.{registry,tag}`);
 empty ⇒ inherit `imageRegistry`/`imageTag`. **Image coordinates are GitOps single
-source of truth** (chart `values.yaml` + registry `valuesObject` in
-`platform.yaml`, the latter taking precedence per component). Live cluster-secret
+source of truth** (chart `values.yaml` + the registry `valuesObject` in the
+workshop overlay `overrides.yaml`, the latter taking precedence per component). Live cluster-secret
 annotation overrides for image tags are **not** read on the current integration
 branch — bump the git default in both places instead. (The `seb-demo` default
 registry is an interim; durable registry tracked in
@@ -680,9 +687,9 @@ reference this document and are consolidated **one PR per repo per feature**
 | Repo | Component / path | Change | Why |
 |---|---|---|---|
 | `appmod-blueprints` | `platform-charts/appset-chart` | Reused (unchanged generator) as the generator for the agentic plane | One generator drives platform **and** agentic addons — no second machinery |
-| `appmod-blueprints` | `gitops/addons/charts/peeks-agent` (+ OAM app) → `aiops-agent` ([#954](https://github.com/aws-samples/appmod-blueprints/issues/954)) | **New** chart + KubeVela OAM Application | The reference agent (chat + autonomous RCA→MR) |
-| `appmod-blueprints` | `gitops/addons/registry/platform.yaml` | **New** agent registry entry, gated `enable_peeks_agent` (→ `enable_aiops_agent`) | Opt-in placement, wave + `dependsOn` ordering |
-| `appmod-blueprints` | `gitops/overlays/environments/*/enabled-addons.yaml` | **New** agentic flags; **remove** legacy `agent_platform` entry ([#955](https://github.com/aws-samples/appmod-blueprints/issues/955)) | Per-env enablement, off by default; free the umbrella key |
+| `appmod-blueprints` | `workshop/aiops-agent/chart` (+ OAM app; sources `workshop/aiops-agent/src/`) | **New** chart + KubeVela OAM Application (moved under `workshop/` in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**; base tree agent-free) | The reference agent (chat + autonomous RCA→MR) |
+| `appmod-blueprints` | `workshop/overlay/overlays/environments/*/overrides.yaml` | **New** agent registry entry — **workshop overlay**, not base `platform.yaml`; gated `enable_aiops_agent`, sync-wave 9 | Opt-in placement via overlay, wave + `dependsOn` ordering |
+| `appmod-blueprints` | `workshop/overlay/overlays/environments/*/enabled-addons.yaml` | **New** agentic flags (`aiops_agent`, `amp_incident`, …) in the workshop overlay; **remove** legacy `agent_platform` entry from the base ([#955](https://github.com/aws-samples/appmod-blueprints/issues/955)) | Per-env enablement, off by default; free the umbrella key |
 | `open-agentic-platform` | `gitops/bootstrap/agent-platform-app.yaml` | **New** two-source Application | Deploy OAP via the appmod generator (no vendoring) |
 | `open-agentic-platform` | `gitops/addons/registry/*` (`_defaults`, `gateway`, `observability`, `agentcore`, `sandbox`) | Registry files with per-addon selectors + **`dependsOn`** for coupled pairs | Per-addon gating; enforce `otel→langfuse`, `agent→umbrella` ([#53](https://github.com/awslabs/open-agentic-platform/issues/53)) |
 | `open-agentic-platform` | `charts/configs` (`bifrost`, `agent-gateway`, `oam-agent-components`, `langfuse`, `otel-collector`, …) | Agentic component charts/configs | The OAP feature set consumed by `aiops-agent` |
@@ -770,7 +777,7 @@ enabledAddons:
   oam_components: true
   langfuse: true
   otel_collector: true      # requires langfuse: true (coupled — §6.2/§8.3/#53)
-  peeks_agent: true         # → aiops_agent (#954); requires the umbrella + above
+  aiops_agent: true         # requires the umbrella + above
 ```
 
 Commit + push → the fleet ESO stamps `enable_*` labels → Argo CD renders the OAP
@@ -840,9 +847,12 @@ tracking issue so this doc is the index.
   Studio guidance to adopt the newest models; do it **in lockstep** (bifrost route
   + provisioning Lambda id + Marketplace subscription for the new id), via the
   single shared constant, to avoid the silent-403 mismatch. §9.1.
-- **Rename `peeks-agent` → `aiops-agent` in the implementation.** Chart dir,
-  registry key, `enable_peeks_agent`, OAM app/component. Cheaper before #926 lands.
-  [appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954).
+- **Agent naming & location.** `peeks-agent` → `aiops-agent` rename **done in
+  [#926](https://github.com/aws-samples/appmod-blueprints/pull/926)**
+  ([appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954)); the
+  agent chart + sources also moved under `workshop/aiops-agent/` (**interim**, base
+  `gitops/addons/` tree agent-free, overlay-introduced). A later cleanup may fold
+  the chart back into the generic `gitops/addons/` tree once stabilized.
 - **Remove the legacy `agent_platform` enabled-addons key** + mark neighbouring
   agent-platform docs (`README.md`, `COMPONENTS.md`, `UPGRADE-APPROACH.md`)
   historical. §6.4/§13 ·
