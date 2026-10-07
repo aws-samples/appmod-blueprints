@@ -65,7 +65,28 @@ spec:
           policy: >-
             {"Version":"2012-10-17","Statement":[{"Sid":"AllowAMPPublish","Effect":"Allow","Principal":{"Service":"aps.amazonaws.com"},"Action":"sns:Publish","Resource":"arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}","Condition":{"ArnEquals":{"aws:SourceArn":"${ampworkspace.status.atProvider.arn}"},"StringEquals":{"aws:SourceAccount":"${schema.spec.accountId}"}}}]}
 
-    # 3) SQS queue — SNS delivers here; the in-cluster consumer reads it.
+    # 3) Dead-letter queue — a poison-pill incident (one the agent repeatedly fails to
+    #    process) is redelivered up to maxReceiveCount times by the main queue below, then
+    #    parked HERE instead of looping forever and pinning the consumer. Longer retention
+    #    (14d) so a human can inspect what the agent could not handle.
+    - id: dlq
+      template:
+        apiVersion: sqs.services.k8s.aws/v1alpha1
+        kind: Queue
+        metadata:
+          name: ${schema.spec.topicName}-dlq
+          namespace: aiops-agent
+        spec:
+          queueName: ${schema.spec.topicName}-dlq
+          messageRetentionPeriod: "1209600"
+          visibilityTimeout: "360"
+
+    # 4) SQS queue — SNS delivers here; the in-cluster consumer reads it. A redrivePolicy
+    #    routes chronically-failing messages to the DLQ after maxReceiveCount deliveries, so
+    #    a message the agent can never process cannot pin the consumer in an infinite retry.
+    #    visibilityTimeout (360s) >= the agent's processing budget (AGENT_TIMEOUT 300s + hop),
+    #    so an in-flight incident is NOT redelivered mid-RCA — the old 120s was shorter than a
+    #    single RCA and caused a duplicate forward when the message reappeared mid-processing.
     - id: queue
       template:
         apiVersion: sqs.services.k8s.aws/v1alpha1
@@ -77,11 +98,13 @@ spec:
           queueName: ${schema.spec.topicName}
           messageRetentionPeriod: "3600"
           receiveMessageWaitTimeSeconds: "20"
-          visibilityTimeout: "120"
+          visibilityTimeout: "360"
+          redrivePolicy: >-
+            {"deadLetterTargetArn":"${dlq.status.ackResourceMetadata.arn}","maxReceiveCount":5}
           policy: >-
             {"Version":"2012-10-17","Statement":[{"Sid":"AllowSNSDelivery","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"arn:aws:sqs:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}"}}}]}
 
-    # 4) SNS→SQS subscription.
+    # 5) SNS→SQS subscription.
     - id: subscription
       template:
         apiVersion: sns.services.k8s.aws/v1alpha1
@@ -95,7 +118,7 @@ spec:
           endpoint: arn:aws:sqs:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
           rawMessageDelivery: "true"
 
-    # 5) AMP AlertManager routing (actionable workload alerts -> SNS). workspaceID is
+    # 6) AMP AlertManager routing (actionable workload alerts -> SNS). workspaceID is
     #    the id READ from the external Crossplane Workspace CR — no literal, no stamp.
     - id: alertmanager
       template:

@@ -63,29 +63,24 @@ def _fingerprint(alert: dict) -> str:
 
 
 def _subject(alert: dict) -> str:
-    """Coarse idempotency key: the COMPONENT that is failing, independent of
-    alertname, cluster, or pod-instance.
+    """Idempotency key: the failing COMPONENT scoped by its NAMESPACE, independent
+    of alertname, cluster, or pod-instance.
 
     AMP fires SEVERAL alertnames for one broken pod (PodOOMKilled,
-    PodFrequentRestarts, PodCrashLoopBackOff, …); a SINGLE GitOps fix addresses
-    all of them, so they MUST collapse to ONE subject. Keying on the component
-    (container, else PVC, else pod) WITHOUT the alertname removes the race where
-    a second alertname arrived before the first remediation's MR was open and
-    produced a duplicate forward (observed: PodOOMKilled|hog forwarded, then
-    PodCrashLoopBackOff|hog forwarded again for the same pod).
+    PodFrequentRestarts, PodCrashLoopBackOff, …); a SINGLE GitOps fix addresses all
+    of them, so they collapse to ONE subject by keying on the component (container,
+    else PVC, else pod) WITHOUT the alertname.
 
-    The `namespace` label is deliberately EXCLUDED for container-scoped signals:
-    the same failing pod is reported under different namespace labels by
-    different AMP rules (observed: `kube-prometheus-stack` vs the real
-    namespace), and the GitOps fix (`configs/<addon>/values.yaml`) is
-    namespace-agnostic anyway. It is kept ONLY for PVC/node-scoped signals (no
-    container), where a name can legitimately repeat across namespaces."""
-    comp = _component(alert)
-    if alert.get("container"):
-        return comp
-    # node/PVC-scoped signals have no container -> keep namespace as discriminator
-    # (a PVC name can legitimately repeat across namespaces).
-    return "|".join([str(alert.get("namespace", "")), str(comp)])
+    The `namespace` label IS included (previously it was dropped for container-scoped
+    signals). A GitOps remediation targets a specific workload (e.g.
+    configs/<addon>/values.yaml for a specific namespace), and the same container
+    name can legitimately recur in DIFFERENT namespaces for unrelated workloads —
+    dropping namespace would collapse two genuinely distinct incidents into one and
+    SUPPRESS the second remediation (fail-closed, the dangerous direction). Including
+    it means at worst a duplicate forward if AMP reports the same pod under two
+    namespace labels, which the open-MR check and the agent's own open-MR listing
+    absorb — a far safer failure mode than silently dropping a real incident."""
+    return "|".join([str(alert.get("namespace", "")), str(_component(alert))])
 
 
 def _dedup(fp: str) -> bool:
@@ -118,8 +113,8 @@ def _open_mr_exists(alert: dict) -> bool:
     """Deterministic, restart-proof duplicate guard: True if the target repo
     already has an OPEN MR addressing this component. Fail-open (returns False)
     when GitLab is not configured or unreachable, so it never blocks a real
-    incident. Matches on an explicit machine marker (`Incident-Component: <c>`)
-    the agent embeds, and falls back to a component substring in title/branch."""
+    incident. Matches ONLY on an explicit machine marker (`Incident-Component: <c>`)
+    the agent embeds verbatim in every remediation MR description."""
     if not (GITLAB_API_URL and GITLAB_TOKEN and GITLAB_MR_PROJECT):
         return False
     comp = _component(alert)
@@ -130,7 +125,6 @@ def _open_mr_exists(alert: dict) -> bool:
         url = f"{GITLAB_API_URL}/projects/{quote(GITLAB_MR_PROJECT, safe='')}/merge_requests"
         page = 1
         marker = f"incident-component: {comp}".lower()
-        comp_l = comp.lower()
         while True:
             r = requests.get(
                 url,
@@ -144,10 +138,15 @@ def _open_mr_exists(alert: dict) -> bool:
                 return False
             for mr in mrs:
                 desc = (mr.get("description") or "").lower()
+                # EXACT machine marker only. The agent embeds "Incident-Component: <comp>"
+                # verbatim in every remediation MR, so this is a precise, reliable match.
+                # A looser title/branch SUBSTRING match was REMOVED: a short or common
+                # component name (e.g. "app", "api", "web") substring-matches unrelated MRs
+                # -> false positive -> the real incident is SUPPRESSED (fail-closed, the
+                # dangerous direction). When the marker is absent we deliberately fail OPEN
+                # (forward) rather than risk dropping a genuine incident; the in-memory
+                # _seen dedup and the agent's own open-MR listing still prevent a storm.
                 if marker in desc:
-                    return True
-                hay = (mr.get("title", "") + " " + mr.get("source_branch", "")).lower()
-                if comp_l and comp_l in hay:
                     return True
             if len(mrs) < 100:
                 return False
@@ -263,7 +262,14 @@ def main() -> int:
                 QueueUrl=QUEUE_URL,
                 MaxNumberOfMessages=1,
                 WaitTimeSeconds=POLL_WAIT,
-                VisibilityTimeout=max(AGENT_TIMEOUT + 30, 90),
+                # Hide the message for the full agent-processing budget so it is NOT
+                # redelivered mid-RCA (the old 90s floor was shorter than one RCA and caused
+                # duplicate forwards). Kept >= the queue's own visibilityTimeout (360s). A
+                # message the agent can never process is redelivered up to the queue's
+                # maxReceiveCount, after which the SQS redrivePolicy parks it in the DLQ — so
+                # the consumer never loops forever on a poison pill.
+                VisibilityTimeout=max(AGENT_TIMEOUT + 60, 360),
+                AttributeNames=["ApproximateReceiveCount"],
             )
         except Exception as exc:  # noqa: BLE001
             log(f"receive error: {exc}; backing off 10s")
@@ -271,6 +277,9 @@ def main() -> int:
             continue
         for msg in resp.get("Messages", []):
             rh = msg["ReceiptHandle"]
+            rc = int(msg.get("Attributes", {}).get("ApproximateReceiveCount", "1"))
+            if rc > 1:
+                log(f"redelivery #{rc} of this message (SQS redrivePolicy parks it in the DLQ after maxReceiveCount)")
             alerts = _alerts_from_body(msg.get("Body", ""))
             firing = [a for a in alerts if a.get("status", "firing") != "resolved"]
             handled = True
