@@ -1021,17 +1021,20 @@ tasks:
         # <hub>/secrets.aiops_agent_git_token (mirrors how git_token is captured above), so the
         # agent's gitlab-mcp ExternalSecret and the real PAT can never diverge.
         BOT_USERNAME="aiops-agent"
-        BOT_TOKEN="aiops-{{.GIT_PASSWORD}}"
-        # GitLab's NoWeakPasswordValidator rejects a LOGIN password that contains the username
-        # ("aiops" ⊂ "aiops-agent") → user creation fails with "Password must not contain commonly
-        # used combinations of words and letters" and the bot is never created (silently, on a
-        # fresh deploy too). So the deterministic PAT value must NOT double as the login password:
-        # create the user with the plain git password (the same value user1 is created with →
-        # passes the validator), and set the deterministic PAT token separately via set_token
-        # (which bypasses the password validator). The bot never logs in interactively — only its
-        # PAT is used by gitlab-mcp — so the login password value is immaterial beyond being valid.
+        # RANDOM PAT — the bot's write token is NOT derived from any human credential. Stripping
+        # any prefix yields only random hex, never user1/Owner's password. init-ec2 is the single
+        # source of truth: it sets this value on the PAT (via set_token) AND writes the SAME value
+        # into <hub>/secrets.aiops_agent_git_token below, so determinism is unnecessary and no
+        # formula can leak the Owner credential. The glpat- prefix keeps the value in GitLab's
+        # routable PAT format so it authenticates like any native token.
+        BOT_TOKEN="glpat-$(openssl rand -hex 20)"
+        # The bot LOGIN password is SEPARATE from its PAT: GitLab's NoWeakPasswordValidator rejects
+        # a login password that contains the username, and the bot never logs in interactively
+        # (only its PAT is used by gitlab-mcp). Create the user with the plain git password (the
+        # same value user1 is created with → passes the validator); the random PAT above is set
+        # independently via set_token (which bypasses the password validator).
         BOT_LOGIN_PW="{{.GIT_PASSWORD}}"
-        printf '  Ensuring %s bot user + deterministic PAT...\n' "$BOT_USERNAME"
+        printf '  Ensuring %s bot user + random least-privilege PAT...\n' "$BOT_USERNAME"
         docker exec gitlab-gitlab-1 env BOTUSER="$BOT_USERNAME" BOTLOGINPW="$BOT_LOGIN_PW" BOTPW="$BOT_TOKEN" gitlab-rails runner '
           u = User.find_by_username(ENV["BOTUSER"])
           if u.nil?
