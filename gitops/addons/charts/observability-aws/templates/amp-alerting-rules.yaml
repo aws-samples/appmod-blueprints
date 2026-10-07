@@ -4,9 +4,9 @@
 # `cluster` label. Fires `ALERTS{alertstate="firing"}` series (queryable via the
 # AMP query API) AND drives the AlertManagerDefinition (SNS) when one is defined.
 #
-# Consumers (either pattern):
-#   - pull: an in-cluster bridge on the hub queries ALERTS{...} and POSTs the agent
-#   - push: AlertManagerDefinition -> SNS -> Lambda -> agent
+# Consumers (either pattern, agent-agnostic):
+#   - pull: a consumer queries ALERTS{alertstate="firing"} via the AMP query API
+#   - push: AlertManagerDefinition -> SNS (-> any subscriber)
 apiVersion: amp.aws.upbound.io/v1beta1
 kind: RuleGroupNamespace
 metadata:
@@ -39,7 +39,7 @@ spec:
                 remediation: gitops-memory-bump
               annotations:
                 summary: "OOMKilled: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
-                description: "Container was terminated with reason=OOMKilled. Propose a GitOps memory-limit increase via a Merge Request; do not mutate the cluster."
+                description: "Container was terminated with reason=OOMKilled — its memory limit is likely too low for the workload."
             # Fast-restart guard: a container restarting repeatedly in a short window
             # (catches OOM crash-loops even before the reason gauge settles).
             - alert: PodFrequentRestarts
@@ -68,7 +68,7 @@ spec:
                 remediation: gitops-image-fix
               annotations:
                 summary: "ImagePullError: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
-                description: "Container cannot pull its image (reason waiting). Propose a GitOps fix to the image reference (tag/repo/registry) or the imagePullSecret via a Merge Request; do not mutate the cluster."
+                description: "Container cannot pull its image (ImagePullBackOff/ErrImagePull/InvalidImageName) — the image reference (tag/repo/registry) or the imagePullSecret is likely wrong."
             # Container stuck in CrashLoopBackOff (waiting reason set) — distinct from
             # the restart-rate guard; catches persistent crash loops.
             - alert: PodCrashLoopBackOff
@@ -83,7 +83,7 @@ spec:
                 remediation: gitops-config-or-probe-fix
               annotations:
                 summary: "CrashLoopBackOff: {{ "{{ $labels.container }}" }} in {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
-                description: "Container is crash-looping. Perform RCA (logs, probes, config/env) and propose the appropriate GitOps fix (command/args, env/config, liveness-probe timing) via a Merge Request; do not mutate the cluster."
+                description: "Container is crash-looping (CrashLoopBackOff) — likely a bad command/args, env/config, or liveness-probe timing."
             # Pod cannot be scheduled (insufficient resources / affinity / taints).
             - alert: PodUnschedulable
               expr: |
@@ -97,7 +97,7 @@ spec:
                 remediation: gitops-resources-or-nodepool
               annotations:
                 summary: "Unschedulable: {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.pod }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
-                description: "Pod cannot be scheduled for >5m. RCA the cause (requests too high, node affinity/taints, nodepool capacity) and propose a GitOps fix (right-size requests, tolerations/affinity, or a Karpenter NodePool change) via a Merge Request; do not mutate the cluster."
+                description: "Pod cannot be scheduled for >5m — likely requests too high, node affinity/taints, or insufficient Karpenter NodePool capacity."
             # PersistentVolumeClaim stuck Pending (missing/incorrect StorageClass, no
             # provisioner, or capacity limits).
             - alert: PVCPending
@@ -112,7 +112,7 @@ spec:
                 remediation: gitops-pvc-or-storageclass
               annotations:
                 summary: "PVC Pending: {{ "{{ $labels.namespace }}" }}/{{ "{{ $labels.persistentvolumeclaim }}" }} on cluster {{ "{{ $labels.cluster }}" }}"
-                description: "PVC has been Pending for >5m. RCA (StorageClass exists? provisioner healthy? capacity?) and propose a GitOps fix (correct storageClassName / requested size) via a Merge Request; do not mutate the cluster."
+                description: "PVC has been Pending for >5m — likely a missing/incorrect StorageClass, an unhealthy provisioner, or a capacity limit."
   providerConfigRef:
     name: default
 {{- end }}
