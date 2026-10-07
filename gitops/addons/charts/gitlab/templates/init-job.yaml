@@ -122,46 +122,6 @@ data:
       end
     "
 
-    # --- Create the aiops-agent BOT user (dedicated least-privilege identity) ---
-    # The AIOps agent's GitLab write path uses THIS identity, not the shared user1 PAT.
-    # It is added below as a project MEMBER with the Developer role (NOT Owner), so with
-    # fleet-config `main` protected it can push feature branches and open MRs but CANNOT
-    # merge them — a human (user1/Owner) merges. Its PAT value is deterministic
-    # (aiops-<root pwd>) so it matches the aiops_agent_git_token that secrets-manager:seed
-    # writes into <hub>/secrets for the agent's gitlab-mcp ExternalSecret to read.
-    export BOT_USERNAME="aiops-agent"
-    export BOT_TOKEN="aiops-${GITLAB_ROOT_PASSWORD}"
-    echo "Ensuring $BOT_USERNAME bot user..."
-    BOT_EXISTS=$(curl -s "$GITLAB_URL/api/v4/users?username=$BOT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then length else 0 end')
-    if [[ "$BOT_EXISTS" == "0" ]]; then
-      echo "Creating $BOT_USERNAME..."
-      curl -sS -X 'POST' "$GITLAB_URL/api/v4/users" \
-        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" \
-        -H 'accept: application/json' \
-        -H 'Content-Type: application/json' \
-        -d "{\"name\": \"AIOps Agent\", \"username\": \"$BOT_USERNAME\", \"email\": \"$BOT_USERNAME@example.com\", \"password\": \"$BOT_TOKEN\", \"skip_confirmation\": true}" && echo -e "\n"
-    else
-      echo "Bot user $BOT_USERNAME already exists, skipping creation."
-    fi
-    # Idempotent / self-healing: (re)set the bot PAT to the deterministic value.
-    # Scopes are api + read/write_repository ONLY — no sudo, no admin_mode (unlike root).
-    kubectl exec -i $GITLAB_POD_NAME -n gitlab -- env BOTPW="$BOT_TOKEN" gitlab-rails runner "
-      u = User.find_by_username('$BOT_USERNAME')
-      if u
-        u.personal_access_tokens.where(name: 'aiops-agent token').delete_all
-        token = u.personal_access_tokens.create(
-          name: 'aiops-agent token',
-          scopes: ['api', 'read_repository', 'write_repository'],
-          expires_at: 365.days.from_now
-        )
-        token.set_token(ENV['BOTPW'])
-        token.save!
-        puts 'ensured PAT for $BOT_USERNAME'
-      end
-    "
-    BOT_ID=$(curl -s "$GITLAB_URL/api/v4/users?username=$BOT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then (.[0].id // "") else "" end')
-    echo "Bot $BOT_USERNAME id: $BOT_ID"
-
     # --- Create fleet-config overlay repo (owned by $GIT_USERNAME) ---
     # Resolve the target user's id so repos are created in THEIR namespace.
     # Using root's PAT against /projects/ would create them under root/, which
@@ -205,28 +165,10 @@ data:
       echo "Repository $WORKING_REPO already exists, skipping creation."
     fi
 
-    # --- fleet-config: add aiops-agent bot as Developer + PROTECT main (human merge-gate) ---
+    # Unprotect main branch on fleet-config
     PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$WORKING_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$WORKING_REPO'")][0].id // "") else "" end')
-    # Add the bot as a Developer member (access_level 30) — idempotent (create, else update).
-    if [[ -n "$BOT_ID" && -n "$PROJECT_ID" ]]; then
-      curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/members" \
-        -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" -H 'Content-Type: application/json' \
-        -d "{\"user_id\": $BOT_ID, \"access_level\": 30}" >/dev/null 2>&1 \
-        || curl -sS -X 'PUT' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/members/$BOT_ID" \
-             -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" -H 'Content-Type: application/json' \
-             -d '{"access_level": 30}' >/dev/null 2>&1 || true
-      echo "fleet-config: $BOT_USERNAME added as Developer"
-    fi
-    # PROTECT main: push/merge require Maintainer (level 40). The bot is a Developer (30),
-    # so it can push feature branches + open MRs but CANNOT merge or push to main; the
-    # repo Owner ($GIT_USERNAME) and the overlay-seeding automation (which use the Owner's
-    # git_token) are unaffected. Re-protect idempotently (delete then recreate).
     curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches/main" \
-      -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" >/dev/null 2>&1 || true
-    curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/$PROJECT_ID/protected_branches?name=main&push_access_level=40&merge_access_level=40&allow_force_push=false" \
-      -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" >/dev/null 2>&1 \
-      && echo "fleet-config: main protected (Maintainer push/merge)" \
-      || echo "fleet-config: main protection already set"
+      -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || echo "Main branch was not protected or already unprotected"
 
     # --- Push Backstage templates into fleet-config (same path as GitHub source) ---
     SOURCE_REPO_URL="{{ .Values.source_repo_url | default "https://github.com/aws-samples/appmod-blueprints" }}"
@@ -273,17 +215,10 @@ data:
         -H 'Content-Type: application/json' \
         -d "{\"name\": \"$APP_REPO\", \"initialize_with_readme\": true}" && echo -e "\n"
 
-      # Unprotect main branch (app repos stay unprotected — participants push directly)
+      # Unprotect main branch
       APP_PROJECT_ID=$(curl -s "$GITLAB_URL/api/v4/projects?search=$APP_REPO" -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" | jq -r 'if type=="array" then ([.[] | select(.path_with_namespace == "'$GIT_USERNAME'/'$APP_REPO'")][0].id // "") else "" end')
       curl -sS -X 'DELETE' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/protected_branches/main" \
         -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" || true
-      # Add the aiops-agent bot as a Developer here too, so the agent keeps its MR path on
-      # app repos (it previously used the shared Owner PAT). access_level 30 = Developer.
-      if [[ -n "$BOT_ID" && -n "$APP_PROJECT_ID" ]]; then
-        curl -sS -X 'POST' "$GITLAB_URL/api/v4/projects/$APP_PROJECT_ID/members" \
-          -H "PRIVATE-TOKEN: $ROOT_GITLAB_TOKEN" -H 'Content-Type: application/json' \
-          -d "{\"user_id\": $BOT_ID, \"access_level\": 30}" >/dev/null 2>&1 || true
-      fi
     else
       echo "Application repo $APP_REPO already exists, skipping creation."
     fi
