@@ -2,12 +2,13 @@
 #
 # Placement: this lives in kro-manifests (like every other RGD) but is EXCLUDED from the
 # always-applied kro-manifests / kro-manifests-hub apps and shipped instead by the dedicated
-# `kro-aiops-agent-rgd-hub` registry app, gated on enable_aiops_agent. WHY (ray-service
+# `kro-amp-incident-rgd-hub` registry app, gated on enable_amp_incident. WHY (ray-service
 # precedent): the graph references sns/sqs/prometheusservice (managed ACK capability) and
 # amp.aws.upbound.io/Workspace (Crossplane). If those kinds are ever absent, KRO cannot build
 # the graph and the RGD stays Ready=False; in the shared kro-manifests-hub wave chain that
-# would stall eksclusterwithvpc and break spoke provisioning. Gating on enable_aiops_agent
-# ties the RGD's lifecycle to the agent that already depends on those CRDs.
+# would stall eksclusterwithvpc and break spoke provisioning. Gating on enable_amp_incident
+# (agent-neutral) decouples this alerting plumbing from the agent; the consumer that
+# instantiates the AmpIncident CR (the aiops-agent overlay) sets both gates.
 #
 # Cluster-agnostic by design: accountId/region/workspaceName/topicName are schema spec fields
 # supplied by the AmpIncident INSTANCE (an OAM component in the aiops-agent Application), so
@@ -33,8 +34,10 @@ spec:
       workspaceName: string | default="peeks-amp"
       accountId: string
       region: string | default="us-west-2"
-      # SNS/SQS resource base name (topic == queue == this).
-      topicName: string | default="aiops-agent-incidents"
+      # SNS/SQS resource base name (topic == queue == this). Account-scoped, so the
+      # AmpIncident INSTANCE should pass a ${resource_prefix}-prefixed value (see the
+      # aiops-agent overlay). Default is agent-neutral.
+      topicName: string | default="amp-incidents"
     status:
       # Surface the resolved id so `kubectl get ampincident` shows what was read.
       workspaceId: ${ampworkspace.status.atProvider.id}
