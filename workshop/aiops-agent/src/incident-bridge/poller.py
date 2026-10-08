@@ -271,6 +271,29 @@ def _forward(alert: dict) -> bool:
     }
     r = requests.post(AGENT_A2A_URL, json=rpc, timeout=AGENT_TIMEOUT)
     r.raise_for_status()
+    # A2A/JSON-RPC surfaces APPLICATION-level failures (e.g. the agent's §7.1
+    # readiness gate raising AgentNotReadyError, or any execution error) as an
+    # HTTP 200 carrying a JSON-RPC `error` member or a terminal `failed`/`rejected`/
+    # `canceled` task state — NOT as a 4xx/5xx. So raise_for_status() alone would let
+    # a refused/failed incident look "forwarded", the message would be deleted, and
+    # the incident silently dropped — defeating the readiness gate AND the circuit
+    # breaker. Inspect the body so a genuine failure propagates to the caller, which
+    # leaves the message on the queue (NACK -> SQS redelivery -> DLQ after
+    # maxReceiveCount) and counts toward the breaker.
+    try:
+        payload = r.json()
+    except ValueError:
+        return True  # 200 with a non-JSON body: nothing actionable to fail on
+    if isinstance(payload, dict):
+        if payload.get("error"):
+            err = payload["error"]
+            msg = err.get("message", err) if isinstance(err, dict) else err
+            raise RuntimeError(f"agent returned JSON-RPC error: {msg}")
+        result = payload.get("result")
+        if isinstance(result, dict) and result.get("kind") == "task":
+            state = (result.get("status") or {}).get("state", "")
+            if state in {"failed", "rejected", "canceled", "unknown"}:
+                raise RuntimeError(f"agent task ended in '{state}' state (not forwarded)")
     return True
 
 
