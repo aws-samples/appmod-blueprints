@@ -40,6 +40,14 @@ AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "300"))
 # incident MRs are already OPEN on the target repo (0 disables). Stops a storm from
 # flooding the highest-precedence GitOps layer with agent MRs.
 OPEN_MR_CEILING = int(os.getenv("OPEN_MR_CEILING", "10"))
+# A ceiling hit is VALID backpressure, not a poison message, so defer the incident with
+# a long visibility backoff instead of letting it reappear every VisibilityTimeout and
+# burn through the SQS receive count: a real incident must NOT be parked in the DLQ
+# (dropped from the autonomous loop) merely because remediation MRs were saturated. This
+# stretches the drain window so a transient ceiling never DLQs a genuine incident; a
+# sustained ceiling still eventually DLQs (safety net), but the log says so explicitly.
+# 0 keeps the receive-time visibility (legacy behavior).
+CEILING_BACKOFF = int(os.getenv("CEILING_BACKOFF", "900"))
 # Circuit breaker: after this many CONSECUTIVE forward failures, stop forwarding and
 # leave messages on the queue for CB_COOLDOWN seconds (then resume; the next failure
 # re-trips). Guards against a systemic failure (agent/model/GitLab down) turning every
@@ -381,10 +389,28 @@ def main() -> int:
                 if OPEN_MR_CEILING > 0:
                     open_mrs = _open_mr_count()
                     if open_mrs >= OPEN_MR_CEILING:
+                        # Backpressure, NOT a poison message: a valid incident we defer until
+                        # open remediation MRs drain. Extend the visibility with a long backoff so
+                        # it does not reappear every VisibilityTimeout and burn through the receive
+                        # count — otherwise a real incident is DROPPED to the DLQ (no MR opened)
+                        # after maxReceiveCount purely because the MR ceiling was saturated.
+                        backoff_note = ""
+                        if CEILING_BACKOFF > 0:
+                            try:
+                                sqs.change_message_visibility(
+                                    QueueUrl=QUEUE_URL,
+                                    ReceiptHandle=rh,
+                                    VisibilityTimeout=CEILING_BACKOFF,
+                                )
+                                backoff_note = f" deferred {CEILING_BACKOFF}s for MRs to drain —"
+                            except Exception as exc:  # noqa: BLE001 — fail-open to receive-time visibility
+                                log(f"ceiling backoff change_message_visibility failed ({exc}); using receive-time visibility")
                         log(
                             f"open-MR CEILING reached ({open_mrs} >= {OPEN_MR_CEILING}); NOT forwarding "
-                            f"subject={subj} — backpressure, resolve/close open incident MRs. Message "
-                            f"left on queue (DLQ after maxReceiveCount)."
+                            f"subject={subj} — backpressure, resolve/close open incident MRs.{backoff_note} "
+                            f"if the ceiling stays saturated this incident is eventually DROPPED to the DLQ "
+                            f"(no MR opened, lost from the autonomous loop) after maxReceiveCount — "
+                            f"drain MRs or redrive the DLQ."
                         )
                         _seen.pop(subj, None)  # don't consume the dedup slot
                         handled = False        # keep the message on the queue

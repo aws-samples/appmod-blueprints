@@ -35,14 +35,14 @@ env:
     CHAT_UI_TAG: "v1.4"
     EKS_MCP_TAG: "v1"
     GITLAB_MCP_TAG: "v2"
-    INCIDENT_BRIDGE_TAG: "v1.5"
+    INCIDENT_BRIDGE_TAG: "v1.6"
     SKILLS_MCP_TAG: "v4"
     STRANDS_TAG: "v1.13"
     # TODO(pre-publish): APPMOD_REF/OAP_REF are MOVING integration/fork refs. Once OAP PR #56
     # (integration/peeks-e2e) merges to awslabs main, repoint OAP_REPO to awslabs/open-agentic-platform
     # and pin APPMOD_REF/OAP_REF to a tag/SHA. Tracked in the B2/B4 build-pin issue (#964).
     # APPMOD_REPO/REF point at the PR #926 branch (allamand fork) so the pinned
-    # incident-bridge:v1.5 (poller NACK + ceiling + breaker) is reproducible from this
+    # incident-bridge:v1.6 (poller NACK + ceiling + breaker + ceiling-skip DLQ-safe backoff) is reproducible from this
     # buildspec. feat/peeks-agent-instance lives on the fork (not yet on aws-samples);
     # repoint to aws-samples + a tag/SHA once #926 merges — tracked in #964.
     APPMOD_REPO: "https://github.com/allamand/appmod-blueprints.git"
