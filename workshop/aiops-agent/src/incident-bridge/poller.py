@@ -35,6 +35,18 @@ DEDUP_TTL = int(os.getenv("DEDUP_TTL", "3600"))
 POLL_WAIT = int(os.getenv("POLL_WAIT", "20"))
 AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "300"))
 
+# §8.1 backpressure controls for the autonomous loop.
+# Open-MR ceiling: refuse to forward (open new remediation MRs) once this many
+# incident MRs are already OPEN on the target repo (0 disables). Stops a storm from
+# flooding the highest-precedence GitOps layer with agent MRs.
+OPEN_MR_CEILING = int(os.getenv("OPEN_MR_CEILING", "10"))
+# Circuit breaker: after this many CONSECUTIVE forward failures, stop forwarding and
+# leave messages on the queue for CB_COOLDOWN seconds (then resume; the next failure
+# re-trips). Guards against a systemic failure (agent/model/GitLab down) turning every
+# incident into a 300s failed run.
+CB_FAILURE_THRESHOLD = int(os.getenv("CB_FAILURE_THRESHOLD", "5"))
+CB_COOLDOWN = int(os.getenv("CB_COOLDOWN", "300"))
+
 # Durable, restart-proof anti-duplicate: before forwarding, check the target repo
 # for an OPEN MR that already addresses this failing component. Generic and
 # fail-open — if any of these are unset or GitLab is unreachable, the check is
@@ -45,6 +57,11 @@ GITLAB_TOKEN = os.getenv("GITLAB_PERSONAL_ACCESS_TOKEN", "")  # reused read-only
 GITLAB_MR_PROJECT = os.getenv("GITLAB_MR_PROJECT", "")       # project path or numeric id the agent opens MRs on
 
 _seen: dict[str, float] = {}  # fingerprint -> last-sent epoch
+
+# Circuit-breaker state (process-local): consecutive forward failures, and the epoch
+# until which the breaker stays OPEN (no forwarding).
+_cb_failures: int = 0
+_cb_open_until: float = 0.0
 
 
 def log(msg: str) -> None:
@@ -156,6 +173,41 @@ def _open_mr_exists(alert: dict) -> bool:
         return False
 
 
+def _open_mr_count() -> int:
+    """Count OPEN remediation MRs on the target repo (those carrying the agent's
+    ``Incident-Component:`` marker). Returns -1 when GitLab is not configured, so the
+    caller treats the ceiling as disabled. Fail-open on error (returns -1) — the
+    ceiling must never block a real incident because of a transient GitLab blip."""
+    if not (GITLAB_API_URL and GITLAB_TOKEN and GITLAB_MR_PROJECT):
+        return -1
+    try:
+        from urllib.parse import quote
+        url = f"{GITLAB_API_URL}/projects/{quote(GITLAB_MR_PROJECT, safe='')}/merge_requests"
+        count = 0
+        page = 1
+        while True:
+            r = requests.get(
+                url,
+                headers={"PRIVATE-TOKEN": GITLAB_TOKEN},
+                params={"state": "opened", "per_page": 100, "page": page},
+                timeout=15,
+            )
+            r.raise_for_status()
+            mrs = r.json()
+            if not mrs:
+                break
+            for mr in mrs:
+                if "incident-component:" in (mr.get("description") or "").lower():
+                    count += 1
+            if len(mrs) < 100:
+                break
+            page += 1
+        return count
+    except Exception as exc:  # noqa: BLE001
+        log(f"open-MR count failed ({exc}); treating ceiling as disabled")
+        return -1
+
+
 def _incident_prompt(alert: dict) -> str:
     """Build the autonomous-incident message the agent expects (mode 1).
 
@@ -251,12 +303,23 @@ def _alerts_from_body(body: str) -> list[dict]:
 
 
 def main() -> int:
+    global _cb_failures, _cb_open_until
     if not QUEUE_URL:
         log("FATAL: SQS_QUEUE_URL not set")
         return 2
     sqs = boto3.client("sqs", region_name=REGION)
-    log(f"polling {QUEUE_URL} -> {AGENT_A2A_URL} (dedup {DEDUP_TTL}s)")
+    log(
+        f"polling {QUEUE_URL} -> {AGENT_A2A_URL} "
+        f"(dedup {DEDUP_TTL}s, open-MR ceiling {OPEN_MR_CEILING}, "
+        f"circuit-breaker {CB_FAILURE_THRESHOLD} fails/{CB_COOLDOWN}s)"
+    )
     while True:
+        # Circuit breaker: while OPEN, do not receive/forward — leave messages on the
+        # queue (bounded by the SQS redrivePolicy -> DLQ) until the cooldown elapses.
+        now = time.time()
+        if now < _cb_open_until:
+            time.sleep(min(_cb_open_until - now, POLL_WAIT))
+            continue
         try:
             resp = sqs.receive_message(
                 QueueUrl=QUEUE_URL,
@@ -292,13 +355,33 @@ def main() -> int:
                 if _open_mr_exists(alert):
                     log(f"open-MR skip (component={_component(alert)}) fp={fp} — MR already open in {GITLAB_MR_PROJECT}")
                     continue
+                if OPEN_MR_CEILING > 0:
+                    open_mrs = _open_mr_count()
+                    if open_mrs >= OPEN_MR_CEILING:
+                        log(
+                            f"open-MR CEILING reached ({open_mrs} >= {OPEN_MR_CEILING}); NOT forwarding "
+                            f"subject={subj} — backpressure, resolve/close open incident MRs. Message "
+                            f"left on queue (DLQ after maxReceiveCount)."
+                        )
+                        _seen.pop(subj, None)  # don't consume the dedup slot
+                        handled = False        # keep the message on the queue
+                        continue
                 try:
                     _forward(alert)
+                    _cb_failures = 0  # a success resets the breaker
                     log(f"forwarded incident {fp} (subject={subj})")
                 except Exception as exc:  # noqa: BLE001
-                    log(f"forward FAILED {fp}: {exc}")
+                    _cb_failures += 1
+                    log(f"forward FAILED {fp} (consecutive failures {_cb_failures}): {exc}")
                     _seen.pop(subj, None)  # allow retry
                     handled = False
+                    if _cb_failures >= CB_FAILURE_THRESHOLD:
+                        _cb_open_until = time.time() + CB_COOLDOWN
+                        log(
+                            f"CIRCUIT BREAKER OPEN after {_cb_failures} consecutive failures; pausing "
+                            f"forwarding for {CB_COOLDOWN}s (messages stay on the queue)"
+                        )
+                        break  # stop processing the rest of this batch
             # delete only if every firing alert was handled (or none firing)
             if handled:
                 try:
