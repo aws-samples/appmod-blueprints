@@ -18,10 +18,11 @@
 #                SKILLS_MCP_TAG, STRANDS_TAG) — per-component pinned tags; defaults below
 #                MUST match chart/values.yaml images.*.tag. Override just one to bump it.
 #   APPMOD_REF   (default integration/peeks-e2e-unified)  — appmod-blueprints branch/tag (aws-samples)
-#   OAP_REF      (default fix/configurable-max-tokens) — OAP branch/tag with the configurable
-#                max_tokens env fix. NOTE: this fix is NOT yet on awslabs/open-agentic-platform
-#                main (main hardcodes max_tokens=1000), so OAP_REPO still points at the fork
-#                until the fix is upstreamed to awslabs. Repoint OAP_REPO once merged upstream.
+#   OAP_REF      (default integration/peeks-e2e) — the PEEKS integration branch proposed by
+#                OAP PR #56 (awslabs/open-agentic-platform#56); it carries the MCP first-boot
+#                retry (#50) + configurable max_tokens (#35) the pinned agent image is cut from.
+#                NOT yet on awslabs main, so OAP_REPO points at the fork until #56 merges; then
+#                repoint OAP_REPO to awslabs and pin to a tag/SHA.
 version: 0.2
 env:
   variables:
@@ -37,13 +38,13 @@ env:
     INCIDENT_BRIDGE_TAG: "v1.4"
     SKILLS_MCP_TAG: "v4"
     STRANDS_TAG: "v1.12"
-    # TODO(pre-publish): APPMOD_REF/OAP_REF are MOVING integration/fork refs. Repoint OAP_REPO to
-    # awslabs/open-agentic-platform and pin APPMOD_REF/OAP_REF to a tag/SHA once the max_tokens fix
-    # (OAP PR #35) is upstream. Tracked in the B2/B4 build-pin issue.
+    # TODO(pre-publish): APPMOD_REF/OAP_REF are MOVING integration/fork refs. Once OAP PR #56
+    # (integration/peeks-e2e) merges to awslabs main, repoint OAP_REPO to awslabs/open-agentic-platform
+    # and pin APPMOD_REF/OAP_REF to a tag/SHA. Tracked in the B2/B4 build-pin issue (#964).
     APPMOD_REPO: "https://github.com/aws-samples/appmod-blueprints.git"
     APPMOD_REF: "integration/peeks-e2e-unified"
     OAP_REPO: "https://github.com/allamand/open-agentic-platform.git"
-    OAP_REF: "fix/configurable-max-tokens"
+    OAP_REF: "integration/peeks-e2e"
 phases:
   pre_build:
     commands:
@@ -66,7 +67,7 @@ phases:
       - docker build -f /src/workshop/aiops-agent/skills-overlay/Dockerfile
           --build-arg SKILLS_MCP_IMAGE="skills-mcp-base:$SKILLS_MCP_TAG"
           -t "$REG/skills-mcp:$SKILLS_MCP_TAG" /src
-      # 3) agent runtime from the OAP fork (configurable max_tokens — issue #34 / PR #35)
+      # 3) agent runtime from the OAP fork (PR #56 integration/peeks-e2e — MCP retry #50 + max_tokens #35)
       - docker build -t "$REG/strands-agent:$STRANDS_TAG" /oap/applications/strands-agent-base
   post_build:
     commands:
