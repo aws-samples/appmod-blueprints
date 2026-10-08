@@ -17,7 +17,7 @@
 #   <COMPONENT>_TAG (CHAT_UI_TAG, EKS_MCP_TAG, GITLAB_MCP_TAG, INCIDENT_BRIDGE_TAG,
 #                SKILLS_MCP_TAG, STRANDS_TAG) — per-component pinned tags; defaults below
 #                MUST match chart/values.yaml images.*.tag. Override just one to bump it.
-#   APPMOD_REF   (default integration/peeks-e2e-unified)  — appmod-blueprints branch/tag (aws-samples)
+#   APPMOD_REF   (default feat/peeks-agent-instance, on the allamand fork = PR #926 head)  — appmod-blueprints branch/tag
 #   OAP_REF      (default integration/peeks-e2e) — the PEEKS integration branch proposed by
 #                OAP PR #56 (awslabs/open-agentic-platform#56); it carries the MCP first-boot
 #                retry (#50) + configurable max_tokens (#35) the pinned agent image is cut from.
@@ -35,14 +35,18 @@ env:
     CHAT_UI_TAG: "v1.4"
     EKS_MCP_TAG: "v1"
     GITLAB_MCP_TAG: "v2"
-    INCIDENT_BRIDGE_TAG: "v1.4"
+    INCIDENT_BRIDGE_TAG: "v1.5"
     SKILLS_MCP_TAG: "v4"
-    STRANDS_TAG: "v1.12"
+    STRANDS_TAG: "v1.13"
     # TODO(pre-publish): APPMOD_REF/OAP_REF are MOVING integration/fork refs. Once OAP PR #56
     # (integration/peeks-e2e) merges to awslabs main, repoint OAP_REPO to awslabs/open-agentic-platform
     # and pin APPMOD_REF/OAP_REF to a tag/SHA. Tracked in the B2/B4 build-pin issue (#964).
-    APPMOD_REPO: "https://github.com/aws-samples/appmod-blueprints.git"
-    APPMOD_REF: "integration/peeks-e2e-unified"
+    # APPMOD_REPO/REF point at the PR #926 branch (allamand fork) so the pinned
+    # incident-bridge:v1.5 (poller NACK + ceiling + breaker) is reproducible from this
+    # buildspec. feat/peeks-agent-instance lives on the fork (not yet on aws-samples);
+    # repoint to aws-samples + a tag/SHA once #926 merges — tracked in #964.
+    APPMOD_REPO: "https://github.com/allamand/appmod-blueprints.git"
+    APPMOD_REF: "feat/peeks-agent-instance"
     OAP_REPO: "https://github.com/allamand/open-agentic-platform.git"
     OAP_REF: "integration/peeks-e2e"
 phases:
