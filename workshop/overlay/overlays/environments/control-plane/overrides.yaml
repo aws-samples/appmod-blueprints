@@ -77,10 +77,10 @@ aiops-agent:
       gitlabMcp:      { registry: "", tag: "v2" }
       chatUi:         { registry: "", tag: "v1.4" }
       incidentBridge: { registry: "", tag: "v1.4" }
-    accountId: '{{.metadata.annotations.aws_account_id}}'
-    clusterPrefix: '{{.metadata.annotations.resource_prefix}}'
+    accountId: '{{ index .metadata.annotations "aws_account_id" }}'
+    clusterPrefix: '{{ default "peeks" (index .metadata.annotations "resource_prefix") }}'
     region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
-    cloudfrontDomain: '{{default "" .metadata.annotations.ingress_domain_name}}'
+    cloudfrontDomain: '{{ default "" (index .metadata.annotations "ingress_domain_name") }}'
     # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
     gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
     # Project the agent opens remediation MRs on = the overlay/fleet-config repo.
