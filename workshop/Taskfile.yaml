@@ -1091,14 +1091,16 @@ tasks:
                 || curl -s -X PUT "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/members/$BOT_ID" -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
                      -H 'Content-Type: application/json' -d '{"access_level": 30}' >/dev/null 2>&1 || true
             fi
-            if [ "$REPO" = "fleet-config" ]; then
-              # Protect main: push/merge require Maintainer (40). Bot (Developer 30) opens MRs but
-              # cannot merge/push to main; user1/Owner + overlay-seeding (git_token) are unaffected.
-              # App repos stay unprotected (participants push directly).
-              curl -s -X DELETE "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/protected_branches/main" -H "PRIVATE-TOKEN: $ROOT_TOKEN" >/dev/null 2>&1 || true
-              curl -s -X POST "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/protected_branches?name=main&push_access_level=40&merge_access_level=40&allow_force_push=false" -H "PRIVATE-TOKEN: $ROOT_TOKEN" >/dev/null 2>&1 \
-                && printf '  fleet-config: main protected (human merge-gate); %s = Developer\n' "$BOT_USERNAME" || true
-            fi
+            # Protect main on EVERY repo (fleet-config AND every app repo): push/merge require
+            # Maintainer (40), no force-push. The workshop user ({{.GIT_USERNAME}}) OWNS these
+            # projects (Owner=50) so retains direct push + merge, and overlay-seeding (git_token)
+            # is unaffected; the aiops bot (Developer=30) can OPEN MRs but canNOT merge its own MR
+            # or force-push main anywhere. This is the human merge-gate the design (§12) rests on —
+            # app repos are reachable (the bridge prompt tells the agent to find the owning repo),
+            # so leaving them unprotected would let the bot self-merge an app-repo remediation MR.
+            curl -s -X DELETE "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/protected_branches/main" -H "PRIVATE-TOKEN: $ROOT_TOKEN" >/dev/null 2>&1 || true
+            curl -s -X POST "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/protected_branches?name=main&push_access_level=40&merge_access_level=40&allow_force_push=false" -H "PRIVATE-TOKEN: $ROOT_TOKEN" >/dev/null 2>&1 \
+              && printf '  %s: main protected (human merge-gate); %s = Developer\n' "$REPO" "$BOT_USERNAME" || true
           done
         fi
         # Authoritative write of the bot PAT into <hub>/secrets (single source of truth — the value
