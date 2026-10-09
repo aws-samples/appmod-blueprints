@@ -60,7 +60,9 @@ spec:
         pause: string | default="5s"
       metrics:
         enabled: boolean | default=false
+        pause: string | default="2s"
         path: string | default="/collection/FRONT_PAGE"
+        evaluationCriteria: "[]map[string]string | default=[]"
   resources:
     - id: iamroleselector
       includeWhen:
@@ -418,6 +420,13 @@ spec:
                     - name: service-name
                       value: ${schema.metadata.name}
                 - setWeight: 80
+                # Metrics analysis (metrics.enabled with evaluationCriteria): pause, then
+                # run metrics-<name> against the canary. Without criteria there is no
+                # gate, as before #529 (a vector(1) no-op). kro can't drop a list item,
+                # so then both steps render as 0s pauses.
+                - pause:
+                    duration: '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? schema.spec.metrics.pause : "0s"}'
+                - '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? dyn({"analysis": {"templates": [{"templateName": "metrics-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}]}}) : dyn({"pause": {"duration": "0s"}})}'
           template:
             metadata:
               labels:
@@ -491,6 +500,13 @@ spec:
                     - name: service-name
                       value: ${schema.metadata.name}
                 - setWeight: 80
+                # Metrics analysis (metrics.enabled with evaluationCriteria): pause, then
+                # run metrics-<name> against the canary. Without criteria there is no
+                # gate, as before #529 (a vector(1) no-op). kro can't drop a list item,
+                # so then both steps render as 0s pauses.
+                - pause:
+                    duration: '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? schema.spec.metrics.pause : "0s"}'
+                - '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? dyn({"analysis": {"templates": [{"templateName": "metrics-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}]}}) : dyn({"pause": {"duration": "0s"}})}'
           template:
             metadata:
               labels:
@@ -733,6 +749,7 @@ spec:
     - id: metricsanalysis
       includeWhen:
         - ${schema.spec.metrics.enabled}
+        - ${size(schema.spec.metrics.evaluationCriteria) == 0}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: AnalysisTemplate
@@ -772,6 +789,43 @@ spec:
                   authentication:
                     sigv4:
                       region: "{{args.amp-workspace-region}}"
+
+    # metrics.evaluationCriteria given: one Prometheus (AMP) metric per criterion,
+    # rendered into the same metrics-<name> template the Rollout step references.
+    # The len(result) guard makes an empty result a clean failed/not-failed
+    # measurement instead of an index-out-of-range Error.
+    - id: metricsanalysisWithCriteria
+      includeWhen:
+        - ${schema.spec.metrics.enabled}
+        - ${size(schema.spec.metrics.evaluationCriteria) > 0}
+      template:
+        apiVersion: argoproj.io/v1alpha1
+        kind: AnalysisTemplate
+        metadata:
+          name: metrics-${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+        spec:
+          args:
+            - name: service-name
+            - name: amp-workspace-url
+              valueFrom:
+                secretKeyRef:
+                  name: ${ampsecrets.spec.target.name}
+                  key: amp-workspace-url
+            - name: amp-workspace-region
+              valueFrom:
+                secretKeyRef:
+                  name: ${ampsecrets.spec.target.name}
+                  key: amp-workspace-region
+          metrics: "${schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'len(result) > 0 && result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + (has(c.rateInterval) ? 'rate(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.rateInterval) ? '[' + c.rateInterval + '])' : '') + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'len(result) > 0 && result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + (has(c.rateInterval) ? 'rate(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.rateInterval) ? '[' + c.rateInterval + '])' : '') + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
 
     - id: benchmarkconfig
       includeWhen:
