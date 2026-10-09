@@ -1840,10 +1840,14 @@ tasks:
               --output text 2>/dev/null || true)
             echo "$STACK_TAG" | grep -qi "tCaT\|peeks-workshop" || continue
             echo "  Cleaning SGs in workshop VPC $VPC_ID..."
-            # Revoke cross-SG rules first, then delete
+            # Revoke cross-SG rules first, then delete. Skip the stack's own SGs
+            # (tagged aws:cloudformation:stack-name, e.g. the IDE and its EFS SG):
+            # they are still in use and CFN deletes them with the stack. Revoking
+            # the EFS "NFS from IDE instances" rule here cuts the IDE's home
+            # directory while this teardown is still running on it.
             SG_IDS=$(aws ec2 describe-security-groups --region "$REGION" \
               --filters "Name=vpc-id,Values=$VPC_ID" \
-              --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+              --query 'SecurityGroups[?GroupName!=`default` && !(Tags[?Key==`aws:cloudformation:stack-name`])].GroupId' \
               --output text 2>/dev/null | tr '\t' '\n')
             for SG in $SG_IDS; do
               [ -z "$SG" ] && continue
