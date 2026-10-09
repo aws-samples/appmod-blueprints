@@ -793,7 +793,7 @@ tasks:
           echo "FAILED $(date -u +%FT%TZ)" > "$IDC_STATUS_FILE"
           # Honour IDC_STRICT=true to hard-fail (e.g. for standalone runs / CI); default
           # is tolerant so the install tail is not aborted.
-          [ "${IDC_STRICT:-false}" = "true" ] && exit 1
+          if [ "${IDC_STRICT:-false}" = "true" ]; then exit 1; fi
         fi
       - printf '{{.C_STEP}}▸ Syncing admin group members into IDC admin group...{{.C_RESET}}\n'
       - |
