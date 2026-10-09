@@ -85,6 +85,17 @@ spec:
       env:
       - name: MAX_TOKENS
         value: "4096"
+      # ▶READINESS GATE (§7.1): arm it explicitly so the posture is visible and
+      # auditable in GitOps rather than relying on the image default. The gate
+      # makes the AUTONOMOUS (incident) path refuse to open a remediation MR on
+      # an incomplete MCP toolset — it declines (AgentNotReadyError) and the
+      # incident's SQS redelivery retries once the backends warm up.
+      - name: MCP_READINESS_GATE
+        value: "true"
+      # MCP_REQUIRED_SERVERS is intentionally UNSET. In the agent image an empty
+      # value means "require ALL configured MCP servers" (strictest), NOT an
+      # empty required-set — so the gate is fully armed, not a no-op. Set it only
+      # to require a SUBSET (comma-separated server names, e.g. "eks-read,gitlab").
       registerWithGateway: true
       resources:
         limits:
@@ -773,7 +784,7 @@ spec:
             {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::REPLACE_ACCOUNT_ID:root"},"Action":["sts:AssumeRole","sts:TagSession"],"Condition":{"ArnLike":{"aws:PrincipalArn":["arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-hub-ack-capability-role","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-ack-*","arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_CLUSTER_PREFIX-spoke-*-ack-capability-role"]}}}]}
           inlinePolicies:
             incident-bridge-provisioning: |
-              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:REPLACE_REGION:REPLACE_ACCOUNT_ID:REPLACE_CLUSTER_PREFIX-amp-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":"arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:REPLACE_CLUSTER_PREFIX-amp-incidents"},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:REPLACE_REGION:REPLACE_ACCOUNT_ID:workspace/*"}]}
+              {"Version":"2012-10-17","Statement":[{"Sid":"SNS","Effect":"Allow","Action":["sns:CreateTopic","sns:DeleteTopic","sns:GetTopicAttributes","sns:SetTopicAttributes","sns:ListTagsForResource","sns:TagResource","sns:UntagResource","sns:Subscribe","sns:Unsubscribe","sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:ListSubscriptionsByTopic"],"Resource":"arn:aws:sns:REPLACE_REGION:REPLACE_ACCOUNT_ID:REPLACE_CLUSTER_PREFIX-amp-incidents"},{"Sid":"SQS","Effect":"Allow","Action":["sqs:CreateQueue","sqs:DeleteQueue","sqs:GetQueueAttributes","sqs:SetQueueAttributes","sqs:ListQueueTags","sqs:TagQueue","sqs:UntagQueue","sqs:GetQueueUrl"],"Resource":["arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:REPLACE_CLUSTER_PREFIX-amp-incidents","arn:aws:sqs:REPLACE_REGION:REPLACE_ACCOUNT_ID:REPLACE_CLUSTER_PREFIX-amp-incidents-dlq"]},{"Sid":"APS","Effect":"Allow","Action":["aps:CreateAlertManagerDefinition","aps:DescribeAlertManagerDefinition","aps:PutAlertManagerDefinition","aps:DeleteAlertManagerDefinition"],"Resource":"arn:aws:aps:REPLACE_REGION:REPLACE_ACCOUNT_ID:workspace/*"}]}
       # ── AMP AlertManagerDefinition + SNS Topic + SQS Queue + SNS→SQS Subscription
       # are provisioned by the AmpIncident kro RGD (ampincident.kro.run, shipped via
       # kro-manifests / kro-amp-incident-rgd-hub) and INSTANTIATED by the `amp-incident`
