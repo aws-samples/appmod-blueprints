@@ -1395,7 +1395,9 @@ tasks:
           if [ -n "$ADMIN_ROLE" ]; then
             ADMIN_ARN_LINE="    adminRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ADMIN_ROLE"
           fi
-          INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName | [0]" --output text 2>/dev/null || echo "")
+          # JSON output: with --output text the CLI applies --query to EACH ListRoles
+          # page, so `| [0]` prints one line per page ("None\n<role>" on large accounts).
+          INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r '.[0] // empty' || echo "")
           ADMIN_INSTANCE_ARN_LINE=""
           if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
             ADMIN_INSTANCE_ARN_LINE="    adminInstanceRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$INSTANCE_ROLE"
@@ -1580,7 +1582,9 @@ tasks:
         # cluster-admin AccessEntry. Set on every run (idempotent) so existing
         # spokes also pick up the instance role.
         CONSOLE_ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})
-        INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName | [0]" --output text 2>/dev/null || echo "")
+        # JSON output: with --output text the CLI applies --query to EACH ListRoles
+        # page, so `| [0]` prints one line per page ("None\n<role>" on large accounts).
+        INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r '.[0] // empty' || echo "")
         yq -i 'del(.clusters."{{.CLUSTER}}".adminRoles)' "$KRO_VALUES" 2>/dev/null || true
         if [ -n "$CONSOLE_ROLE" ] && [ "$CONSOLE_ROLE" != "null" ]; then
           CONSOLE_ROLE="$CONSOLE_ROLE" yq -i '.clusters."{{.CLUSTER}}".adminRoleName = env(CONSOLE_ROLE)' "$KRO_VALUES"
