@@ -202,6 +202,15 @@ spec:
                     mountPath: /workspace
             
             - name: upload
+              # The target bucket is not created by this RGD: the workshop creates it
+              # in `ray:setup`, which can run after these instances are synced. Retry
+              # until it exists (the workspace PVC outlives the step, so only the
+              # upload re-runs, not the download).
+              retryStrategy:
+                limit: 30
+                retryPolicy: "Always"
+                backoff:
+                  duration: "2m"
               container:
                 image: amazon/aws-cli:latest
                 command: [bash, -c]
