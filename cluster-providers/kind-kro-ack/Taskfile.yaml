@@ -1659,6 +1659,7 @@ tasks:
           [ -n "$PREFIX" ] && aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
             [ -z "$ROLE" ] && continue
             echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (infra/bootstrap/CFN — not swept)"; continue; }
+            case "$ROLE" in "${PREFIX}-workshop-"*) echo "  skip role $ROLE (CloudFormation stack role — not swept)"; continue ;; esac
             ACK=$(aws iam list-role-tags --role-name "$ROLE" --query "length(Tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
             [ "$ACK" = "0" ] && { echo "  skip role $ROLE (not ACK-managed)"; continue; }
             for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
@@ -1721,6 +1722,10 @@ tasks:
               --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
             [ -z "$ROLE" ] && continue
             echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (CFN — not swept)"; continue; }
+            # The stack's own roles are named <stack-name>-<LogicalId>-<random>. The self-paced
+            # stack is "<prefix>-workshop" (no "-team-stack-"), so match the stack-name prefix too:
+            # deleting them breaks the stack's custom-resource Lambdas during delete-stack.
+            case "$ROLE" in "${PREFIX}-workshop-"*) echo "  skip role $ROLE (CloudFormation stack role — not swept)"; continue ;; esac
             for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
               aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
             done

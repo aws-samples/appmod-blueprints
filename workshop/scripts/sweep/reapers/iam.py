@@ -11,9 +11,16 @@ def reap(ctx):
         _skip = ("-team-stack-", "SharedRole")
         _owned_prefixes = [prefix] + [s for s in spokes if not s.startswith(prefix + "-")]
 
+        # CloudFormation names the stack's own roles <stack-name>-<LogicalId>-<random>.
+        # The self-paced stack is "<prefix>-workshop" (no "-team-stack-"), so skip that
+        # prefix too: deleting those roles breaks the stack's custom resources on delete.
+        _stack_prefix = prefix + "-workshop-"
+
         def _is_owned(name):
-            return any(name.startswith(p + "-") for p in _owned_prefixes) and not any(
-                x in name for x in _skip
+            return (
+                any(name.startswith(p + "-") for p in _owned_prefixes)
+                and not any(x in name for x in _skip)
+                and not name.startswith(_stack_prefix)
             )
 
         count = 0
