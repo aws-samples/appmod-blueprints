@@ -375,91 +375,144 @@ async def configure_identity_center(
             await page.wait_for_timeout(2000)
             await dismiss_overlays(page)
 
-            # Click Enable button — skip gracefully if provisioning already enabled
+            # Click Enable — scoped to the "Automatic provisioning" section. The Settings
+            # page has other Enable buttons (Identity-enhanced sessions comes first in the
+            # DOM), so a bare 'button:has-text("Enable")' clicks the wrong one (#967).
+            # Nearest container of the section heading that has an Enable button, and only
+            # a button after that heading (so another section's Enable never matches).
             await screenshot(page, "/tmp/step9_before_enable.png", debug)
+            enable_btn = page.locator(
+                'xpath=//*[normalize-space(text())="Automatic provisioning"]'
+                '/ancestor::*[.//button[normalize-space()="Enable"]][1]'
+                '//button[normalize-space()="Enable"]'
+                '[preceding::*[normalize-space(text())="Automatic provisioning"]]'
+            ).first
             try:
+                await enable_btn.wait_for(state="visible", timeout=10000)
+            except Exception:
+                enable_btn = None
+            if enable_btn:
+                await enable_btn.click()
+            else:
+                # Already enabled (e.g. a re-run): the one-time token shown at enablement
+                # is gone, so generate a new one via Actions → Manage provisioning.
+                print(
+                    "Automatic provisioning already enabled — generating a new SCIM token.",
+                    file=sys.stderr,
+                )
                 await click_first_visible(
                     page,
                     [
-                        'button:has-text("Enable")',
-                        'button:has-text("Enable automatic provisioning")',
+                        '[data-testid="identity-source-actions"]',
+                        'button:has-text("Actions")',
                     ],
-                    timeout=10000,
-                    description="Enable provisioning button",
+                    description="Actions button",
+                )
+                await page.wait_for_timeout(1000)
+                await click_first_visible(
+                    page,
+                    [
+                        '[role="menuitem"]:has-text("Manage provisioning")',
+                        'li:has-text("Manage provisioning")',
+                        'a:has-text("Manage provisioning")',
+                    ],
+                    description="Manage provisioning menu item",
                 )
                 await wait_for_stable(page)
                 await page.wait_for_timeout(2000)
-            except RuntimeError:
-                # Check if provisioning is already enabled (Disable button present)
-                try:
-                    disable_btn = await page.wait_for_selector(
-                        'button:has-text("Disable")', state="visible", timeout=3000
-                    )
-                    if disable_btn:
-                        print(
-                            "Automatic provisioning already enabled — skipping Enable step.",
-                            file=sys.stderr,
-                        )
-                except Exception:
-                    raise  # Re-raise original error if Disable button not found either
+                await click_first_visible(
+                    page,
+                    ['button:has-text("Generate token")'],
+                    timeout=15000,
+                    description="Generate token button (IDC allows at most 2 SCIM tokens)",
+                )
+            await wait_for_stable(page)
+            await page.wait_for_timeout(2000)
             await screenshot(page, "/tmp/step9.png", debug)
 
-            # --- Step 10: Extract SCIM endpoint and token ---
+            # --- Step 10: Extract SCIM endpoint and token from the token dialog ---
             print("Extracting SCIM token...", file=sys.stderr)
-            # Click "Show token"
-            await click_first_visible(
-                page,
-                [
-                    'button:has-text("Show token")',
-                    'button:has-text("Show access token")',
-                    'a:has-text("Show token")',
-                ],
-                timeout=10000,
-                description="Show token button",
-            )
-            await page.wait_for_timeout(2000)
+            dialog = page.locator('[role="dialog"]:visible').last
+            try:
+                await dialog.wait_for(state="visible", timeout=15000)
+            except Exception as e:
+                raise RuntimeError("SCIM token dialog did not open") from e
+            # Click "Show token" inside the dialog (if the token is masked)
+            for sel in [
+                'button:has-text("Show token")',
+                'button:has-text("Show access token")',
+                'a:has-text("Show token")',
+            ]:
+                show_btn = dialog.locator(sel)
+                if await show_btn.count() > 0:
+                    await show_btn.first.click()
+                    await page.wait_for_timeout(2000)
+                    break
             await screenshot(page, "/tmp/step10.png", debug)
 
-            # Extract SCIM data from page text
-            page_text = await page.evaluate("() => document.body.innerText")
+            # Read only the dialog: the rest of the console page holds other long
+            # strings (e.g. the assumed-role session name) that look like tokens. Take
+            # its text nodes and field values one by one, so adjacent labels/buttons
+            # never get glued onto the token.
+            dialog_strings = [
+                t.strip()
+                for t in await dialog.evaluate(
+                    """d => {
+                        const out = [];
+                        const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT);
+                        while (w.nextNode()) out.push(w.currentNode.data);
+                        d.querySelectorAll("input, textarea").forEach(e => out.push(e.value));
+                        return out;
+                    }"""
+                )
+                if t.strip()
+            ]
+            dialog_text = "\n".join(dialog_strings)
 
-            # Find SCIM endpoint — match any scim URL pattern
+            # Find SCIM endpoint — match any scim URL pattern. The Enable dialog shows
+            # it; after "Generate token" it is on the Manage provisioning page instead.
+            page_text = await page.evaluate("() => document.body.innerText")
             scim_endpoint = None
-            for pattern in [
-                r"(https://scim[^\s]+/scim/v2[^\s]*)",
-                r"(https://[^\s]*scim[^\s]*/v2[^\s]*)",
-            ]:
-                m = re.search(pattern, page_text)
-                if m:
-                    scim_endpoint = m.group(1).strip().rstrip(".")
+            for text in (dialog_text, page_text):
+                for pattern in [
+                    r"(https://scim[^\s]+/scim/v2[^\s]*)",
+                    r"(https://[^\s]*scim[^\s]*/v2[^\s]*)",
+                ]:
+                    m = re.search(pattern, text)
+                    if m:
+                        scim_endpoint = m.group(1).strip().rstrip(".")
+                        break
+                if scim_endpoint:
                     break
 
-            # Find SCIM token — try data-testid first, then regex
+            # Find SCIM token — data-testid first, then a token-like string in the dialog.
+            # Tokens are long base64-ish strings (usually UUID-prefixed, with colons).
+            token_re = r"[A-Za-z0-9+/=:_\-]{60,}"
             scim_token = None
-            token_el = page.locator('[data-testid="scim-token"]')
+            token_el = dialog.locator('[data-testid="scim-token"]')
             if await token_el.count() > 0:
-                scim_token = (await token_el.text_content()).strip()
+                text = (await token_el.first.text_content() or "").strip()
+                if re.fullmatch(token_re, text):
+                    scim_token = text
 
             if not scim_token:
-                # Try to find a long token-like string near "Access token" text
-                # Tokens are long base64-ish strings with colons
-                m = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[^\s]{20,})", page_text)
-                if m:
-                    scim_token = m.group(1).strip()
+                candidates = {
+                    t
+                    for t in dialog_strings
+                    if re.fullmatch(token_re, t) and not t.startswith(("arn:", "http"))
+                }
+                if len(candidates) == 1:
+                    scim_token = candidates.pop()
+                elif candidates:
+                    raise RuntimeError(
+                        f"Found {len(candidates)} token-like strings in the SCIM token "
+                        "dialog; refusing to guess"
+                    )
 
             if not scim_token:
-                # Try copy button approach — find all copyable text elements
-                copy_els = await page.query_selector_all(
-                    '[class*="copy"] + span, [class*="copyable"]'
-                )
-                for el in copy_els:
-                    text = (await el.text_content() or "").strip()
-                    if len(text) > 50 and "scim" not in text.lower():
-                        scim_token = text
-                        break
-
-            if not scim_token:
-                raise RuntimeError("Failed to extract SCIM access token from page")
+                raise RuntimeError("Failed to extract SCIM access token from the token dialog")
+            if not scim_endpoint:
+                raise RuntimeError("Failed to extract SCIM endpoint from page")
 
             scim_data = {"endpoint": scim_endpoint, "token": scim_token}
             json.dump(scim_data, open(SCIM_DATA_FILE, "w"))
