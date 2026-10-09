@@ -8,7 +8,8 @@
 #   browser. Guards against an empty/half-formed URL (ingress with no address yet).
 open_when_ready() {
   local url="$1" timeout="${2:-300}" start=$SECONDS code
-  if [ -z "$url" ] || [[ "$url" == http://*//* ]] || [[ "$url" == https://*//* ]]; then
+  local host="${url#*://}"; host="${host%%/*}"
+  if [ -z "$url" ] || [ -z "$host" ]; then
     echo "⚠️  Empty/incomplete URL ('$url'). The ingress may not have an ALB address yet" >&2
     echo "    (check \$DNS_DEV / \$DNS_PROD). Re-run the export step and retry." >&2
     return 1
