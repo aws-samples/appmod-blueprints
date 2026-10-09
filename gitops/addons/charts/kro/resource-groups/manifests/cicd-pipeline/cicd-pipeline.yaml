@@ -1412,23 +1412,17 @@ spec:
 
                      # Update various deployment file formats
                      echo "Debug: Application name is: ${schema.spec.application.name}"
-                     # Update image only for java applications in deployment/dev/application.yaml
-                     if [ "${schema.spec.application.name}" = "java" ]; then
-                       if [ -f "dev/application.yaml" ]; then
-                         sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" dev/application.yaml
-                         # KubeVela only re-renders the Rollout when app.oam.dev/publishVersion
-                         # changes — bump it to the image tag so a new image actually rolls out.
-                         sed -i "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g" dev/application.yaml
-                       fi
-                     else
-                       # Replace placeholder and existing ECR images for non-java applications
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g"
-                       # KubeVela publishVersion bump (see java branch) — no-op for manifests without it.
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g"
+                     # CI updates deployment/dev/ only, for every application (as java already did).
+                     # prod/ changes only through an explicit promotion (Kargo or the module's
+                     # promotion step), and templates/ keeps its <image> placeholders.
+                     # KubeVela only re-renders the Rollout when app.oam.dev/publishVersion
+                     # changes, so bump it to the image tag too (no-op for manifests without it).
+                     if [ -d dev ]; then
+                       find dev \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i \
+                         -e "s|image: <image>|image: $IMAGE_URI|g" \
+                         -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" \
+                         -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" \
+                         -e "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g"
                      fi
 
                      # Show what changed
