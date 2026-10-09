@@ -286,7 +286,10 @@ spec:
           strategy:
             canary:
               canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              # No stableService: it would pin <name> (the Ingress backend) to the stable
+              # pods, so Ingress traffic would only reach the canary at the final cutover.
+              # Unpinned, <name> selects both ReplicaSets and traffic follows the
+              # canary/stable pod ratio, as in the KubeVela components (#976).
               steps:
                 - setWeight: 20
                 - pause:
@@ -340,7 +343,10 @@ spec:
           strategy:
             canary:
               canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              # No stableService: it would pin <name> (the Ingress backend) to the stable
+              # pods, so Ingress traffic would only reach the canary at the final cutover.
+              # Unpinned, <name> selects both ReplicaSets and traffic follows the
+              # canary/stable pod ratio, as in the KubeVela components (#976).
               steps:
                 - setWeight: 20
                 - pause:
@@ -394,7 +400,10 @@ spec:
           strategy:
             canary:
               canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              # No stableService: it would pin <name> (the Ingress backend) to the stable
+              # pods, so Ingress traffic would only reach the canary at the final cutover.
+              # Unpinned, <name> selects both ReplicaSets and traffic follows the
+              # canary/stable pod ratio, as in the KubeVela components (#976).
               steps:
                 - setWeight: 20
                 - pause:
@@ -467,7 +476,10 @@ spec:
           strategy:
             canary:
               canaryService: ${schema.metadata.name}-preview
-              stableService: ${schema.metadata.name}
+              # No stableService: it would pin <name> (the Ingress backend) to the stable
+              # pods, so Ingress traffic would only reach the canary at the final cutover.
+              # Unpinned, <name> selects both ReplicaSets and traffic follows the
+              # canary/stable pod ratio, as in the KubeVela components (#976).
               steps:
                 - setWeight: 20
                 - pause:
