@@ -1266,9 +1266,15 @@ spec:
                    - name: build-and-push
                      template: kaniko-build
                      dependencies: [run-tests]
+                   - name: stamp-build-time
+                     template: stamp-build-time
+                     dependencies: [build-and-push]
+                     # Best effort: if stamping fails, only Kargo's NewestBuild ordering is affected
+                     continueOn:
+                       failed: true
                    - name: update-deployment
                      template: update-git-repo
-                     dependencies: [build-and-push]
+                     dependencies: [stamp-build-time]
                    - name: notify-completion
                      template: notify-status
                      dependencies: [update-deployment]
@@ -1387,6 +1393,49 @@ spec:
                      secretName: ${schema.spec.name}-docker-config
                      # Ensure proper permissions for Kaniko
                      defaultMode: 0644
+
+             # Kaniko keeps the base image's manifest annotations, so an image built FROM an
+             # official image (e.g. tomcat) carries the base's org.opencontainers.image.created.
+             # Kargo's NewestBuild reads that annotation before the config's created time, so
+             # every build of an app looks equally old. Overwrite it with this build's time.
+             - name: stamp-build-time
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               initContainers:
+                 - name: ecr-login
+                   image: amazon/aws-cli:latest
+                   command: [sh, -c]
+                   args:
+                     - |
+                       set -e
+                       ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
+                       ECR_TOKEN=$(aws ecr get-login-password --region ${schema.spec.aws.region})
+                       printf '{"auths":{"%s":{"auth":"%s"}}}' "$ECR_REGISTRY" "$(echo -n "AWS:$ECR_TOKEN" | base64 -w 0)" > /docker/config.json
+                   volumeMounts:
+                     - name: docker-auth
+                       mountPath: /docker
+               container:
+                 image: gcr.io/go-containerregistry/crane/debug:v0.22.1
+                 command: [sh, -c]
+                 args:
+                   - |
+                     set -e
+                     IMAGE="${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}"
+                     CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                     crane mutate --annotation org.opencontainers.image.created=$CREATED "$IMAGE"
+                     echo "Stamped $IMAGE with org.opencontainers.image.created=$CREATED"
+                 env:
+                   - name: DOCKER_CONFIG
+                     value: /docker
+                 volumeMounts:
+                   - name: docker-auth
+                     mountPath: /docker
+                     readOnly: true
+               volumes:
+                 - name: docker-auth
+                   emptyDir:
+                     medium: Memory
 
              - name: update-git-repo
                metadata:
