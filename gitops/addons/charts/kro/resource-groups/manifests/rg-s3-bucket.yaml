@@ -65,6 +65,9 @@ spec:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
           argocd.argoproj.io/sync-options: "Ignore=true,SkipDryRunOnMissingResource=true"
+          # Explicit dependency on the selector: kro deletes by dependency wave, so
+          # the selector (ACK's role for this Bucket) is kept until the Bucket is gone.
+          peeks/depends-on: ${iamroleselector.metadata.name}
       spec:
         name: ${schema.spec.name}
         # Optional user awsTags rendered as an S3 tagSet ({key,value}), keys sorted
