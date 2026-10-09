@@ -47,36 +47,14 @@ aiops-agent:
         operator: In
         values: ['true']
   valuesObject:
-    # Image coordinates live in git only (GitOps single source of truth). No per-cluster
-    # cluster-secret annotation overrides — to change an image, edit this file and let
-    # ArgoCD reconcile. Empty component registry/tag inherits imageRegistry/imageTag below.
-    imageRegistry: public.ecr.aws/seb-demo
-    imageTag: v1
-    # Per-component pins carry fixes the public seb-demo :v1 images predate:
-    #   agent  v1.2 -> agent.py _sanitize_agentcore_id (AgentCore sessionId fix)
-    #   chatUi v1.3 -> copy buttons (message + code blocks), scrollable suggestions,
-    #                  elapsed timer, textarea auto-grow, scroll-to-bottom (v1.2 predates these)
-    #   incidentBridge v1.4 -> ISO-8601 UTC timestamp log prefix (follow the incident chronology)
-    #                  (v1.3 = _subject dedup keyed on COMPONENT only: PodOOMKilled/CrashLoopBackOff/
-    #                  FrequentRestarts of one pod collapse to ONE remediation;
-    #                  v1.2 = deterministic open-MR dup-check, v1.1 = poller.py contextId sanitize)
-    #   skillsMcp v4 -> steering reinforcement: ArgoCD/kro/ACK run as EKS Managed Capabilities, so the
-    #                  argocd namespace has ZERO in-cluster control-plane pods (and no kro/ACK controller
-    #                  pods) BY DESIGN — assess ArgoCD health via Application CRs, never flag "0 pods" as
-    #                  an incident (added to .kiro/steering/troubleshooting.md "ArgoCD 3.x EKS Capability")
-    #                  (v3 = manage-addons: override-key convention (kebab registry key vs snake
-    #                  enable_<addon>) + read-the-ApplicationSet-first guardrail; v2 = remediation guardrails)
-    #   gitlabMcp v2 -> @zereight/mcp-gitlab 2.1.69 (commit_id OPTIONAL on create_or_update_file) + baked
-    #                  GITLAB_DENIED_TOOLS_REGEX curating 118 default tools -> ~35 repo/MR/commit tools, so the agent can commit a new file + open its
-    #                  own remediation MR without 118-tool bloat (v1/v1.1: commit_id REQUIRED -> 400; v1.2: 2.1.69 pin, no curation)
-    # The other components inherit the global tag (:v1).
-    images:
-      skillsMcp:      { registry: "", tag: "v4" }
-      agent:          { registry: "", tag: "v1.12" }
-      eksMcp:         { registry: "", tag: "" }
-      gitlabMcp:      { registry: "", tag: "v2" }
-      chatUi:         { registry: "", tag: "v1.4" }
-      incidentBridge: { registry: "", tag: "v1.4" }
+    # Image coordinates (imageRegistry / imageTag / per-component images.<comp>) are
+    # deliberately NOT set here. The chart's own values.yaml — workshop/aiops-agent/chart/
+    # values.yaml — is the SINGLE source of truth for image pins. The agent runs only on
+    # the hub, so the chart default == the hub value; re-pinning here would just duplicate
+    # it and drift (which is exactly what bit us: this overlay used to pin stale tags that
+    # silently won over the chart, keeping the hub on old images). To change an image, edit
+    # the chart values.yaml. Override per-cluster ONLY if a cluster genuinely needs a
+    # different image, via overlays/clusters/<cluster>/aiops-agent/values.yaml.
     accountId: '{{ index .metadata.annotations "aws_account_id" }}'
     clusterPrefix: '{{ default "peeks" (index .metadata.annotations "resource_prefix") }}'
     region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
