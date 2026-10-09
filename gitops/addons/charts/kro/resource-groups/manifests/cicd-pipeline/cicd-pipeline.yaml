@@ -1498,6 +1498,13 @@ spec:
              workflow.kro.run/type: cicd
         spec:
           entrypoint: handle-rollout-check-and-process-deploy
+          # Sensor-submitted workflows: clean up their pods and the workflows themselves
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          ttlStrategy:
+            secondsAfterSuccess: 86400
+            secondsAfterFailure: 604800
           arguments:
             parameters:
               - name: body
@@ -1538,41 +1545,49 @@ spec:
                 parameters:
                   - name: namespace
                   - name: body
+              # The script polls inside one pod, for up to 20 minutes. Retries are only for
+              # failed attempts, such as an unreachable cluster or an evicted pod.
               retryStrategy:
-                limit: 60
+                limit: 2
                 retryPolicy: "Always"
                 backoff:
                   duration: "10s"
               container:
-                image: amazon/aws-cli:latest
+                # Pinned image that ships kubectl, the AWS CLI and jq
+                image: alpine/k8s:1.35.9
                 command: [/bin/bash, -c]
                 args:
                 - |
                   aws eks update-kubeconfig \
                     --name "{{workflow.parameters.target-cluster-name}}" \
-                    --region "{{workflow.parameters.target-cluster-region}}" > /dev/null
-
-                  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-                  chmod +x kubectl && mv kubectl /usr/local/bin/
+                    --region "{{workflow.parameters.target-cluster-region}}" > /dev/null || exit 1
 
                   COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after')
 
-                  ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
-                  CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
-                  CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
+                  # Wait for the Rollout to run this commit's image and settle. Progress goes to
+                  # stderr: stdout is the SUCCESS/FAILURE result that process-deployment receives.
+                  deadline=$((SECONDS + 1200))
+                  while [ "$SECONDS" -lt "$deadline" ]; do
+                    ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
+                    CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+                    CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
 
-                  if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
-                    phase=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
-                    if [ "$phase" = "Healthy" ]; then
-                      echo "SUCCESS"
-                      exit 0
-                    elif [ "$phase" = "Degraded" ]; then
-                      echo "FAILURE"
-                      exit 0
+                    if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
+                      phase=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+                      if [ "$phase" = "Healthy" ]; then
+                        echo "SUCCESS"
+                        exit 0
+                      elif [ "$phase" = "Degraded" ]; then
+                        echo "FAILURE"
+                        exit 0
+                      fi
                     fi
-                  fi
 
-                  echo "Still waiting for rollout to complete..."
+                    echo "Still waiting for rollout to complete..." >&2
+                    sleep 10
+                  done
+
+                  echo "Timed out waiting for the rollout to complete" >&2
                   exit 1
     
             - name: process-deployment
@@ -1629,6 +1644,13 @@ spec:
           name: ${schema.spec.name}-dora-incident-workflow
         spec:
           entrypoint: process-incident
+          # Sensor-submitted workflows: clean up their pods and the workflows themselves
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          ttlStrategy:
+            secondsAfterSuccess: 86400
+            secondsAfterFailure: 604800
           arguments:
             parameters:
               - name: body
@@ -1685,6 +1707,13 @@ spec:
           name: ${schema.spec.name}-dora-pull-request-workflow
         spec:
           entrypoint: process-pull-request
+          # Sensor-submitted workflows: clean up their pods and the workflows themselves
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          ttlStrategy:
+            secondsAfterSuccess: 86400
+            secondsAfterFailure: 604800
           arguments:
             parameters:
               - name: body
