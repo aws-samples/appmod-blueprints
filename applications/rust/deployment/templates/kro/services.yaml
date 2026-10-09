@@ -19,3 +19,18 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+---
+# Environment-independent name for in-cluster clients (the next-js frontend uses
+# http://rust-microservice.team-rust.svc.cluster.local:8080). The KubeVela
+# template creates a Service with this name; this keeps the kro path compatible.
+# It is not a Rollout stable/canary Service, so it selects all app pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rust-microservice
+spec:
+  selector:
+    app: rust-microservice-<environment>
+  ports:
+    - port: 8080
+      targetPort: 8080
