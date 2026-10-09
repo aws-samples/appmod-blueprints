@@ -1949,6 +1949,10 @@ spec:
                 API_KEY="$DEVLAKE_TOKEN"
                 CONNECTION_ID="$DEVLAKE_HOOK_ID"
                 BLUEPRINT_ID="$DEVLAKE_BP_ID"
+                # Seeded IDs carry the app name: DevLake's DORA dashboards join incidents to
+                # deployments on the deployment ID alone, so plain DEPLOY-<n> IDs mix teams.
+                # Seeded PR keys start at 1000000, clear of the GitLab MR ids real MRs use.
+                APP="{{workflow.parameters.appname}}"
                 
                 
                 rand() {
@@ -1974,14 +1978,14 @@ spec:
                          -H "Authorization: Bearer $API_KEY" \
                          -H 'Content-Type: application/json' \
                          -d '{
-                      "id": "PR-'"$pr_id"'",
+                      "id": "'"$APP"'-PR-'"$pr_id"'",
                       "headRepoId": "repo-'"$(($(rand) % 1000))"'",
                       "status": "MERGED",
                       "originalStatus": "OPEN",
                       "displayTitle": "Feature: Add new functionality '"$pr_id"'",
                       "description": "This PR adds new features",
                       "url": "https://github.com/org/repo/pull/'"$pr_id"'",
-                      "pullRequestKey": '"$pr_id"',
+                      "pullRequestKey": '"$((1000000 + pr_id))"',
                       "createdDate": "'"$created_date"'",
                       "mergedDate": "'"$merged_date"'",
                       "closedDate": null,
@@ -2003,7 +2007,7 @@ spec:
                     response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/deployments" -X 'POST' \
                          -H "Authorization: Bearer $API_KEY" \
                          -d "{
-                      \"id\": \"DEPLOY-$deploy_id\",
+                      \"id\": \"$APP-DEPLOY-$deploy_id\",
                       \"startedDate\": \"$start_date\",
                       \"finishedDate\": \"$finish_date\",
                       \"result\": \"SUCCESS\",
@@ -2030,7 +2034,7 @@ spec:
                     response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
                          -H "Authorization: Bearer $API_KEY" \
                          -d "{
-                      \"issueKey\":\"INC-$incident_id\",
+                      \"issueKey\":\"$APP-INC-$incident_id\",
                       \"title\":\"Incident $incident_id\",
                       \"type\":\"INCIDENT\",
                       \"originalStatus\":\"TODO\",
@@ -2048,7 +2052,7 @@ spec:
                     response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
                          -H "Authorization: Bearer $API_KEY" \
                          -d "{
-                      \"issueKey\":\"INC-$incident_id\",
+                      \"issueKey\":\"$APP-INC-$incident_id\",
                       \"title\":\"Incident $incident_id\",
                       \"type\":\"INCIDENT\",
                       \"originalStatus\":\"TODO\",
