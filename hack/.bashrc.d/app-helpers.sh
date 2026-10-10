@@ -16,7 +16,9 @@ open_when_ready() {
   fi
   echo "⏳ Waiting for the load balancer to serve ${url} (can take 1-2 min)…"
   while :; do
-    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || echo 000)
+    # curl already prints 000 (and exits non-zero) when it cannot connect, so only
+    # default the code when it printed nothing (e.g. a malformed URL).
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null) || code=${code:-000}
     case "$code" in
       2*|3*) echo "✅ ${url} is reachable (HTTP ${code})."; break ;;
     esac
