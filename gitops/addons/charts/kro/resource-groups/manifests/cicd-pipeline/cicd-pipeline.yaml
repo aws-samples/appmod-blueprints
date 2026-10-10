@@ -1833,6 +1833,15 @@ spec:
               parameters:
               - name: appname
               - name: url
+            # DevLake can be unavailable for minutes (its liveness probe restarts it
+            # during long migrations). The checks below fail the step then, and it is
+            # retried instead of handing empty ids to the CI/CD workflows.
+            retryStrategy:
+              limit: 5
+              retryPolicy: "Always"
+              backoff:
+                duration: "1m"
+                factor: 2
             container: 
               image: alpine:3.20
               command: ["/bin/sh", "-c"]
@@ -1879,6 +1888,10 @@ spec:
                 webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/plugins/webhook/connections -d "$webhookCreateRequest")
                 webhookID=$(echo $webhookCreateResponse | jq -r '.id')
                 webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
+                for id in "$blueprintID" "$webhookID"; do
+                  case "$id" in ''|*[!0-9]*) echo "DevLake setup failed: blueprint id '$blueprintID', webhook connection id '$webhookID'" >&2; exit 1;; esac
+                done
+                if [ -z "$webhookApiKey" ] || [ "$webhookApiKey" = null ]; then echo "DevLake setup failed: no webhook API key" >&2; exit 1; fi
                 
                 blueprintPatchRequest=$(
                   cat <<EOF
@@ -1909,6 +1922,7 @@ spec:
                 )
                 
                 resp=$(curl -X PATCH -H "Content-Type: application/json" $BASE_URL/blueprints/$blueprintID -d "$blueprintPatchRequest")
+                if [ "$(echo "$resp" | jq -r '.id' 2>/dev/null)" != "$blueprintID" ]; then echo "DevLake setup failed: could not attach the webhook to blueprint $blueprintID" >&2; exit 1; fi
                 
                 
                 echo "$webhookApiKey|$webhookID|$blueprintID"
@@ -1932,6 +1946,12 @@ spec:
                   --from-literal=DEVLAKE_HOOK_ID="$HOOK_ID" --from-literal=DEVLAKE_BP_ID="$BP_ID"
         
           - name: devlake-generate-data
+            retryStrategy:
+              limit: 3
+              retryPolicy: "Always"
+              backoff:
+                duration: "1m"
+                factor: 2
             container:
               image: debian:12
               command: [/bin/bash, -c]
@@ -1944,6 +1964,10 @@ spec:
               - |
                 apt update
                 apt install -y curl openssl coreutils
+                # Retry DevLake while it restarts, and stop at the first call that still fails
+                # (HTTP error included) so lost seed data fails the step instead of passing.
+                set -e
+                curl() { command curl --fail --show-error --max-time 60 --retry 20 --retry-delay 15 --retry-connrefused "$@"; }
                 BASE_URL="http://devlake-ui.devlake.svc.cluster.local:4000"
                 TRIGGER_URL="http://devlake-lake.devlake.svc.cluster.local:8080"
                 API_KEY="$DEVLAKE_TOKEN"
