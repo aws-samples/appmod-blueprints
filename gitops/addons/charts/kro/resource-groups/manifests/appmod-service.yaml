@@ -263,6 +263,12 @@ spec:
     - id: rolloutWithDynamoDB
       includeWhen:
         - ${schema.spec.functionalGate.enabled == false && schema.spec.performanceGate.enabled == false && schema.spec.components.dynamodb.enabled == true}
+      # Ready only when Argo Rollouts has observed the current spec and reports it
+      # Healthy. A progressing, paused or aborted (Degraded) rollout keeps the
+      # instance not Ready, so Argo CD and Kargo do not treat it as healthy (#977).
+      readyWhen:
+        - ${rolloutWithDynamoDB.status.?observedGeneration.orValue("") == string(rolloutWithDynamoDB.metadata.generation)}
+        - ${rolloutWithDynamoDB.status.?phase.orValue("") == "Healthy"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Rollout
@@ -317,6 +323,9 @@ spec:
     - id: rolloutWithoutDynamoDB
       includeWhen:
         - ${schema.spec.functionalGate.enabled == false && schema.spec.performanceGate.enabled == false && schema.spec.components.dynamodb.enabled == false}
+      readyWhen:
+        - ${rolloutWithoutDynamoDB.status.?observedGeneration.orValue("") == string(rolloutWithoutDynamoDB.metadata.generation)}
+        - ${rolloutWithoutDynamoDB.status.?phase.orValue("") == "Healthy"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Rollout
@@ -371,6 +380,9 @@ spec:
     - id: rolloutWithGatesAndDynamoDB
       includeWhen:
         - ${(schema.spec.functionalGate.enabled == true || schema.spec.performanceGate.enabled == true) && schema.spec.components.dynamodb.enabled == true}
+      readyWhen:
+        - ${rolloutWithGatesAndDynamoDB.status.?observedGeneration.orValue("") == string(rolloutWithGatesAndDynamoDB.metadata.generation)}
+        - ${rolloutWithGatesAndDynamoDB.status.?phase.orValue("") == "Healthy"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Rollout
@@ -444,6 +456,9 @@ spec:
     - id: rolloutWithGatesWithoutDynamoDB
       includeWhen:
         - ${(schema.spec.functionalGate.enabled == true || schema.spec.performanceGate.enabled == true) && schema.spec.components.dynamodb.enabled == false}
+      readyWhen:
+        - ${rolloutWithGatesWithoutDynamoDB.status.?observedGeneration.orValue("") == string(rolloutWithGatesWithoutDynamoDB.metadata.generation)}
+        - ${rolloutWithGatesWithoutDynamoDB.status.?phase.orValue("") == "Healthy"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Rollout
