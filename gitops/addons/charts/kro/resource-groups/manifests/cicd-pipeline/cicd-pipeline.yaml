@@ -1581,7 +1581,16 @@ spec:
                     if [ "$phase" = "Healthy" ] || [ "$phase" = "Degraded" ]; then
                       # Started: when the ReplicaSet of this revision was created. Finished: now.
                       POD_HASH=$(kubectl get rollout "$ROLLOUT_NAME" -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.currentPodHash}')
-                      kubectl get replicaset -n "{{inputs.parameters.namespace}}" -l rollouts-pod-template-hash="$POD_HASH" -o jsonpath='{.items[0].metadata.creationTimestamp}' > /tmp/started
+                      RS_CREATED=$(kubectl get replicaset -n "{{inputs.parameters.namespace}}" -l rollouts-pod-template-hash="$POD_HASH" -o jsonpath='{.items[0].metadata.creationTimestamp}')
+                      # A rollback or re-promotion reuses an older ReplicaSet: only trust its
+                      # creation time if it is newer than this workflow, else leave it empty so
+                      # process-deployment falls back to the workflow start (ISO-8601 Z sorts as text).
+                      WF_CREATED="{{workflow.creationTimestamp}}"
+                      if [ "$RS_CREATED" != "$WF_CREATED" ] && [ "$(printf '%s\n%s\n' "$RS_CREATED" "$WF_CREATED" | sort | tail -n1)" = "$RS_CREATED" ]; then
+                        printf '%s' "$RS_CREATED" > /tmp/started
+                      else
+                        : > /tmp/started
+                      fi
                       date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/finished
                     fi
                     if [ "$phase" = "Healthy" ]; then
