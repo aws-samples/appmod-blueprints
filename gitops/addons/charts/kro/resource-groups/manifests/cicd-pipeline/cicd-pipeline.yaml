@@ -684,6 +684,73 @@ spec:
                  key: ${schema.spec.aws.clusterName}/secrets
                  property: git_token
 
+    # Random shared secret for the GitLab webhook, generated once per pipeline. GitLab sends it
+    # in X-Gitlab-Token and the EventSource rejects requests that don't carry it.
+    - id: webhooktokengenerator
+      template:
+       apiVersion: generators.external-secrets.io/v1alpha1
+       kind: Password
+       metadata:
+          name: ${schema.spec.name}-webhook-token
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          length: 40
+          digits: 10
+          symbols: 0
+          noUpper: false
+          allowRepeat: true
+
+    - id: webhooksecret
+      readyWhen:
+       - ${webhooksecret.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
+      template:
+       apiVersion: external-secrets.io/v1
+       kind: ExternalSecret
+       metadata:
+          name: ${schema.spec.name}-webhook-token
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          # Never regenerate: the GitLab hook keeps the token it was registered with
+          refreshPolicy: CreatedOnce
+          target:
+              name: ${schema.spec.name}-webhook-token
+              creationPolicy: Owner
+              # With a template, ESO doesn't copy this object's labels (including kro's applyset
+              # labels) onto the Secret, so kro doesn't prune it
+              template:
+                data:
+                  token: '{{ .password }}'
+          dataFrom:
+             - sourceRef:
+                 generatorRef:
+                   apiVersion: generators.external-secrets.io/v1alpha1
+                   kind: Password
+                   name: ${webhooktokengenerator.metadata.name}
+
     # Docker registry secret for ECR authentication - properly scoped to namespace
     - id: dockersecret
       readyWhen:
@@ -980,6 +1047,13 @@ spec:
                  envFrom:
                    - secretRef:
                        name: gitlab-credentials
+                 env:
+                   # Shared secret GitLab sends in X-Gitlab-Token; the EventSource checks it
+                   - name: WEBHOOK_SECRET_TOKEN
+                     valueFrom:
+                       secretKeyRef:
+                         name: ${webhooksecret.spec.target.name}
+                         key: token
                  args:
                    - |
                      apk add curl jq
@@ -994,6 +1068,7 @@ spec:
                      gitlab_username=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
                      app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
                      gitlab_token="$$GITLAB_TOKEN"
+                     webhook_token="$$WEBHOOK_SECRET_TOKEN"
 
                      api_url="https://$$gitlab_hostname/api/v4/projects/$$gitlab_username%2F$$app_name/hooks"
 
@@ -1058,7 +1133,7 @@ spec:
                            "releases_events": false,
                            "subgroup_events": false,
                            "enable_ssl_verification": false,
-                           "token": "",
+                           "token": "'"$$webhook_token"'",
                            "push_events_branch_filter": "main"
                          }' -s -w "\nHTTP_CODE:%{http_code}")
                        
@@ -1075,7 +1150,14 @@ spec:
                        fi
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
-                       echo "Webhook is correctly configured - no action needed"
+                       # Set the secret token on it too: the EventSource rejects requests without it
+                       update_http_code=$$(curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
+                         -H "accept: application/json" \
+                         -H "Authorization: Bearer $$gitlab_token" \
+                         -H "Content-Type: application/json" \
+                         -d '{"url": "'"$$webhook_url"'", "token": "'"$$webhook_token"'"}' \
+                         -s -o /dev/null -w "%{http_code}")
+                       echo "Update HTTP Code: $$update_http_code"
                      fi
 
                      echo "GitLab webhook configuration completed"
@@ -2384,12 +2466,30 @@ spec:
              ports:
                - port: 12000
                  targetPort: 12000
-          webhook:
+          # A gitlab EventSource (not webhook) rejects requests whose X-Gitlab-Token header
+          # doesn't match secretToken. setup-gitlab-webhook registers the GitLab hook, so no
+          # projects or groups are listed and the EventSource never calls the GitLab API.
+          # Argo Events v1.9 only loads secretToken when accessToken and webhook.url are set,
+          # so accessToken points at the same secret: it is never sent anywhere, and the GitLab
+          # API token stays out of this internet-facing pod.
+          gitlab:
              gitlab-webhook:
-               port: '12000'
-               endpoint: /argo-events/${schema.spec.name}
-               method: POST
-               url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/argo-events/${schema.spec.name}
+               webhook:
+                 port: '12000'
+                 endpoint: /argo-events/${schema.spec.name}
+                 method: POST
+                 url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/argo-events/${schema.spec.name}
+               events:
+                 - PushEvents
+                 - IssuesEvents
+                 - MergeRequestsEvents
+               gitlabBaseURL: https://${schema.spec.gitlab.hostname}
+               secretToken:
+                 name: ${webhooksecret.spec.target.name}
+                 key: token
+               accessToken:
+                 name: ${webhooksecret.spec.target.name}
+                 key: token
 
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
