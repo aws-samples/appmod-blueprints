@@ -148,6 +148,8 @@ spec:
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${dynamodbroleselector.metadata.name}
         spec:
           tableName: ${schema.spec.components.dynamodb.tableName}
           billingMode: PAY_PER_REQUEST
@@ -180,6 +182,8 @@ spec:
               controller: false
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${iamroleselector.metadata.name}
         spec:
           name: ${schema.spec.resourcePrefix}-${schema.metadata.name}-role
           assumeRolePolicyDocument: |
@@ -220,6 +224,8 @@ spec:
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${eksroleselector.metadata.name}
         spec:
           clusterName: ${schema.spec.clusterName}
           namespace: ${schema.metadata.namespace}
