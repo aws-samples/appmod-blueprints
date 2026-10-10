@@ -1546,6 +1546,10 @@ spec:
               container:
                 image: amazon/aws-cli:latest
                 command: [/bin/bash, -c]
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 args:
                 - |
                   aws eks update-kubeconfig \
@@ -1555,7 +1559,7 @@ spec:
                   curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                   chmod +x kubectl && mv kubectl /usr/local/bin/
 
-                  COMMIT_HASH=$(echo '{{inputs.parameters.body}}' | jq -r '.after')
+                  COMMIT_HASH=$(printf '%s' "$BODY" | jq -r '.after')
 
                   ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
                   CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
@@ -1589,11 +1593,15 @@ spec:
                       name: devlake-webhook-secret
                   - configMapRef:
                       name: devlake-webhook-id
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
                   RESULT="{{inputs.parameters.status}}"
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments          
-                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
+                  PAYLOAD=$(printf '%s' "$BODY" | jq --arg result "$RESULT" '
                   . as $root |
                   {
                     id: ("deployment-" + (.after | .[0:7])),
@@ -1648,11 +1656,15 @@ spec:
                       name: devlake-webhook-secret
                   - configMapRef:
                       name: devlake-webhook-id
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/issues
-                  echo '{{inputs.parameters.body}}'
-                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  printf '%s\n' "$BODY"
+                  PAYLOAD=$(printf '%s' "$BODY" | jq '
                   {
                     issueKey: (.repository.name + "-" + (.object_attributes.id | tostring)),
                     title: .object_attributes.title,
@@ -1704,11 +1716,15 @@ spec:
                       name: devlake-webhook-secret
                   - configMapRef:
                       name: devlake-webhook-id
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/pull_requests
-                  echo '{{inputs.parameters.body}}'
-                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  printf '%s\n' "$BODY"
+                  PAYLOAD=$(printf '%s' "$BODY" | jq '
                   {
                     id: (.repository.name + "-" + (.object_attributes.id | tostring)),
                     pullRequestKey: (.object_attributes.id | tostring),
@@ -2456,6 +2472,11 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
+                   # `after` becomes the CI image tag and is used in shell steps: accept only a full commit SHA
+                   - path: body.after
+                     type: string
+                     value:
+                       - '^[0-9a-f]{40}$'
                  # Filter out commits from CI/CD pipeline and deployment-only changes
                  script: |
                   local commits = event.body.commits
