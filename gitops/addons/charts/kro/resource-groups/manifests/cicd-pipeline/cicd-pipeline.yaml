@@ -127,6 +127,8 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorEcr.metadata.name}
              ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
@@ -190,6 +192,8 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorEcr.metadata.name}
              ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
@@ -246,6 +250,8 @@ spec:
           # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
           # the AWS policy when deleting this Kro instance (may be referenced by other resources)
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${iamroleselectorIam.metadata.name}
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -317,6 +323,8 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorIam.metadata.name}
        spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           description: IAM role for CI/CD pipeline with EKS pod identity
@@ -363,6 +371,8 @@ spec:
           annotations:
              services.k8s.aws/adoption-policy: adopt-or-create
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorEks.metadata.name}
              # Implicit dependencies through template references
              roleArn: ${iamrole.status.ackResourceMetadata.arn}
        spec:
@@ -394,6 +404,8 @@ spec:
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${iamroleselectorEks.metadata.name}
             services.k8s.aws/region: ${schema.spec.aws.region}
         spec:
           clusterName: "${schema.spec.aws.deployClusterName}"
