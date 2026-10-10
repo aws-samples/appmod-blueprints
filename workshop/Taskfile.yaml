@@ -1852,6 +1852,138 @@ tasks:
           printf '{{.C_INFO}}  Skipped marker/CARM cleanup (prune not confirmed). Re-run this task after a successful prune.{{.C_RESET}}\n'
         fi
         rm -rf "$REPO_DIR"
+        printf '{{.C_INFO}}  When {{.CLUSTER}} is gone, delete what outlives it (IAM roles, CARM selectors, secrets, log group): task spokes:sweep-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
+
+  spokes:sweep-kro:
+    desc: "After spokes:disable-kro: wait until a KRO spoke is deleted, then remove what outlives it (usage: task spokes:sweep-kro -- <cluster-name>)"
+    vars:
+      CLUSTER: '{{.CLI_ARGS}}'
+    cmds:
+      - |
+        if [ -z "{{.CLUSTER}}" ]; then echo "Usage: task spokes:sweep-kro -- <cluster-name>"; exit 1; fi
+        C="{{.CLUSTER}}"
+        REGION="{{.AWS_REGION}}"
+        KC=$(mktemp)
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region "$REGION" --kubeconfig "$KC" >/dev/null
+        KC_HUB="kubectl --kubeconfig $KC"
+
+        # 1. Never sweep a live spoke: wait until the EksclusterWithVpc instance (whose
+        #    deletion removes the EKS cluster, the VPC and the IAM roles the RGD owns) and
+        #    the EKS cluster are both gone.
+        printf '{{.C_STEP}}▸ Waiting for %s to be deleted (up to 30m)...{{.C_RESET}}\n' "$C"
+        GONE=false
+        for i in $(seq 1 90); do
+          LEFT=""
+          if ! N=$($KC_HUB get eksclusterwithvpcs.kro.run -n "$C" -o name 2>/dev/null); then LEFT="$LEFT hub-unreachable"; elif [ -n "$N" ]; then LEFT="$LEFT EksclusterWithVpc"; fi
+          if aws eks describe-cluster --name "$C" --region "$REGION" >/dev/null 2>&1; then LEFT="$LEFT EKS-cluster"; fi
+          if [ -z "$LEFT" ]; then GONE=true; break; fi
+          printf '{{.C_INFO}}  Still present:%s (%s/90){{.C_RESET}}\n' "$LEFT" "$i"
+          sleep 20
+        done
+        if [ "$GONE" != true ]; then
+          printf '{{.C_ERR}}⚠ %s is not deleted yet; nothing swept. Re-run once spokes:disable-kro has finished.{{.C_RESET}}\n' "$C"
+          rm -f "$KC"; exit 1
+        fi
+        # Argo CD apps that still deploy into the spoke's hub namespace (e.g.
+        # ack_pod_identities) would re-create the CRs, and so the IAM roles, swept below.
+        APPS=$($KC_HUB get applications.argoproj.io -n argocd -o json 2>/dev/null \
+          | jq -r --arg c "$C" '[.items[] | select(.spec.destination.namespace == $c) | .metadata.name] | join(" ")') || APPS="?"
+        if [ -n "$APPS" ]; then
+          printf '{{.C_ERR}}⚠ Argo CD apps still target namespace %s (%s); de-register the spoke first. Nothing swept.{{.C_RESET}}\n' "$C" "$APPS"
+          rm -f "$KC"; exit 1
+        fi
+
+        # 2. The spoke's hub namespace. It still holds the CRs of the hub-side addon apps
+        #    (e.g. ack_pod_identities), which their ApplicationSets orphan when the spoke is
+        #    de-registered (preserveResourcesOnDeletion). Delete it before the IAM sweep so
+        #    ACK cannot re-create a role we delete.
+        NS_GONE=true
+        if $KC_HUB get namespace "$C" >/dev/null 2>&1; then
+          $KC_HUB delete namespace "$C" --wait=true --timeout=10m >/dev/null 2>&1 || NS_GONE=false
+        fi
+
+        # 3. The per-spoke IAMRoleSelectors (CARM). multi-acct runs with prune:false, so
+        #    removing the spoke from its values does not delete them. Only once the
+        #    namespace is gone: ACK needs them to finish deleting the namespace's CRs.
+        if [ "$NS_GONE" = true ]; then
+          SELS=$($KC_HUB get iamroleselectors.services.k8s.aws -o json 2>/dev/null \
+            | jq -r --arg c "$C" '.items[] | select(.spec.namespaceSelector.names == [$c]) | .metadata.name') || SELS=""
+          for S in $SELS; do $KC_HUB delete iamroleselectors.services.k8s.aws "$S" --ignore-not-found >/dev/null; done
+          printf '{{.C_OK}}✓ Hub namespace %s is gone; deleted %s IAMRoleSelector(s).{{.C_RESET}}\n' "$C" "$(echo $SELS | wc -w)"
+        else
+          printf '{{.C_ERR}}⚠ Hub namespace %s did not finish deleting in 10m; skipping the CARM selectors and IAM sweep. Re-run later.{{.C_RESET}}\n' "$C"
+          rm -f "$KC"; exit 1
+        fi
+
+        # 4. IAM objects named <cluster>-* that outlive the cluster: the ack-pod-identity
+        #    roles/policies (deletion-policy: retain) and the roles the spoke's own
+        #    Crossplane created (crossplane-base), whose managed resources vanished with
+        #    the cluster. Matched by name AND by the tag that ties them to this spoke:
+        #    the ACK namespace tag (EKS capability or self-managed ACK) or, for Crossplane,
+        #    managed-by=crossplane on a <cluster>-Crossplane* role.
+        ROLES=0; POLICIES=0
+        for R in $(aws iam list-roles --query "Roles[?starts_with(RoleName, '$C-')].RoleName" --output text); do
+          T=$(aws iam list-role-tags --role-name "$R" --output json) || continue
+          NS_TAG=$(echo "$T" | jq -r '[.Tags[] | select(.Key == "eks:kubernetes-namespace" or .Key == "services.k8s.aws/namespace") | .Value][0] // ""')
+          MB_TAG=$(echo "$T" | jq -r '[.Tags[] | select(.Key == "managed-by") | .Value][0] // ""')
+          case "$R" in "$C"-Crossplane*) XP=true ;; *) XP=false ;; esac
+          if [ "$NS_TAG" != "$C" ] && { [ "$XP" != true ] || [ "$MB_TAG" != crossplane ]; }; then continue; fi
+          for P in $(aws iam list-attached-role-policies --role-name "$R" --query 'AttachedPolicies[].PolicyArn' --output text); do
+            aws iam detach-role-policy --role-name "$R" --policy-arn "$P"
+          done
+          for P in $(aws iam list-role-policies --role-name "$R" --query 'PolicyNames[]' --output text); do
+            aws iam delete-role-policy --role-name "$R" --policy-name "$P"
+          done
+          for IP in $(aws iam list-instance-profiles-for-role --role-name "$R" --query 'InstanceProfiles[].InstanceProfileName' --output text); do
+            aws iam remove-role-from-instance-profile --role-name "$R" --instance-profile-name "$IP"
+          done
+          if aws iam delete-role --role-name "$R"; then ROLES=$((ROLES + 1)); else printf '{{.C_ERR}}⚠ could not delete role %s{{.C_RESET}}\n' "$R"; fi
+        done
+        for A in $(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '$C-')].Arn" --output text); do
+          NS_TAG=$(aws iam list-policy-tags --policy-arn "$A" --output json \
+            | jq -r '[.Tags[] | select(.Key == "eks:kubernetes-namespace" or .Key == "services.k8s.aws/namespace") | .Value][0] // ""')
+          [ "$NS_TAG" = "$C" ] || continue
+          # Only ever attached to this spoke's roles (deleted above); skip it if anything
+          # else still uses it.
+          OTHERS=$(aws iam list-entities-for-policy --policy-arn "$A" --output json \
+            | jq -r --arg p "$C-" '[.PolicyRoles[].RoleName | select(startswith($p) | not)] + [.PolicyUsers[].UserName, .PolicyGroups[].GroupName] | length')
+          if [ "$OTHERS" != "0" ]; then
+            printf '{{.C_INFO}}  skip policy %s (attached outside %s){{.C_RESET}}\n' "$A" "$C"; continue
+          fi
+          for R in $(aws iam list-entities-for-policy --policy-arn "$A" --query 'PolicyRoles[].RoleName' --output text); do
+            aws iam detach-role-policy --role-name "$R" --policy-arn "$A"
+          done
+          for V in $(aws iam list-policy-versions --policy-arn "$A" --query 'Versions[?!IsDefaultVersion].VersionId' --output text); do
+            aws iam delete-policy-version --policy-arn "$A" --version-id "$V"
+          done
+          if aws iam delete-policy --policy-arn "$A"; then POLICIES=$((POLICIES + 1)); else printf '{{.C_ERR}}⚠ could not delete policy %s{{.C_RESET}}\n' "$A"; fi
+        done
+        printf '{{.C_OK}}✓ Deleted %s IAM role(s) and %s IAM policy(ies) left by %s.{{.C_RESET}}\n' "$ROLES" "$POLICIES" "$C"
+
+        # 5. Secrets the spoke's ACK Secrets left scheduled for deletion (e.g. <cluster>/config,
+        #    30-day recovery window). Their names stay reserved, so re-enabling a spoke with
+        #    the same name would fail; they are already deleted, so skip the window.
+        for S in $(aws secretsmanager list-secrets --region "$REGION" --include-planned-deletion \
+            --filters Key=name,Values="$C/" --query 'SecretList[?DeletedDate!=`null`].Name' --output text); do
+          case "$S" in "$C"/*) ;; *) continue ;; esac
+          if aws secretsmanager delete-secret --region "$REGION" --secret-id "$S" --force-delete-without-recovery >/dev/null; then
+            printf '{{.C_OK}}✓ Purged secret %s (was scheduled for deletion).{{.C_RESET}}\n' "$S"
+          else
+            printf '{{.C_ERR}}⚠ could not purge secret %s{{.C_RESET}}\n' "$S"
+          fi
+        done
+
+        # 6. The control-plane log group EKS leaves behind (best effort: the IDE role may
+        #    not be allowed to delete log groups; task destroy's sweep removes it anyway).
+        if aws logs describe-log-groups --region "$REGION" --log-group-name-prefix "/aws/eks/$C/cluster" \
+            --query 'logGroups[].logGroupName' --output text | tr '\t' '\n' | grep -qx "/aws/eks/$C/cluster"; then
+          if aws logs delete-log-group --region "$REGION" --log-group-name "/aws/eks/$C/cluster" 2>/dev/null; then
+            printf '{{.C_OK}}✓ Deleted log group /aws/eks/%s/cluster.{{.C_RESET}}\n' "$C"
+          else
+            printf '{{.C_INFO}}  Could not delete log group /aws/eks/%s/cluster (permissions?); task destroy removes it.{{.C_RESET}}\n' "$C"
+          fi
+        fi
+        rm -f "$KC"
 
   spokes:disable-all:
     desc: >-

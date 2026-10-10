@@ -73,6 +73,12 @@ What they do:
 > would *orphan* the `EksclusterWithVpc` instead of deleting it. The task removes
 > the spec first, prunes through the still-existing app, then removes the marker.
 
+Once a KRO spoke is gone, `task spokes:sweep-kro -- <cluster-name>` removes what
+outlives it: the IAM roles and policies kept by `deletion-policy: retain` or
+created by the spoke's own Crossplane, its `IAMRoleSelector`s and hub namespace,
+secrets left scheduled for deletion, and the EKS log group. It waits for the
+deletion to finish first. (`task destroy` sweeps all of this itself.)
+
 ### Manual equivalent
 
 ```bash
