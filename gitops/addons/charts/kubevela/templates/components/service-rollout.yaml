@@ -25,7 +25,7 @@ spec:
 
         // Container name is context.name (see note 3 in the file header), so the
         // Prometheus container filter derives from it too.
-        let prometheusTargetQuery = "k8s_container_name=\"\(context.name)\", k8s_namespace_name=\"\(context.namespace)\""
+        let prometheusTargetQuery = "container_name=\"\(context.name)\", namespace=\"\(context.namespace)\""
 
         output: {
         	apiVersion: "argoproj.io/v1alpha1"

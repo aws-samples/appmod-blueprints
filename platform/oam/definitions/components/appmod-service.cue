@@ -42,7 +42,7 @@ template: {
 	// RGD from the amp-workspace secret.
 	let ampWorkspaceUrl = #"{{ "{{" }}args.amp-workspace-url{{ "}}" }}"#
 	let ampWorkspaceRegion = #"{{ "{{" }}args.amp-workspace-region{{ "}}" }}"#
-	let prometheusTargetQuery = "k8s_container_name=\"\(parameter.image_name)\", k8s_namespace_name=\"\(context.namespace)\""
+	let prometheusTargetQuery = "container_name=\"\(parameter.image_name)\", namespace=\"\(context.namespace)\""
 
 	output: {
 		apiVersion: "argoproj.io/v1alpha1"
