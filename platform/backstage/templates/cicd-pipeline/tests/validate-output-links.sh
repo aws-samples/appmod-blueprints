@@ -199,9 +199,12 @@ else
 fi
 
 if grep -q '\${{ parameters\.cluster_name }}' "$TEMPLATE_FILE"; then
-    echo "  ✅ Cluster name parameter used in URLs"
+    echo "  ❌ Removed cluster_name parameter still referenced (use fetchSystem hub_cluster_name)"
+    exit 1
+elif grep -q "clusters/\${{ steps\['fetchSystem'\]\.output\.entity\.spec\.hub_cluster_name }}" "$TEMPLATE_FILE"; then
+    echo "  ✅ Hub cluster name used in URLs"
 else
-    echo "  ❌ Cluster name parameter not used in URLs"
+    echo "  ❌ Hub cluster name not used in URLs"
     exit 1
 fi
 
