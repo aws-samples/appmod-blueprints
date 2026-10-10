@@ -2186,7 +2186,8 @@ spec:
              cicd.kro.run/application: ${schema.spec.application.name}
              cicd.kro.run/setup-type: 'initial-ecr-credentials'
        spec:
-          ttlSecondsAfterFinished: 300 # Clean up after 5 minutes
+          # No ttlSecondsAfterFinished: this Job is a kro-managed resource, so a TTL
+          # deletion makes kro recreate (and re-run) it, flapping the instance's Ready.
           template:
              metadata:
                labels:
