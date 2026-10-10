@@ -1813,6 +1813,9 @@ tasks:
         # PHASE 2: deliberate prune through the still-existing app.
         printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
         PRUNED=false
+        # The kubectl steps below need the hub kubeconfig; (re)write it the way `destroy` does.
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+          --kubeconfig {{.REPO}}/private/hub-kubeconfig >/dev/null 2>&1 || true
         KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
         if command -v argocd >/dev/null 2>&1; then
           # Try to refresh the ArgoCD token first (in case session expired).
@@ -1837,16 +1840,49 @@ tasks:
             printf '{{.C_ERR}}⚠ kubectl patch also failed. The spoke will be deleted when kind-kro-ack:destroy runs hub:destroy-addons.{{.C_RESET}}\n'
         fi
 
-        # PHASE 3: cleanup the now-empty app + CARM mapping (only after a successful prune,
-        # so we never orphan a live resource). The appset removes clusters-kro-<name> once
-        # the marker is gone; its resources are already pruned.
+        # PHASE 3: cleanup (only after a successful prune, so we never orphan a live
+        # resource): the marker, the CARM mapping, and the fleet member file and
+        # per-cluster overlay that enable-kro wrote.
         if [ "$PRUNED" = true ]; then
           CHANGED=0
           [ -f "$MARKER" ] && { rm -f "$MARKER"; CHANGED=1; }
           [ -f "$MA_FILE" ] && yq -e '.clusters."{{.CLUSTER}}"' "$MA_FILE" >/dev/null 2>&1 && { yq -i 'del(.clusters."{{.CLUSTER}}")' "$MA_FILE"; CHANGED=1; }
+          for D in "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}" "$REPO_DIR/overlays/clusters/{{.CLUSTER}}"; do
+            if [ -d "$D" ]; then rm -rf "$D"; CHANGED=1; fi
+          done
           if [ "$CHANGED" = "1" ]; then
-            ( cd "$REPO_DIR" && git add -A && git commit -m "chore: remove {{.CLUSTER}} KRO marker + multi-acct mapping (post-prune cleanup)" && git push 2>/dev/null )
-            printf '{{.C_OK}}✓ Cleaned up {{.CLUSTER}} marker + multi-acct mapping; app will be removed by the appset.{{.C_RESET}}\n'
+            ( cd "$REPO_DIR" && git add -A && git commit -m "chore: remove {{.CLUSTER}} KRO marker, fleet member + multi-acct mapping (post-prune cleanup)" && git push 2>/dev/null )
+            printf '{{.C_OK}}✓ Cleaned up {{.CLUSTER}} marker, fleet member, overlay + multi-acct mapping.{{.C_RESET}}\n'
+          fi
+          # De-register the spoke from Argo CD. The clusters-kro and fleet-secrets
+          # ApplicationSets are create-update (they never delete an Application) and their
+          # Applications carry no resources-finalizer, so removing the files above leaves
+          # clusters-kro-<name> and fleet-secret-<name> in place, and fleet-secret-<name>
+          # keeps the cluster Secret, so every addon app keeps targeting the deleted
+          # cluster. Delete them, but only after both appsets have re-read fleet-config
+          # (the controller drops the refresh annotation after a successful generation
+          # that bypassed the revision cache), so they cannot re-create the apps. These
+          # are Argo CD objects only; the prune above already deleted the cluster.
+          FS_APP="fleet-secret-{{.CLUSTER}}"
+          REFRESHING=true
+          for AS in clusters-kro fleet-secrets; do
+            $KC_HUB annotate applicationsets.argoproj.io "$AS" -n argocd argocd.argoproj.io/application-set-refresh=true --overwrite >/dev/null 2>&1 || REFRESHING=false
+          done
+          DEREG=false
+          for i in $(seq 1 18); do
+            [ "$REFRESHING" = true ] || break
+            sleep 10
+            PENDING=$($KC_HUB get applicationsets.argoproj.io clusters-kro fleet-secrets -n argocd \
+              -o jsonpath='{.items[*].metadata.annotations.argocd\.argoproj\.io/application-set-refresh}' 2>/dev/null || echo "?")
+            if [ -z "$PENDING" ]; then DEREG=true; break; fi
+          done
+          if [ "$DEREG" = true ]; then
+            $KC_HUB delete applications.argoproj.io "$APP" "$FS_APP" -n argocd --ignore-not-found
+            $KC_HUB delete externalsecrets.external-secrets.io "$FS_APP" -n argocd --ignore-not-found
+            $KC_HUB delete secret "{{.CLUSTER}}" -n argocd --ignore-not-found
+            printf '{{.C_OK}}✓ De-registered {{.CLUSTER}} from Argo CD (%s, %s, cluster Secret).{{.C_RESET}}\n' "$APP" "$FS_APP"
+          else
+            printf '{{.C_ERR}}⚠ The ApplicationSets have not refreshed yet; left %s and %s in place. Re-run this task in a few minutes.{{.C_RESET}}\n' "$APP" "$FS_APP"
           fi
         else
           printf '{{.C_INFO}}  Skipped marker/CARM cleanup (prune not confirmed). Re-run this task after a successful prune.{{.C_RESET}}\n'
