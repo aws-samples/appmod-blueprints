@@ -37,7 +37,7 @@ env:
     GITLAB_MCP_TAG: "v2"
     INCIDENT_BRIDGE_TAG: "v1.6"
     SKILLS_MCP_TAG: "v4"
-    STRANDS_TAG: "v1.13"
+    STRANDS_TAG: "v1.14"
     # TODO(pre-publish): APPMOD_REF/OAP_REF are MOVING integration/fork refs. Once OAP PR #56
     # (integration/peeks-e2e) merges to awslabs main, repoint OAP_REPO to awslabs/open-agentic-platform
     # and pin APPMOD_REF/OAP_REF to a tag/SHA. Tracked in the B2/B4 build-pin issue (#964).
