@@ -1532,12 +1532,27 @@ spec:
                           value: "{{workflow.parameters.body}}"
                         - name: url
                           value: devlake-ui.devlake.svc.cluster.local:4000
+                        - name: started
+                          value: "{{steps.check-rollout.outputs.parameters.started}}"
+                        - name: finished
+                          value: "{{steps.check-rollout.outputs.parameters.finished}}"
     
             - name: check-rollout-status
               inputs:
                 parameters:
                   - name: namespace
                   - name: body
+              outputs:
+                parameters:
+                  # When the rollout of this commit started and finished, for process-deployment
+                  - name: started
+                    valueFrom:
+                      path: /tmp/started
+                      default: ""
+                  - name: finished
+                    valueFrom:
+                      path: /tmp/finished
+                      default: ""
               retryStrategy:
                 limit: 60
                 retryPolicy: "Always"
@@ -1563,6 +1578,21 @@ spec:
 
                   if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
                     phase=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+                    if [ "$phase" = "Healthy" ] || [ "$phase" = "Degraded" ]; then
+                      # Started: when the ReplicaSet of this revision was created. Finished: now.
+                      POD_HASH=$(kubectl get rollout "$ROLLOUT_NAME" -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.currentPodHash}')
+                      RS_CREATED=$(kubectl get replicaset -n "{{inputs.parameters.namespace}}" -l rollouts-pod-template-hash="$POD_HASH" -o jsonpath='{.items[0].metadata.creationTimestamp}')
+                      # A rollback or re-promotion reuses an older ReplicaSet: only trust its
+                      # creation time if it is newer than this workflow, else leave it empty so
+                      # process-deployment falls back to the workflow start (ISO-8601 Z sorts as text).
+                      WF_CREATED="{{workflow.creationTimestamp}}"
+                      if [ "$RS_CREATED" != "$WF_CREATED" ] && [ "$(printf '%s\n%s\n' "$RS_CREATED" "$WF_CREATED" | sort | tail -n1)" = "$RS_CREATED" ]; then
+                        printf '%s' "$RS_CREATED" > /tmp/started
+                      else
+                        : > /tmp/started
+                      fi
+                      date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/finished
+                    fi
                     if [ "$phase" = "Healthy" ]; then
                       echo "SUCCESS"
                       exit 0
@@ -1581,6 +1611,8 @@ spec:
                   - name: body
                   - name: url
                   - name: status
+                  - name: started
+                  - name: finished
               script:
                 image: alpine
                 command: [sh]
@@ -1592,14 +1624,19 @@ spec:
                 source: |
                   apk add --no-cache jq curl
                   RESULT="{{inputs.parameters.status}}"
+                  # Rollout start and finish from check-rollout-status (fallback: trigger time, now)
+                  export STARTED="{{inputs.parameters.started}}" FINISHED="{{inputs.parameters.finished}}"
+                  [ -n "$STARTED" ] || STARTED="{{workflow.creationTimestamp}}"
+                  [ -n "$FINISHED" ] || FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments          
                   PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
                   . as $root |
                   {
                     id: ("deployment-" + (.after | .[0:7])),
-                    createdDate: (.commits | first | .timestamp),
-                    startedDate: (.commits | first | .timestamp),
-                    finishedDate: (.commits | last | .timestamp),
+                    displayTitle: (.commits | last | .title),
+                    createdDate: $ENV.STARTED,
+                    startedDate: $ENV.STARTED,
+                    finishedDate: $ENV.FINISHED,
                     environment: "PRODUCTION",
                     result: $result,
                     name: ("deployment-" + (.after | .[0:7])),
@@ -1607,10 +1644,11 @@ spec:
                       .commits[] | {
                         repoUrl: $root.repository.git_http_url,
                         refName: $root.ref,
-                        startedDate: .timestamp,
-                        finishedDate: .timestamp,
+                        startedDate: $ENV.STARTED,
+                        finishedDate: $ENV.FINISHED,
                         commitSha: .id,
                         commitMsg: .message,
+                        displayTitle: (.title // (.message | split("\n")[0])),
                         result: $result,
                       }
                     ]
