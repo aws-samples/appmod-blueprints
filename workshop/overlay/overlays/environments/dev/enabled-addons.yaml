@@ -1,0 +1,21 @@
+# WORKSHOP overlay — spoke (dev) agent/OAP enablement.
+#
+# Merged LAST by the fleet-secrets (spoke) ApplicationSet after the base
+# $values/overlays/environments/dev/enabled-addons.yaml. Kept out of the generic
+# tree so the base solution stays agent-free (Mikhail PR #926 review).
+#
+# NOT set here (hub-only): langfuse (the single trace backend lives on the hub) and
+# aiops_agent (the read-only platform agent stays on the hub).
+enabledAddons:
+  # Crossplane abstractions on this spoke (all except platform-cluster, which stays
+  # on the hub). Enables the aws-service-identity OAM trait -> PodIdentity for agent
+  # workloads that run on this spoke (appmod PR #960, enable_abstractions).
+  abstractions: true
+  # OAP agent-platform layer so agent workloads can run on this spoke: agent runtime
+  # ComponentDefinitions, Bifrost, Agent Gateway, and the OTel collector that ships
+  # traces to the SINGLE hub Langfuse.
+  agent_platform: true
+  bifrost: true
+  agent_gateway: true
+  oam_components: true
+  otel_collector: true

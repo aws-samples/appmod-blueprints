@@ -1,0 +1,47 @@
+# aiops-agent addon — workshop-generic values.
+# Images default to the public workshop registry (public.ecr.aws/seb-demo), pinned by
+# tag; override imageRegistry/imageTag per-cluster in the fleet-config overlay
+# (overlays/clusters/<cluster>/aiops-agent/values.yaml) to point at your own registry.
+# TODO(pre-publish): imageRegistry points at the DEMO registry (public.ecr.aws/seb-demo) and the
+# per-component tags below are the current pins — review/repoint before cutting a workshop release.
+# grep 'TODO(pre-publish)' to find every pin/ref that must be revisited (buildspec defaults must match).
+imageRegistry: "public.ecr.aws/seb-demo"
+imageTag: "v1"
+
+# Per-component image overrides (optional). Empty string => inherit imageRegistry/imageTag
+# above. This lets you pin a SINGLE component to a different registry and/or tag without
+# moving all images — e.g. publish only the corrected incident-bridge under a new tag on
+# the public demo registry and pin just that component:
+#   images:
+#     incidentBridge:
+#       tag: "v1.1"          # registry inherits imageRegistry (public.ecr.aws/seb-demo)
+# Component keys: skillsMcp, agent (strands-agent), eksMcp, gitlabMcp, chatUi, incidentBridge.
+images:
+  skillsMcp:      { registry: "", tag: "v4" }
+  agent:          { registry: "", tag: "v1.14" }   # strands-agent — v1.14 = cut from OAP integration/peeks-e2e (PR #56 tip 7a5ae95a): the /ready redesign — REMOVES the v1.13 in-code readiness gate (it fired at agent-card import -> crash-loop when an MCP was down) and replaces it with a k8s-native /ready HTTP probe (503 + per-server reason until the workload MCP pool is complete; /health stays liveness-only), drops the 401/403/404 "non-retryable" classification + background warm-up thread (a transient first-boot gateway 404 is now just retried on the next probe instead of losing the server's tools permanently), and fails the langfuse Helm render when resourcePrefix is empty; v1.13 = cut from OAP integration/peeks-e2e (PR #56 tip b51e3873): added the readiness gate (§7.1 — refuse autonomous remediation on an incomplete MCP toolset; raises AgentNotReadyError, chat degrades gracefully) + robust MCP-required matching (_mcp_server_name, warns on unknown MCP_REQUIRED_SERVERS) + generic langfuse salt — superseded by v1.14 (the gate caused an import-time crash-loop); v1.12 = cut from OAP integration/peeks-e2e: adds graceful max_tokens truncation handling — on MaxTokensReachedException the agent now streams a visible "Response truncated (MAX_TOKENS reached)" notice and completes the A2A task instead of failing it with an opaque "Agent execution failed" (chat used to cut off mid-sentence with no reason); tunable via MAX_TOKENS_NOTICE / MAX_TOKENS_NOTICE_ENABLED; v1.11 = cut from OAP integration/peeks-e2e: carries BOTH the MCP first-boot retry (OAP #50) AND configurable max_tokens 4096 (PR #35) — fixes the v1.10 regression where max_tokens was hardcoded to 1000 (long answers truncated / MaxTokensReachedException), inherited when v1.10 was built from the unified branch; v1.10 = retry MCP connect through first-boot warm-up race (OAP #50) but regressed max_tokens to 1000; v1.9 = configurable max_tokens/temperature via env (MAX_TOKENS default 4096, MODEL_TEMPERATURE 0.7) = cherry-pick of upstream PR #35 (supersedes v1.8's MODEL_MAX_TOKENS); v1.7 = drop a2a.utils.* helper spans; v1.6 = Langfuse tags via langfuse.trace.tags (v1.5 = session.id + source:{rca,chat} tags & drop noisy a2a event-queue spans, v1.4 = OTEL context isolation for pooled MCP conns, v1.3 = MCP pool rebuild on token recycle, v1.2 = contextId sanitize)
+  eksMcp:         { registry: "", tag: "" }   # eks-read-mcp
+  gitlabMcp:      { registry: "", tag: "v2" }   # v2 = @zereight/mcp-gitlab 2.1.69 (commit_id optional on create_or_update_file) + baked GITLAB_DENIED_TOOLS_REGEX curating 118 tools -> ~35 repo/MR/commit tools (v1/v1.1 baked an older build where commit_id was REQUIRED; v1.2 = the 2.1.69 pin without curation)
+  chatUi:         { registry: "", tag: "v1.4" }   # v1.4 = fleet-level default suggestion prompts (v1.3 = copy buttons + scrollable suggestions + auto-grow, v1.2 = markdown/suggestions overhaul)
+  incidentBridge: { registry: "", tag: "v1.6" }   # v1.6 = ceiling-skip no longer DLQs a VALID incident like a poison message — on open-MR CEILING the message gets a CEILING_BACKOFF (default 900s) visibility backoff so backpressure does not burn the SQS receive count, and the log states explicitly the incident is DROPPED to the DLQ (no MR opened) if the ceiling stays saturated (Elamaran §8.1 follow-up); v1.5 = _forward() NACK on A2A failure (inspect JSON-RPC error / terminal failed·rejected·canceled task state and raise so a gated/failed incident redelivers -> DLQ at maxReceiveCount:5 instead of being silently deleted) + open-MR ceiling + circuit breaker (§8.1) (v1.4 = ISO-8601 UTC timestamp log prefix, v1.3 = _subject dedup component-only, v1.2 = deterministic open-MR dup-check, v1.1 = contextId sanitize)
+
+# Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
+# registry entry (the fleet-secret/ESO stamps resource_prefix, aws_account_id, aws_region,
+# ingress_domain_name, gitlab_domain_name). The literals below are only fallback defaults for
+# a standalone `helm template`; a real deploy overrides every one from the cluster annotations.
+accountId: ""                 # aws_account_id       (per-account, injected)
+clusterPrefix: "peeks"        # resource_prefix      (platform default "peeks"; injected per env, e.g. a different prefix)
+region: "us-west-2"           # aws_region           (platform default; injected/overridable per env)
+cloudfrontDomain: ""          # ingress_domain_name  (chat-ui ingress host, injected)
+gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL host, injected)
+# Project (path or numeric id) the agent opens remediation MRs on — the overlay/
+# fleet-config repo. When set, the incident-bridge does a deterministic, restart-
+# proof duplicate check (skip forwarding if an OPEN MR already addresses the failing
+# component). Leave "" to disable the check (bridge still forwards; fail-open).
+gitlabMrProject: ""
+
+# NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is
+# provisioned by the AmpIncident kro RGD (ampincident.kro.run — shipped via kro-manifests /
+# kro-amp-incident-rgd-hub), which reads the workspace id LIVE from the Crossplane AMP
+# Workspace CR via externalRef — no literal id, no cluster-secret stamp. The AmpIncident
+# INSTANCE is the `amp-incident` component in files/aiops-agent-app.yaml; its workspaceName
+# defaults to "<clusterPrefix>-amp" — edit that component if your AMP Workspace CR differs.

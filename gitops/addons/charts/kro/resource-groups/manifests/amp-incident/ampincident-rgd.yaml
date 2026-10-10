@@ -1,0 +1,153 @@
+# ampincident.kro.run — RGD DEFINITION for the PEEKS agent autonomous-incident bridge.
+#
+# Placement: this lives in kro-manifests (like every other RGD) but is EXCLUDED from the
+# always-applied kro-manifests / kro-manifests-hub apps and shipped instead by the dedicated
+# `kro-amp-incident-rgd-hub` registry app, gated on enable_amp_incident. WHY (ray-service
+# precedent): the graph references sns/sqs/prometheusservice (managed ACK capability) and
+# amp.aws.upbound.io/Workspace (Crossplane). If those kinds are ever absent, KRO cannot build
+# the graph and the RGD stays Ready=False; in the shared kro-manifests-hub wave chain that
+# would stall eksclusterwithvpc and break spoke provisioning. Gating on enable_amp_incident
+# (agent-neutral) decouples this alerting plumbing from the agent; the consumer that
+# instantiates the AmpIncident CR (the aiops-agent overlay) sets both gates.
+#
+# Cluster-agnostic by design: accountId/region/workspaceName/topicName are schema spec fields
+# supplied by the AmpIncident INSTANCE (an OAM component in the aiops-agent Application), so
+# no REPLACE_ token substitution is needed here.
+#
+# RBAC PREREQUISITE (now in the eks-capabilities-rbac chart, NOT here): the kro capability
+# controller (<cluster>-kro-capability-role/KRO) is granted get/list/watch on
+# amp.aws.upbound.io/workspaces via the shared `eks-capabilities-kro` ClusterRole, so the
+# externalRef below can read the Crossplane Workspace CR.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ampincident.kro.run
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AmpIncident
+    spec:
+      # AMP Workspace CR name (Crossplane amp.aws.upbound.io/Workspace). Default
+      # matches the PEEKS naming (<prefix>-amp); override per deployment.
+      workspaceName: string | default="peeks-amp"
+      accountId: string
+      region: string | default="us-west-2"
+      # SNS/SQS resource base name (topic == queue == this). Account-scoped, so the
+      # AmpIncident INSTANCE should pass a ${resource_prefix}-prefixed value (see the
+      # aiops-agent overlay). Default is agent-neutral.
+      topicName: string | default="amp-incidents"
+    status:
+      # Surface the resolved id so `kubectl get ampincident` shows what was read.
+      workspaceId: ${ampworkspace.status.atProvider.id}
+      workspaceArn: ${ampworkspace.status.atProvider.arn}
+  resources:
+    # 1) READ-ONLY reference to the existing Crossplane AMP Workspace (not created here).
+    - id: ampworkspace
+      externalRef:
+        apiVersion: amp.aws.upbound.io/v1beta2
+        kind: Workspace
+        metadata:
+          name: ${schema.spec.workspaceName}
+
+    # 2) SNS topic — AMP AlertManager (aps.amazonaws.com) publishes here, scoped to
+    #    THIS workspace ARN (read from the external Workspace CR).
+    - id: topic
+      template:
+        apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Topic
+        metadata:
+          name: ${schema.spec.topicName}
+          namespace: aiops-agent
+        spec:
+          name: ${schema.spec.topicName}
+          policy: >-
+            {"Version":"2012-10-17","Statement":[{"Sid":"AllowAMPPublish","Effect":"Allow","Principal":{"Service":"aps.amazonaws.com"},"Action":"sns:Publish","Resource":"arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}","Condition":{"ArnEquals":{"aws:SourceArn":"${ampworkspace.status.atProvider.arn}"},"StringEquals":{"aws:SourceAccount":"${schema.spec.accountId}"}}}]}
+
+    # 3) Dead-letter queue — a poison-pill incident (one the agent repeatedly fails to
+    #    process) is redelivered up to maxReceiveCount times by the main queue below, then
+    #    parked HERE instead of looping forever and pinning the consumer. Longer retention
+    #    (14d) so a human can inspect what the agent could not handle.
+    - id: dlq
+      template:
+        apiVersion: sqs.services.k8s.aws/v1alpha1
+        kind: Queue
+        metadata:
+          name: ${schema.spec.topicName}-dlq
+          namespace: aiops-agent
+        spec:
+          queueName: ${schema.spec.topicName}-dlq
+          messageRetentionPeriod: "1209600"
+          visibilityTimeout: "360"
+
+    # 4) SQS queue — SNS delivers here; the in-cluster consumer reads it. A redrivePolicy
+    #    routes chronically-failing messages to the DLQ after maxReceiveCount deliveries, so
+    #    a message the agent can never process cannot pin the consumer in an infinite retry.
+    #    visibilityTimeout (360s) >= the agent's processing budget (AGENT_TIMEOUT 300s + hop),
+    #    so an in-flight incident is NOT redelivered mid-RCA — the old 120s was shorter than a
+    #    single RCA and caused a duplicate forward when the message reappeared mid-processing.
+    - id: queue
+      template:
+        apiVersion: sqs.services.k8s.aws/v1alpha1
+        kind: Queue
+        metadata:
+          name: ${schema.spec.topicName}
+          namespace: aiops-agent
+        spec:
+          queueName: ${schema.spec.topicName}
+          messageRetentionPeriod: "3600"
+          receiveMessageWaitTimeSeconds: "20"
+          visibilityTimeout: "360"
+          redrivePolicy: >-
+            {"deadLetterTargetArn":"${dlq.status.ackResourceMetadata.arn}","maxReceiveCount":5}
+          policy: >-
+            {"Version":"2012-10-17","Statement":[{"Sid":"AllowSNSDelivery","Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"arn:aws:sqs:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}","Condition":{"ArnEquals":{"aws:SourceArn":"arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}"}}}]}
+
+    # 5) SNS→SQS subscription.
+    - id: subscription
+      template:
+        apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Subscription
+        metadata:
+          name: ${schema.spec.topicName}-sqs
+          namespace: aiops-agent
+        spec:
+          protocol: sqs
+          topicARN: arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
+          endpoint: arn:aws:sqs:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
+          rawMessageDelivery: "true"
+
+    # 6) AMP AlertManager routing (actionable workload alerts -> SNS). workspaceID is
+    #    the id READ from the external Crossplane Workspace CR — no literal, no stamp.
+    - id: alertmanager
+      template:
+        apiVersion: prometheusservice.services.k8s.aws/v1alpha1
+        kind: AlertManagerDefinition
+        metadata:
+          name: aiops-agent-alertmanager
+          namespace: aiops-agent
+        spec:
+          workspaceID: ${ampworkspace.status.atProvider.id}
+          configuration: |
+            alertmanager_config: |
+              route:
+                receiver: null-receiver
+                group_by: ['alertname','cluster','namespace','pod']
+                routes:
+                  - receiver: aiops-agent-sns
+                    matchers:
+                      - severity=~"warning|critical"
+                    group_wait: 30s
+                    group_interval: 5m
+                    repeat_interval: 4h
+              receivers:
+                - name: null-receiver
+                - name: aiops-agent-sns
+                  sns_configs:
+                    - topic_arn: arn:aws:sns:${schema.spec.region}:${schema.spec.accountId}:${schema.spec.topicName}
+                      sigv4:
+                        region: ${schema.spec.region}
+                      subject: 'PEEKS incident {{ .CommonLabels.alertname }} {{ .CommonLabels.namespace }}/{{ .CommonLabels.pod }}'
+                      message: |
+                        {{ range .Alerts }}{"status":"{{ .Status }}","alertname":"{{ .Labels.alertname }}","signal":"{{ .Labels.signal }}","remediation":"{{ .Labels.remediation }}","severity":"{{ .Labels.severity }}","cluster":"{{ .Labels.cluster }}","namespace":"{{ .Labels.namespace }}","pod":"{{ .Labels.pod }}","container":"{{ .Labels.container }}","persistentvolumeclaim":"{{ .Labels.persistentvolumeclaim }}","summary":"{{ .Annotations.summary }}","description":"{{ .Annotations.description }}"}{{ end }}

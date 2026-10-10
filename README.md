@@ -8,6 +8,8 @@ This code is used in associated Workshop: https://catalog.workshops.aws/platform
 
 This repository implements a complete platform engineering solution on Amazon EKS, enabling organizations to modernize applications and adopt cloud-native practices. It provides a production-ready platform with integrated developer portals, GitOps workflows, and progressive delivery capabilities.
 
+This platform is extended with an agentic layer powered by the [Open Agentic Platform (OAP)](https://github.com/awslabs/open-agentic-platform), which adds AI agent management capabilities (such as the `aiops-agent`) on top of the EKS platform.
+
 ## Architecture
 
 ![Platform Engineering on EKS Architecture](docs/images/Peeks-Architecture.png)

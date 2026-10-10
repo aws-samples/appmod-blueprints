@@ -19,3 +19,56 @@
 #   metrics_server:
 #     valuesObject:
 #       replicas: 2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKSHOP agent addon entry (moved out of the generic gitops/addons/registry/
+# platform.yaml so the base solution stays agent-free). This overrides.yaml is a
+# valueFile of the cluster-addons appset-chart, merged LAST, so a top-level addon
+# key here INTRODUCES the app only when the fleet-config overlay is wired.
+# NOTE: path is LITERAL from repo root (addonsRepoBasepath="gitops/" at deploy, so a
+# {{basepath}} prefix would wrongly yield gitops/workshop/...). Gated by
+# enable_aiops_agent, which the workshop control-plane enabled-addons.yaml sets.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# aiops-agent — the PEEKS read-only platform-engineering agent (OAP Strands agent +
+# skills-mcp + eks-read-mcp + chat-ui + AgentCore memory + incident bridge) as ONE
+# KubeVela Application. Gated by enable_aiops_agent (default OFF); values overridable
+# per-cluster via the fleet-config overlay (overlays/clusters/<cluster>/aiops-agent/values.yaml).
+# Depends on KubeVela + the OAP agent-platform-addons (bifrost/agentgateway/oam-components),
+# hence a late sync-wave.
+aiops-agent:
+  namespace: aiops-agent
+  path: 'workshop/aiops-agent/chart'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '9'
+  selector:
+    matchExpressions:
+      - key: enable_aiops_agent
+        operator: In
+        values: ['true']
+  valuesObject:
+    # Image coordinates (imageRegistry / imageTag / per-component images.<comp>) are
+    # deliberately NOT set here. The chart's own values.yaml — workshop/aiops-agent/chart/
+    # values.yaml — is the SINGLE source of truth for image pins. The agent runs only on
+    # the hub, so the chart default == the hub value; re-pinning here would just duplicate
+    # it and drift (which is exactly what bit us: this overlay used to pin stale tags that
+    # silently won over the chart, keeping the hub on old images). To change an image, edit
+    # the chart values.yaml. Override per-cluster ONLY if a cluster genuinely needs a
+    # different image, via overlays/clusters/<cluster>/aiops-agent/values.yaml.
+    accountId: '{{ index .metadata.annotations "aws_account_id" }}'
+    clusterPrefix: '{{ default "peeks" (index .metadata.annotations "resource_prefix") }}'
+    region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
+    cloudfrontDomain: '{{ default "" (index .metadata.annotations "ingress_domain_name") }}'
+    # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
+    gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
+    # Project the agent opens remediation MRs on = the overlay/fleet-config repo.
+    # DERIVED from the already-stamped `overlay_repo_url` annotation (strip scheme+host
+    # and .git) so it needs NO new stamp and works for any setup; empty when there is
+    # no overlay repo (then the bridge dup-check is disabled, fail-open). NOTE: use
+    # overlay_repo_url, NOT fleetRepoURL (the latter is the GitHub base repo).
+    gitlabMrProject: '{{ trimSuffix ".git" (regexReplaceAll "^https?://[^/]+/" ((index .metadata.annotations "overlay_repo_url") | default "") "") }}'
+  ignoreDifferences:
+    - group: core.oam.dev
+      kind: Application
+      jsonPointers:
+        - /status

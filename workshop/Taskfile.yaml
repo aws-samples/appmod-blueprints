@@ -968,10 +968,18 @@ tasks:
             # Seed content at gitops/fleet/ so both paths align.
             mkdir -p "$TMP/gitops/fleet"
             cp -r "$SRC/." "$TMP/gitops/fleet/"
-            # Seed workshop-specific overlay overrides (e.g. Kargo ALB ingress on the hub —
-            # kept out of the generic solution, see workshop/overlay/README.md). Copied to the
-            # fleet-config ROOT (overlay_repo_basepath="") so ArgoCD's $overlay source resolves
-            # overlays/environments/<env>/overrides.yaml exactly like the base solution does.
+            # Seed workshop-specific overlay content (enabled-addons, overrides, per-addon
+            # values; e.g. Kargo ALB ingress on the hub — kept out of the generic solution,
+            # see workshop/overlay/README.md). Copied to the fleet-config ROOT
+            # (overlay_repo_basepath=""): the bootstrap appsets (hub-fleet-secret /
+            # fleet-secrets / addons) read $overlay/<overlay_repo_basepath>overlays/* using
+            # overlay_repo_basepath AS-IS — they intentionally do NOT apply the gitops/
+            # fallback to the overlay (only the $overlay fleet/* reads keep `or … fleetRepoBasepath`),
+            # matching the appset-chart's root convention for configs/per-addon values. So the
+            # overlay's overlays/environments/<env>/{enabled-addons,overrides}.yaml resolve at
+            # root here. (Validated e2e 2026-10-07: OAP addons fan out to hub+spokes, aiops_agent
+            # + langfuse stay hub-only.) NOTE: this differs from the base solution, whose own
+            # $defaults overrides read under gitops/ (addonsRepoBasepath).
             if [ -d "$WORKSHOP_DIR/workshop/overlay" ]; then
               cp -r "$WORKSHOP_DIR/workshop/overlay/." "$TMP/"
             fi
@@ -986,11 +994,21 @@ tasks:
           cd "$TMP"
           git init -q && git add -A && git commit -qm "init" 2>/dev/null || true
           git remote add origin "$REMOTE_URL"
-          REMOTE_EMPTY=$(git ls-remote "$REMOTE_URL" HEAD 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$REMOTE_EMPTY" = "0" ]; then
-            git push -f origin HEAD:main
+          # Idempotency / --force safety: a plain `git ls-remote … 2>/dev/null | wc -l` MASKS a
+          # transient auth/connection failure as "0 refs" → the old code then force-pushed, and on
+          # a --force rerun against an already-populated repo that `git push -f` fails with 128,
+          # aborting the whole task under `set -e` BEFORE the aiops-agent bot block runs. Instead,
+          # capture ls-remote's exit status via an `if` condition (set -e does not abort on a
+          # failing condition) so we can tell "unreachable" (leave as-is) from genuinely "empty"
+          # (seed), and guard the push so a push failure logs-and-continues instead of killing init.
+          if REMOTE_REFS=$(git ls-remote "$REMOTE_URL" 2>/dev/null); then
+            if [ -z "$REMOTE_REFS" ]; then
+              git push -f origin HEAD:main || echo "  ⚠ push failed (leaving as-is): $REPO"
+            else
+              echo "  skipped (already populated): $REPO"
+            fi
           else
-            echo "  skipped (already populated): $REPO"
+            echo "  skipped (remote unreachable — not forcing): $REPO"
           fi
           cd - >/dev/null; rm -rf "$TMP"
           echo "  seeded: $REPO"
@@ -1001,6 +1019,98 @@ tasks:
           u = User.find_by(username: ENV['GIT_USERNAME'] || 'user1')
           Project.where(namespace_id: u.namespace_id).each{|p| ProtectedBranch.where(project: p).destroy_all}
         " 2>/dev/null || true
+        # --- aiops-agent GitLab bot: dedicated least-privilege identity + fleet-config merge-gate ---
+        # The AIOps agent's GitLab write path uses THIS identity, not user1's shared Owner PAT.
+        # Bot = Developer (30) on fleet-config + app repos: it can push feature branches and open
+        # MRs, but with fleet-config `main` protected (push/merge = Maintainer 40) it CANNOT merge
+        # or push to main — a human (user1/Owner) merges. That is the human merge-gate Mikhail asked
+        # for. This block runs AFTER the final unprotect above (so it is not undone), and it is the
+        # SINGLE source of truth for the bot PAT: it sets the PAT and writes the SAME value into
+        # <hub>/secrets.aiops_agent_git_token (mirrors how git_token is captured above), so the
+        # agent's gitlab-mcp ExternalSecret and the real PAT can never diverge.
+        BOT_USERNAME="aiops-agent"
+        # RANDOM PAT — the bot's write token is GitLab-generated, NOT derived from any human
+        # credential. We let GitLab mint the PAT and capture its own plaintext value (readable
+        # once, on the freshly-created in-memory token object), then treat init-ec2 as the single
+        # source of truth by writing that exact value into <hub>/secrets.aiops_agent_git_token
+        # below. Nothing about user1/Owner's password is recoverable from it, and because GitLab
+        # mints it, it is a native routable token guaranteed to authenticate (no custom set_token
+        # value that might not match GitLab's expected token format).
+        # The bot LOGIN password is SEPARATE and immaterial — the bot never logs in interactively
+        # (only its PAT is used by gitlab-mcp). Use the plain git password (the same value user1
+        # is created with) so it passes GitLab's NoWeakPasswordValidator, which rejects a login
+        # password containing the username ("aiops" ⊂ "aiops-agent").
+        BOT_LOGIN_PW="{{.GIT_PASSWORD}}"
+        printf '  Ensuring %s bot user + random least-privilege PAT...\n' "$BOT_USERNAME"
+        BOT_OUT=$(docker exec gitlab-gitlab-1 env BOTUSER="$BOT_USERNAME" BOTLOGINPW="$BOT_LOGIN_PW" gitlab-rails runner '
+          u = User.find_by_username(ENV["BOTUSER"])
+          if u.nil?
+            Users::CreateService.new(User.find(1), {
+              name: "AIOps Agent", username: ENV["BOTUSER"],
+              email: ENV["BOTUSER"] + "@workshop.local",
+              password: ENV["BOTLOGINPW"], password_confirmation: ENV["BOTLOGINPW"],
+              skip_confirmation: true,
+              organization_id: (Organizations::Organization.find_by(id: 1)&.id || 1)
+            }).execute
+            u = User.find_by_username(ENV["BOTUSER"])
+          end
+          if u && u.persisted?
+            # Scopes are api + read/write_repository ONLY — no sudo, no admin (unlike root/user1).
+            u.personal_access_tokens.where(name: "aiops-agent token").delete_all
+            t = u.personal_access_tokens.create!(name: "aiops-agent token",
+              scopes: ["api","read_repository","write_repository"], expires_at: 365.days.from_now)
+            # Emit the GitLab-generated plaintext token so bash can capture it as the SM source of
+            # truth (available only on this in-memory object, right after create!).
+            puts "AIOPS_PAT=" + t.token
+            puts "aiops-agent bot ready id=" + u.id.to_s
+          else
+            # Fail loud: a silent creation failure (e.g. weak-password rejection) must be visible
+            # in the init log instead of a dangling SM token with no bot behind it.
+            STDERR.puts "aiops-agent bot creation FAILED: " + (u ? u.errors.full_messages.join("; ") : "user not persisted")
+          end
+        ' 2>&1)
+        # Capture the generated PAT; log the remaining lines WITHOUT echoing the secret.
+        BOT_TOKEN=$(printf '%s\n' "$BOT_OUT" | sed -n 's/^AIOPS_PAT=//p' | tail -1)
+        printf '%s\n' "$BOT_OUT" | grep -v '^AIOPS_PAT=' | tail -3 || true
+        # ROOT_TOKEN can be empty on a re-run: find_or_initialize_by('root-api').token returns nil
+        # for an already-existing (hashed) token, so the protection/membership calls below would
+        # silently skip. Recreate root-api to force a usable plaintext token when that happens.
+        if [ -z "$ROOT_TOKEN" ]; then
+          ROOT_TOKEN=$(docker exec gitlab-gitlab-1 gitlab-rails runner "User.find(1).personal_access_tokens.where(name: 'root-api').delete_all; puts User.find(1).personal_access_tokens.create!(name: 'root-api', scopes: ['api','sudo'], expires_at: 365.days.from_now).token" 2>/dev/null | tail -1)
+        fi
+        # Resolve the bot id, add it as Developer on every repo, and PROTECT fleet-config main.
+        if [ -n "{{.GIT_DOMAIN}}" ] && [ -n "$ROOT_TOKEN" ]; then
+          BOT_ID=$(curl -s "https://{{.GIT_DOMAIN}}/api/v4/users?username=$BOT_USERNAME" -H "PRIVATE-TOKEN: $ROOT_TOKEN" | jq -r 'if type=="array" then (.[0].id // "") else "" end')
+          for REPO in {{.REPOS}}; do
+            PID=$(curl -s "https://{{.GIT_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F$REPO" -H "PRIVATE-TOKEN: $ROOT_TOKEN" | jq -r '.id // ""')
+            [ -z "$PID" ] && continue
+            if [ -n "$BOT_ID" ]; then
+              # Developer (30) — idempotent: POST (create), else PUT (update existing membership).
+              curl -s -X POST "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/members" -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
+                -H 'Content-Type: application/json' -d "{\"user_id\": $BOT_ID, \"access_level\": 30}" >/dev/null 2>&1 \
+                || curl -s -X PUT "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/members/$BOT_ID" -H "PRIVATE-TOKEN: $ROOT_TOKEN" \
+                     -H 'Content-Type: application/json' -d '{"access_level": 30}' >/dev/null 2>&1 || true
+            fi
+            # Protect main on EVERY repo (fleet-config AND every app repo): push/merge require
+            # Maintainer (40), no force-push. The workshop user ({{.GIT_USERNAME}}) OWNS these
+            # projects (Owner=50) so retains direct push + merge, and overlay-seeding (git_token)
+            # is unaffected; the aiops bot (Developer=30) can OPEN MRs but canNOT merge its own MR
+            # or force-push main anywhere. This is the human merge-gate the design (§12) rests on —
+            # app repos are reachable (the bridge prompt tells the agent to find the owning repo),
+            # so leaving them unprotected would let the bot self-merge an app-repo remediation MR.
+            curl -s -X DELETE "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/protected_branches/main" -H "PRIVATE-TOKEN: $ROOT_TOKEN" >/dev/null 2>&1 || true
+            curl -s -X POST "https://{{.GIT_DOMAIN}}/api/v4/projects/$PID/protected_branches?name=main&push_access_level=40&merge_access_level=40&allow_force_push=false" -H "PRIVATE-TOKEN: $ROOT_TOKEN" >/dev/null 2>&1 \
+              && printf '  %s: main protected (human merge-gate); %s = Developer\n' "$REPO" "$BOT_USERNAME" || true
+          done
+        fi
+        # Authoritative write of the bot PAT into <hub>/secrets (single source of truth — the value
+        # is BOT_TOKEN, exactly what was set on the PAT above; no second formula to drift from).
+        BOT_SM=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null)
+        if [ -n "$BOT_SM" ]; then
+          NEW_SM=$(echo "$BOT_SM" | jq -c --arg p "$BOT_TOKEN" '.aiops_agent_git_token = $p')
+          aws secretsmanager put-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --secret-string "$NEW_SM" >/dev/null 2>&1 \
+            && printf '  Updated %s/secrets.aiops_agent_git_token (matches bot PAT)\n' "{{.HUB_CLUSTER_NAME}}"
+        fi
       # After init, clone repos locally
       - task: gitlab:clone-repos
 

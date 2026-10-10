@@ -185,7 +185,7 @@ kro-manifests:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**}'
+    exclude: '{cicd-pipeline/**,huggingface/**,ray-service/**,amp-incident/**}'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2'
   selector:
@@ -209,7 +209,12 @@ kro-manifests-hub:
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests'
   directory:
     recurse: true
-    exclude: '{eks/**,ray-service/**}'
+    # eks/** and ray-service/** are excluded (handled by the dedicated apps below); amp-incident/**
+    # is ALSO excluded because its graph references sns/sqs/prometheusservice (managed ACK
+    # capability) + amp.aws.upbound.io (Crossplane) — if a referenced kind is absent the RGD stays
+    # Ready=False and would stall this shared wave chain. It is shipped instead by
+    # kro-amp-incident-rgd-hub, gated on enable_amp_incident (ray-service precedent).
+    exclude: '{eks/**,ray-service/**,amp-incident/**}'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '-2'
   selector:
@@ -268,6 +273,32 @@ kro-ray-rgd-hub:
         operator: In
         values: ['true']
       - key: enable_ray_operator
+        operator: In
+        values: ['true']
+
+# The ampincident.kro.run RGD — generic AMP->SNS->SQS alerting plumbing, gated on
+# enable_amp_incident (agent-neutral; decoupled from the agent so any consumer can opt in).
+# Its graph references sns/sqs/prometheusservice (managed ACK capability) + amp.aws.upbound.io/Workspace
+# (Crossplane), so — like kro-ray-rgd-hub for ray.io — it must NOT sit in the always-applied
+# kro-manifests-hub wave chain (a missing kind there would stall eksclusterwithvpc). It ships
+# only when enable_amp_incident is set; wave 8 places it before the AmpIncident CR consumer
+# (e.g. the aiops-agent app at wave 9), and after the ACK/Crossplane capabilities that provide
+# the referenced kinds. NOTE: a consumer that instantiates the AmpIncident CR (the aiops-agent
+# overlay) MUST set BOTH enable_amp_incident AND its own gate, or the CR has no RGD.
+kro-amp-incident-rgd-hub:
+  namespace: kro
+  type: manifest
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/kro/resource-groups/manifests/amp-incident'
+  directory:
+    recurse: true
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '8'
+  selector:
+    matchExpressions:
+      - key: enable_kro_manifests_hub
+        operator: In
+        values: ['true']
+      - key: enable_amp_incident
         operator: In
         values: ['true']
 

@@ -1,0 +1,33 @@
+# WORKSHOP overlay — hub (control-plane) agent/OAP enablement.
+#
+# Merged LAST by the hub-fleet-secret ApplicationSet (after the base
+# $values/overlays/environments/control-plane/enabled-addons.yaml), so these keys
+# turn the agent layer ON only when the fleet-config overlay is wired. Kept OUT of
+# the generic gitops/overlays/environments/control-plane/enabled-addons.yaml so the
+# base solution stays agent-free (Mikhail PR #926 review).
+#
+# Key -> cluster-secret label mapping is enable_<key> (fleet-secret chart).
+enabledAddons:
+  # OAP agent-platform layer on the hub (consumed by the OAP agent-platform-addons
+  # appsets via useSelectors): Bifrost model gateway, Agent Gateway, OAM
+  # ComponentDefinitions (mcp-server / agent / agentcore-memory).
+  agent_platform: true
+  bifrost: true
+  agent_gateway: true
+  oam_components: true
+  # Observability: OTel collector + the SINGLE Langfuse trace backend (hub-only).
+  otel_collector: true
+  langfuse: true
+  # AgentCore memory provider (OAP crossplane-agentcore). REQUIRED now that the
+  # bedrockagentcore provider was dropped from the generic crossplane-base — OAP must
+  # provision it. VALIDATE on a fresh event (garde-fou #3): if AgentCore memory
+  # wedges on a missing CRD, OAP is not consuming this gate and the provider must be
+  # declared in this overlay (configs/crossplane-base/values.yaml) instead.
+  agent_core: true
+  # amp-incident alerting plumbing RGD (generic, renamed from enable_aiops_agent).
+  # MUST be set together with aiops_agent, or the agent's AmpIncident CR has no RGD.
+  amp_incident: true
+  # The PEEKS read-only platform-engineering agent itself. Its registry entry is
+  # provided by this overlay's overrides.yaml (path workshop/aiops-agent/chart).
+  # Depends on KubeVela + the OAP layer above (late sync-wave).
+  aiops_agent: true

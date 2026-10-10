@@ -601,7 +601,7 @@ data:
       "serviceAccountsEnabled": false,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
-      "standardFlowEnabled": true,
+      "standardFlowEnabled": false,
       "frontchannelLogout": true,
       "attributes": {
         "oauth2.device.authorization.grant.enabled": true,
@@ -610,12 +610,8 @@ data:
       "alwaysDisplayInConsole": false,
       "rootUrl": "",
       "baseUrl": "",
-      "redirectUris": [
-        "*"
-      ],
-      "webOrigins": [
-        "*"
-      ]
+      "redirectUris": [],
+      "webOrigins": []
     }
 ---
 apiVersion: batch/v1
