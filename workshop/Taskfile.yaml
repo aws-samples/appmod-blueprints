@@ -1423,7 +1423,7 @@ tasks:
         # the EksclusterWithVpc RGD). The fleet-secrets appset discovers members from
         # the overlay (fleet-config), so write it here. environment is derived from
         # the cluster name (dev/prod/staging/test), defaulting to dev.
-        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
+        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1 || true); ENV="${ENV:-dev}"
         mkdir -p "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}"
         cat > "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
         clusterName: {{.CLUSTER}}
@@ -1551,7 +1551,7 @@ tasks:
           # spoke as environment=prod so every spoke loaded the wrong
           # overlays/environments/<env> tier (e.g. pod-identities), and made the two
           # spoke apps collide on shared hub resources.
-          ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
+          ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1 || true); ENV="${ENV:-dev}"
           OCTET=$OCTET CLUSTER={{.CLUSTER}} AWS_REGION={{.AWS_REGION}} K8S_VERSION={{.K8S_VERSION}} \
           AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}} RESOURCE_PREFIX={{.RESOURCE_PREFIX}} ENV="$ENV" \
           yq -i '.clusters.[env(CLUSTER)] = {
@@ -1625,7 +1625,7 @@ tasks:
         # its default createArgocdClusterSecret=false path. `labels` drives the
         # enabled-addons overlay selection (tenant/environment). ENV is derived from
         # the cluster name to match the Crossplane convention.
-        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1); ENV="${ENV:-dev}"
+        ENV=$(echo "{{.CLUSTER}}" | grep -oE 'prod|staging|test|dev' | head -1 || true); ENV="${ENV:-dev}"
         mkdir -p "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}"
         cat > "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}/values.yaml" <<EOF
         clusterName: {{.CLUSTER}}
