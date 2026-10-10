@@ -399,24 +399,17 @@ spec:
                 - setWeight: 20
                 - pause:
                     duration: ${schema.spec.functionalGate.pause}
-                - analysis:
-                    templates:
-                    - templateName: functional-gate-${schema.metadata.name}
-                    args:
-                    - name: service-name
-                      value: ${schema.metadata.name}-preview
+                # A gate's AnalysisTemplate exists only while that gate is enabled, so a
+                # disabled gate's step renders as a 0s pause (kro can't drop a list item).
+                # Either gate can then be enabled on its own.
+                - '${schema.spec.functionalGate.enabled ? dyn({"analysis": {"templates": [{"templateName": "functional-gate-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}]}}) : dyn({"pause": {"duration": "0s"}})}'
                 - setWeight: 40
                 - pause:
                     duration: 5s
                 - setWeight: 60
                 - pause:
                     duration: ${schema.spec.performanceGate.pause}
-                - analysis:
-                    templates:
-                    - templateName: performance-gate-${schema.metadata.name}
-                    args:
-                    - name: service-name
-                      value: ${schema.metadata.name}
+                - '${schema.spec.performanceGate.enabled ? dyn({"analysis": {"templates": [{"templateName": "performance-gate-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name}]}}) : dyn({"pause": {"duration": "0s"}})}'
                 - setWeight: 80
           template:
             metadata:
@@ -472,24 +465,17 @@ spec:
                 - setWeight: 20
                 - pause:
                     duration: ${schema.spec.functionalGate.pause}
-                - analysis:
-                    templates:
-                    - templateName: functional-gate-${schema.metadata.name}
-                    args:
-                    - name: service-name
-                      value: ${schema.metadata.name}-preview
+                # A gate's AnalysisTemplate exists only while that gate is enabled, so a
+                # disabled gate's step renders as a 0s pause (kro can't drop a list item).
+                # Either gate can then be enabled on its own.
+                - '${schema.spec.functionalGate.enabled ? dyn({"analysis": {"templates": [{"templateName": "functional-gate-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}]}}) : dyn({"pause": {"duration": "0s"}})}'
                 - setWeight: 40
                 - pause:
                     duration: 5s
                 - setWeight: 60
                 - pause:
                     duration: ${schema.spec.performanceGate.pause}
-                - analysis:
-                    templates:
-                    - templateName: performance-gate-${schema.metadata.name}
-                    args:
-                    - name: service-name
-                      value: ${schema.metadata.name}
+                - '${schema.spec.performanceGate.enabled ? dyn({"analysis": {"templates": [{"templateName": "performance-gate-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name}]}}) : dyn({"pause": {"duration": "0s"}})}'
                 - setWeight: 80
           template:
             metadata:
