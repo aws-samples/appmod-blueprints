@@ -1639,6 +1639,7 @@ spec:
                         finishedDate: $ENV.FINISHED,
                         commitSha: .id,
                         commitMsg: .message,
+                        displayTitle: (.title // (.message | split("\n")[0])),
                         result: $result,
                       }
                     ]
