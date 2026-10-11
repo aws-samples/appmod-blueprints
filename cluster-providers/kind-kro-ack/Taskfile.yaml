@@ -2748,10 +2748,12 @@ tasks:
 
         # --- 1. Serialize kind EksCluster spec -> hub-side manifest ------------
         WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+        # Project to a CLEAN manifest: keep only apiVersion/kind/name/namespace/spec.
+        # Dropping the kind instance's finalizers, kro.run/* labels and
+        # applyset.kubernetes.io/* annotations is REQUIRED — applying them verbatim would
+        # hand the hub KRO a foreign applyset id + finalizer. The hub assigns its own.
         kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o json \
-          | jq 'del(.status,.metadata.managedFields,.metadata.uid,.metadata.resourceVersion,
-                    .metadata.generation,.metadata.creationTimestamp,.metadata.ownerReferences,
-                    .metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"])' \
+          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace}, spec}' \
           > "$WORK/hub-instance.json"
         printf '{{.C_OK}}✓ serialized kind %s/%s spec -> hub-side manifest{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
 
