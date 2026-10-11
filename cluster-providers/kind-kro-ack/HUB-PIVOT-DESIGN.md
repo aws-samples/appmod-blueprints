@@ -52,12 +52,19 @@ All already annotated `adoption-policy: adopt-or-create` (✅ = #855):
 
 > **Caveat — ingress SecurityGroups are Class 2.** `ingressHttpSecurityGroup` /
 > `ingressHttpsSecurityGroup` are ec2 (AWS-ID-keyed) and today carry **no**
-> `adoption-policy`. They are cheap/stateless (HTTP/HTTPS-from-anywhere on the
-> hub VPC) so the pragmatic options are: (a) let the hub-side graph **recreate**
-> them (new SG IDs; the ingress annotation `ingress_security_groups` is derived
-> from `.status.id`, so KubeVela/ALB re-resolves them) and let kind's retained
-> copies be swept, or (b) adopt them with `adoption-fields` like the VPC case.
-> Default plan: **(a) recreate** — simplest, and nothing durable keys off the SG ID.
+> `adoption-policy`. Two options were considered: (a) let the hub-side graph
+> **recreate** them, or (b) adopt them with `adoption-fields`.
+>
+> **⚠️ Live validation (2026-10-11) REFUTES plan (a) recreate.** While kind's copies
+> still exist, the hub's ACK tries to **create** fresh SGs and EC2 rejects the
+> duplicate group-name within the same VPC → the child goes `ACK.Terminal=True`
+> with `Resource already exists` and **never syncs**. The adoption-complete gate
+> then (correctly) blocks forever. The same happened to the `OpenIDConnectProvider`
+> (`EntityAlreadyExists: Provider with url … already exists`). **Conclusion: the
+> ingress SGs AND the OIDC provider MUST carry true adoption (`adopt-or-create` +
+> `adoption-fields`), not recreate.** This makes the retain/adoption fix on those
+> three nodes a **pivot blocker**, not merely a `task destroy` nicety (see
+> Deliverable #3).
 
 ## Pivot algorithm (`task hub:pivot`)
 
@@ -145,37 +152,77 @@ chain targets the kind cluster — kind only ever held the EksCluster CR. So "re
 Crossplane to the hub" is **already true**; the only requirement is that the hub's
 provider PIAs are healthy before kind is deleted (they are, post-install).
 
-## Risks / open questions (to validate on a live kind+hub)
+## Live validation (2026-10-11, Workshop Studio event)
 
-- **KRO applyset ownership on re-apply.** Re-applying the same `EksCluster` instance
-  on the hub creates a *fresh* KRO instance (new uid) owning child CRs via
-  ownerReferences. Must confirm KRO's applyset GC on the hub does not fight the
-  adopted children, and that the hub-side instance reaches `Active` without
-  recreating the cluster. **Primary thing to test.**
-- **OIDC provider adoption** needs a CEL scheme-strip of the issuer URL (noted
-  "best-effort" in #855). Verify it adopts rather than 409s on the hub.
-- **ingress SecurityGroups**: confirm recreate (plan A) leaves no dangling ALB
-  listener references; otherwise implement adoption-fields (plan B).
+Ran the **LIVE stop-mode pivot** (`task hub:pivot PIVOT_DRY_RUN=false
+PIVOT_DETACH_MODE=stop PIVOT_CONFIRM=yes`) on a running PEEKS event (fresh account,
+`kind-kro-ack`). Driven on the IDE; hub observed with participant creds.
+
+**What passed (the core of the design — validated):**
+- **Confirm gate works.** The first run without `PIVOT_CONFIRM=yes` **refused**
+  (`✗ Refusing live pivot without PIVOT_CONFIRM=yes`) and mutated nothing — fail-closed.
+- **Stop-first ordering works.** The kind control-plane container was `docker stop`ed
+  (ended `Exited (137)`, still registered → recoverable) *before* the hub applied the
+  manifest, so only the hub reconciled — no dual-manager window.
+- **Clean-projection manifest works.** The serialized spec carried only the
+  pre-created VPC/subnets + hub config (no finalizers/applyset/kro labels).
+- **Adopt-in-place of the live cluster works — the critical result.** The real EKS
+  cluster stayed `ACTIVE` with its original creation timestamp (never recreated), and
+  the hub's `clusters.eks` child adopted it `status=ACTIVE, ResourceSynced=True`.
+  **21/24 kro-owned children adopted**: cluster 1/1, access entries 4/4, IAM roles
+  11/11, pod-identity associations 5/5.
+- **Adoption-complete gate is correctly fail-closed.** The hub instance stayed
+  `IN_PROGRESS` and the gate never reached GO because 3 children could not sync, so
+  kind was **never discarded** — exactly the intended safety behavior.
+
+**What failed — and the decisive finding (3/24 children):**
+- The 2 ingress `SecurityGroup`s and the `OpenIDConnectProvider` went
+  `ACK.Terminal=True` / `already exists` — ACK tried to **create** them (they lack
+  `adopt-or-create`) and collided with kind's still-live copies. This **refutes the
+  "recreate" plan** for the SGs (EC2/IAM reject duplicates) and promotes true adoption
+  of those three nodes to a **pivot blocker** (Deliverable #3, re-scoped below).
+
+**End state left on the event:** kind **stopped** (recoverable via `docker start`),
+hub as sole manager of the adopted resources, real cluster + spokes healthy. No
+destructive action taken; the risky retain-delete of the hub-side CR was deliberately
+NOT performed (finalizer hazard — requires the Deliverable #3 fix first).
+
+## Risks / open questions
+
+- **✅ RESOLVED — KRO applyset ownership on re-apply.** Re-applying the instance on the
+  hub created a fresh KRO graph that adopted the existing children via
+  `adopt-or-create` without recreating the cluster or fighting a foreign applyset. The
+  hub instance converged to `IN_PROGRESS→(21/24 synced)` purely gated by the SG/OIDC
+  issue, not by any applyset GC conflict. This was the primary unknown — now observed OK.
+- **🔴 CONFIRMED-BLOCKING — ingress SecurityGroups + OIDC provider.** Must carry
+  `adopt-or-create` (+ `adoption-fields`): see the Class-2 caveat above and
+  Deliverable #3. Until then the pivot cannot reach GO.
 - **Bootstrap window.** kind must survive until the hub ACK/KRO capabilities are
   healthy (already sequenced in `install`). `hub:pivot` is a **separate, explicit**
-  task — not wired into `install` — until proven.
+  task — not wired into `install`.
 - **Teardown interaction.** `task destroy` currently assumes kind manages the hub.
-  After a pivot the hub self-manages; `destroy` must delete the hub-side EksCluster
-  CR (on the hub) rather than the kind one. Needs a follow-up to the destroy path.
+  After a completed pivot the hub self-manages; `destroy` must delete the hub-side
+  EksCluster CR (on the hub). Needs a follow-up to the destroy path (Deliverable #5).
 
 ## Deliverables (incremental)
 
-1. `HUB-PIVOT-DESIGN.md` (this doc).
-2. `task hub:pivot` in `cluster-providers/kind-kro-ack/Taskfile.yaml`, **dry-run
-   first** (`PIVOT_DRY_RUN=true` prints the hub-side manifest + the adoption-complete
-   go/no-go, mutates nothing). Detach = `kind delete cluster` (not a graceful CR
-   delete), so no retain audit is needed on the pivot path.
-3. `rg-eks.yaml` retain-coverage fix: add `deletion-policy:
-   "${schema.spec.deletionPolicy}"` to the `ekscluster`, ingress `SecurityGroup`,
-   and `AccessEntry` nodes. **Decoupled from the pivot** — this hardens the
-   `task destroy` graceful-teardown path (so an intentional `retain` destroy does
-   not delete those three node types); the pivot itself does not depend on it.
-4. (fallback path) ec2 `adoption-fields` generation helper for `EksclusterWithVpc`
+1. ✅ `HUB-PIVOT-DESIGN.md` (this doc).
+2. ✅ `task hub:pivot` in `cluster-providers/kind-kro-ack/Taskfile.yaml`, with
+   `PIVOT_DRY_RUN=true` default + a `PIVOT_CONFIRM=yes` live gate + the
+   adoption-complete go/no-go. Detach via `PIVOT_DETACH_MODE` (`stop` default,
+   recoverable | `delete`), no graceful CR delete → no finalizer / no AWS Delete.
+3. 🔴 **`rg-eks.yaml` adoption fix — now a PIVOT BLOCKER (re-scoped after live run).**
+   Add true adoption to the three nodes that live-failed to sync:
+   - ingress `SecurityGroup`s (http/https): `adopt-or-create` + an AWS-ID/filter
+     `adoption-fields` (recreate is refuted — EC2 rejects the duplicate group-name).
+   - `OpenIDConnectProvider`: `adopt-or-create` + ARN `adoption-fields` (with the
+     CEL issuer scheme-strip), to avoid IAM `EntityAlreadyExists`.
+   Also add `deletion-policy: "${schema.spec.deletionPolicy}"` to the `ekscluster`,
+   ingress `SecurityGroup`, and `AccessEntry` nodes to harden the `task destroy`
+   graceful-teardown path. Until #3 lands, `hub:pivot` will correctly NO-GO at 21/24.
+4. ✅ (fallback path) ec2 `adoption-fields` generation helper for `EksclusterWithVpc`
    (`scripts/pivot-adopt-ec2.sh`).
-5. destroy-path follow-up (post-pivot teardown targets the hub-side CR).
-6. Validation on a live kind+hub (the only way to de-risk the KRO applyset question).
+5. ⬜ destroy-path follow-up (post-pivot teardown targets the hub-side CR).
+6. ✅ Validation on a live kind+hub — **done 2026-10-11** (see "Live validation"
+   above): adopt-in-place + stop-first + gate fail-closed all confirmed; surfaced the
+   #3 blocker. The remaining re-run to GREEN depends on #3.
