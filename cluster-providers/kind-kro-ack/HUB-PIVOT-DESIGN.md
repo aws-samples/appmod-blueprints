@@ -194,9 +194,12 @@ NOT performed (finalizer hazard — requires the Deliverable #3 fix first).
   `adopt-or-create` without recreating the cluster or fighting a foreign applyset. The
   hub instance converged to `IN_PROGRESS→(21/24 synced)` purely gated by the SG/OIDC
   issue, not by any applyset GC conflict. This was the primary unknown — now observed OK.
-- **🔴 CONFIRMED-BLOCKING — ingress SecurityGroups + OIDC provider.** Must carry
-  `adopt-or-create` (+ `adoption-fields`): see the Class-2 caveat above and
-  Deliverable #3. Until then the pivot cannot reach GO.
+- **🟢 RESOLVED — ingress SecurityGroups + OIDC provider.** Now carry
+  `adopt-or-create` (Deliverable #3): the SGs adopt by `(group-name, vpc-id)` with no
+  adoption-fields (ACK `getSecurityGroupID`), the OIDC provider by a derived ARN
+  `adoption-fields`. Verified against the ec2/iam controller source. A hub re-apply
+  will adopt all three in place instead of hitting EC2/IAM "already exists", so the
+  gate can reach GO (24/24). Re-run on a live kind+hub to confirm end-to-end GREEN.
 - **Bootstrap window.** kind must survive until the hub ACK/KRO capabilities are
   healthy (already sequenced in `install`). `hub:pivot` is a **separate, explicit**
   task — not wired into `install`.
@@ -211,15 +214,30 @@ NOT performed (finalizer hazard — requires the Deliverable #3 fix first).
    `PIVOT_DRY_RUN=true` default + a `PIVOT_CONFIRM=yes` live gate + the
    adoption-complete go/no-go. Detach via `PIVOT_DETACH_MODE` (`stop` default,
    recoverable | `delete`), no graceful CR delete → no finalizer / no AWS Delete.
-3. 🔴 **`rg-eks.yaml` adoption fix — now a PIVOT BLOCKER (re-scoped after live run).**
-   Add true adoption to the three nodes that live-failed to sync:
-   - ingress `SecurityGroup`s (http/https): `adopt-or-create` + an AWS-ID/filter
-     `adoption-fields` (recreate is refuted — EC2 rejects the duplicate group-name).
-   - `OpenIDConnectProvider`: `adopt-or-create` + ARN `adoption-fields` (with the
-     CEL issuer scheme-strip), to avoid IAM `EntityAlreadyExists`.
-   Also add `deletion-policy: "${schema.spec.deletionPolicy}"` to the `ekscluster`,
-   ingress `SecurityGroup`, and `AccessEntry` nodes to harden the `task destroy`
-   graceful-teardown path. Until #3 lands, `hub:pivot` will correctly NO-GO at 21/24.
+3. 🟢 **`rg-eks.yaml` adoption fix — IMPLEMENTED (the pivot blocker).** True adoption
+   added to the two nodes that live-failed to sync, verified against the ACK
+   controller source:
+   - ingress `SecurityGroup`s (http/https): `adopt-or-create` with **NO
+     `adoption-fields`**. ACK's ec2 `SecurityGroup` find (`getSecurityGroupID`)
+     resolves the live `sg-id` from a `(group-name, vpc-id)` filter when `Status.ID`
+     is unset — both are already in `spec` — so the same manifest CREATES on a fresh
+     cluster and ADOPTS on pivot. (This refines the earlier "AWS-ID/filter
+     adoption-fields" guess: no runtime id injection is needed; recreate is still
+     refuted — EC2 rejects the duplicate group-name.)
+   - `OpenIDConnectProvider`: `adopt-or-create` + ARN `adoption-fields`. OIDC find
+     uses `GetOpenIDConnectProvider` (ARN-keyed) and cannot match by a spec
+     attribute, so the ARN must be supplied. It is derivable with a CEL scheme-strip:
+     `arn:<partition>:iam::<accountId>:oidc-provider/<issuer.replace("https://","")>`
+     (kro enables `ext.Strings()`), mirroring the existing cni-metrics-helper Policy
+     adoption-fields pattern. On a fresh cluster the ARN does not exist →
+     `NoSuchEntity` → ACK creates.
+   This makes `hub:pivot` able to reach GO (24/24) on a re-run.
+
+   ⬜ **Remaining (destroy-path hardening, NOT a pivot blocker):** add
+   `deletion-policy: "${schema.spec.deletionPolicy}"` to the `ekscluster` and the
+   `AccessEntry` nodes too (the SG nodes already got it with this fix). This only
+   affects a graceful `task destroy` with `deletionPolicy=retain`; it is independent
+   of the pivot, which never graceful-deletes. Deferred as a separable follow-up.
 4. ✅ (fallback path) ec2 `adoption-fields` generation helper for `EksclusterWithVpc`
    (`scripts/pivot-adopt-ec2.sh`).
 5. ⬜ destroy-path follow-up (post-pivot teardown targets the hub-side CR).

@@ -168,6 +168,16 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            # #775 hub self-adoption pivot: adopt an existing ingress SG instead of a
+            # bare Create that fails Terminal "Resource already exists" on a pivot/re-run
+            # (EC2 rejects a duplicate group-name in a VPC). NO adoption-fields are needed:
+            # ACK's SecurityGroup find resolves the live sg-id from (group-name, vpc-id)
+            # when Status.ID is unset (ec2-controller getSecurityGroupID), and both are in
+            # spec — so the same manifest CREATES on a fresh cluster and ADOPTS on pivot.
+            services.k8s.aws/adoption-policy: adopt-or-create
+            # Honored only on a graceful kubectl-delete (task destroy); the pivot never
+            # graceful-deletes, so this does not affect adoption.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-ingress-http"
           description: "HTTP from anywhere"
@@ -213,6 +223,16 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            # #775 hub self-adoption pivot: adopt an existing ingress SG instead of a
+            # bare Create that fails Terminal "Resource already exists" on a pivot/re-run
+            # (EC2 rejects a duplicate group-name in a VPC). NO adoption-fields are needed:
+            # ACK's SecurityGroup find resolves the live sg-id from (group-name, vpc-id)
+            # when Status.ID is unset (ec2-controller getSecurityGroupID), and both are in
+            # spec — so the same manifest CREATES on a fresh cluster and ADOPTS on pivot.
+            services.k8s.aws/adoption-policy: adopt-or-create
+            # Honored only on a graceful kubectl-delete (task destroy); the pivot never
+            # graceful-deletes, so this does not affect adoption.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-ingress-https"
           description: "HTTPS from anywhere"
@@ -434,6 +454,16 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            # #775 hub self-adoption pivot: OIDC providers are keyed by ARN
+            # (GetOpenIDConnectProvider needs it) and ACK cannot find one from a spec
+            # attribute, so adopt-or-create REQUIRES the ARN in adoption-fields —
+            # otherwise a pivot/re-run hits IAM Terminal "EntityAlreadyExists". The ARN
+            # is derivable: issuer from status minus the https:// scheme, under this
+            # account/partition. On a fresh cluster the ARN does not exist yet ->
+            # GetOpenIDConnectProvider NoSuchEntity -> ACK creates (same as the
+            # cni-metrics-helper Policy adoption-fields pattern above).
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:${schema.spec.aws_partition}:iam::${schema.spec.accountId}:oidc-provider/${ekscluster.status.identity.oidc.issuer.replace("https://", "")}"}
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             # force dependency on ekscluster: the OIDC issuer only exists once ACTIVE
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
@@ -1096,12 +1126,15 @@ spec:
     # it does not leak on teardown because the association is cluster-scoped and
     # dies with the EKS Cluster (which is delete, not retain).
     #
-    # SCOPE: this adopt-or-create default is applied to PodIdentityAssociations
-    # only. The other ACK resources in this RGD (Cluster, SecurityGroup, Role,
-    # AccessEntry, Capability, Addon) still do a plain Create and are NOT set to
-    # cluster / IAM role is a larger, riskier design decision tracked separately
-    # in https://github.com/aws-samples/appmod-blueprints/issues/775 ("adopt
-    # existing cluster"). Do not widen adopt-or-create beyond PIAs in this PR.
+    # SCOPE / HISTORY: adopt-or-create started here on PodIdentityAssociations only.
+    # #855 then widened it to every name/attribute-keyed resource (Cluster, Role,
+    # AccessEntry, Capability, cni Policy, OIDC). #775 (hub self-adoption pivot)
+    # completes it on the last two create-only nodes — the ingress SecurityGroups
+    # (adopted by group-name+vpc-id, no adoption-fields) and the OIDC provider
+    # (adopted by derived ARN) — so a hub re-apply ADOPTS the live resources in place
+    # instead of colliding with EC2/IAM "already exists". See
+    # https://github.com/aws-samples/appmod-blueprints/issues/775 ("adopt existing
+    # cluster"). Every ACK resource in this RGD is now adopt-or-create.
     ###########################################################
     - id: externalSecretsPodIdentityAssociation
       readyWhen:
