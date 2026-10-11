@@ -187,6 +187,40 @@ hub as sole manager of the adopted resources, real cluster + spokes healthy. No
 destructive action taken; the risky retain-delete of the hub-side CR was deliberately
 NOT performed (finalizer hazard — requires the Deliverable #3 fix first).
 
+### Re-run attempt after the Deliverable #3 fix (2026-10-11) — why in-place validation is not possible on an already-provisioned event
+
+After implementing the SG/OIDC `adopt-or-create` fix, I attempted to drive the same
+event's 3 stuck children to GREEN by applying the fixed `ekscluster.kro.run` RGD to the
+live hub. **This cannot be validated in-place on a provisioned event**, for a structural
+reason worth recording:
+
+- The event's RGD is reconciled by an **ArgoCD ApplicationSet-managed** app
+  (`kro-clusters-rgds-hub-peeks-hub`) with **`selfHeal: true`**, sourced from the
+  **event's provisioning branch** (which predates #1033). A `kubectl apply` of the fixed
+  RGD is **reverted by selfHeal within the resync window** — faster than kro recreates a
+  deleted child, so freshly-rendered children are born from the *reverted* (pre-fix) RGD.
+- Two approaches were tried and both lose to selfHeal: (a) apply-and-nudge — ACK terminal
+  CRs do **not** auto-requeue on an annotation-only change (known behavior), so the
+  children stay terminal; (b) apply-then-delete/recreate — selfHeal restores the pre-fix
+  RGD before kro re-renders, so the recreated SG has `adoption-policy=None` and the
+  recreated OIDC has `adopt-or-create` **but no `adoption-fields`** (confirming the
+  event-branch RGD is missing both halves of the #1033 fix).
+- Disabling selfHeal on the child app is **reverted by the parent ApplicationSet**;
+  disabling it on the ApplicationSet would stop reconciliation of **all** cluster RGDs on
+  a shared workshop hub — too intrusive for a validation.
+
+**All mutations were AWS-safe and left the event no worse than before:** the deleted SG
+child CRs had empty `Status.ID` (ACK finalizer no-op) and were `retain`-annotated
+defensively; the real ingress SGs, the EKS cluster (original creation time), and both
+spokes remained intact. Net state == pre-attempt (21/24, same 3 terminal).
+
+**Faithful validation of 24/24 GREEN = a fresh deploy from this branch** (RGD correct
+from t=0 → children born with `adopt-or-create` [+ OIDC `adoption-fields`], no selfHeal
+fight), or repointing the event's addons source at #1033. The in-place re-run did,
+however, independently **re-confirm the fix is necessary and correctly targeted**: the
+live event-branch RGD lacks SG `adopt-or-create` and OIDC `adoption-fields`, which is
+exactly why those 3 children are terminal.
+
 ## Risks / open questions
 
 - **✅ RESOLVED — KRO applyset ownership on re-apply.** Re-applying the instance on the
@@ -209,7 +243,7 @@ NOT performed (finalizer hazard — requires the Deliverable #3 fix first).
 
 ## Deliverables (incremental)
 
-1. ✅ `HUB-PIVOT-DESIGN.md` (this doc).
+1. ✅ `docs/platform/hub-self-adoption-pivot.md` (this doc).
 2. ✅ `task hub:pivot` in `cluster-providers/kind-kro-ack/Taskfile.yaml`, with
    `PIVOT_DRY_RUN=true` default + a `PIVOT_CONFIRM=yes` live gate + the
    adoption-complete go/no-go. Detach via `PIVOT_DETACH_MODE` (`stop` default,
@@ -233,11 +267,13 @@ NOT performed (finalizer hazard — requires the Deliverable #3 fix first).
      `NoSuchEntity` → ACK creates.
    This makes `hub:pivot` able to reach GO (24/24) on a re-run.
 
-   ⬜ **Remaining (destroy-path hardening, NOT a pivot blocker):** add
-   `deletion-policy: "${schema.spec.deletionPolicy}"` to the `ekscluster` and the
-   `AccessEntry` nodes too (the SG nodes already got it with this fix). This only
-   affects a graceful `task destroy` with `deletionPolicy=retain`; it is independent
-   of the pivot, which never graceful-deletes. Deferred as a separable follow-up.
+   ✅ **Destroy-path hardening — IMPLEMENTED.** `deletion-policy:
+   "${schema.spec.deletionPolicy}"` now also on the `ekscluster` (`Cluster`) node and
+   all six `AccessEntry` nodes (`access-entry`, `-argocd-capability`, `-admin`,
+   `-admin-instance`, `-argocd-capability-access`, `-ack-capability-access`), matching
+   every Role/PIA/SG node. This only affects a graceful `task destroy` with
+   `deletionPolicy=retain` (so a retained hub is never issued `DeleteCluster` /
+   access-entry deletes); it is independent of the pivot, which never graceful-deletes.
 4. ✅ (fallback path) ec2 `adoption-fields` generation helper for `EksclusterWithVpc`
    (`scripts/pivot-adopt-ec2.sh`).
 5. ⬜ destroy-path follow-up (post-pivot teardown targets the hub-side CR).
