@@ -72,50 +72,70 @@ hub (installed by the normal addons sync); kind reachable.
 2. (EksclusterWithVpc fallback only) read live ec2 IDs from the kind Vpc CR
    .status and generate adoption-fields for VPC/subnets/IGW/NAT/EIP/routetables.
    Skip entirely on the EksCluster (pre-created-VPC) path.
-3. Apply the EksCluster manifest on the HUB context. Because every child carries
-   adopt-or-create, the hub's ACK adopts the existing AWS resources in place —
-   no recreate, no 409. KRO rebuilds the instance graph; readyWhen gates on the
-   live cluster being ACTIVE (already true) so it converges fast.
-4. Wait: hub-side EksCluster instance Active && all child ACK CRs
-   ACK.ResourceSynced=True (reuse the hub:wait-for-* pattern).
-5. DETACH from kind (order matters):
-     a. patch kind CRs: services.k8s.aws/deletion-policy: retain  (schema field
-        spec.deletionPolicy already exists; set it to "retain" and let it
-        propagate, OR kubectl annotate the child CRs directly for the transient).
-     b. kubectl delete the kind EksCluster CR  → ACK removes the K8s CRs but
-        RETAINS the AWS resources (now solely owned by the hub-side CRs).
-     c. VERIFY no AWS deletion: re-describe the EKS cluster + roles still exist.
-6. kind delete cluster.
-7. Idempotency: a re-run is a no-op (adopt-or-create reconciles; delete of an
-   absent kind cluster is tolerated).
+3. STOP kind FIRST (before adopting), to avoid both kind's and the hub's kro/ACK
+   controllers reconciling the same AWS resources at once:
+     docker stop $(kind node containers for this cluster)
+   This halts kind's kube-apiserver + kro/ACK controller pods but PRESERVES etcd in
+   the container filesystem — fully recoverable with `docker start`. The live AWS
+   resources (EKS cluster, roles, PIAs, OIDC, SGs) need no controller to keep
+   running, so the brief no-manager window between stop and hub-adopt is harmless.
+4. Apply the EksCluster manifest on the HUB context. With kind stopped, ONLY the hub
+   reconciles. Because every child carries adopt-or-create, the hub's ACK adopts the
+   existing AWS resources in place — no recreate, no 409, no dual-manager conflict.
+   KRO rebuilds the instance graph; readyWhen gates on the live cluster being ACTIVE
+   (already true) so it converges fast.
+5. Wait (THE safety gate): hub-side EksCluster instance Active && EVERY kro-owned
+   child CR synced (ACK.ResourceSynced/Ready/Synced = True). This is the single
+   go/no-go — the hub must demonstrably own every resource before kind is discarded.
+6. DETACH outcome — PIVOT_DETACH_MODE:
+     stop   (DEFAULT): leave kind STOPPED. Fully recoverable (`docker start`) while
+            the procedure is still being validated. kind's CRs still exist in its
+            (stopped) etcd but no controller is running them, so no AWS delete fires.
+     delete: `kind delete cluster` — removes the node containers (docker rm -f),
+            taking etcd + controllers atomically. No deletionTimestamp is ever set on
+            the CR, so NO finalizer runs and ACK never issues an AWS Delete. Permanent.
+   On gate FAILURE: `docker start` the kind nodes to resume kind management (abort);
+   nothing on the hub or kind is deleted.
+7. Idempotency: a re-run is a no-op (adopt-or-create reconciles; a stopped/absent kind
+   is tolerated).
 ```
 
-### Why detach is safe — and the gap that makes it NOT safe yet
+### Why this ordering is safe — stop kind first, never `kubectl delete` the CR
 
-`deletion-policy: retain` on the kind side is the #855 enabler: deleting a CR with
-`retain` orphans the AWS resource instead of calling the AWS Delete API. The hub-side
-CR already **adopted** the same AWS resource in step 3, so after detach it is owned by
-exactly one manager (the hub).
+Stopping kind **before** adopting removes the only real hazard of a dual-manager
+window: with kind's apiserver + kro/ACK controllers down, only the hub reconciles the
+adopted resources, so the two controller sets never fight over the same AWS objects.
+The AWS resources are stable without any controller, so the stop→adopt gap is benign.
 
-> **⚠️ Coverage gap (found reading `rg-eks.yaml`).** `deletion-policy:
-> "${schema.spec.deletionPolicy}"` is wired on the **Roles, PodIdentityAssociations,
-> OIDCProvider and Capabilities**, but **NOT** on the `Cluster`, the ingress
-> `SecurityGroup`s, or the `AccessEntry`s (those carry `adopt-or-create` only).
-> With `deletionPolicy=retain` set on the instance, those three node types would
-> still default to **delete** — so deleting the kind `EksCluster` CR would **delete
-> the real EKS cluster**. This is the single most dangerous step.
+The pivot also deliberately **avoids** the graceful-delete path. `deletion-policy` (the
+#855 `retain` enabler) only takes effect when a CR is gracefully deleted (`kubectl
+delete` sets a deletion timestamp → ACK's finalizer calls the AWS Delete API). Neither
+`stop` (leave kind halted) nor `delete` (`kind delete cluster`, which destroys the
+container outright) ever sets a deletion timestamp on the CR — so there is **no
+deletion event, no finalizer, no AWS Delete call**. The AWS resources survive, and the
+hub already adopted them in steps 4–5, so the hub is their sole manager.
+
+> **This is why the `retain` coverage gap does NOT block the pivot.** `deletion-policy:
+> "${schema.spec.deletionPolicy}"` is wired on the Roles/PIAs/OIDC/Capabilities but
+> NOT on the `Cluster`, ingress `SecurityGroup`s, or `AccessEntry`s. That gap would
+> only bite a **graceful** `kubectl delete` of the CR — which the pivot never does.
+> Stopping or discarding kind sidesteps `deletion-policy` entirely.
 >
-> Therefore the detach must guarantee retain on **every** live child ACK CR. Two ways:
-> 1. **RGD change (preferred):** add `services.k8s.aws/deletion-policy:
->    "${schema.spec.deletionPolicy}"` to the `ekscluster`, `ingressHttp/Https
->    SecurityGroup`, and all `AccessEntry` nodes, then `kubectl patch` the instance
->    `spec.deletionPolicy: retain` and let KRO re-propagate before delete.
-> 2. **Task-level authoritative annotate:** `kubectl annotate` every live child ACK
->    CR with `deletion-policy: retain` directly before delete (bypasses the RGD).
+> **Absolute rules during the pivot window** (this is where the missing `retain`
+> WOULD be dangerous):
+> 1. NEVER `kubectl delete` the kind `EksCluster` CR (or its namespace) — fires
+>    finalizers → with the gap, the real cluster would be deleted.
+> 2. NEVER run `task destroy` mid-pivot — same graceful-delete hazard.
+> 3. To ABORT, `docker start` kind — do NOT `kubectl delete` the hub-side instance to
+>    "undo" an adopt (same finalizer hazard, now on the hub side).
 >
-> **Fail-closed rule for `hub:pivot`:** before any delete, enumerate every live ACK CR
-> owned by the kind `EksCluster` and assert each carries `deletion-policy: retain`.
-> If any is missing → **abort**. The dry-run reports this go/no-go and mutates nothing.
+> **Fail-closed rule for `hub:pivot`:** the go/no-go is the *adoption-complete* check in
+> step 5 (hub instance Active + all kro-owned children synced), NOT a retain audit.
+> If the hub has not fully adopted → **abort** (leave/restart kind), never detach.
+> The dry-run reports this and mutates nothing.
+>
+> The `retain`-coverage fix (deliverable #3) is still worth landing, but for the
+> **`task destroy` graceful-teardown path**, not for the pivot.
 
 ### Crossplane re-point (issue step 6)
 
@@ -147,11 +167,14 @@ provider PIAs are healthy before kind is deleted (they are, post-install).
 
 1. `HUB-PIVOT-DESIGN.md` (this doc).
 2. `task hub:pivot` in `cluster-providers/kind-kro-ack/Taskfile.yaml`, **dry-run
-   first** (`PIVOT_DRY_RUN=true` prints the hub-side manifest + the detach plan +
-   the retain go/no-go, mutates nothing).
+   first** (`PIVOT_DRY_RUN=true` prints the hub-side manifest + the adoption-complete
+   go/no-go, mutates nothing). Detach = `kind delete cluster` (not a graceful CR
+   delete), so no retain audit is needed on the pivot path.
 3. `rg-eks.yaml` retain-coverage fix: add `deletion-policy:
    "${schema.spec.deletionPolicy}"` to the `ekscluster`, ingress `SecurityGroup`,
-   and `AccessEntry` nodes (closes the gap above so a `retain` detach is safe).
+   and `AccessEntry` nodes. **Decoupled from the pivot** — this hardens the
+   `task destroy` graceful-teardown path (so an intentional `retain` destroy does
+   not delete those three node types); the pivot itself does not depend on it.
 4. (fallback path) ec2 `adoption-fields` generation helper for `EksclusterWithVpc`
    (`scripts/pivot-adopt-ec2.sh`).
 5. destroy-path follow-up (post-pivot teardown targets the hub-side CR).

@@ -2700,16 +2700,25 @@ tasks:
   hub:pivot:
     desc: >-
       [#775] Move management of the hub EksCluster from the ephemeral kind cluster to
-      the hub EKS cluster itself (self-adoption), then it is safe to delete kind.
-      DRY-RUN by default (PIVOT_DRY_RUN=true) — inventories, prints the hub-side
-      manifest + detach plan + retain go/no-go, and MUTATES NOTHING. The real pivot
-      additionally requires PIVOT_CONFIRM=yes (experimental, validate on a test env).
+      the hub EKS cluster itself (self-adoption), then it is safe to stop/delete kind.
+      DRY-RUN by default (PIVOT_DRY_RUN=true) — inventories kind-side children, prints
+      the hub-side manifest + pivot plan, and MUTATES NOTHING. The real pivot
+      (PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes) STOPS kind first (so only the hub
+      reconciles — no dual-controller conflict), adopts on the hub, GATES on adoption
+      being complete (hub instance ACTIVE + every kro-owned child synced), then detaches
+      per PIVOT_DETACH_MODE (stop=default, leaves kind stopped & recoverable; delete=
+      `kind delete cluster`). No graceful CR delete, so no finalizer runs and
+      deletion-policy is never consulted (the rg-eks.yaml retain gap is irrelevant to
+      the pivot; it only matters for the `task destroy` graceful path).
     vars:
       PIVOT_DRY_RUN: '{{.PIVOT_DRY_RUN | default "true"}}'
       PIVOT_CONFIRM: '{{.PIVOT_CONFIRM | default "no"}}'
       KINDKC: '{{.ROOT_DIR}}/private/kubeconfig'
       HUBKC: '{{.ROOT_DIR}}/private/hub-kubeconfig'
       HUB_KIND: '{{if .HUB_VPC_ID}}EksCluster{{else}}EksclusterWithVpc{{end}}'
+      PIVOT_ADOPT_TIMEOUT_SEC: '{{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}}'
+      PIVOT_ADOPT_INTERVAL_SEC: '{{.PIVOT_ADOPT_INTERVAL_SEC | default "20"}}'
+      PIVOT_DETACH_MODE: '{{.PIVOT_DETACH_MODE | default "stop"}}'
     cmds:
       - task: hub:kubeconfig
       - |
@@ -2757,33 +2766,45 @@ tasks:
           : > "$WORK/ec2-adopt.yaml"
         fi
 
-        # --- 3. Retain go/no-go: every live child ACK CR must retain on detach --
-        # deletion-policy coverage gap (#775): Cluster/SecurityGroup/AccessEntry nodes
-        # in rg-eks.yaml carry adopt-or-create but NOT deletion-policy, so a bare delete
-        # of the kind CR would DELETE the real cluster. Assert retain on all children.
-        printf '{{.C_STEP}}▸ Retain coverage check (kind-side children)…{{.C_RESET}}\n'
-        NOGO=0
-        # ACK resource kinds the EksCluster graph creates that have an AWS side-effect:
-        for gk in cluster.eks.services.k8s.aws accessentry.eks.services.k8s.aws \
-                  securitygroup.ec2.services.k8s.aws; do
-          for cr in $(kind_k -n "$NS" get "$gk" -o name 2>/dev/null); do
-            dp=$(kind_k -n "$NS" get "$cr" \
-                  -o jsonpath='{.metadata.annotations.services\.k8s\.aws/deletion-policy}' 2>/dev/null || true)
-            if [ "$dp" != "retain" ]; then
-              printf '{{.C_ERR}}  ✗ %-55s deletion-policy=%s (needs retain){{.C_RESET}}\n' "$cr" "${dp:-<unset>}"
-              NOGO=1
-            else
-              printf '{{.C_OK}}  ✓ %-55s retain{{.C_RESET}}\n' "$cr"
-            fi
+        # --- 3. Inventory kind-side AWS-backed children (informational) --------
+        # The pivot ADOPTS these on the hub, then discards kind WITHOUT a graceful CR
+        # delete. No deletionTimestamp is ever set, so no ACK finalizer runs and no AWS
+        # Delete API is called -> deletion-policy is never consulted. The rg-eks.yaml
+        # retain gap is therefore IRRELEVANT to the pivot (it only matters for the
+        # graceful `task destroy` path). The real safety gate is adoption completeness.
+        printf '{{.C_STEP}}▸ kind-side AWS-backed children (will be adopted on the hub)…{{.C_RESET}}\n'
+        # The EksCluster kro graph produces these namespaced, kro-owned ACK children.
+        # (Cluster-scoped Crossplane roles.iam.aws.upbound.io are platform GitOps roles,
+        # NOT children of this instance — excluded. Confirmed live on peeks-hub.)
+        CHILD_GKS="cluster.eks.services.k8s.aws accessentry.eks.services.k8s.aws securitygroup.ec2.services.k8s.aws podidentityassociation.eks.services.k8s.aws role.iam.services.k8s.aws openidconnectprovider.iam.services.k8s.aws"
+        for gk in $CHILD_GKS; do
+          for cr in $(kind_k -n "$NS" get "$gk" -l kro.run/owned=true -o name 2>/dev/null); do
+            printf '{{.C_INFO}}  • %s{{.C_RESET}}\n' "$cr"
           done
         done
-        if [ "$NOGO" = 1 ]; then
-          printf '{{.C_ERR}}✗ NO-GO: some AWS-backed child CRs are not retain. Apply the rg-eks.yaml{{.C_RESET}}\n'
-          printf '{{.C_ERR}}  retain-coverage fix (deletion-policy on Cluster/SecurityGroup/AccessEntry){{.C_RESET}}\n'
-          printf '{{.C_ERR}}  and set spec.deletionPolicy=retain before detaching.{{.C_RESET}}\n'
-        else
-          printf '{{.C_OK}}✓ GO: all AWS-backed child CRs are retain-safe for detach.{{.C_RESET}}\n'
-        fi
+
+        # adoption_gate <kubeconfig-accessor-fn>: prints per-child readiness on the hub;
+        # returns 0 only if the hub instance is ACTIVE AND every AWS-backed child reports
+        # synced/ready. Call ONLY in a condition context (returns non-zero by design).
+        adoption_gate() {
+          local K="$1"; local notready=0 st cr ok
+          st=$($K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o jsonpath='{.status.state}' 2>/dev/null || true)
+          printf '{{.C_INFO}}  hub instance {{.HUB_KIND}}/%s state=%s{{.C_RESET}}\n' "$HUB" "${st:-<none>}"
+          [ "$st" = "ACTIVE" ] || notready=1
+          for gk in $CHILD_GKS; do
+            for cr in $($K -n "$NS" get "$gk" -l kro.run/owned=true -o name 2>/dev/null); do
+              ok=$($K -n "$NS" get "$cr" -o jsonpath='{range .status.conditions[*]}{.type}={.status} {end}' 2>/dev/null \
+                    | grep -oE '(ACK\.ResourceSynced|Synced|Ready)=True' | head -1 || true)
+              if [ -n "$ok" ]; then
+                printf '{{.C_OK}}    ✓ %-55s synced{{.C_RESET}}\n' "$cr"
+              else
+                printf '{{.C_ERR}}    ✗ %-55s NOT synced{{.C_RESET}}\n' "$cr"
+                notready=1
+              fi
+            done
+          done
+          return $notready
+        }
 
         # --- Dry-run output ----------------------------------------------------
         printf '{{.C_STEP}}▸ Hub-side instance manifest (would be applied on %s):{{.C_RESET}}\n' "$HUB"
@@ -2791,7 +2812,7 @@ tasks:
         if [ -s "$WORK/ec2-adopt.yaml" ]; then
           printf '{{.C_STEP}}▸ ec2 adoption manifests:{{.C_RESET}}\n'; sed 's/^/    /' "$WORK/ec2-adopt.yaml"
         fi
-        printf '{{.C_STEP}}▸ Detach plan: patch spec.deletionPolicy=retain -> wait propagate -> delete kind %s/%s -> verify no AWS deletion -> kind delete cluster.{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
+        printf '{{.C_STEP}}▸ Pivot plan: stop kind nodes (docker stop) -> apply manifest on hub (adopt-or-create, single reconciler) -> WAIT adoption-complete (instance ACTIVE + every kro-owned child synced) -> detach=%s (stop: leave kind stopped & recoverable | delete: kind delete cluster). No kubectl delete of the CR, so no finalizer / no AWS Delete.{{.C_RESET}}\n' '{{.PIVOT_DETACH_MODE}}'
 
         if [ "{{.PIVOT_DRY_RUN}}" = "true" ]; then
           printf '{{.C_OK}}✓ DRY-RUN complete — nothing mutated. Re-run with PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes to execute.{{.C_RESET}}\n'
@@ -2802,22 +2823,57 @@ tasks:
         if [ "{{.PIVOT_CONFIRM}}" != "yes" ]; then
           printf '{{.C_ERR}}✗ Refusing live pivot without PIVOT_CONFIRM=yes.{{.C_RESET}}\n'; exit 1
         fi
-        if [ "$NOGO" = 1 ]; then
-          printf '{{.C_ERR}}✗ Refusing live pivot: retain go/no-go failed (see above).{{.C_RESET}}\n'; exit 1
-        fi
-        printf '{{.C_STEP}}▸ [LIVE] adopting on hub…{{.C_RESET}}\n'
+
+        # Identify this cluster's kind node containers (label set by kind).
+        KIND_NODES=$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}" 2>/dev/null || true)
+
+        # STOP kind FIRST — halt its kube-apiserver + kro/ACK controllers so ONLY the
+        # hub reconciles the adopted resources (no dual-manager conflict). docker stop
+        # preserves etcd in the container fs -> recoverable with `docker start`.
+        printf '{{.C_STEP}}▸ [LIVE] stopping kind nodes so only the hub reconciles…{{.C_RESET}}\n'
+        if [ -n "$KIND_NODES" ]; then docker stop $KIND_NODES; \
+          else printf '{{.C_INFO}}  no running kind nodes for {{.KIND_CLUSTER_NAME}} (already stopped?).{{.C_RESET}}\n'; fi
+
+        # ADOPT on the hub (kind is down -> single reconciler, no conflict).
+        printf '{{.C_STEP}}▸ [LIVE] adopting on hub (adopt-or-create)…{{.C_RESET}}\n'
         [ -s "$WORK/ec2-adopt.yaml" ] && hub_k apply -f "$WORK/ec2-adopt.yaml"
         hub_k create namespace "$NS" --dry-run=client -o yaml | hub_k apply -f -
         hub_k apply -f "$WORK/hub-instance.json"
-        printf '{{.C_STEP}}▸ [LIVE] waiting for hub-side %s/%s to be ACTIVE…{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
-        for i in $(seq 1 60); do
-          cs=$(hub_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o jsonpath='{.status.clusterState}{.status.state}' 2>/dev/null || true)
-          [ "$cs" = "ACTIVE" ] && break; sleep 15
+
+        # THE gate: do not detach until the hub demonstrably owns every resource.
+        printf '{{.C_STEP}}▸ [LIVE] waiting for adoption-complete (max {{.PIVOT_ADOPT_TIMEOUT_SEC}}s)…{{.C_RESET}}\n'
+        GATE_OK=0; GATE_LOG="$WORK/gate.out"
+        DEADLINE=$(( $(date +%s) + {{.PIVOT_ADOPT_TIMEOUT_SEC}} ))
+        while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+          if adoption_gate hub_k >"$GATE_LOG" 2>&1; then GATE_OK=1; break; fi
+          sleep {{.PIVOT_ADOPT_INTERVAL_SEC}}
         done
-        printf '{{.C_STEP}}▸ [LIVE] detaching from kind (retain)…{{.C_RESET}}\n'
-        kind_k -n "$NS" patch {{.HUB_KIND}}.kro.run "$HUB" --type merge -p '{"spec":{"deletionPolicy":"retain"}}'
-        sleep 30
-        kind_k -n "$NS" delete {{.HUB_KIND}}.kro.run "$HUB" --wait=true
-        # verify the real cluster still exists
-        aws eks describe-cluster --name "$HUB" --region "$REGION" --query 'cluster.status' --output text
-        printf '{{.C_OK}}✓ [LIVE] pivot done. kind is now safe to delete (kind delete cluster --name <name>).{{.C_RESET}}\n'
+        cat "$GATE_LOG" 2>/dev/null || true
+        if [ "$GATE_OK" != 1 ]; then
+          printf '{{.C_ERR}}✗ ADOPTION NOT COMPLETE within timeout — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Restarting kind to resume its management (recovering prior state)…{{.C_RESET}}\n'
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          printf '{{.C_ERR}}  Re-run when the hub is healthy; adopt-or-create is idempotent.{{.C_RESET}}\n'
+          exit 1
+        fi
+        printf '{{.C_OK}}✓ adoption-complete gate PASSED — the hub owns every resource.{{.C_RESET}}\n'
+
+        # DETACH outcome (PIVOT_DETACH_MODE: stop=default recoverable | delete=permanent).
+        # Neither path sets a deletionTimestamp on the CR, so no finalizer runs and ACK
+        # never issues an AWS Delete; the live resources stay, now solely hub-owned.
+        if [ "{{.PIVOT_DETACH_MODE}}" = "delete" ]; then
+          printf '{{.C_STEP}}▸ [LIVE] PIVOT_DETACH_MODE=delete — discarding kind %s (permanent)…{{.C_RESET}}\n' '{{.KIND_CLUSTER_NAME}}'
+          kind delete cluster --name '{{.KIND_CLUSTER_NAME}}'
+        else
+          printf '{{.C_OK}}▸ [LIVE] PIVOT_DETACH_MODE=stop — leaving kind STOPPED (recoverable via docker start).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Once validated, re-run with PIVOT_DETACH_MODE=delete to remove kind permanently.{{.C_RESET}}\n'
+        fi
+
+        # Verify the real EKS cluster survived.
+        sleep 5
+        FINAL=$(aws eks describe-cluster --name "$HUB" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null || echo MISSING)
+        if [ "$FINAL" = "ACTIVE" ]; then
+          printf '{{.C_OK}}✓ [LIVE] pivot done. %s ACTIVE and now self-managed by the hub (kind {{if eq .PIVOT_DETACH_MODE "delete"}}deleted{{else}}stopped{{end}}).{{.C_RESET}}\n' "$HUB"
+        else
+          printf '{{.C_ERR}}✗ [LIVE] post-pivot EKS status=%s (expected ACTIVE) — investigate.{{.C_RESET}}\n' "$FINAL"; exit 1
+        fi
