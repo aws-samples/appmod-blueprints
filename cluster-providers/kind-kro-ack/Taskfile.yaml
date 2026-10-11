@@ -2696,3 +2696,128 @@ tasks:
             done
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
+
+  hub:pivot:
+    desc: >-
+      [#775] Move management of the hub EksCluster from the ephemeral kind cluster to
+      the hub EKS cluster itself (self-adoption), then it is safe to delete kind.
+      DRY-RUN by default (PIVOT_DRY_RUN=true) — inventories, prints the hub-side
+      manifest + detach plan + retain go/no-go, and MUTATES NOTHING. The real pivot
+      additionally requires PIVOT_CONFIRM=yes (experimental, validate on a test env).
+    vars:
+      PIVOT_DRY_RUN: '{{.PIVOT_DRY_RUN | default "true"}}'
+      PIVOT_CONFIRM: '{{.PIVOT_CONFIRM | default "no"}}'
+      KINDKC: '{{.ROOT_DIR}}/private/kubeconfig'
+      HUBKC: '{{.ROOT_DIR}}/private/hub-kubeconfig'
+      HUB_KIND: '{{if .HUB_VPC_ID}}EksCluster{{else}}EksclusterWithVpc{{end}}'
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        set -euo pipefail
+        HUB='{{.HUB_CLUSTER_NAME}}'; NS="$HUB"
+        KINDKC='{{.KINDKC}}'; HUBKC='{{.HUBKC}}'; REGION='{{.AWS_REGION}}'
+        kind_k() { KUBECONFIG="$KINDKC" kubectl "$@"; }
+        hub_k()  { KUBECONFIG="$HUBKC"  kubectl "$@"; }
+
+        printf '{{.C_STEP}}▸ hub:pivot ({{if eq .PIVOT_DRY_RUN "true"}}DRY-RUN{{else}}LIVE{{end}}) for %s{{.C_RESET}}\n' "$HUB"
+
+        # --- Preconditions (fail-closed) --------------------------------------
+        if ! kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}✗ kind has no {{.HUB_KIND}}/%s in ns %s — nothing to pivot (already pivoted?).{{.C_RESET}}\n' "$HUB" "$NS"
+          exit 1
+        fi
+        for rgd in ekscluster.kro.run vpc.kro.run; do
+          hub_k get resourcegraphdefinition "$rgd" >/dev/null 2>&1 \
+            || { printf '{{.C_ERR}}✗ hub missing RGD %s — hub ACK/KRO addons not synced yet.{{.C_RESET}}\n' "$rgd"; exit 1; }
+        done
+        for cap in ack kro; do
+          st=$(aws eks list-addons --cluster-name "$HUB" --region "$REGION" >/dev/null 2>&1; \
+               aws eks describe-capability --cluster-name "$HUB" --name "$cap" --region "$REGION" \
+                 --query 'capability.status' --output text 2>/dev/null || echo UNKNOWN)
+          printf '{{.C_INFO}}  hub capability %-4s = %s{{.C_RESET}}\n' "$cap" "$st"
+        done
+
+        # --- 1. Serialize kind EksCluster spec -> hub-side manifest ------------
+        WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+        kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o json \
+          | jq 'del(.status,.metadata.managedFields,.metadata.uid,.metadata.resourceVersion,
+                    .metadata.generation,.metadata.creationTimestamp,.metadata.ownerReferences,
+                    .metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"])' \
+          > "$WORK/hub-instance.json"
+        printf '{{.C_OK}}✓ serialized kind %s/%s spec -> hub-side manifest{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
+
+        # --- 2. (fallback path) ec2 adoption-fields manifests ------------------
+        if [ "{{.HUB_KIND}}" = "EksclusterWithVpc" ]; then
+          printf '{{.C_INFO}}  EksclusterWithVpc path — generating Class-2 ec2 adoption manifests{{.C_RESET}}\n'
+          SRC_KUBECONFIG="$KINDKC" VPC_CR_NAME="$HUB" VPC_CR_NS="$NS" REGION="$REGION" \
+            bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-adopt-ec2.sh' \
+            > "$WORK/ec2-adopt.yaml" || true
+        else
+          printf '{{.C_INFO}}  EksCluster (pre-created VPC) path — no Class-2 ec2 adoption needed{{.C_RESET}}\n'
+          : > "$WORK/ec2-adopt.yaml"
+        fi
+
+        # --- 3. Retain go/no-go: every live child ACK CR must retain on detach --
+        # deletion-policy coverage gap (#775): Cluster/SecurityGroup/AccessEntry nodes
+        # in rg-eks.yaml carry adopt-or-create but NOT deletion-policy, so a bare delete
+        # of the kind CR would DELETE the real cluster. Assert retain on all children.
+        printf '{{.C_STEP}}▸ Retain coverage check (kind-side children)…{{.C_RESET}}\n'
+        NOGO=0
+        # ACK resource kinds the EksCluster graph creates that have an AWS side-effect:
+        for gk in cluster.eks.services.k8s.aws accessentry.eks.services.k8s.aws \
+                  securitygroup.ec2.services.k8s.aws; do
+          for cr in $(kind_k -n "$NS" get "$gk" -o name 2>/dev/null); do
+            dp=$(kind_k -n "$NS" get "$cr" \
+                  -o jsonpath='{.metadata.annotations.services\.k8s\.aws/deletion-policy}' 2>/dev/null || true)
+            if [ "$dp" != "retain" ]; then
+              printf '{{.C_ERR}}  ✗ %-55s deletion-policy=%s (needs retain){{.C_RESET}}\n' "$cr" "${dp:-<unset>}"
+              NOGO=1
+            else
+              printf '{{.C_OK}}  ✓ %-55s retain{{.C_RESET}}\n' "$cr"
+            fi
+          done
+        done
+        if [ "$NOGO" = 1 ]; then
+          printf '{{.C_ERR}}✗ NO-GO: some AWS-backed child CRs are not retain. Apply the rg-eks.yaml{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  retain-coverage fix (deletion-policy on Cluster/SecurityGroup/AccessEntry){{.C_RESET}}\n'
+          printf '{{.C_ERR}}  and set spec.deletionPolicy=retain before detaching.{{.C_RESET}}\n'
+        else
+          printf '{{.C_OK}}✓ GO: all AWS-backed child CRs are retain-safe for detach.{{.C_RESET}}\n'
+        fi
+
+        # --- Dry-run output ----------------------------------------------------
+        printf '{{.C_STEP}}▸ Hub-side instance manifest (would be applied on %s):{{.C_RESET}}\n' "$HUB"
+        jq -r '.' "$WORK/hub-instance.json" | sed 's/^/    /'
+        if [ -s "$WORK/ec2-adopt.yaml" ]; then
+          printf '{{.C_STEP}}▸ ec2 adoption manifests:{{.C_RESET}}\n'; sed 's/^/    /' "$WORK/ec2-adopt.yaml"
+        fi
+        printf '{{.C_STEP}}▸ Detach plan: patch spec.deletionPolicy=retain -> wait propagate -> delete kind %s/%s -> verify no AWS deletion -> kind delete cluster.{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
+
+        if [ "{{.PIVOT_DRY_RUN}}" = "true" ]; then
+          printf '{{.C_OK}}✓ DRY-RUN complete — nothing mutated. Re-run with PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes to execute.{{.C_RESET}}\n'
+          exit 0
+        fi
+
+        # --- LIVE path (experimental, gated) -----------------------------------
+        if [ "{{.PIVOT_CONFIRM}}" != "yes" ]; then
+          printf '{{.C_ERR}}✗ Refusing live pivot without PIVOT_CONFIRM=yes.{{.C_RESET}}\n'; exit 1
+        fi
+        if [ "$NOGO" = 1 ]; then
+          printf '{{.C_ERR}}✗ Refusing live pivot: retain go/no-go failed (see above).{{.C_RESET}}\n'; exit 1
+        fi
+        printf '{{.C_STEP}}▸ [LIVE] adopting on hub…{{.C_RESET}}\n'
+        [ -s "$WORK/ec2-adopt.yaml" ] && hub_k apply -f "$WORK/ec2-adopt.yaml"
+        hub_k create namespace "$NS" --dry-run=client -o yaml | hub_k apply -f -
+        hub_k apply -f "$WORK/hub-instance.json"
+        printf '{{.C_STEP}}▸ [LIVE] waiting for hub-side %s/%s to be ACTIVE…{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
+        for i in $(seq 1 60); do
+          cs=$(hub_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o jsonpath='{.status.clusterState}{.status.state}' 2>/dev/null || true)
+          [ "$cs" = "ACTIVE" ] && break; sleep 15
+        done
+        printf '{{.C_STEP}}▸ [LIVE] detaching from kind (retain)…{{.C_RESET}}\n'
+        kind_k -n "$NS" patch {{.HUB_KIND}}.kro.run "$HUB" --type merge -p '{"spec":{"deletionPolicy":"retain"}}'
+        sleep 30
+        kind_k -n "$NS" delete {{.HUB_KIND}}.kro.run "$HUB" --wait=true
+        # verify the real cluster still exists
+        aws eks describe-cluster --name "$HUB" --region "$REGION" --query 'cluster.status' --output text
+        printf '{{.C_OK}}✓ [LIVE] pivot done. kind is now safe to delete (kind delete cluster --name <name>).{{.C_RESET}}\n'
