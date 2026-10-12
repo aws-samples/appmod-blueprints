@@ -236,6 +236,15 @@ tasks:
       # Wait for ALL Crossplane providers (including ec2) to be Healthy.
       - task: hub:wait-for-providers
       - task: install:finalize
+      # [#1033] Self-adopt the hub EksCluster onto the hub itself, then detach from the
+      # ephemeral kind bootstrap cluster. Runs LAST, once the hub is fully synced: at this
+      # point NO spokes exist yet (the workshop/consumer enables them AFTER this generic
+      # install returns), so the pivot cannot perturb any spoke instance. Gated by
+      # HUB_PIVOT_ON_INSTALL (default true); set HUB_PIVOT_ON_INSTALL=false to keep the hub
+      # managed by kind and pivot manually later. Nothing after this (the workshop tail:
+      # cloudfront, set-overlay-repo, spokes:enable, idc, ray) depends on kind — they all
+      # target the hub + AWS APIs.
+      - task: install:pivot
       - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
   install:post-sync:
@@ -280,6 +289,29 @@ tasks:
       - hub:restart-langfuse
       - hub:restart-backstage
       - urls
+
+  install:pivot:
+    internal: true
+    desc: >-
+      [#1033] Self-adopt the hub EksCluster onto the hub and detach from the ephemeral
+      kind bootstrap cluster. Enabled by default; disable with HUB_PIVOT_ON_INSTALL=false.
+    vars:
+      HUB_PIVOT_ON_INSTALL: '{{.HUB_PIVOT_ON_INSTALL | default "true"}}'
+    cmds:
+      - |
+        if [ "{{.HUB_PIVOT_ON_INSTALL}}" != "true" ]; then
+          printf '{{.C_INFO}}  hub self-adoption pivot skipped (HUB_PIVOT_ON_INSTALL=%s). The hub stays managed by the kind bootstrap cluster; detach later with:\n    task kind-kro-ack:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes{{.C_RESET}}\n' '{{.HUB_PIVOT_ON_INSTALL}}'
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ [#1033] Automatic hub self-adoption pivot (detaching from kind bootstrap cluster)...{{.C_RESET}}\n'
+        # Recursive `task` invocation (same pattern as install:phase1-observability-bg) so
+        # ROOT_DIR and task namespacing resolve correctly. LIVE pivot, detach=stop (kind is
+        # left stopped & recoverable, not deleted). The pivot is fail-closed: its
+        # spoke-integrity guard aborts and restarts kind if any pre-existing spoke instance
+        # is perturbed, and the adoption gate only detaches once EVERY hub-side kro child is
+        # synced — which requires the Deliverable #9 `ack-self-manage-hub` IAM grant applied
+        # in hub:create-mgmt-roles (eks:Describe*/pod-identity on the hub's own cluster ARN).
+        cd "{{.ROOT_DIR}}" && task kind-kro-ack:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
@@ -2517,6 +2549,53 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
+        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
+        # [#1033 Deliverable #9] Allow the ACK capability role to SELF-MANAGE the hub's
+        # own EKS cluster + pod-identity associations. Required by hub:pivot: after the
+        # hub adopts EksCluster/<hub> (self-adoption off kind), the single reconciler is
+        # the hub's ACK EKS controller running AS this capability role (single-account,
+        # no CARM role mapping). AWS's managed AmazonEKSACKPolicy deliberately does NOT
+        # grant the capability role rights on its OWN cluster (a guardrail against a
+        # cluster's in-cluster controller mutating itself), so without this the pivot's
+        # adoption of the `cluster` + the 5 pod-identity-association children fails with
+        # `AccessDeniedException ... eks:DescribeCluster / eks:DescribePodIdentityAssociation
+        # on .../cluster/<hub> ... no identity-based policy allows the action` and the
+        # adoption gate never reaches GREEN. Scoped strictly to the hub's own cluster ARN
+        # (+ its pod-identity-association sub-resources) — not a blanket eks:* like the
+        # spoke cluster-mgmt-eks role. Same best-effort/re-applied-in-hub:seed semantics
+        # as ack-assume-role above.
+        aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-self-manage-hub --policy-document '{
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "SelfManageHubCluster",
+              "Effect": "Allow",
+              "Action": [
+                "eks:DescribeCluster",
+                "eks:UpdateClusterConfig",
+                "eks:UpdateClusterVersion",
+                "eks:ListPodIdentityAssociations",
+                "eks:CreatePodIdentityAssociation",
+                "eks:TagResource",
+                "eks:UntagResource",
+                "eks:ListTagsForResource"
+              ],
+              "Resource": "arn:aws:eks:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:cluster/{{.HUB_CLUSTER_NAME}}"
+            },
+            {
+              "Sid": "SelfManageHubPodIdentity",
+              "Effect": "Allow",
+              "Action": [
+                "eks:DescribePodIdentityAssociation",
+                "eks:UpdatePodIdentityAssociation",
+                "eks:DeletePodIdentityAssociation",
+                "eks:TagResource",
+                "eks:UntagResource",
+                "eks:ListTagsForResource"
+              ],
+              "Resource": "arn:aws:eks:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:podidentityassociation/{{.HUB_CLUSTER_NAME}}/*"
+            }
+          ]
         }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 

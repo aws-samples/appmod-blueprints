@@ -347,9 +347,25 @@ same `eks:` AccessDenied (Blocker #1).
    `hub:pivot` snapshots pre-existing spoke instances and fails closed (abort + restart
    kind) the instant any acquires a `deletionTimestamp` during adoption — in the gate
    loop and as a final pre-detach assertion. Defense-in-depth behind #7.
-9. ⬜ **Hub ACK capability-role self-manage follow-up.** Grant
-   `peeks-hub-ack-capability-role` `eks:DescribeCluster` /
-   `eks:DescribePodIdentityAssociation` (and related reads) on the hub cluster ARN so
-   the adopted hub `cluster.eks` + pod-identity-association children can sync (Blocker #1
-   from the 2026-10-12 fresh-deploy run). Independent of #7/#8; needed for 14/14 (or
-   24/24) GREEN.
+9. 🟢 **Hub ACK capability-role self-manage — IMPLEMENTED (Blocker #1 fix).**
+   `hub:create-mgmt-roles` now attaches an inline policy `ack-self-manage-hub` to
+   `{{HUB}}-ack-capability-role` granting `eks:DescribeCluster` /
+   `UpdateClusterConfig` / `UpdateClusterVersion` / tag reads on the hub cluster ARN
+   and `eks:Describe/Update/DeletePodIdentityAssociation` (+ `List`/`Create` on the
+   cluster) on `podidentityassociation/{{HUB}}/*`. Single-account, no CARM role map, so
+   the hub's ACK EKS controller reconciles the adopted hub CRs AS the capability role;
+   AWS's managed `AmazonEKSACKPolicy` deliberately withholds self-reference on the
+   cluster's own ARN, so this explicit, hub-scoped grant is what lets the adopted
+   `cluster.eks` + 5 pod-identity-association children reach `synced` → the adoption
+   gate reaches GREEN. Best-effort/re-applied-in-`hub:seed` (same as `ack-assume-role`).
+   Independent of #7/#8.
+10. 🟢 **Automatic pivot on install — IMPLEMENTED.** New gated `install:pivot` task runs
+    `hub:pivot` (LIVE, `PIVOT_DETACH_MODE=stop`) as the **final** step of
+    `kind-kro-ack:install`, so a fresh bootstrap self-adopts the hub and detaches from
+    the kind bootstrap cluster automatically. Gated by `HUB_PIVOT_ON_INSTALL` (default
+    `true`; set `false` to keep kind-managed and pivot manually later). Placed at the end
+    of the generic hub install — **before** the workshop/consumer enables any spoke — so
+    the auto-pivot runs with no spokes present (cannot perturb them), and the whole
+    workshop tail (cloudfront, overlay wiring, spokes:enable, idc, ray) runs afterward
+    against the self-managed hub (none of it needs kind). Fail-closed via #8's
+    spoke-integrity guard; depends on #9 for the adoption gate to pass.
