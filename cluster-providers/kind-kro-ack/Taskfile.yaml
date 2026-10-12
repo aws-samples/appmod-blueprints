@@ -750,6 +750,13 @@ tasks:
           name: {{.HUB_CLUSTER_NAME}}
           tenant: platform
           environment: control-plane
+          # Fleet role: the hub MUST be control-plane — the clusters-kro ApplicationSet
+          # matrix selects the hub via matchLabels{fleet_member: control-plane}. Set
+          # explicitly so the hub:pivot self-adoption (#775) serializes it into the hub
+          # instance spec and the EksCluster RGD stamps the ArgoCD cluster secret
+          # control-plane (not the default "spoke") — otherwise the hub is ejected from
+          # the matrix and the spokes are pruned (#1033).
+          fleetMember: control-plane
           region: {{.AWS_REGION}}
           # managementRegion drives the ACK region annotation on the cluster-config
           # Secrets Manager secret (clusterConfigSecret). For this single-region/account
@@ -2808,6 +2815,47 @@ tasks:
           return $notready
         }
 
+        # --- Spoke-integrity guard (#1033 applyset scoping) --------------------
+        # The pivot MUST be inert to the spoke instances the hub already manages
+        # (clusters-kro -> EksclusterWithVpc/EksCluster). Capture the baseline set now,
+        # then the gate below fails-closed if ANY of them acquires a deletionTimestamp
+        # during the pivot — kind is NEVER discarded while a spoke is being pruned, and
+        # kind is restarted so it can drive the spokes back. The root cause (a
+        # control-plane->spoke relabel ejecting the hub from the clusters-kro matrix) is
+        # fixed in rg-eks.yaml via the fleetMember schema field; this guard scopes the
+        # pivot so a future regression cannot silently cascade into spoke deletion.
+        SPOKE_GKS="eksclusterwithvpc.kro.run ekscluster.kro.run"
+        spoke_instances() {
+          local K="$1" gk
+          for gk in $SPOKE_GKS; do
+            $K get "$gk" -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || true
+          done | grep -v "^$NS/$HUB\$" | sort -u
+        }
+        SPOKE_BASELINE=$(spoke_instances hub_k || true)
+        if [ -n "$SPOKE_BASELINE" ]; then
+          printf '{{.C_INFO}}  spoke instances the pivot must NOT perturb:{{.C_RESET}}\n'
+          printf '%s\n' "$SPOKE_BASELINE" | sed 's/^/    • /'
+        else
+          printf '{{.C_INFO}}  no pre-existing spoke instances on the hub (nothing to protect).{{.C_RESET}}\n'
+        fi
+        # Returns non-zero (and prints) if any baseline spoke instance is deletion-marked.
+        spokes_intact() {
+          local K="$1" si ns name ts gk bad=0
+          [ -z "$SPOKE_BASELINE" ] && return 0
+          while IFS= read -r si; do
+            [ -z "$si" ] && continue
+            ns=${si%%/*}; name=${si#*/}
+            for gk in $SPOKE_GKS; do
+              ts=$($K -n "$ns" get "$gk" "$name" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)
+              if [ -n "$ts" ]; then
+                printf '{{.C_ERR}}    ✗ spoke %s/%s deletion-marked (%s) — pivot perturbed a spoke!{{.C_RESET}}\n' "$ns" "$name" "$ts"
+                bad=1
+              fi
+            done
+          done < <(printf '%s\n' "$SPOKE_BASELINE")
+          return $bad
+        }
+
         # --- Dry-run output ----------------------------------------------------
         printf '{{.C_STEP}}▸ Hub-side instance manifest (would be applied on %s):{{.C_RESET}}\n' "$HUB"
         jq -r '.' "$WORK/hub-instance.json" | sed 's/^/    /'
@@ -2844,13 +2892,22 @@ tasks:
 
         # THE gate: do not detach until the hub demonstrably owns every resource.
         printf '{{.C_STEP}}▸ [LIVE] waiting for adoption-complete (max {{.PIVOT_ADOPT_TIMEOUT_SEC}}s)…{{.C_RESET}}\n'
-        GATE_OK=0; GATE_LOG="$WORK/gate.out"
+        GATE_OK=0; SPOKE_PERTURBED=0; GATE_LOG="$WORK/gate.out"
         DEADLINE=$(( $(date +%s) + {{.PIVOT_ADOPT_TIMEOUT_SEC}} ))
         while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+          # Fail-closed the moment the pivot perturbs a pre-existing spoke (#1033).
+          if ! spokes_intact hub_k; then SPOKE_PERTURBED=1; break; fi
           if adoption_gate hub_k >"$GATE_LOG" 2>&1; then GATE_OK=1; break; fi
           sleep {{.PIVOT_ADOPT_INTERVAL_SEC}}
         done
         cat "$GATE_LOG" 2>/dev/null || true
+        if [ "$SPOKE_PERTURBED" = 1 ]; then
+          printf '{{.C_ERR}}✗ PIVOT PERTURBED A SPOKE INSTANCE — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Restarting kind so it reconciles the spoke(s) back to desired state…{{.C_RESET}}\n'
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          printf '{{.C_ERR}}  A spoke was deletion-marked during adoption — this must not happen; investigate the fleetMember label on the hub cluster secret before retrying.{{.C_RESET}}\n'
+          exit 1
+        fi
         if [ "$GATE_OK" != 1 ]; then
           printf '{{.C_ERR}}✗ ADOPTION NOT COMPLETE within timeout — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
           printf '{{.C_INFO}}  Restarting kind to resume its management (recovering prior state)…{{.C_RESET}}\n'
@@ -2859,6 +2916,14 @@ tasks:
           exit 1
         fi
         printf '{{.C_OK}}✓ adoption-complete gate PASSED — the hub owns every resource.{{.C_RESET}}\n'
+
+        # Final pre-detach assertion: spokes must still be intact right before we make
+        # kind unrecoverable/stopped (#1033). Covers the gate-pass -> detach window.
+        if ! spokes_intact hub_k; then
+          printf '{{.C_ERR}}✗ A spoke was deletion-marked after the gate passed — ABORTING before detach; restarting kind.{{.C_RESET}}\n'
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          exit 1
+        fi
 
         # DETACH outcome (PIVOT_DETACH_MODE: stop=default recoverable | delete=permanent).
         # Neither path sets a deletionTimestamp on the CR, so no finalizer runs and ACK

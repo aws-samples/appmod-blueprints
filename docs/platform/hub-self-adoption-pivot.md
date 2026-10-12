@@ -221,6 +221,62 @@ however, independently **re-confirm the fix is necessary and correctly targeted*
 live event-branch RGD lacks SG `adopt-or-create` and OIDC `adoption-fields`, which is
 exactly why those 3 children are terminal.
 
+### Fresh-deploy re-run (2026-10-12, event built from #1033) — SG/OIDC fix confirmed; new fleet-identity defect found
+
+Provisioned a **fresh** Workshop Studio event whose hub carries #1033 from t=0 (content
+branch `test/hub-pivot-event` → appmod fork branch `feat/peeks-agent-instance-hub-pivot`,
+= `feat/peeks-agent-instance` + #1033). Ran the LIVE stop-mode pivot on the full
+agent-platform (#926) hub (14 kro-owned children on the `peeks-hub` instance, vs the
+earlier simpler hub's 24).
+
+**✅ Deliverable #3 confirmed end-to-end.** The two ingress `SecurityGroup`s adopted by
+`(group-name, vpc-id)` (`ACK.ResourceSynced=True`), the OIDC provider synced — the old
+event's 3 terminal "already exists" children are **gone**. **8/14 adopted** (2 SG + 1
+OIDC + 4 access-entries + 1 role). Real `peeks-hub` cluster stayed `ACTIVE` (original
+creation time, never recreated).
+
+**❌ Blocker #1 (IAM scoping, separate follow-up).** The remaining 6 are all `eks:`
+resources (cluster + 5 pod-identity-associations), each failing identically:
+`AccessDeniedException … peeks-hub-ack-capability-role … not authorized to perform
+eks:DescribeCluster / eks:DescribePodIdentityAssociation on …/cluster/peeks-hub`. The
+hub ACK capability role is provisioned to manage **spokes**, not to **self-manage the
+hub cluster**. `adopt-or-create` is necessary but not sufficient — a follow-up must
+grant that role `eks:Describe*`/pod-identity reads on the hub cluster ARN
+(Deliverable #9).
+
+**🔴 Blocker #2 (THE fleet-identity defect — now fixed).** The instant the pivot adopted
+`EksCluster/peeks-hub`, the hub's own ArgoCD cluster secret flipped
+`fleet_member: control-plane → spoke`, and seconds later the hub's `clusters-kro-*` apps
+deletion-marked the spoke `EksclusterWithVpc` parents (cascading to their `EksCluster`
+children). ArgoCD was **exonerated** by live evidence — the `clusters-kro` apps stayed
+`Synced` and still *wanted* the spokes (`requiresPruning=None`); the appset's
+deletion-safety guards (`create-update`, no `resources-finalizer`, `prune:false`,
+`preserveResourcesOnDeletion:true`) all held. The delete came from **kro** after the hub
+dropped out of the `clusters-kro` matrix generator, whose first generator selects
+`matchLabels{fleet_member: control-plane}` (`gitops/bootstrap/clusters-kro.yaml`). The
+real spoke EKS clusters survived only because the kro cascade was itself wedged on the
+same `eks:` AccessDenied (Blocker #1).
+
+**Root cause:** `fleet_member` was **hardcoded `spoke`** in the `EksCluster` RGD
+(`rg-eks.yaml`) — both the direct `argocdSecret` label (hub path) and the fleet-secret
+`addons` blob. On self-adoption the hub reconciled its own `EksCluster` and overwrote the
+`control-plane` label that `hub:claim` had set.
+
+**Fixes added to #1033 (both pivot-safety fixes):**
+1. **`fleetMember` schema field** (root cause). `rg-eks.yaml` gains
+   `fleetMember: string | default="spoke"`; both hardcoded sites become
+   `${schema.spec.fleetMember}`. Threaded through the wrapper RGD `rg-eks-vpc.yaml`
+   (schema + EksCluster passthrough) and the `clusters-kro` chart
+   (`clusters.yaml`, default `spoke`); `hub:claim` now sets `fleetMember: control-plane`.
+   Spokes are unchanged (default `spoke`); the hub keeps `control-plane` through
+   self-adoption → it stays in the matrix → spokes are never pruned.
+2. **Applyset scoping / spoke-integrity guard** (defense-in-depth) in `hub:pivot`. The
+   task now snapshots the pre-existing spoke `EksclusterWithVpc`/`EksCluster` instances
+   and **fails closed** (aborts + `docker start` kind) the instant any of them acquires
+   a `deletionTimestamp` during adoption — both inside the adoption gate loop and as a
+   final pre-detach assertion. kind is never discarded while a spoke is being pruned, so
+   a future regression cannot silently cascade into spoke deletion.
+
 ## Risks / open questions
 
 - **✅ RESOLVED — KRO applyset ownership on re-apply.** Re-applying the instance on the
@@ -280,3 +336,20 @@ exactly why those 3 children are terminal.
 6. ✅ Validation on a live kind+hub — **done 2026-10-11** (see "Live validation"
    above): adopt-in-place + stop-first + gate fail-closed all confirmed; surfaced the
    #3 blocker. The remaining re-run to GREEN depends on #3.
+7. 🟢 **Fleet-identity fix — IMPLEMENTED (pivot-safety fix #1).** `fleetMember` schema
+   field on `rg-eks.yaml` (default `spoke`) replaces the hardcoded `fleet_member: spoke`
+   in both the `argocdSecret` label and the fleet-secret `addons` blob; threaded through
+   `rg-eks-vpc.yaml` (schema + EksCluster passthrough) and `clusters.yaml` (chart,
+   default `spoke`); `hub:claim` sets `control-plane`. Stops the hub self-adoption from
+   relabelling the hub `control-plane→spoke` and pruning the spokes (fresh-deploy
+   finding, 2026-10-12).
+8. 🟢 **Applyset scoping / spoke-integrity guard — IMPLEMENTED (pivot-safety fix #2).**
+   `hub:pivot` snapshots pre-existing spoke instances and fails closed (abort + restart
+   kind) the instant any acquires a `deletionTimestamp` during adoption — in the gate
+   loop and as a final pre-detach assertion. Defense-in-depth behind #7.
+9. ⬜ **Hub ACK capability-role self-manage follow-up.** Grant
+   `peeks-hub-ack-capability-role` `eks:DescribeCluster` /
+   `eks:DescribePodIdentityAssociation` (and related reads) on the hub cluster ARN so
+   the adopted hub `cluster.eks` + pod-identity-association children can sync (Blocker #1
+   from the 2026-10-12 fresh-deploy run). Independent of #7/#8; needed for 14/14 (or
+   24/24) GREEN.
