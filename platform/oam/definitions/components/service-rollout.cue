@@ -61,10 +61,21 @@ template: {
 	// RGD from the amp-workspace secret.
 	let ampWorkspaceUrl = #"{{ "{{" }}args.amp-workspace-url{{ "}}" }}"#
 	let ampWorkspaceRegion = #"{{ "{{" }}args.amp-workspace-region{{ "}}" }}"#
+	let canaryHash = #"{{ "{{" }}args.canary-hash{{ "}}" }}"#
 
 	// Container name is context.name (see note 3 in the file header), so the
 	// Prometheus container filter derives from it too.
-	let prometheusTargetQuery = "container_name=\"\(context.name)\", namespace=\"\(context.namespace)\""
+	//
+	// Scope the metric gate to this cluster's canary pods. Every cluster's scraper
+	// writes to the same AMP workspace and labels its series with `cluster`, and a
+	// Rollout names its pods <rollout>-<pod-template-hash>-<suffix>. The canary's
+	// hash alone is not enough: the same image and env give the same hash on every
+	// cluster.
+	let prometheusTargetQuery = strings.Join([
+		"container_name=\"\(context.name)\", namespace=\"\(context.namespace)\"",
+		if parameter.clusterName != "" {"cluster=\"\(parameter.clusterName)\""},
+		"pod_name=~\"\(context.name)-\(canaryHash)-.*\"",
+	], ", ")
 
 	output: {
 		apiVersion: "argoproj.io/v1alpha1"
@@ -140,9 +151,9 @@ template: {
 							}
 						}
 					},
-					if parameter.MetricGate != _|_ {
+					if parameter.metrics != _|_ {
 						{
-							pause: duration: parameter.MetricGate.pause
+							pause: duration: parameter.metrics.pause
 						}
 					},
 					if parameter.metrics != _|_ {
@@ -157,6 +168,10 @@ template: {
 									{
 										name:  "service-name"
 										value: previewService
+									},
+									{
+										name: "canary-hash"
+										valueFrom: podTemplateHashValue: "Latest"
 									},
 								]
 							}
@@ -313,6 +328,8 @@ template: {
 							name: "amp-workspace-\(context.name)"
 							key:  "amp-workspace-region"
 						}
+					}, {
+						name: "canary-hash"
 					}]
 					metrics:
 					[
@@ -536,5 +553,9 @@ template: {
 		functionalGate?:  #QualityGate
 		performanceGate?: #QualityGate
 		metrics?:         #MetricGate
+		// Value of the scrapers' `cluster` label for this cluster, used by the metric
+		// gate. Defaults to the EKS cluster name, which the kubevela addon supplies per
+		// cluster (global.clusterName). Empty drops the cluster matcher.
+		clusterName: *"{{ .Values.global.clusterName }}" | string
 	}
 }
