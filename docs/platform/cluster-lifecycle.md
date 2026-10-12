@@ -65,7 +65,10 @@ What they do:
    exactly what will be deleted.
 3. `argocd app sync <app> --prune` — the explicit destructive step.
 4. (KRO only) After a successful prune, remove the `clusters/<name>.json`
-   marker and the `multi-acct` CARM mapping, so the now-empty app is cleaned up.
+   marker, the `multi-acct` CARM mapping, the fleet member file and the
+   per-cluster overlay. Then delete the `clusters-kro-<name>` and
+   `fleet-secret-<name>` Applications and the Argo CD cluster Secret: both
+   ApplicationSets are `create-update`, so they never delete those Applications.
 
 > KRO ordering matters: the per-cluster app is `clusters-kro-<name>`, generated
 > from the `clusters/<name>.json` marker. The appset uses
