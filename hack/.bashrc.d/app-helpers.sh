@@ -8,14 +8,17 @@
 #   browser. Guards against an empty/half-formed URL (ingress with no address yet).
 open_when_ready() {
   local url="$1" timeout="${2:-300}" start=$SECONDS code
-  if [ -z "$url" ] || [[ "$url" == http://*//* ]] || [[ "$url" == https://*//* ]]; then
+  local host="${url#*://}"; host="${host%%/*}"
+  if [ -z "$url" ] || [ -z "$host" ]; then
     echo "⚠️  Empty/incomplete URL ('$url'). The ingress may not have an ALB address yet" >&2
     echo "    (check \$DNS_DEV / \$DNS_PROD). Re-run the export step and retry." >&2
     return 1
   fi
   echo "⏳ Waiting for the load balancer to serve ${url} (can take 1-2 min)…"
   while :; do
-    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || echo 000)
+    # curl already prints 000 (and exits non-zero) when it cannot connect, so only
+    # default the code when it printed nothing (e.g. a malformed URL).
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null) || code=${code:-000}
     case "$code" in
       2*|3*) echo "✅ ${url} is reachable (HTTP ${code})."; break ;;
     esac
