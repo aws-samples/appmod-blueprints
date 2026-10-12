@@ -24,29 +24,3 @@ spec:
     path: /unicorn
     rewrite: false
     healthcheckPath: /unicorn
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: next-js-app
-  namespace: team-nextjs
-spec:
-  selector:
-    app: next-js-app
-  ports:
-  - port: 8080
-    targetPort: 8080
-    protocol: TCP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: next-js-app-preview
-  namespace: team-nextjs
-spec:
-  selector:
-    app: next-js-app
-  ports:
-  - port: 8080
-    targetPort: 8080
-    protocol: TCP
