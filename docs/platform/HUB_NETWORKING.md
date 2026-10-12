@@ -36,7 +36,7 @@ customer's perspective.
 ```yaml
 hub:
   clusterName: peeks-hub
-  kubernetesVersion: "1.35"
+  kubernetesVersion: "1.37"
   # Customer-supplied VPC. Leave empty to have the platform create a VPC.
   vpcId: "vpc-0123456789abcdef0"
   # Required when vpcId is set: at least 2 private subnets (across distinct

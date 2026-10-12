@@ -40,7 +40,7 @@ spec:
                 kubernetesVersion:
                   type: string
                   description: EKS Kubernetes version
-                  default: "1.32"
+                  default: "1.37"
                 autoMode:
                   type: boolean
                   description: Enable EKS Auto Mode (manages compute, storage, networking)

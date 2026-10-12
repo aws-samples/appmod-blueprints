@@ -37,7 +37,7 @@ clusters:
     tenant: workshop
     environment: dev
     region: us-west-2
-    k8sVersion: "1.35"
+    k8sVersion: "1.37"
     accountId: "123456789012"
     managementAccountId: "123456789012"
     resourcePrefix: peeks

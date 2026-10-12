@@ -208,7 +208,7 @@ clusters:
     region: us-west-2
     clusterName: spoke-dev
     vpcCidr: "10.1.0.0/16"
-    kubernetesVersion: "1.35"
+    kubernetesVersion: "1.37"
     autoMode: true
     resourcePrefix: peeks
 ```
@@ -345,7 +345,7 @@ repo:
 # Hub cluster configuration
 hub:
   clusterName: "hub"                 # EKS cluster name
-  kubernetesVersion: "1.32"          # EKS Kubernetes version
+  kubernetesVersion: "1.37"          # EKS Kubernetes version
   vpcCidr: "10.0.0.0/16"            # VPC CIDR block
 
   # Optional: managed node group alongside Auto Mode

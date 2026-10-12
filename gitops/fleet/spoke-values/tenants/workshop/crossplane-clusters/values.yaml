@@ -9,13 +9,13 @@ clusters: {}
   #   # region: us-east-1
   #   clusterName: spoke-dev
   #   vpcCidr: "10.1.0.0/16"
-  #   kubernetesVersion: "1.35"
+  #   kubernetesVersion: "1.37"
   #   autoMode: true
   #   resourcePrefix: peeks
   # spoke-prod:
   #   # region: us-east-1
   #   clusterName: spoke-prod
   #   vpcCidr: "10.2.0.0/16"
-  #   kubernetesVersion: "1.35"
+  #   kubernetesVersion: "1.37"
   #   autoMode: true
   #   resourcePrefix: peeks

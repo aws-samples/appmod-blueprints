@@ -8,7 +8,7 @@
 #     region: us-west-2
 #     clusterName: spoke-us-west-2
 #     vpcCidr: "10.1.0.0/16"
-#     kubernetesVersion: "1.32"
+#     kubernetesVersion: "1.37"
 #     autoMode: true
 
 clusters: {}
