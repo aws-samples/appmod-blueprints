@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Chat</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d; --fg:#e6edf3;
+    --accent:#ff9900; --blue:#58a6ff; --green:#3fb950; --muted:#8b949e; --err:#f85149;
+    --code-bg:#0b0f16;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--fg); height:100vh; display:flex; flex-direction:column; }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; background:linear-gradient(180deg,#161b22,#0d1117); }
+  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.2px; }
+  header .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  header .who { color:var(--muted); font-size:12px; margin-left:auto; }
+  header .who a { color:var(--accent); cursor:pointer; margin-left:10px; }
+  #log { flex:1; overflow-y:auto; padding:22px 18px; display:flex; flex-direction:column; gap:16px; }
+  .row { display:flex; width:100%; }
+  .row.user { justify-content:flex-end; }
+  .row.agent, .row.sys { justify-content:flex-start; }
+  .msg { max-width:min(900px,92%); padding:13px 16px; border-radius:12px; line-height:1.55; font-size:14px; }
+  .msg.user { background:#1f6feb26; border:1px solid #1f6feb59; border-bottom-right-radius:4px; white-space:pre-wrap; }
+  .msg.agent { background:var(--panel); border:1px solid var(--line); border-bottom-left-radius:4px; }
+  .msg.sys { align-self:center; max-width:760px; color:var(--muted); font-size:12.5px; background:transparent; border:1px dashed var(--line); text-align:center; }
+  .msg.agent { position:relative; }
+  .msg.agent .avatar { color:var(--accent); font-weight:600; font-size:11px; letter-spacing:.6px; text-transform:uppercase; }
+  .ahead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .copy-msg { margin-left:auto; background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:2px 9px; font-size:11px; font-weight:500; cursor:pointer; opacity:0; transition:opacity .12s,color .12s,border-color .12s; }
+  .msg.agent:hover .copy-msg, .copy-msg:focus-visible { opacity:1; }
+  .copy-msg:hover { color:var(--fg); border-color:var(--accent); }
+  .copy-msg.done { color:var(--green); border-color:var(--green); opacity:1; }
+  .md pre.code .copy-code { position:absolute; top:6px; right:6px; background:var(--panel2); color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:2px 8px; font-size:11px; cursor:pointer; opacity:0; transition:opacity .12s,color .12s,border-color .12s; }
+  .md pre.code:hover .copy-code, .copy-code:focus-visible { opacity:1; }
+  .md pre.code .copy-code:hover { color:var(--fg); border-color:var(--accent); }
+  .md pre.code .copy-code.done { color:var(--green); border-color:var(--green); opacity:1; }
+  .status { color:var(--muted); font-style:italic; }
+
+  /* markdown */
+  .md > *:first-child { margin-top:0; }
+  .md > *:last-child { margin-bottom:0; }
+  .md h1,.md h2,.md h3,.md h4 { color:var(--accent); margin:14px 0 6px; line-height:1.3; font-weight:600; }
+  .md h1 { font-size:18px; } .md h2 { font-size:16px; } .md h3 { font-size:14.5px; } .md h4 { font-size:13.5px; }
+  .md p { margin:8px 0; }
+  .md ul,.md ol { margin:8px 0; padding-left:22px; }
+  .md li { margin:3px 0; }
+  .md a { color:var(--blue); text-decoration:none; } .md a:hover { text-decoration:underline; }
+  .md strong { color:#fff; font-weight:600; }
+  .md em { color:#d2a8ff; font-style:italic; }
+  .md code { background:var(--code-bg); color:var(--accent); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; }
+  .md pre.code { position:relative; background:var(--code-bg); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:12px 14px; overflow-x:auto; margin:10px 0; }
+  .md pre.code code { background:none; border:0; padding:0; color:#c9d1d9; font-size:12.5px; line-height:1.5; }
+  .md blockquote { border-left:3px solid var(--muted); margin:8px 0; padding:2px 12px; color:var(--muted); }
+  .md hr { border:0; border-top:1px solid var(--line); margin:12px 0; }
+  .md table { border-collapse:collapse; margin:10px 0; font-size:13px; }
+  .md th,.md td { border:1px solid var(--line); padding:6px 10px; }
+  .md th { background:var(--panel2); color:var(--accent); }
+  .cursor::after { content:'▋'; color:var(--accent); animation:blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  form#f { display:flex; gap:10px; padding:14px 18px; border-top:1px solid var(--line); background:var(--panel); }
+  textarea { flex:1; resize:none; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:9px; padding:11px 13px; font-size:14px; font-family:inherit; height:46px; line-height:1.4; max-height:160px; overflow-y:auto; }
+  textarea:focus { outline:none; border-color:var(--accent); }
+  button { background:var(--accent); color:#111; border:0; border-radius:9px; padding:0 20px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  .examples { display:flex; gap:10px; align-items:center; padding:12px 18px 14px; background:var(--panel); border-top:1px solid var(--line); }
+  .examples .lbl { flex:0 0 auto; color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; margin-right:4px; }
+  .ex-scroll { display:flex; gap:10px; flex:1 1 auto; min-width:0; overflow-x:auto; scroll-behavior:smooth; padding-bottom:2px;
+    scrollbar-width:thin; scrollbar-color:var(--line) transparent;
+    -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent); mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent); }
+  .ex-scroll.at-end { -webkit-mask-image:none; mask-image:none; }
+  .ex-scroll::-webkit-scrollbar { height:6px; }
+  .ex-scroll::-webkit-scrollbar-thumb { background:var(--line); border-radius:3px; }
+  .ex-scroll button { flex:0 0 auto; white-space:nowrap; }
+  .examples button { background:var(--bg); color:var(--muted); border:1px solid var(--line); font-weight:400; padding:7px 13px; font-size:12px; border-radius:8px; transition:all .12s; }
+  .examples button:hover { color:var(--fg); border-color:var(--accent); background:var(--panel2); }
+  #app { display:none; flex:1; flex-direction:column; min-height:0; position:relative; }
+  #app.on { display:flex; }
+  .tobottom { position:absolute; right:22px; bottom:150px; width:34px; height:34px; padding:0; border-radius:50%; background:var(--panel2); color:var(--fg); border:1px solid var(--line); cursor:pointer; display:none; align-items:center; justify-content:center; font-size:16px; line-height:1; box-shadow:0 2px 10px #0007; z-index:5; }
+  .tobottom.show { display:flex; }
+  .tobottom:hover { border-color:var(--accent); color:var(--accent); }
+  #login { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; }
+  #login .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:28px 26px; width:340px; }
+  #login h2 { margin:0 0 4px; font-size:17px; }
+  #login p { margin:0 0 18px; color:var(--muted); font-size:12px; }
+  #login label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  #login input { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:14px; }
+  #login input:focus { outline:none; border-color:var(--accent); }
+  #login button { width:100%; margin-top:18px; padding:10px; }
+  #login .err { color:var(--err); font-size:12px; margin-top:10px; min-height:14px; }
+  .kc { display:inline-block; margin-top:14px; color:var(--muted); font-size:11px; }
+</style>
+</head>
+<body>
+  <div id="login">
+    <form class="card" id="loginForm">
+      <h2 data-app-title>Agent Chat</h2>
+      <p>Sign in with your Keycloak account to chat with the agent.</p>
+      <label>Username</label>
+      <input id="u" autocomplete="username" value="user1" />
+      <label>Password</label>
+      <input id="p" type="password" autocomplete="current-password" />
+      <button type="submit" id="loginBtn">Sign in</button>
+      <div class="err" id="loginErr"></div>
+      <span class="kc">Keycloak realm: platform</span>
+    </form>
+  </div>
+
+  <div id="app">
+    <header>
+      <span class="dot"></span>
+      <h1 data-app-title>Agent Chat</h1>
+      <span class="who" id="who"></span>
+    </header>
+    <div id="log">
+      <div class="row sys"><div class="msg sys" data-app-intro>Ask the agent. It reasons and can run read-only inspection, then proposes GitOps fixes.</div></div>
+    </div>
+    <button id="tobottom" class="tobottom" type="button" title="Scroll to latest" aria-label="Scroll to latest">↓</button>
+    <div class="examples" id="examples">
+      <span class="lbl">Try</span>
+      <div class="ex-scroll" id="exList">
+        <button data-q="In two sentences: what are you, and what are your two operating modes?">Who are you?</button>
+        <button data-q="How many clusters are in the fleet? List each one by name.">How many clusters in the fleet?</button>
+        <button data-q="Check every cluster in the fleet and flag any issues: unhealthy pods, NotReady nodes, or degraded ArgoCD applications.">Any issues in any cluster?</button>
+        <button data-q="Are my nodes underutilized? Show CPU and memory usage versus allocatable capacity per node and flag any that are over-provisioned.">Are my nodes underutilized?</button>
+        <button data-q="Run an EKS recon on spoke-dev: list nodes, unhealthy pods, and any recent OOMKilled or CrashLoopBackOff containers.">Recon spoke-dev</button>
+        <button data-q="List the ArgoCD applications on the hub and flag any that are not Healthy or not Synced.">ArgoCD app health</button>
+        <button data-q="List the skills you can run and what each one is for.">List skills</button>
+        <button data-q="Show recent pod restarts across the fleet and the most likely root cause for each.">Recent restarts</button>
+        <button data-q="Walk me through how you remediate an OOMKilled workload end to end, from detection to the GitOps merge request.">How do you remediate?</button>
+      </div>
+    </div>
+    <form id="f">
+      <textarea id="m" placeholder="Ask the agent…"></textarea>
+      <button id="send" type="submit">Send</button>
+    </form>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  // Works whether served at root or behind a path prefix, slash or not.
+  const BASE = location.pathname.replace(/\/+$/, '');
+  const CKEY = 'a2aCtx', HKEY = 'a2aHistory';
+  let AGENT_LABEL = 'agent';
+  fetch(BASE + '/config').then(r=>r.json()).then(c=>{
+    if(c.title){ document.title=c.title; document.querySelectorAll('[data-app-title]').forEach(e=>e.textContent=c.title); }
+    if(c.agentLabel) AGENT_LABEL=c.agentLabel;
+    if(c.intro){ const i=document.querySelector('[data-app-intro]'); if(i) i.textContent=c.intro; }
+  }).catch(()=>{});
+  let contextId = localStorage.getItem(CKEY) || crypto.randomUUID();
+  localStorage.setItem(CKEY, contextId);
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem(HKEY) || '[]'); } catch (e) { history = []; }
+  function saveHistory() { try { localStorage.setItem(HKEY, JSON.stringify(history.slice(-100))); } catch (e) {} }
+
+  // ── minimal, safe markdown renderer (escape first, then format) ──────────
+  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function mdInline(s){
+    return s
+      .replace(/`([^`]+)`/g,(m,c)=>'<code>'+c+'</code>')
+      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+      .replace(/__([^_]+)__/g,'<strong>$1</strong>')
+      .replace(/(^|[^*])\*(?!\s)([^*]+?)\*/g,'$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  }
+  function md(src){
+    src = esc(String(src));
+    // fenced code blocks
+    const blocks=[];
+    src = src.replace(/```[^\n]*\n?([\s\S]*?)```/g,(m,code)=>{
+      blocks.push('<pre class="code"><code>'+code.replace(/\n+$/,'')+'</code></pre>');
+      return '\u0000B'+(blocks.length-1)+'\u0000';
+    });
+    const lines = src.split('\n');
+    let html='', i=0;
+    const flushList=(tag,items)=>{ html+='<'+tag+'>'+items.map(x=>'<li>'+mdInline(x)+'</li>').join('')+'</'+tag+'>'; };
+    let para=[];
+    const flushPara=()=>{ if(para.length){ html+='<p>'+mdInline(para.join(' ').trim())+'</p>'; para=[]; } };
+    while(i<lines.length){
+      let ln = lines[i];
+      if(/^\u0000B\d+\u0000$/.test(ln.trim())){ flushPara(); html+=ln.trim(); i++; continue; }
+      const h = ln.match(/^\s*(#{1,4})\s+(.*)$/);
+      if(h){ flushPara(); const lvl=h[1].length; html+='<h'+lvl+'>'+mdInline(h[2])+'</h'+lvl+'>'; i++; continue; }
+      if(/^\s*(---|\*\*\*)\s*$/.test(ln)){ flushPara(); html+='<hr>'; i++; continue; }
+      if(/^\s*>\s?/.test(ln)){ flushPara(); let q=[]; while(i<lines.length&&/^\s*>\s?/.test(lines[i])){ q.push(lines[i].replace(/^\s*>\s?/,'')); i++; } html+='<blockquote>'+mdInline(q.join(' '))+'</blockquote>'; continue; }
+      if(/^\s*[-*+]\s+/.test(ln)){ flushPara(); let items=[]; while(i<lines.length&&/^\s*[-*+]\s+/.test(lines[i])){ items.push(lines[i].replace(/^\s*[-*+]\s+/,'')); i++; } flushList('ul',items); continue; }
+      if(/^\s*\d+\.\s+/.test(ln)){ flushPara(); let items=[]; while(i<lines.length&&/^\s*\d+\.\s+/.test(lines[i])){ items.push(lines[i].replace(/^\s*\d+\.\s+/,'')); i++; } flushList('ol',items); continue; }
+      if(ln.indexOf('|')>=0 && i+1<lines.length && /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(lines[i+1])){
+        flushPara();
+        const splitRow=(r)=>{ let s=r.trim().replace(/^\|/,'').replace(/\|\s*$/,''); return s.split('|').map(c=>c.trim()); };
+        const headers=splitRow(ln); i+=2;
+        let rows=[];
+        while(i<lines.length && lines[i].indexOf('|')>=0 && lines[i].trim()!==''){ rows.push(splitRow(lines[i])); i++; }
+        let t='<table><thead><tr>'+headers.map(c=>'<th>'+mdInline(c)+'</th>').join('')+'</tr></thead><tbody>';
+        t+=rows.map(r=>'<tr>'+r.map(c=>'<td>'+mdInline(c)+'</td>').join('')+'</tr>').join('');
+        html+=t+'</tbody></table>'; continue;
+      }
+      if(ln.trim()===''){ flushPara(); i++; continue; }
+      para.push(ln); i++;
+    }
+    flushPara();
+    return html.replace(/\u0000B(\d+)\u0000/g,(m,n)=>blocks[+n]);
+  }
+
+  async function checkAuth() {
+    try { const r = await fetch(BASE + '/me'); const d = await r.json();
+      if (d.authenticated) showApp(d.username); } catch (e) {}
+  }
+  function showApp(user) {
+    $('login').style.display = 'none';
+    $('app').classList.add('on');
+    $('who').innerHTML = 'signed in as <b>' + user + '</b> <a id="clr">clear</a> <a id="lo">logout</a>';
+    $('clr').onclick = () => { history = []; saveHistory(); document.querySelectorAll('#log .row.user,#log .row.agent').forEach(r => r.remove()); };
+    $('lo').onclick = async () => { history = []; saveHistory(); localStorage.removeItem(CKEY); await fetch(BASE + '/logout', {method:'POST'}); location.reload(); };
+    renderHistory();
+    $('m').focus();
+  }
+  function renderHistory() {
+    history.forEach(msg => {
+      if (msg.r === 'user') { const el = addRow('user'); el.textContent = msg.t; }
+      else { const el = addRow('agent'); el.innerHTML = agentHeader() + '<span class="md"></span>'; const mdEl = el.querySelector('.md'); mdEl.innerHTML = md(msg.t); wireMsgCopy(mdEl, msg.t); }
+    });
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  $('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('loginBtn').disabled = true; $('loginErr').textContent = '';
+    try {
+      const r = await fetch(BASE + '/login', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ username: $('u').value.trim(), password: $('p').value }) });
+      const d = await r.json();
+      if (r.ok && d.authenticated) showApp(d.username);
+      else $('loginErr').textContent = d.error || 'login failed';
+    } catch (e) { $('loginErr').textContent = 'network error'; }
+    finally { $('loginBtn').disabled = false; }
+  });
+
+  function addRow(cls){
+    const row = document.createElement('div'); row.className = 'row ' + cls;
+    const el = document.createElement('div'); el.className = 'msg ' + cls;
+    row.appendChild(el); $('log').appendChild(row); $('log').scrollTop = $('log').scrollHeight;
+    return el;
+  }
+  function addUser(text){ const el = addRow('user'); el.textContent = text; }
+  function agentHeader(){ return '<div class="ahead"><span class="avatar">'+AGENT_LABEL+'</span>'
+    + '<button class="copy-msg" type="button" title="Copy this message" aria-label="Copy this message">Copy</button></div>'; }
+  function addAgent(){ const el = addRow('agent'); el.innerHTML = agentHeader() + '<span class="md cursor">…</span>'; return el.querySelector('.md'); }
+
+  function nearBottom(){ const l = $('log'); return (l.scrollHeight - l.scrollTop - l.clientHeight) < 120; }
+  async function copyText(text, btn){
+    const orig = btn.dataset.label || btn.textContent;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
+      else { const ta = document.createElement('textarea'); ta.value = text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+      btn.textContent = 'Copied'; btn.classList.add('done');
+    } catch (e) { btn.textContent = 'failed'; }
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('done'); }, 1400);
+  }
+  function addCodeCopies(mdEl){
+    mdEl.querySelectorAll('pre.code').forEach(pre => {
+      if (pre.querySelector('.copy-code')) return;
+      const code = pre.querySelector('code'); if (!code) return;
+      const b = document.createElement('button'); b.type='button'; b.className='copy-code';
+      b.textContent='Copy'; b.dataset.label='Copy'; b.title='Copy code'; b.setAttribute('aria-label','Copy code');
+      b.addEventListener('click', () => copyText(code.innerText, b));
+      pre.appendChild(b);
+    });
+  }
+  function wireMsgCopy(mdEl, raw){
+    const msg = mdEl.closest('.msg.agent'); if (!msg) return;
+    const btn = msg.querySelector('.copy-msg'); if (btn) { btn.dataset.label='Copy'; btn.onclick = () => copyText(raw, btn); }
+    addCodeCopies(mdEl);
+  }
+
+  async function ask(text) {
+    addUser(text); history.push({r:'user', t:text}); saveHistory();
+    $('m').value = ''; $('m').style.height = ''; $('send').disabled = true;
+    const body = addAgent();
+    try {
+      const r = await fetch(BASE + '/api/send', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ message: text, contextId }) });
+      if (r.status === 401) { body.classList.remove('cursor'); body.textContent = 'session expired — reloading'; setTimeout(()=>location.reload(), 800); return; }
+      const start = await r.json();
+      if (start.contextId) { contextId = start.contextId; localStorage.setItem(CKEY, contextId); }
+      const jobId = start.jobId;
+      // Poll for the result: recon can take minutes; each poll is a fast GET so
+      // it never hits the CloudFront/ALB edge timeout.
+      let resp = null;
+      const t0 = Date.now();
+      const MAX = 300; // 300 * 2s = 10 min ceiling
+      for (let n = 0; n < MAX; n++) {
+        await new Promise(res => setTimeout(res, 2000));
+        body.textContent = 'working… ' + Math.round((Date.now() - t0) / 1000) + 's';
+        if (nearBottom()) $('log').scrollTop = $('log').scrollHeight;
+        let d;
+        try {
+          const pr = await fetch(BASE + '/api/result?jobId=' + encodeURIComponent(jobId));
+          if (pr.status === 401) { body.classList.remove('cursor'); body.textContent = 'session expired — reloading'; setTimeout(()=>location.reload(), 800); return; }
+          d = await pr.json();
+        } catch (e) { continue; } // transient (edge hiccup) — keep polling
+        if (d.contextId) { contextId = d.contextId; localStorage.setItem(CKEY, contextId); }
+        if (d.status === 'done')  { resp = d.response || '(no response)'; break; }
+        if (d.status === 'error') { resp = 'error: ' + (d.error || 'agent failed'); break; }
+        if (d.status === 'unknown') { resp = 'error: job not found (backend may have restarted)'; break; }
+        // still pending → loop
+      }
+      if (resp === null) resp = 'error: timed out waiting for the agent (still running server-side)';
+      body.classList.remove('cursor');
+      body.innerHTML = md(resp);
+      wireMsgCopy(body, resp);
+      history.push({r:'agent', t:resp}); saveHistory();
+      // contextual follow-up suggestions (async, non-blocking, like KiroCrew)
+      fetch(BASE + '/api/suggest', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ question: text, answer: resp }) })
+        .then(r => r.json())
+        .then(s => { if (s.suggestions && s.suggestions.length) setSuggestions(s.suggestions); })
+        .catch(() => {});
+    } catch (e) { body.classList.remove('cursor'); body.textContent = 'error: ' + e; }
+    finally { $('send').disabled = false; $('m').focus(); $('log').scrollTop = $('log').scrollHeight; }
+  }
+  function setSuggestions(items){
+    const box = $('exList') || $('examples');
+    box.querySelectorAll('button').forEach(b => b.remove());
+    items.slice(0,6).forEach(q => {
+      const b = document.createElement('button'); b.textContent = q; b.dataset.q = q;
+      b.addEventListener('click', () => ask(q)); box.appendChild(b);
+    });
+    box.scrollLeft = 0; updateExMask();
+  }
+  $('f').addEventListener('submit', (e) => { e.preventDefault(); const t = $('m').value.trim(); if (t) ask(t); });
+  $('m').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('f').requestSubmit(); } });
+  document.querySelectorAll('.examples button').forEach(b => b.addEventListener('click', () => ask(b.dataset.q)));
+  // suggestions: single-line horizontal scroller (vertical wheel scrolls it sideways; fade hints overflow)
+  const exList = $('exList');
+  function updateExMask(){
+    if (!exList) return;
+    const noOverflow = exList.scrollWidth <= exList.clientWidth + 1;
+    const atEnd = exList.scrollLeft + exList.clientWidth >= exList.scrollWidth - 2;
+    exList.classList.toggle('at-end', noOverflow || atEnd);
+  }
+  if (exList){
+    exList.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { exList.scrollLeft += e.deltaY; e.preventDefault(); }
+    }, { passive:false });
+    exList.addEventListener('scroll', updateExMask);
+    window.addEventListener('resize', updateExMask);
+    updateExMask();
+  }
+  // textarea auto-grow (up to CSS max-height, then it scrolls)
+  const ta = $('m');
+  function autogrow(){ ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
+  ta.addEventListener('input', autogrow);
+  // scroll-to-latest button: shown only when the user has scrolled up
+  const logEl = $('log'), toBottom = $('tobottom');
+  function updateToBottom(){ toBottom.classList.toggle('show', !nearBottom()); }
+  logEl.addEventListener('scroll', updateToBottom);
+  toBottom.addEventListener('click', () => { logEl.scrollTop = logEl.scrollHeight; updateToBottom(); });
+  checkAuth();
+</script>
+</body>
+</html>
