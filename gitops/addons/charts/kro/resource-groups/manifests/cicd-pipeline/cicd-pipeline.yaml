@@ -117,8 +117,6 @@ spec:
           # This prevents accidental deletion of ECR repositories containing production container images
           # annotations:
           #   services.k8s.aws/deletion-policy: retain
-          annotations:
-            services.k8s.aws/adoption-policy: adopt-or-create
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -127,6 +125,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
+             services.k8s.aws/adoption-policy: adopt-or-create
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
              peeks/depends-on: ${iamroleselectorEcr.metadata.name}
@@ -182,8 +181,6 @@ spec:
           # This prevents accidental deletion of ECR repositories containing cached build layers
           # annotations:
           #   services.k8s.aws/deletion-policy: retain
-          annotations:
-            services.k8s.aws/adoption-policy: adopt-or-create
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -192,6 +189,7 @@ spec:
                blockOwnerDeletion: true
                controller: false
           annotations:
+             services.k8s.aws/adoption-policy: adopt-or-create
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
              # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
              peeks/depends-on: ${iamroleselectorEcr.metadata.name}
