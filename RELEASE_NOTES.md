@@ -1,5 +1,7 @@
 # Release Notes
 
+Release notes for v0.2.8 and later are published with each [GitHub release](https://github.com/aws-samples/appmod-blueprints/releases). This file keeps the notes for v0.1.0-riv25 to v0.2.7.
+
 ## v0.2.7 (2026-05-08)
 
 - Revert kro `omit()` change for tracking-id annotation (caused rendering issues)
