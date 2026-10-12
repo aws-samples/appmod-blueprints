@@ -1106,7 +1106,16 @@ tasks:
         # Authoritative write of the bot PAT into <hub>/secrets (single source of truth — the value
         # is BOT_TOKEN, exactly what was set on the PAT above; no second formula to drift from).
         BOT_SM=$(aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null)
-        if [ -n "$BOT_SM" ]; then
+        # Guard on BOT_TOKEN: a failed bot (re)creation leaves it empty (see the "aiops-agent bot
+        # creation FAILED" line above). Writing "" here would WIPE a previously-working token on a
+        # rerun, so skip the write when empty — but surface it LOUDLY so a debug/recovery reader of
+        # the init log sees the exact cause instead of a silent no-op. Non-fatal on purpose: a bot
+        # hiccup degrades only the agent's git-write path, it must not fail the whole workshop install.
+        if [ -z "$BOT_TOKEN" ]; then
+          printf '{{.C_ERR}}  ⚠ aiops-agent bot PAT is EMPTY — bot (re)creation failed (see "aiops-agent bot creation FAILED" above).{{.C_RESET}}\n'
+          printf '{{.C_ERR}}    Skipped SM write to %s/secrets.aiops_agent_git_token (kept existing value, did NOT overwrite with "").{{.C_RESET}}\n' "{{.HUB_CLUSTER_NAME}}"
+          printf '{{.C_ERR}}    Recovery: fix the bot cause, then re-run `task gitlab:init-ec2` to re-mint the PAT and populate the secret.{{.C_RESET}}\n'
+        elif [ -n "$BOT_SM" ]; then
           NEW_SM=$(echo "$BOT_SM" | jq -c --arg p "$BOT_TOKEN" '.aiops_agent_git_token = $p')
           aws secretsmanager put-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --secret-string "$NEW_SM" >/dev/null 2>&1 \
             && printf '  Updated %s/secrets.aiops_agent_git_token (matches bot PAT)\n' "{{.HUB_CLUSTER_NAME}}"
