@@ -1,7 +1,27 @@
 # Environment-level value overrides for the control-plane environment.
-# Add Helm value overrides here that apply to all clusters in this environment.
-# These values are layered after registry domain files and before cluster-level overrides.
-# Example:
-#   metrics_server:
+# Add appset-chart-level overrides here that apply to all clusters in this
+# environment (version pins, valuesObject, selectors). Layered after the
+# registry domain files and before cluster-level overrides.
+#
+# ⚠️ KEY CONVENTION — the top-level key MUST be the addon's registry key, which
+# is KEBAB-case (e.g. `external-secrets`, `metrics-server`, `cert-manager`).
+# This is NOT the snake_case `enable_<addon>` convention used in
+# `enabled-addons.yaml` (`external_secrets: true`). Helm merges this file onto
+# the registry entry by EXACT top-level key match: a snake_case key such as
+# `external_secrets:` does NOT merge onto `external-secrets` and is silently
+# dropped by the appset-chart (it has no `namespace` field, so the generator
+# skips it) — a no-op.
+#
+# ✅ Before writing an override, READ THE APPLICATION-SET DEFINITION to confirm
+# the exact key and schema this file is consumed under:
+#   - platform-charts/appset-chart/templates/application-set.yaml
+#       (iterates `.Values.<registry-key>` maps that have a `namespace`,
+#        and injects `<registry-key>.valuesObject` into the addon Application)
+#   - gitops/addons/registry/*.yaml  (the authoritative kebab-case addon keys)
+#   - gitops/bootstrap/addons.yaml   (shows this overrides.yaml is a valueFile
+#        of the appset-chart, for both $defaults and the $overlay/fleet-config)
+#
+# Example (correct kebab key = the registry key):
+#   metrics-server:
 #     valuesObject:
 #       replicas: 2
