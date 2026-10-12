@@ -83,6 +83,13 @@ spec:
           - key: "Name"
             value: ${schema.spec.name}-igw
   - id: natGateway1
+    # Gate the private route tables on the NAT gateway being available. A brand-new
+    # NAT gateway ID is not visible to CreateRoute for a few seconds
+    # (InvalidNatGatewayID.NotFound), and the ACK RouteTable create discards the route
+    # table it just made when its route fails, so every retry left another orphan route
+    # table in the VPC (and the orphans block the VPC deletion on teardown).
+    readyWhen:
+      - ${natGateway1.status.?state.orValue("") == "available"}
     template:
       apiVersion: ec2.services.k8s.aws/v1alpha1
       kind: NATGateway
