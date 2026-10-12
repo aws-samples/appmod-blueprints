@@ -20,6 +20,7 @@ spec:
        resourcePrefix: string | default="peeks"
        accountId: string
        deployClusterName: string | default="peeks-spoke-dev"
+       prodClusterName: string | default="peeks-spoke-prod"
       application:
        name: string
        dockerfilePath: string | default="."
@@ -127,6 +128,8 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorEcr.metadata.name}
              ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
@@ -190,6 +193,8 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorEcr.metadata.name}
              ecr.services.k8s.aws/force-delete: "true"
        spec:
           name: >-
@@ -246,6 +251,8 @@ spec:
           # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
           # the AWS policy when deleting this Kro instance (may be referenced by other resources)
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${iamroleselectorIam.metadata.name}
           ownerReferences:
              - apiVersion: kro.run/v1alpha1
                kind: ${schema.kind}
@@ -273,7 +280,10 @@ spec:
                    "Action": [
                      "eks:DescribeCluster"
                    ],
-                   "Resource": "arn:aws:eks:${schema.spec.aws.region}:*:cluster/${schema.spec.aws.deployClusterName}"
+                   "Resource": [
+                     "arn:aws:eks:${schema.spec.aws.region}:*:cluster/${schema.spec.aws.deployClusterName}",
+                     "arn:aws:eks:${schema.spec.aws.region}:*:cluster/${schema.spec.aws.prodClusterName}"
+                   ]
                  },
                  {
                    "Effect": "Allow",
@@ -317,6 +327,8 @@ spec:
                controller: false
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorIam.metadata.name}
        spec:
           name: ${schema.spec.aws.resourcePrefix}-${schema.spec.application.name}-role
           description: IAM role for CI/CD pipeline with EKS pod identity
@@ -363,6 +375,8 @@ spec:
           annotations:
              services.k8s.aws/adoption-policy: adopt-or-create
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+             # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+             peeks/depends-on: ${iamroleselectorEks.metadata.name}
              # Implicit dependencies through template references
              roleArn: ${iamrole.status.ackResourceMetadata.arn}
        spec:
@@ -394,6 +408,8 @@ spec:
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            # Keep the IAMRoleSelector (ACK's role for this resource) until this is deleted.
+            peeks/depends-on: ${iamroleselectorEks.metadata.name}
             services.k8s.aws/region: ${schema.spec.aws.region}
         spec:
           clusterName: "${schema.spec.aws.deployClusterName}"
@@ -401,6 +417,37 @@ spec:
             - accessScope:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          principalARN: "${iamrole.status.ackResourceMetadata.arn}"
+          type: STANDARD
+
+    # Read-only access to the app namespace on the prod cluster, for the DORA prod deployment
+    # check. AmazonEKSViewPolicy doesn't cover Argo Rollouts, so this uses AmazonEKSAdminViewPolicy.
+    # No readyWhen: without a prod cluster, only the DORA prod check fails, not the pipeline.
+    - id: prodaccessentry
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: AccessEntry
+        metadata:
+          name: "${schema.spec.name}-${schema.spec.aws.prodClusterName}-access-entry"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: CICDPipeline
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            services.k8s.aws/adoption-policy: adopt-or-create
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.aws.region}
+        spec:
+          clusterName: "${schema.spec.aws.prodClusterName}"
+          accessPolicies:
+            - accessScope:
+                type: "namespace"
+                namespaces:
+                  - "${schema.spec.namespace}"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy"
           principalARN: "${iamrole.status.ackResourceMetadata.arn}"
           type: STANDARD
 
@@ -1348,9 +1395,15 @@ spec:
                    - name: build-and-push
                      template: kaniko-build
                      dependencies: [run-tests]
+                   - name: stamp-build-time
+                     template: stamp-build-time
+                     dependencies: [build-and-push]
+                     # Best effort: if stamping fails, only Kargo's NewestBuild ordering is affected
+                     continueOn:
+                       failed: true
                    - name: update-deployment
                      template: update-git-repo
-                     dependencies: [build-and-push]
+                     dependencies: [stamp-build-time]
                    - name: notify-completion
                      template: notify-status
                      dependencies: [update-deployment]
@@ -1469,6 +1522,49 @@ spec:
                      secretName: ${schema.spec.name}-docker-config
                      # Ensure proper permissions for Kaniko
                      defaultMode: 0644
+
+             # Kaniko keeps the base image's manifest annotations, so an image built FROM an
+             # official image (e.g. tomcat) carries the base's org.opencontainers.image.created.
+             # Kargo's NewestBuild reads that annotation before the config's created time, so
+             # every build of an app looks equally old. Overwrite it with this build's time.
+             - name: stamp-build-time
+               metadata:
+                 annotations:
+                   karpenter.sh/do-not-disrupt: "true"
+               initContainers:
+                 - name: ecr-login
+                   image: amazon/aws-cli:latest
+                   command: [sh, -c]
+                   args:
+                     - |
+                       set -e
+                       ECR_REGISTRY="${ecrmainrepo.status.ackResourceMetadata.ownerAccountID}.dkr.ecr.${schema.spec.aws.region}.amazonaws.com"
+                       ECR_TOKEN=$(aws ecr get-login-password --region ${schema.spec.aws.region})
+                       printf '{"auths":{"%s":{"auth":"%s"}}}' "$ECR_REGISTRY" "$(echo -n "AWS:$ECR_TOKEN" | base64 -w 0)" > /docker/config.json
+                   volumeMounts:
+                     - name: docker-auth
+                       mountPath: /docker
+               container:
+                 image: gcr.io/go-containerregistry/crane/debug:v0.22.1
+                 command: [sh, -c]
+                 args:
+                   - |
+                     set -e
+                     IMAGE="${ecrmainrepo.status.repositoryURI}:{{workflow.parameters.image-tag}}"
+                     CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                     crane mutate --annotation org.opencontainers.image.created=$CREATED "$IMAGE"
+                     echo "Stamped $IMAGE with org.opencontainers.image.created=$CREATED"
+                 env:
+                   - name: DOCKER_CONFIG
+                     value: /docker
+                 volumeMounts:
+                   - name: docker-auth
+                     mountPath: /docker
+                     readOnly: true
+               volumes:
+                 - name: docker-auth
+                   emptyDir:
+                     medium: Memory
 
              - name: update-git-repo
                metadata:
@@ -1594,15 +1690,27 @@ spec:
                 value: ${schema.spec.aws.region}
               - name: target-role-arn
                 value: ${iamrole.status.ackResourceMetadata.arn}
+              # DevLake environment. CI pushes are checked on the dev cluster (deployClusterName);
+              # gitlab-dora-prod-trigger sets PRODUCTION and the prod cluster for prod pushes.
+              - name: environment
+                value: DEVELOPMENT
           templates:
             - name: handle-rollout-check-and-process-deploy
               steps:
+                - - name: resolve-tag
+                    template: resolve-deployed-tag
+                    arguments:
+                      parameters:
+                        - name: body
+                          value: "{{workflow.parameters.body}}"
                 - - name: check-rollout
                     template: check-rollout-status
                     arguments:
                       parameters:
                         - name: namespace
                           value: team-"{{workflow.parameters.appname}}"
+                        - name: tag
+                          value: "{{steps.resolve-tag.outputs.result}}"
                         - name: body
                           value: "{{workflow.parameters.body}}"
                 - - name: process-and-send-deployment
@@ -1611,6 +1719,8 @@ spec:
                       parameters:
                         - name: status
                           value: "{{steps.check-rollout.outputs.result}}"
+                        - name: tag
+                          value: "{{steps.resolve-tag.outputs.result}}"
                         - name: body
                           value: "{{workflow.parameters.body}}"
                         - name: url
@@ -1624,6 +1734,7 @@ spec:
               inputs:
                 parameters:
                   - name: namespace
+                  - name: tag
                   - name: body
               outputs:
                 parameters:
@@ -1657,7 +1768,8 @@ spec:
                     --name "{{workflow.parameters.target-cluster-name}}" \
                     --region "{{workflow.parameters.target-cluster-region}}" > /dev/null || exit 1
 
-                  COMMIT_HASH=$(printf '%s' "$BODY" | jq -r '.after')
+                  # Image tag to wait for (resolve-deployed-tag)
+                  COMMIT_HASH="{{inputs.parameters.tag}}"
 
                   # Wait for the Rollout to run this commit's image and settle. Progress goes to
                   # stderr: stdout is the SUCCESS/FAILURE result that process-deployment receives.
@@ -1704,6 +1816,7 @@ spec:
               inputs:
                 parameters:
                   - name: body
+                  - name: tag
                   - name: url
                   - name: status
                   - name: started
@@ -1722,6 +1835,16 @@ spec:
                     value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
+                  # A prod push is a manifest commit: attribute the deployment to the commit the
+                  # deployed image was built from (its tag), so DevLake links it to that change.
+                  # The ID suffix keeps it apart from a dev record for the same push.
+                  DEPLOYED_SHA=""
+                  ID_SUFFIX=""
+                  if [ "{{workflow.parameters.environment}}" = "PRODUCTION" ]; then
+                    DEPLOYED_SHA=$(echo "{{inputs.parameters.tag}}" | grep -E '^[0-9a-f]{40}$')
+                    ID_SUFFIX="-prod"
+                  fi
+                  export DEPLOYED_SHA ID_SUFFIX
                   RESULT="{{inputs.parameters.status}}"
                   # Rollout start and finish from check-rollout-status (fallback: trigger time, now)
                   export STARTED="{{inputs.parameters.started}}" FINISHED="{{inputs.parameters.finished}}"
@@ -1731,16 +1854,16 @@ spec:
                   PAYLOAD=$(printf '%s' "$BODY" | jq --arg result "$RESULT" '
                   . as $root |
                   {
-                    id: ("deployment-" + (.after | .[0:7])),
+                    id: ("deployment-" + (.after | .[0:7]) + $ENV.ID_SUFFIX),
                     displayTitle: (.commits | last | .title),
                     createdDate: $ENV.STARTED,
                     startedDate: $ENV.STARTED,
                     finishedDate: $ENV.FINISHED,
-                    environment: "PRODUCTION",
+                    environment: "{{workflow.parameters.environment}}",
                     result: $result,
                     name: ("deployment-" + (.after | .[0:7])),
                     deploymentCommits: [
-                      .commits[] | {
+                      (if $ENV.DEPLOYED_SHA != "" then [.commits | last | .id = $ENV.DEPLOYED_SHA] else .commits end)[] | {
                         repoUrl: $root.repository.git_http_url,
                         refName: $root.ref,
                         startedDate: $ENV.STARTED,
@@ -1755,6 +1878,45 @@ spec:
                   echo "====Transformed Payload===="
                   echo "$PAYLOAD" | jq '.'
                   curl -X POST -H "Authorization: Bearer $DEVLAKE_TOKEN" -H "Content-Type: application/json" -d "$PAYLOAD" $webhook_url
+
+            # Image tag the deployment waits for. A CI push builds an image tagged with its commit
+            # SHA. A prod push is a manifest commit (a Kargo or manual promotion), so its tag is
+            # the one the pushed deployment/prod/ manifests set.
+            - name: resolve-deployed-tag
+              inputs:
+                parameters:
+                  - name: body
+              script:
+                image: alpine/k8s:1.32.8
+                command: [bash]
+                envFrom:
+                  - secretRef:
+                      name: gitlab-credentials
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
+                source: |
+                  AFTER=$(printf '%s' "$BODY" | jq -r '.after')
+                  TAG="$AFTER"
+                  if [ "{{workflow.parameters.environment}}" = "PRODUCTION" ]; then
+                    TAG=""
+                    PROJECT_ID=$(printf '%s' "$BODY" | jq -r '.project.id')
+                    printf '%s' "$BODY" | jq -r '[.commits[] | (.added + .modified)[]] | unique[] | select(test("^deployment/prod/.*[.]ya?ml$"))' > /tmp/prod-files
+                    while IFS= read -r f; do
+                      FILE=$(jq -rn --arg f "$f" '$f | @uri')
+                      IMAGE=$(curl -fsS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+                        "https://${schema.spec.gitlab.hostname}/api/v4/projects/$PROJECT_ID/repository/files/$FILE/raw?ref=$AFTER" \
+                        | grep -m1 -oE 'image: *"?[^" ]+' | sed -E 's/image: *"?//')
+                      if [ -n "$IMAGE" ]; then
+                        TAG=$(printf '%s' "$IMAGE" | awk -F ":" '{print $NF}')
+                        break
+                      fi
+                    done < /tmp/prod-files
+                    [ -n "$TAG" ] || echo "No image found in the pushed deployment/prod/ manifests" >&2
+                  fi
+                  # Later steps inline the tag in their scripts: only pass a plain image tag
+                  if [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "$TAG"; fi
 
     - id: doraincident
       readyWhen:
@@ -2108,6 +2270,10 @@ spec:
                 API_KEY="$DEVLAKE_TOKEN"
                 CONNECTION_ID="$DEVLAKE_HOOK_ID"
                 BLUEPRINT_ID="$DEVLAKE_BP_ID"
+                # Seeded IDs carry the app name: DevLake's DORA dashboards join incidents to
+                # deployments on the deployment ID alone, so plain DEPLOY-<n> IDs mix teams.
+                # Seeded PR keys start at 1000000, clear of the GitLab MR ids real MRs use.
+                APP="{{workflow.parameters.appname}}"
                 
                 
                 rand() {
@@ -2133,14 +2299,14 @@ spec:
                          -H "Authorization: Bearer $API_KEY" \
                          -H 'Content-Type: application/json' \
                          -d '{
-                      "id": "PR-'"$pr_id"'",
+                      "id": "'"$APP"'-PR-'"$pr_id"'",
                       "headRepoId": "repo-'"$(($(rand) % 1000))"'",
                       "status": "MERGED",
                       "originalStatus": "OPEN",
                       "displayTitle": "Feature: Add new functionality '"$pr_id"'",
                       "description": "This PR adds new features",
                       "url": "https://github.com/org/repo/pull/'"$pr_id"'",
-                      "pullRequestKey": '"$pr_id"',
+                      "pullRequestKey": '"$((1000000 + pr_id))"',
                       "createdDate": "'"$created_date"'",
                       "mergedDate": "'"$merged_date"'",
                       "closedDate": null,
@@ -2162,7 +2328,7 @@ spec:
                     response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/deployments" -X 'POST' \
                          -H "Authorization: Bearer $API_KEY" \
                          -d "{
-                      \"id\": \"DEPLOY-$deploy_id\",
+                      \"id\": \"$APP-DEPLOY-$deploy_id\",
                       \"startedDate\": \"$start_date\",
                       \"finishedDate\": \"$finish_date\",
                       \"result\": \"SUCCESS\",
@@ -2189,7 +2355,7 @@ spec:
                     response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
                          -H "Authorization: Bearer $API_KEY" \
                          -d "{
-                      \"issueKey\":\"INC-$incident_id\",
+                      \"issueKey\":\"$APP-INC-$incident_id\",
                       \"title\":\"Incident $incident_id\",
                       \"type\":\"INCIDENT\",
                       \"originalStatus\":\"TODO\",
@@ -2207,7 +2373,7 @@ spec:
                     response=$(curl -s "$BASE_URL/api/rest/plugins/webhook/connections/$CONNECTION_ID/issues" -X 'POST' \
                          -H "Authorization: Bearer $API_KEY" \
                          -d "{
-                      \"issueKey\":\"INC-$incident_id\",
+                      \"issueKey\":\"$APP-INC-$incident_id\",
                       \"title\":\"Incident $incident_id\",
                       \"type\":\"INCIDENT\",
                       \"originalStatus\":\"TODO\",
@@ -2345,7 +2511,8 @@ spec:
              cicd.kro.run/application: ${schema.spec.application.name}
              cicd.kro.run/setup-type: 'initial-ecr-credentials'
        spec:
-          ttlSecondsAfterFinished: 300 # Clean up after 5 minutes
+          # No ttlSecondsAfterFinished: this Job is a kro-managed resource, so a TTL
+          # deletion makes kro recreate (and re-run) it, flapping the instance's Ready.
           template:
              metadata:
                labels:
@@ -2547,10 +2714,10 @@ spec:
              app.kubernetes.io/component: cicd-pipeline
              app.kubernetes.io/managed-by: kro
        spec:
-          service:
-             ports:
-               - port: 12000
-                 targetPort: 12000
+          # No spec.service: Argo Events would copy this EventSource's labels, including kro's
+          # applyset part-of label, onto the Service it generates, and kro would prune that
+          # Service on every reconcile ("cluster mutated"). The kro-owned webhookservice below
+          # selects the EventSource pod instead.
           # A gitlab EventSource (not webhook) rejects requests whose X-Gitlab-Token header
           # doesn't match secretToken. setup-gitlab-webhook registers the GitLab hook, so no
           # projects or groups are listed and the EventSource never calls the GitLab API.
@@ -2563,7 +2730,7 @@ spec:
                  port: '12000'
                  endpoint: /argo-events/${schema.spec.name}
                  method: POST
-                 url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/argo-events/${schema.spec.name}
+                 url: http://${schema.spec.name}-webhook-service.${schema.metadata.namespace}.svc.cluster.local:12000/argo-events/${schema.spec.name}
                events:
                  - PushEvents
                  - IssuesEvents
@@ -2702,6 +2869,36 @@ spec:
                   end
                   
                   return false
+             # Pushes to main that add or change prod manifests: a Kargo promotion or a manual
+             # promotion commit. Unlike gitlab-webhook, any author counts: these deploy prod.
+             - name: prod-deploy-webhook
+               eventSourceName: ${eventsource.metadata.name}
+               eventName: gitlab-webhook
+               filters:
+                 data:
+                   - path: body.object_kind
+                     type: string
+                     value:
+                       - 'push'
+                   - path: body.ref
+                     type: string
+                     value:
+                       - 'refs/heads/main'
+                 script: |
+                  local commits = event.body.commits
+                  if commits == nil then
+                    return false
+                  end
+                  for i, commit in ipairs(commits) do
+                    for _, files in ipairs({commit.added or {}, commit.modified or {}}) do
+                      for j, file in ipairs(files) do
+                        if string.match(file, "^deployment/prod/") then
+                          return true
+                        end
+                      end
+                    end
+                  end
+                  return false
           triggers:
              - template:
                  name: gitlab-workflow-trigger
@@ -2779,6 +2976,39 @@ spec:
                    parameters:
                      - src:
                          dependencyName: gitlab-webhook
+                         dataKey: body
+                       dest: spec.arguments.parameters.0.value
+             - template:
+                 name: gitlab-dora-prod-trigger
+                 conditions: "prod-deploy-webhook"
+                 argoWorkflow:
+                   operation: submit
+                   source:
+                     resource:
+                       apiVersion: argoproj.io/v1alpha1
+                       kind: Workflow
+                       metadata:
+                         generateName: ${schema.spec.name}-dora-prod-deploy
+                         namespace: ${schema.metadata.namespace}
+                         labels:
+                           app.kubernetes.io/name: ${schema.spec.application.name}
+                           app.kubernetes.io/component: cicd-pipeline
+                           triggered-by: gitlab-webhook
+                       spec:
+                         serviceAccountName: ${serviceaccount.metadata.name}
+                         workflowTemplateRef:
+                           name: ${doradeploy.metadata.name}
+                         arguments:
+                           parameters:
+                             - name: body
+                               value: 'replace'
+                             - name: target-cluster-name
+                               value: ${schema.spec.aws.prodClusterName}
+                             - name: environment
+                               value: PRODUCTION
+                   parameters:
+                     - src:
+                         dependencyName: prod-deploy-webhook
                          dataKey: body
                        dest: spec.arguments.parameters.0.value
              - template:
@@ -2905,7 +3135,7 @@ spec:
                 paths:
                   - backend:
                       service:
-                        name: ${schema.spec.name}-gitlab-eventsource-eventsource-svc
+                        name: ${webhookservice.metadata.name}
                         port:
                           number: 12000
                     path: /argo-events/${schema.spec.name}

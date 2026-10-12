@@ -27,6 +27,7 @@ spec:
     clusterName: ${{values.cluster_name}}
     resourcePrefix: "${{values.aws_resource_prefix}}"
     deployClusterName: "${{values.aws_resource_prefix}}-spoke-dev"
+    prodClusterName: "${{values.aws_resource_prefix}}-spoke-prod"
     accountId: "${{values.aws_account_id}}"
   application:
     name: ${{values.appname}}
