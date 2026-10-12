@@ -129,9 +129,9 @@ template: {
 							}
 						}
 					},
-					if parameter.MetricGate != _|_ {
+					if parameter.metrics != _|_ {
 						{
-							pause: duration: parameter.MetricGate.pause
+							pause: duration: parameter.metrics.pause
 						}
 					},
 					if parameter.metrics != _|_ {
