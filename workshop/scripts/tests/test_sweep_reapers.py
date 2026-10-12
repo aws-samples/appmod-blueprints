@@ -20,6 +20,7 @@ from sweep import resilience as r  # noqa: E402
 from sweep.reapers import ecr as ecr_reaper  # noqa: E402
 from sweep.reapers import s3 as s3_reaper  # noqa: E402
 from sweep.reapers import logs as logs_reaper  # noqa: E402
+from sweep.reapers import iam as iam_reaper  # noqa: E402
 
 
 class FakeClientError(Exception):
@@ -199,3 +200,44 @@ def test_log_groups_real_delete_counted():
                logs=_FakeLogs(["/aws/eks/peeks-hub/cluster"], lambda n: None))
     logs_reaper.reap_log_groups(ctx)
     assert "CloudWatch: deleted 1/1 log group(s)" in _joined(ctx)
+
+
+# ── IAM ───────────────────────────────────────────────────────────────────────
+
+class _FakeIam:
+    def __init__(self, role_names):
+        self._roles = [{"RoleName": n} for n in role_names]
+        self.deleted = []
+
+    def get_paginator(self, op):
+        roles = self._roles
+
+        class _P:
+            def paginate(self, **k):
+                return iter([{"Roles": roles}] if op == "list_roles" else [{"Policies": []}])
+
+        return _P()
+
+    def list_attached_role_policies(self, RoleName):
+        return {"AttachedPolicies": []}
+
+    def list_role_policies(self, RoleName):
+        return {"PolicyNames": []}
+
+    def delete_role(self, RoleName):
+        self.deleted.append(RoleName)
+
+
+def test_iam_never_deletes_cloudformation_stack_roles():
+    # Self-paced stack "peeks-workshop" and Workshop Studio "peeks-workshop-team-stack"
+    # roles must survive; workshop-created roles are still reaped.
+    iam = _FakeIam([
+        "peeks-workshop-GitTokenSeedFnServiceRole2DC4919C-ABC",
+        "peeks-workshop-PEEKSSharedRole61C60677-XYZ",
+        "peeks-workshop-team-stack-IdeRole-123",
+        "peeks-hub-argo-rollouts",
+        "peeks-spoke-dev-ack-capability-role",
+    ])
+    ctx = _ctx(iam=iam, prefix="peeks", spokes=[])
+    iam_reaper.reap(ctx)
+    assert sorted(iam.deleted) == ["peeks-hub-argo-rollouts", "peeks-spoke-dev-ack-capability-role"]
