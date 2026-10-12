@@ -719,6 +719,73 @@ spec:
                  key: ${schema.spec.aws.clusterName}/secrets
                  property: git_token
 
+    # Random shared secret for the GitLab webhook, generated once per pipeline. GitLab sends it
+    # in X-Gitlab-Token and the EventSource rejects requests that don't carry it.
+    - id: webhooktokengenerator
+      template:
+       apiVersion: generators.external-secrets.io/v1alpha1
+       kind: Password
+       metadata:
+          name: ${schema.spec.name}-webhook-token
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          length: 40
+          digits: 10
+          symbols: 0
+          noUpper: false
+          allowRepeat: true
+
+    - id: webhooksecret
+      readyWhen:
+       - ${webhooksecret.status.conditions.exists(x, x.type == 'Ready' && x.status == "True")}
+      template:
+       apiVersion: external-secrets.io/v1
+       kind: ExternalSecret
+       metadata:
+          name: ${schema.spec.name}-webhook-token
+          ownerReferences:
+             - apiVersion: kro.run/v1alpha1
+               kind: ${schema.kind}
+               name: ${schema.metadata.name}
+               uid: ${schema.metadata.uid}
+               blockOwnerDeletion: true
+               controller: false
+          annotations:
+             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          labels:
+             app.kubernetes.io/name: ${schema.spec.application.name}
+             app.kubernetes.io/component: cicd-pipeline
+             app.kubernetes.io/managed-by: kro
+       spec:
+          # Never regenerate: the GitLab hook keeps the token it was registered with
+          refreshPolicy: CreatedOnce
+          target:
+              name: ${schema.spec.name}-webhook-token
+              creationPolicy: Owner
+              # With a template, ESO doesn't copy this object's labels (including kro's applyset
+              # labels) onto the Secret, so kro doesn't prune it
+              template:
+                data:
+                  token: '{{ .password }}'
+          dataFrom:
+             - sourceRef:
+                 generatorRef:
+                   apiVersion: generators.external-secrets.io/v1alpha1
+                   kind: Password
+                   name: ${webhooktokengenerator.metadata.name}
+
     # Docker registry secret for ECR authentication - properly scoped to namespace
     - id: dockersecret
       readyWhen:
@@ -1015,6 +1082,13 @@ spec:
                  envFrom:
                    - secretRef:
                        name: gitlab-credentials
+                 env:
+                   # Shared secret GitLab sends in X-Gitlab-Token; the EventSource checks it
+                   - name: WEBHOOK_SECRET_TOKEN
+                     valueFrom:
+                       secretKeyRef:
+                         name: ${webhooksecret.spec.target.name}
+                         key: token
                  args:
                    - |
                      apk add curl jq
@@ -1029,6 +1103,7 @@ spec:
                      gitlab_username=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.GITLAB_USERNAME}')
                      app_name=$(kubectl get configmap ${schema.spec.name}-config -n ${schema.metadata.namespace} -o jsonpath='{.data.APPLICATION_NAME}')
                      gitlab_token="$$GITLAB_TOKEN"
+                     webhook_token="$$WEBHOOK_SECRET_TOKEN"
 
                      api_url="https://$$gitlab_hostname/api/v4/projects/$$gitlab_username%2F$$app_name/hooks"
 
@@ -1093,7 +1168,7 @@ spec:
                            "releases_events": false,
                            "subgroup_events": false,
                            "enable_ssl_verification": false,
-                           "token": "",
+                           "token": "'"$$webhook_token"'",
                            "push_events_branch_filter": "main"
                          }' -s -w "\nHTTP_CODE:%{http_code}")
                        
@@ -1110,7 +1185,14 @@ spec:
                        fi
                      else
                        echo "GitLab webhook already exists with ID: $$webhook_exists"
-                       echo "Webhook is correctly configured - no action needed"
+                       # Set the secret token on it too: the EventSource rejects requests without it
+                       update_http_code=$$(curl -k -X 'PUT' "$$api_url/$$webhook_exists" \
+                         -H "accept: application/json" \
+                         -H "Authorization: Bearer $$gitlab_token" \
+                         -H "Content-Type: application/json" \
+                         -d '{"url": "'"$$webhook_url"'", "token": "'"$$webhook_token"'"}' \
+                         -s -o /dev/null -w "%{http_code}")
+                       echo "Update HTTP Code: $$update_http_code"
                      fi
 
                      echo "GitLab webhook configuration completed"
@@ -1447,23 +1529,17 @@ spec:
 
                      # Update various deployment file formats
                      echo "Debug: Application name is: ${schema.spec.application.name}"
-                     # Update image only for java applications in deployment/dev/application.yaml
-                     if [ "${schema.spec.application.name}" = "java" ]; then
-                       if [ -f "dev/application.yaml" ]; then
-                         sed -i "s|image: <image>|image: $IMAGE_URI|g" dev/application.yaml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" dev/application.yaml
-                         sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" dev/application.yaml
-                         # KubeVela only re-renders the Rollout when app.oam.dev/publishVersion
-                         # changes — bump it to the image tag so a new image actually rolls out.
-                         sed -i "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g" dev/application.yaml
-                       fi
-                     else
-                       # Replace placeholder and existing ECR images for non-java applications
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: <image>|image: $IMAGE_URI|g"
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g"
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g"
-                       # KubeVela publishVersion bump (see java branch) — no-op for manifests without it.
-                       find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g"
+                     # CI updates deployment/dev/ only, for every application (as java already did).
+                     # prod/ changes only through an explicit promotion (Kargo or the module's
+                     # promotion step), and templates/ keeps its <image> placeholders.
+                     # KubeVela only re-renders the Rollout when app.oam.dev/publishVersion
+                     # changes, so bump it to the image tag too (no-op for manifests without it).
+                     if [ -d dev ]; then
+                       find dev \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i \
+                         -e "s|image: <image>|image: $IMAGE_URI|g" \
+                         -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" \
+                         -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" \
+                         -e "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g"
                      fi
 
                      # Show what changed
@@ -1533,6 +1609,13 @@ spec:
              workflow.kro.run/type: cicd
         spec:
           entrypoint: handle-rollout-check-and-process-deploy
+          # Sensor-submitted workflows: clean up their pods and the workflows themselves
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          ttlStrategy:
+            secondsAfterSuccess: 86400
+            secondsAfterFailure: 604800
           arguments:
             parameters:
               - name: body
@@ -1588,42 +1671,54 @@ spec:
                   - name: namespace
                   - name: tag
                   - name: body
+              # The script polls inside one pod, for up to 20 minutes. Retries are only for
+              # failed attempts, such as an unreachable cluster or an evicted pod.
               retryStrategy:
-                limit: 60
+                limit: 2
                 retryPolicy: "Always"
                 backoff:
                   duration: "10s"
               container:
-                image: amazon/aws-cli:latest
+                # Pinned image that ships kubectl, the AWS CLI and jq
+                image: alpine/k8s:1.35.9
                 command: [/bin/bash, -c]
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 args:
                 - |
                   aws eks update-kubeconfig \
                     --name "{{workflow.parameters.target-cluster-name}}" \
-                    --region "{{workflow.parameters.target-cluster-region}}" > /dev/null
-
-                  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-                  chmod +x kubectl && mv kubectl /usr/local/bin/
+                    --region "{{workflow.parameters.target-cluster-region}}" > /dev/null || exit 1
 
                   # Image tag to wait for (resolve-deployed-tag)
                   COMMIT_HASH="{{inputs.parameters.tag}}"
 
-                  ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
-                  CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
-                  CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
+                  # Wait for the Rollout to run this commit's image and settle. Progress goes to
+                  # stderr: stdout is the SUCCESS/FAILURE result that process-deployment receives.
+                  deadline=$((SECONDS + 1200))
+                  while [ "$SECONDS" -lt "$deadline" ]; do
+                    ROLLOUT_NAME=$(kubectl get rollout -n "{{inputs.parameters.namespace}}" -o jsonpath='{.items[0].metadata.name}')
+                    CURRENT_IMAGE=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+                    CURRENT_TAG=$(echo $CURRENT_IMAGE | awk -F ":" '{print $2}')
 
-                  if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
-                    phase=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
-                    if [ "$phase" = "Healthy" ]; then
-                      echo "SUCCESS"
-                      exit 0
-                    elif [ "$phase" = "Degraded" ]; then
-                      echo "FAILURE"
-                      exit 0
+                    if [[ "$CURRENT_TAG" == *"$COMMIT_HASH"* ]]; then
+                      phase=$(kubectl get rollout $ROLLOUT_NAME -n "{{inputs.parameters.namespace}}" -o jsonpath='{.status.phase}')
+                      if [ "$phase" = "Healthy" ]; then
+                        echo "SUCCESS"
+                        exit 0
+                      elif [ "$phase" = "Degraded" ]; then
+                        echo "FAILURE"
+                        exit 0
+                      fi
                     fi
-                  fi
 
-                  echo "Still waiting for rollout to complete..."
+                    echo "Still waiting for rollout to complete..." >&2
+                    sleep 10
+                  done
+
+                  echo "Timed out waiting for the rollout to complete" >&2
                   exit 1
     
             - name: process-deployment
@@ -1641,6 +1736,10 @@ spec:
                       name: devlake-webhook-secret
                   - configMapRef:
                       name: devlake-webhook-id
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
                   # A prod push is a manifest commit: attribute the deployment to the commit the
@@ -1655,7 +1754,7 @@ spec:
                   export DEPLOYED_SHA ID_SUFFIX
                   RESULT="{{inputs.parameters.status}}"
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments          
-                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq --arg result "$RESULT" '
+                  PAYLOAD=$(printf '%s' "$BODY" | jq --arg result "$RESULT" '
                   . as $root |
                   {
                     id: ("deployment-" + (.after | .[0:7]) + $ENV.ID_SUFFIX),
@@ -1730,6 +1829,13 @@ spec:
           name: ${schema.spec.name}-dora-incident-workflow
         spec:
           entrypoint: process-incident
+          # Sensor-submitted workflows: clean up their pods and the workflows themselves
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          ttlStrategy:
+            secondsAfterSuccess: 86400
+            secondsAfterFailure: 604800
           arguments:
             parameters:
               - name: body
@@ -1749,11 +1855,15 @@ spec:
                       name: devlake-webhook-secret
                   - configMapRef:
                       name: devlake-webhook-id
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/issues
-                  echo '{{inputs.parameters.body}}'
-                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  printf '%s\n' "$BODY"
+                  PAYLOAD=$(printf '%s' "$BODY" | jq '
                   {
                     issueKey: (.repository.name + "-" + (.object_attributes.id | tostring)),
                     title: .object_attributes.title,
@@ -1786,6 +1896,13 @@ spec:
           name: ${schema.spec.name}-dora-pull-request-workflow
         spec:
           entrypoint: process-pull-request
+          # Sensor-submitted workflows: clean up their pods and the workflows themselves
+          podGC:
+            strategy: OnWorkflowCompletion
+            deleteDelayDuration: 1h
+          ttlStrategy:
+            secondsAfterSuccess: 86400
+            secondsAfterFailure: 604800
           arguments:
             parameters:
               - name: body
@@ -1805,11 +1922,15 @@ spec:
                       name: devlake-webhook-secret
                   - configMapRef:
                       name: devlake-webhook-id
+                # The webhook body is untrusted input: pass it as an env var, never inline it in the script.
+                env:
+                  - name: BODY
+                    value: "{{inputs.parameters.body}}"
                 source: |
                   apk add --no-cache jq curl
                   webhook_url="{{inputs.parameters.url}}"/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/pull_requests
-                  echo '{{inputs.parameters.body}}'
-                  PAYLOAD=$(echo '{{inputs.parameters.body}}' | jq '
+                  printf '%s\n' "$BODY"
+                  PAYLOAD=$(printf '%s' "$BODY" | jq '
                   {
                     id: (.repository.name + "-" + (.object_attributes.id | tostring)),
                     pullRequestKey: (.object_attributes.id | tostring),
@@ -2436,6 +2557,14 @@ spec:
              triggered-by: initial-setup
        spec:
           serviceAccountName: ${serviceaccount.metadata.name}
+          # Run-once semantics for this kro-reconciled singleton.
+          # The referenced WorkflowTemplate sets a 1h ttlStrategy to GC the many
+          # webhook-triggered CI Workflows. Inheriting it here lets Argo delete this
+          # object ~1h after success -> kro's reconcile loop sees its owned resource
+          # missing and recreates it -> the one-shot build re-runs and re-pushes
+          # :initial hourly. A non-nil ttlStrategy on the Workflow spec overrides the
+          # template's, so the object persists and the build runs exactly once.
+          ttlStrategy: {}
           workflowTemplateRef:
               name: ${cicdworkflow.metadata.name}
               namespace: ${schema.metadata.namespace}
@@ -2485,12 +2614,30 @@ spec:
              ports:
                - port: 12000
                  targetPort: 12000
-          webhook:
+          # A gitlab EventSource (not webhook) rejects requests whose X-Gitlab-Token header
+          # doesn't match secretToken. setup-gitlab-webhook registers the GitLab hook, so no
+          # projects or groups are listed and the EventSource never calls the GitLab API.
+          # Argo Events v1.9 only loads secretToken when accessToken and webhook.url are set,
+          # so accessToken points at the same secret: it is never sent anywhere, and the GitLab
+          # API token stays out of this internet-facing pod.
+          gitlab:
              gitlab-webhook:
-               port: '12000'
-               endpoint: /argo-events/${schema.spec.name}
-               method: POST
-               url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/argo-events/${schema.spec.name}
+               webhook:
+                 port: '12000'
+                 endpoint: /argo-events/${schema.spec.name}
+                 method: POST
+                 url: http://${schema.spec.name}-gitlab-eventsource-eventsource-svc.${schema.metadata.namespace}.svc.cluster.local:12000/argo-events/${schema.spec.name}
+               events:
+                 - PushEvents
+                 - IssuesEvents
+                 - MergeRequestsEvents
+               gitlabBaseURL: https://${schema.spec.gitlab.hostname}
+               secretToken:
+                 name: ${webhooksecret.spec.target.name}
+                 key: token
+               accessToken:
+                 name: ${webhooksecret.spec.target.name}
+                 key: token
 
     # Argo Events Sensor for triggering CI/CD workflows
     - id: sensor
@@ -2557,6 +2704,11 @@ spec:
                      type: string
                      value:
                        - 'refs/heads/main'
+                   # `after` becomes the CI image tag and is used in shell steps: accept only a full commit SHA
+                   - path: body.after
+                     type: string
+                     value:
+                       - '^[0-9a-f]{40}$'
                  # Filter out commits from CI/CD pipeline and deployment-only changes
                  script: |
                   local commits = event.body.commits

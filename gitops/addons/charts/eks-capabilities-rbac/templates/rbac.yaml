@@ -56,6 +56,10 @@ rules:
 - apiGroups: ["external-secrets.io"]
   resources: ["externalsecrets", "clustersecretstores"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ESO generators (CICDPipeline creates a Password generator for the webhook token)
+- apiGroups: ["generators.external-secrets.io"]
+  resources: ["passwords"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # ACK EC2
 - apiGroups: ["ec2.services.k8s.aws"]
   resources: ["*"]
@@ -81,6 +85,12 @@ rules:
 - apiGroups: ["grafana.aws.upbound.io"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# AMP workspace (Crossplane) — READ-ONLY. The ampincident.kro.run RGD reads the AMP
+# Workspace id via externalRef; without this grant the kro capability's externalRef GET
+# is forbidden. Read-only (get/list/watch) — kro never creates/mutates the Workspace.
+- apiGroups: ["amp.aws.upbound.io"]
+  resources: ["workspaces"]
+  verbs: ["get", "list", "watch"]
 # Kro custom resources
 - apiGroups: ["kro.run"]
   resources: ["*"]
@@ -99,6 +109,20 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # ACK Services (IAMRoleSelector and other cross-service CRDs)
 - apiGroups: ["services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ACK SNS / SQS / AMP-AlertManager — needed for the ampincident.kro.run RGD
+# (aiops-agent autonomous incident bridge: AlertManagerDefinition -> SNS -> SQS).
+# Without these the kro capability controller cannot get/create the Topic/Queue/
+# Subscription/AlertManagerDefinition and the AmpIncident instance stays
+# ResourcesReady=False ("cannot get resource topics in API group sns.services.k8s.aws").
+- apiGroups: ["sns.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["sqs.services.k8s.aws"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["prometheusservice.services.k8s.aws"]
   resources: ["*"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Ray Serve — needed for kro RayService RGD (Module 40 AI/ML)

@@ -388,6 +388,28 @@ The `services.k8s.aws/force-reconcile` annotation does NOT always work (especial
 
 ## ArgoCD 3.x (EKS Capability) Issues
 
+### No in-cluster control-plane pods — `argocd` namespace has ZERO pods (by design)
+**Symptoms**: `kubectl get pods -n argocd` returns nothing; a health check reports a
+"missing ArgoCD control plane", an "RBAC/namespace issue", or a "connection problem".
+
+**This is NOT a problem.** ArgoCD runs as an **EKS Managed Capability**: its control
+plane (application-controller, repo-server, API) lives in the EKS-managed plane, **not
+as pods in your cluster**. An empty `argocd` namespace is **expected and normal**. The
+same is true for **kro** and **ACK** — their controllers run via managed capabilities,
+so there is **no kro controller pod and no ACK controller pod** to find in the cluster.
+Never flag their absence as an incident, and never infer a connectivity failure from a
+0-pod result for a capability-backed component.
+
+**How to actually assess ArgoCD health** — read the Application custom resources, not pods:
+```bash
+kubectl get applications.argoproj.io -n argocd \
+  -o custom-columns=NAME:.metadata.name,HEALTH:.status.health.status,SYNC:.status.sync.status
+# flag only Degraded/Missing health or OutOfSync sync
+```
+Note: the **argo-workflows / argo-rollouts / argo-events** add-ons *do* run as pods in
+their own namespaces — those are ordinary workloads and are unrelated to the ArgoCD
+*capability*; do not conflate "no argocd pods" with those being down.
+
 ### `dig` function fails on annotations
 **Symptoms**: `error calling dig: interface conversion: interface {} is map[string]string, not map[string]interface {}`
 

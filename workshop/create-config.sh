@@ -331,6 +331,25 @@ fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
+
+# ── OAP (Open Agentic Platform) — agentic addon coordinates ───────────────────
+# OAP-first + config unique: this single config.local.yaml is the superset read by
+# BOTH appmod's `task install` (ignores these extra keys — yq resolves each with a
+# default, so unknown keys are harmless) AND OAP's `task agentic:install` (reads
+# .agenticRepo.* + derives the platform repo from the top-level .repo/.clusterProvider
+# via the aligned `//` fallback in OAP's Taskfile). agenticRepo.url is the repo that
+# HOSTS the addon registry value files ($values in gitops/bootstrap/agent-platform-app.yaml);
+# basepath MUST be "gitops/addons/" so the fan-out valueFiles resolve to
+# $values/gitops/addons/registry/*.yaml (the root cause of the empty-fan-out bug when
+# it was "gitops/"). Overridable via AGENTIC_REPO_URL / AGENTIC_REPO_REVISION /
+# AGENTIC_REPO_BASEPATH; defaults target the awslabs OAP repo on the configured branch.
+AGENTIC_REPO_URL="${AGENTIC_REPO_URL:-https://github.com/awslabs/open-agentic-platform}"
+AGENTIC_REPO_REVISION="${AGENTIC_REPO_REVISION:-main}"   # default for manual/local runs only. The workshop CFN bakes AGENTIC_REPO_REVISION (currently integration/peeks-e2e) as an env override, which wins for the live event. Switch this default to a validated OAP release tag once one is cut.
+AGENTIC_REPO_BASEPATH="${AGENTIC_REPO_BASEPATH:-gitops/addons/}"
+printf 'agenticRepo:\n'                                          >> "$OUTPUT_FILE"
+printf '  url: "%s"\n'      "$AGENTIC_REPO_URL"                  >> "$OUTPUT_FILE"
+printf '  revision: "%s"\n' "$AGENTIC_REPO_REVISION"            >> "$OUTPUT_FILE"
+printf '  basepath: "%s"\n' "$AGENTIC_REPO_BASEPATH"           >> "$OUTPUT_FILE"
 # --- Platform-wide AWS tags (Layer 3 of appmod-blueprints#773) -------------
 # Sourced from the PLATFORM_TAGS env var (compact JSON object string, forwarded
 # by the IDE bootstrap in platform-engineering-on-eks team-stack.ts). Written as
@@ -362,24 +381,6 @@ if [ -n "${PLATFORM_TAGS:-}" ] && [ "${PLATFORM_TAGS}" != "{}" ]; then
     echo "[$(date +%H:%M:%S)] ⚠ PLATFORM_TAGS is not valid JSON; skipping (awsTags will be empty): $PLATFORM_TAGS" >&2
   fi
 fi
-# ── OAP (Open Agentic Platform) — agentic addon coordinates ───────────────────
-# OAP-first + config unique: this single config.local.yaml is the superset read by
-# BOTH appmod's `task install` (ignores these extra keys — yq resolves each with a
-# default, so unknown keys are harmless) AND OAP's `task agentic:install` (reads
-# .agenticRepo.* + derives the platform repo from the top-level .repo/.clusterProvider
-# via the aligned `//` fallback in OAP's Taskfile). agenticRepo.url is the repo that
-# HOSTS the addon registry value files ($values in gitops/bootstrap/agent-platform-app.yaml);
-# basepath MUST be "gitops/addons/" so the fan-out valueFiles resolve to
-# $values/gitops/addons/registry/*.yaml (the root cause of the empty-fan-out bug when
-# it was "gitops/"). Overridable via AGENTIC_REPO_URL / AGENTIC_REPO_REVISION /
-# AGENTIC_REPO_BASEPATH; defaults target the awslabs OAP repo on the configured branch.
-AGENTIC_REPO_URL="${AGENTIC_REPO_URL:-https://github.com/awslabs/open-agentic-platform}"
-AGENTIC_REPO_REVISION="${AGENTIC_REPO_REVISION:-main}"
-AGENTIC_REPO_BASEPATH="${AGENTIC_REPO_BASEPATH:-gitops/addons/}"
-printf 'agenticRepo:\n'                                          >> "$OUTPUT_FILE"
-printf '  url: "%s"\n'      "$AGENTIC_REPO_URL"                  >> "$OUTPUT_FILE"
-printf '  revision: "%s"\n' "$AGENTIC_REPO_REVISION"            >> "$OUTPUT_FILE"
-printf '  basepath: "%s"\n' "$AGENTIC_REPO_BASEPATH"           >> "$OUTPUT_FILE"
 
 # --- Validate --------------------------------------------------------------
 echo "[$(date +%H:%M:%S)] ▸ Validating generated YAML..."

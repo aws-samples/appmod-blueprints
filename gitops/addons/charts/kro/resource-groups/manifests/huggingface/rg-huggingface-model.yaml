@@ -162,10 +162,42 @@ spec:
           templates:
             - name: download-and-upload
               steps:
+                # Ordering gate (durable fix for the provisioning race): the model
+                # staging bucket (${schema.spec.s3Bucket}) is created out-of-band -- by
+                # the IDE Taskfile `create-ray-models-bucket` (or CDK in guided events)
+                # -- asynchronously from this ArgoCD-rendered Workflow (sync-wave 10).
+                # With no ordering between the two, the upload step could run before the
+                # bucket existed and fail hard with NoSuchBucket on a one-shot Workflow
+                # that never retried, leaving the model un-staged for good. This gate
+                # blocks download/upload until the bucket is reachable.
+                - - name: wait-for-bucket
+                    template: wait-bucket
                 - - name: download-model
                     template: download
                 - - name: upload-to-s3
                     template: upload
+            
+            - name: wait-bucket
+              # Poll until the bucket exists. retryStrategy re-runs the step on any
+              # non-zero exit (head-bucket 404/403 while the bucket is not yet created),
+              # covering ~20 min of the provisioning race before giving up.
+              retryStrategy:
+                limit: "40"
+                retryPolicy: "Always"
+                backoff:
+                  duration: "20s"
+                  factor: "1"
+                  maxDuration: "20m"
+              container:
+                image: amazon/aws-cli:latest
+                command: [bash, -c]
+                args:
+                  - |
+                    set -e
+                    BUCKET="${schema.spec.s3Bucket}"
+                    echo "Waiting for s3://$BUCKET to exist (region ${schema.spec.region})..."
+                    aws s3api head-bucket --bucket "$BUCKET" --region ${schema.spec.region}
+                    echo "Bucket $BUCKET is ready."
             
             - name: download
               container:
@@ -202,6 +234,15 @@ spec:
                     mountPath: /workspace
             
             - name: upload
+              # Defence in depth: even past the gate, retry transient S3 errors so a
+              # one-shot provisioning hiccup cannot leave the model un-staged.
+              retryStrategy:
+                limit: "5"
+                retryPolicy: "Always"
+                backoff:
+                  duration: "15s"
+                  factor: "2"
+                  maxDuration: "5m"
               container:
                 image: amazon/aws-cli:latest
                 command: [bash, -c]

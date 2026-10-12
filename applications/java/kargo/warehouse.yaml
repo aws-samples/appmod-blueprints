@@ -9,3 +9,8 @@ spec:
   - image:
       repoURL: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${RESOURCE_PREFIX}/java
       imageSelectionStrategy: NewestBuild
+      # Ignore the one-shot seed tag so NewestBuild tracks real CI (commit-SHA) images.
+      # The initial-build workflow re-pushes :initial periodically, which would otherwise
+      # become "newest" and get promoted to prod instead of the latest feature build.
+      ignoreTagsRegexes:
+        - "^initial$"
