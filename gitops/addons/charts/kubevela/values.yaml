@@ -8,8 +8,15 @@
 # secret's aws_region annotation — see the kubevela entry in
 # gitops/addons/registry/platform.yaml. Left empty here so a bare `helm template`
 # still renders; on a real cluster the registry always sets it.
+#
+# clusterName is the default of the service-rollout / appmod-service clusterName
+# parameter, which scopes the canary metric gate to this cluster's series in the
+# shared AMP workspace. The registry sets it from the cluster secret's
+# aws_cluster_name annotation, the same name the scrapers put in the `cluster`
+# label. Empty leaves the gate without a cluster matcher.
 global:
   awsRegion: ""
+  clusterName: ""
 
 vela-core:
   multicluster:

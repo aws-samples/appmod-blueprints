@@ -42,7 +42,18 @@ template: {
 	// RGD from the amp-workspace secret.
 	let ampWorkspaceUrl = #"{{ "{{" }}args.amp-workspace-url{{ "}}" }}"#
 	let ampWorkspaceRegion = #"{{ "{{" }}args.amp-workspace-region{{ "}}" }}"#
-	let prometheusTargetQuery = "container_name=\"\(parameter.image_name)\", namespace=\"\(context.namespace)\""
+	let canaryHash = #"{{ "{{" }}args.canary-hash{{ "}}" }}"#
+
+	// Scope the metric gate to this cluster's canary pods. Every cluster's scraper
+	// writes to the same AMP workspace and labels its series with `cluster`, and a
+	// Rollout names its pods <rollout>-<pod-template-hash>-<suffix>. The canary's
+	// hash alone is not enough: the same image and env give the same hash on every
+	// cluster.
+	let prometheusTargetQuery = strings.Join([
+		"container_name=\"\(parameter.image_name)\", namespace=\"\(context.namespace)\"",
+		if parameter.clusterName != "" {"cluster=\"\(parameter.clusterName)\""},
+		"pod_name=~\"\(context.name)-\(canaryHash)-.*\"",
+	], ", ")
 
 	output: {
 		apiVersion: "argoproj.io/v1alpha1"
@@ -135,6 +146,10 @@ template: {
 									{
 										name:  "service-name"
 										value: previewService
+									},
+									{
+										name: "canary-hash"
+										valueFrom: podTemplateHashValue: "Latest"
 									},
 								]
 							}
@@ -305,6 +320,8 @@ template: {
 							name: "amp-workspace-\(context.name)"
 							key:  "amp-workspace-region"
 						}
+					}, {
+						name: "canary-hash"
 					}]
 					metrics:
 					[
@@ -530,5 +547,9 @@ template: {
 		functionalGate?:  #QualityGate
 		performanceGate?: #QualityGate
 		metrics?:         #MetricGate
+		// Value of the scrapers' `cluster` label for this cluster, used by the metric
+		// gate. Defaults to the EKS cluster name, which the kubevela addon supplies per
+		// cluster (global.clusterName). Empty drops the cluster matcher.
+		clusterName: *"{{ .Values.global.clusterName }}" | string
 	}
 }
