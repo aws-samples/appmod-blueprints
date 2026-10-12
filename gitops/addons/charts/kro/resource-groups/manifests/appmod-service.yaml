@@ -450,10 +450,11 @@ spec:
                 # Metrics analysis (metrics.enabled with evaluationCriteria): pause, then
                 # run metrics-<name> against the canary. Without criteria there is no
                 # gate, as before #529 (a vector(1) no-op). kro can't drop a list item,
-                # so then both steps render as 0s pauses.
+                # so then both steps render as 0s pauses. canary-hash scopes the queries
+                # to the canary's pods.
                 - pause:
                     duration: '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? schema.spec.metrics.pause : "0s"}'
-                - '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? dyn({"analysis": {"templates": [{"templateName": "metrics-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}]}}) : dyn({"pause": {"duration": "0s"}})}'
+                - '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? dyn({"analysis": {"templates": [{"templateName": "metrics-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}, {"name": "canary-hash", "valueFrom": {"podTemplateHashValue": "Latest"}}]}}) : dyn({"pause": {"duration": "0s"}})}'
           template:
             metadata:
               labels:
@@ -536,10 +537,11 @@ spec:
                 # Metrics analysis (metrics.enabled with evaluationCriteria): pause, then
                 # run metrics-<name> against the canary. Without criteria there is no
                 # gate, as before #529 (a vector(1) no-op). kro can't drop a list item,
-                # so then both steps render as 0s pauses.
+                # so then both steps render as 0s pauses. canary-hash scopes the queries
+                # to the canary's pods.
                 - pause:
                     duration: '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? schema.spec.metrics.pause : "0s"}'
-                - '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? dyn({"analysis": {"templates": [{"templateName": "metrics-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}]}}) : dyn({"pause": {"duration": "0s"}})}'
+                - '${schema.spec.metrics.enabled && size(schema.spec.metrics.evaluationCriteria) > 0 ? dyn({"analysis": {"templates": [{"templateName": "metrics-" + schema.metadata.name}], "args": [{"name": "service-name", "value": schema.metadata.name + "-preview"}, {"name": "canary-hash", "valueFrom": {"podTemplateHashValue": "Latest"}}]}}) : dyn({"pause": {"duration": "0s"}})}'
           template:
             metadata:
               labels:
@@ -852,6 +854,8 @@ spec:
         spec:
           args:
             - name: service-name
+            # The canary ReplicaSet's pod-template hash, from the Rollout step.
+            - name: canary-hash
             - name: amp-workspace-url
               valueFrom:
                 secretKeyRef:
@@ -878,7 +882,9 @@ spec:
               provider:
                 prometheus:
                   address: "{{args.amp-workspace-url}}"
-                  query: "up{container_name=\"${schema.spec.image_name}\", namespace=\"${schema.metadata.namespace}\"}"
+                  # Only this cluster's canary pods: every cluster's scraper writes to the
+                  # same AMP workspace, labelled cluster=<EKS cluster name> (#1027).
+                  query: "up{container_name=\"${schema.spec.image_name}\", namespace=\"${schema.metadata.namespace}\", cluster=\"${schema.spec.clusterName}\", pod_name=~\"${schema.metadata.name}-{{args.canary-hash}}-.*\"}"
                   authentication:
                     sigv4:
                       region: "{{args.amp-workspace-region}}"
@@ -886,7 +892,8 @@ spec:
     # metrics.evaluationCriteria given: one Prometheus (AMP) metric per criterion,
     # rendered into the same metrics-<name> template the Rollout step references.
     # The len(result) guard makes an empty result a clean failed/not-failed
-    # measurement instead of an index-out-of-range Error.
+    # measurement instead of an index-out-of-range Error. Each query matches only
+    # this cluster's canary pods, as in metric0 above (#1027).
     - id: metricsanalysisWithCriteria
       includeWhen:
         - ${schema.spec.metrics.enabled}
@@ -908,6 +915,8 @@ spec:
         spec:
           args:
             - name: service-name
+            # The canary ReplicaSet's pod-template hash, from the Rollout step.
+            - name: canary-hash
             - name: amp-workspace-url
               valueFrom:
                 secretKeyRef:
@@ -918,7 +927,7 @@ spec:
                 secretKeyRef:
                   name: ${ampsecrets.spec.target.name}
                   key: amp-workspace-region
-          metrics: "${schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'len(result) > 0 && result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + (has(c.rateInterval) ? 'rate(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.rateInterval) ? '[' + c.rateInterval + '])' : '') + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'len(result) > 0 && result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + (has(c.rateInterval) ? 'rate(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\"}' + (has(c.rateInterval) ? '[' + c.rateInterval + '])' : '') + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
+          metrics: "${schema.spec.metrics.evaluationCriteria.map(c, c.successOrFailCondition == 'success' ? {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'successCondition': 'len(result) > 0 && result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + (has(c.rateInterval) ? 'rate(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\", cluster=\"' + schema.spec.clusterName + '\", pod_name=~\"' + schema.metadata.name + '-{{args.canary-hash}}-.*\"}' + (has(c.rateInterval) ? '[' + c.rateInterval + '])' : '') + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}} : {'name': 'metric-' + c.successOrFailCondition + '-' + c.metric + '-' + schema.metadata.name, 'interval': c.interval, 'count': has(c.count) ? int(c.count) : 1, 'failureCondition': 'len(result) > 0 && result[0] ' + c.comparisonType + ' ' + c.threshold, 'provider': {'prometheus': {'address': '{{args.amp-workspace-url}}', 'query': (has(c.function) ? c.function + '(' : '') + (has(c.rateInterval) ? 'rate(' : '') + c.metric + '{container_name=\"' + schema.spec.image_name + '\", namespace=\"' + schema.metadata.namespace + '\", cluster=\"' + schema.spec.clusterName + '\", pod_name=~\"' + schema.metadata.name + '-{{args.canary-hash}}-.*\"}' + (has(c.rateInterval) ? '[' + c.rateInterval + '])' : '') + (has(c.function) ? ')' : ''), 'authentication': {'sigv4': {'region': '{{args.amp-workspace-region}}'}}}}})}"
 
     - id: benchmarkconfig
       includeWhen:
