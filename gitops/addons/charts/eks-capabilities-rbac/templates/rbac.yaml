@@ -56,6 +56,10 @@ rules:
 - apiGroups: ["external-secrets.io"]
   resources: ["externalsecrets", "clustersecretstores"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ESO generators (CICDPipeline creates a Password generator for the webhook token)
+- apiGroups: ["generators.external-secrets.io"]
+  resources: ["passwords"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # ACK EC2
 - apiGroups: ["ec2.services.k8s.aws"]
   resources: ["*"]
