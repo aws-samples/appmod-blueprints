@@ -2335,6 +2335,14 @@ spec:
              triggered-by: initial-setup
        spec:
           serviceAccountName: ${serviceaccount.metadata.name}
+          # Run-once semantics for this kro-reconciled singleton.
+          # The referenced WorkflowTemplate sets a 1h ttlStrategy to GC the many
+          # webhook-triggered CI Workflows. Inheriting it here lets Argo delete this
+          # object ~1h after success -> kro's reconcile loop sees its owned resource
+          # missing and recreates it -> the one-shot build re-runs and re-pushes
+          # :initial hourly. A non-nil ttlStrategy on the Workflow spec overrides the
+          # template's, so the object persists and the build runs exactly once.
+          ttlStrategy: {}
           workflowTemplateRef:
               name: ${cicdworkflow.metadata.name}
               namespace: ${schema.metadata.namespace}

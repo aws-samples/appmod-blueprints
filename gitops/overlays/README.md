@@ -78,9 +78,14 @@ The `fleet-secret` chart iterates this map and generates `enable_<addon>: 'true'
      # ... list all addons
    ```
 
-3. Optionally create `overrides.yaml` for appset-level overrides (version pins, etc.):
+3. Optionally create `overrides.yaml` for appset-level overrides (version pins, etc.).
+   The top-level key is the addon's **registry key (kebab-case)** — NOT the
+   snake_case `enable_<addon>` key used in `enabled-addons.yaml`. A snake_case
+   key here is silently dropped (no-op). When unsure, read the ApplicationSet
+   definition (`platform-charts/appset-chart/templates/application-set.yaml`)
+   and the registry (`gitops/addons/registry/*.yaml`) for the exact key/schema:
    ```yaml
-   cert_manager:
+   cert-manager:            # registry (kebab) key, NOT cert_manager
      defaultVersion: "v1.16.0"
    ```
 

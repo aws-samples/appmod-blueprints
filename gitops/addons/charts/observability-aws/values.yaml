@@ -12,6 +12,13 @@ resourcePrefix: ""
 amp:
   enabled: true
   alias: ""  # defaults to <resourcePrefix>-observability-amp
+  # Central alerting rules evaluated by AMP across all scraped clusters.
+  # Modular: disable to remove all alert rules without touching scrapers/recording rules.
+  alerting:
+    enabled: true
+    oomkill:
+      for: "1m"              # how long the condition must hold before firing
+      restartThreshold: 3    # restarts within 10m to trip PodFrequentRestarts
 
 amg:
   enabled: true
