@@ -2222,37 +2222,37 @@ spec:
           # schema.spec.name already carries the resource prefix (e.g. peeks-spoke-dev),
           # so do NOT prepend resourcePrefix again (was producing peeks-peeks-...).
           name: "${schema.spec.name}-ack-capability-role"
-          inlinePolicies:
-            AssumeWorkloadRoles: |
-              {
-                "Version": "2012-10-17",
-                "Statement": [
-                  {
-                    "Effect": "Allow",
-                    "Action": ["sts:AssumeRole", "sts:TagSession"],
-                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.resourcePrefix}-cluster-mgmt-*"]
-                  }
-                ]
-              }
-            ManageIRSARoles: |
-              {
-                "Version": "2012-10-17",
-                "Statement": [
-                  {
-                    "Effect": "Allow",
-                    "Action": [
-                      "iam:GetRole", "iam:CreateRole", "iam:DeleteRole",
-                      "iam:TagRole", "iam:UntagRole", "iam:UpdateRole",
-                      "iam:UpdateAssumeRolePolicy",
-                      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
-                      "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
-                      "iam:ListRoleTags", "iam:ListInstanceProfilesForRole",
-                      "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy"
-                    ],
-                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.name}-*"]
-                  }
-                ]
-              }
+          # inlinePolicies is a CEL-conditional map built with a TERNARY that returns the
+          # whole map (NOT Maps.merge). The two base policies are always present; the
+          # control-plane branch additionally includes `SelfManageHub`, the spoke branch
+          # does not. Gated on schema.spec.fleetMember == "control-plane".
+          #
+          # Why a ternary-duplicate and not `.merge()`: `.merge()` is a managed-capability
+          # CEL extension (absent in some kro builds) and the `${{` map-literal opener is
+          # mishandled by some kro versions (strips a brace). The space-form standalone
+          # ternary `${ cond ? {..} : {..} }` is plain CEL — no extension, no `${{`
+          # ambiguity — and was render-validated on a real kro cluster: the control-plane
+          # instance gets {AssumeWorkloadRoles, ManageIRSARoles, SelfManageHub}, the spoke
+          # instance gets {AssumeWorkloadRoles, ManageIRSARoles} (SelfManageHub absent),
+          # all policy docs valid JSON with ARNs correctly interpolated.
+          #
+          # Why gated on control-plane (#1033 Deliverable #9): the hub self-adoption pivot
+          # makes the hub's own ACK capability role reconcile the hub's OWN EksCluster +
+          # pod-identity children. AWS's managed ACK policy deliberately withholds
+          # self-reference on the cluster's own ARN, so without this grant the adopted
+          # cluster.eks + PodIdentityAssociation children fail eks:DescribeCluster /
+          # eks:DescribePodIdentityAssociation (AccessDeniedException) and the pivot never
+          # reaches GREEN. A SPOKE never self-adopts (its control plane is managed by the
+          # hub), so a spoke capability role granting eks:* on its own cluster ARN would be
+          # a pure least-privilege over-grant — hence the fleetMember gate.
+          #
+          # Layer (RGD, not Taskfile): this role is itself a kro/ACK-managed IAM Role, so
+          # ACK reconciles it back to the RGD-defined inlinePolicies on every pass — an
+          # imperative `aws iam put-role-policy` (the earlier #9 attempt) was silently
+          # stripped. Writing it here is durable. ManageIRSARoles already grants
+          # iam:PutRolePolicy on role/${schema.spec.name}-* (which matches this role), so
+          # self-attaching this inline policy needs NO new IAM surface.
+          inlinePolicies: '${ schema.spec.fleetMember == "control-plane" ? {"AssumeWorkloadRoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:aws:iam::" + schema.spec.accountId + ":role/" + schema.spec.resourcePrefix + "-cluster-mgmt-*\"]}]}", "ManageIRSARoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:aws:iam::" + schema.spec.accountId + ":role/" + schema.spec.name + "-*\"]}]}", "SelfManageHub": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DescribeOwnCluster\",\"Effect\":\"Allow\",\"Action\":[\"eks:DescribeCluster\",\"eks:UpdateClusterConfig\",\"eks:UpdateClusterVersion\",\"eks:ListPodIdentityAssociations\",\"eks:CreatePodIdentityAssociation\",\"eks:TagResource\",\"eks:ListTagsForResource\"],\"Resource\":\"arn:aws:eks:" + schema.spec.region + ":" + schema.spec.accountId + ":cluster/" + schema.spec.name + "\"},{\"Sid\":\"ManageOwnPodIdentity\",\"Effect\":\"Allow\",\"Action\":[\"eks:DescribePodIdentityAssociation\",\"eks:UpdatePodIdentityAssociation\",\"eks:DeletePodIdentityAssociation\",\"eks:TagResource\",\"eks:ListTagsForResource\"],\"Resource\":\"arn:aws:eks:" + schema.spec.region + ":" + schema.spec.accountId + ":podidentityassociation/" + schema.spec.name + "/*\"}]}"} : {"AssumeWorkloadRoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:aws:iam::" + schema.spec.accountId + ":role/" + schema.spec.resourcePrefix + "-cluster-mgmt-*\"]}]}", "ManageIRSARoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:aws:iam::" + schema.spec.accountId + ":role/" + schema.spec.name + "-*\"]}]}"} }'
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",

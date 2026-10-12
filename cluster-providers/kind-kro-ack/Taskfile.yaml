@@ -2550,53 +2550,15 @@ tasks:
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
         }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
-        # [#1033 Deliverable #9] Allow the ACK capability role to SELF-MANAGE the hub's
-        # own EKS cluster + pod-identity associations. Required by hub:pivot: after the
-        # hub adopts EksCluster/<hub> (self-adoption off kind), the single reconciler is
-        # the hub's ACK EKS controller running AS this capability role (single-account,
-        # no CARM role mapping). AWS's managed AmazonEKSACKPolicy deliberately does NOT
-        # grant the capability role rights on its OWN cluster (a guardrail against a
-        # cluster's in-cluster controller mutating itself), so without this the pivot's
-        # adoption of the `cluster` + the 5 pod-identity-association children fails with
-        # `AccessDeniedException ... eks:DescribeCluster / eks:DescribePodIdentityAssociation
-        # on .../cluster/<hub> ... no identity-based policy allows the action` and the
-        # adoption gate never reaches GREEN. Scoped strictly to the hub's own cluster ARN
-        # (+ its pod-identity-association sub-resources) — not a blanket eks:* like the
-        # spoke cluster-mgmt-eks role. Same best-effort/re-applied-in-hub:seed semantics
-        # as ack-assume-role above.
-        aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-self-manage-hub --policy-document '{
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "SelfManageHubCluster",
-              "Effect": "Allow",
-              "Action": [
-                "eks:DescribeCluster",
-                "eks:UpdateClusterConfig",
-                "eks:UpdateClusterVersion",
-                "eks:ListPodIdentityAssociations",
-                "eks:CreatePodIdentityAssociation",
-                "eks:TagResource",
-                "eks:UntagResource",
-                "eks:ListTagsForResource"
-              ],
-              "Resource": "arn:aws:eks:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:cluster/{{.HUB_CLUSTER_NAME}}"
-            },
-            {
-              "Sid": "SelfManageHubPodIdentity",
-              "Effect": "Allow",
-              "Action": [
-                "eks:DescribePodIdentityAssociation",
-                "eks:UpdatePodIdentityAssociation",
-                "eks:DeletePodIdentityAssociation",
-                "eks:TagResource",
-                "eks:UntagResource",
-                "eks:ListTagsForResource"
-              ],
-              "Resource": "arn:aws:eks:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:podidentityassociation/{{.HUB_CLUSTER_NAME}}/*"
-            }
-          ]
-        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
+        # [#1033 Deliverable #9] The hub self-manage grant (eks:Describe/manage on the
+        # hub's OWN cluster + pod-identity ARNs) is NO LONGER applied imperatively here.
+        # This capability role is a kro/ACK-managed IAM Role, so ACK reconciles it back to
+        # its RGD-defined inlinePolicies on every pass and an out-of-band put-role-policy
+        # was silently stripped (observed live: role carried only AssumeWorkloadRoles +
+        # ManageIRSARoles after reconcile → adopted cluster/PIA children stayed
+        # AccessDenied). The grant now lives durably in rg-eks.yaml as the `SelfManageHub`
+        # inlinePolicy on ${schema.spec.name}-ack-capability-role, gated to the
+        # control-plane hub (fleetMember=="control-plane"). See the RGD for details.
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
 
@@ -2838,8 +2800,19 @@ tasks:
         # Dropping the kind instance's finalizers, kro.run/* labels and
         # applyset.kubernetes.io/* annotations is REQUIRED — applying them verbatim would
         # hand the hub KRO a foreign applyset id + finalizer. The hub assigns its own.
+        #
+        # [#1033 anti-prune] We DO inject two ArgoCD annotations on the adopted instance:
+        #   argocd.argoproj.io/compare-options: IgnoreExtraneous  -> no App ever treats
+        #     this CR as "extraneous" (out-of-git) and marks it for pruning.
+        #   argocd.argoproj.io/sync-options: Prune=false           -> belt-and-suspenders;
+        #     even if an App did track it, a sync will not delete it.
+        # The hub EksCluster instance is created imperatively by the pivot (NOT from git),
+        # so an auto-sync/self-heal App with pruning enabled is the prime suspect for the
+        # observed 14:07 deletionTimestamp. These annotations neutralise that path up-front;
+        # the hub_intact gate below still fails-closed + captures forensics if anything
+        # else deletes it.
         kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o json \
-          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace}, spec}' \
+          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, annotations: {"argocd.argoproj.io/compare-options": "IgnoreExtraneous", "argocd.argoproj.io/sync-options": "Prune=false"}}, spec}' \
           > "$WORK/hub-instance.json"
         printf '{{.C_OK}}✓ serialized kind %s/%s spec -> hub-side manifest{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
 
@@ -2935,6 +2908,41 @@ tasks:
           return $bad
         }
 
+        # --- Hub-instance integrity guard + deleter forensics (#1033) ----------
+        # On event 38cd39ef the hub's OWN EksCluster instance acquired a deletionTimestamp
+        # ~3 min after adoption (14:07), yet the gate kept polling it for 27 min because it
+        # only watched the spokes + child-sync, never the hub instance itself. These two
+        # helpers (a) detect that deletionTimestamp immediately and (b) snapshot WHO issued
+        # the delete, so the next run names the deleter instead of us guessing. The anti-
+        # prune annotations on hub-instance.json are the primary defence; this is the
+        # fail-closed net + evidence collector.
+        capture_hub_deleter_forensics() {
+          local K="$1" ts="$2"
+          printf '{{.C_ERR}}  ✗ HUB instance {{.HUB_KIND}}/%s is DELETION-MARKED (%s) — capturing deleter forensics:{{.C_RESET}}\n' "$HUB" "$ts"
+          printf '{{.C_INFO}}  [forensic] hub instance (managed-fields show the last writer per field):{{.C_RESET}}\n'
+          $K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o yaml --show-managed-fields 2>&1 | sed 's/^/      /'
+          printf '{{.C_INFO}}  [forensic] events mentioning %s (ArgoCD prune emits a Delete/Prune event here):{{.C_RESET}}\n' "$HUB"
+          $K get events -A --sort-by=.metadata.creationTimestamp 2>/dev/null | grep -i "$HUB" | tail -40 | sed 's/^/      /' || true
+          printf '{{.C_INFO}}  [forensic] ArgoCD Applications tracking an EksCluster (prune flag + per-resource status = the smoking gun):{{.C_RESET}}\n'
+          $K get applications.argoproj.io -A -o json 2>/dev/null \
+            | jq -r '.items[] | . as $a | (($a.status.resources // [])[] | select(.kind=="EksCluster")) as $r | "\($a.metadata.namespace)/\($a.metadata.name) autoPrune=\($a.spec.syncPolicy.automated.prune // false) selfHeal=\($a.spec.syncPolicy.automated.selfHeal // false) -> \($r.namespace)/\($r.name) status=\($r.status // "n/a") requiresPruning=\($r.requiresPruning // "n/a")"' 2>/dev/null | sed 's/^/      /' || true
+          printf '{{.C_INFO}}  [forensic] all ApplicationSets (a generator pruning the hub out of its matrix would show here):{{.C_RESET}}\n'
+          $K get applicationsets.argoproj.io -A 2>/dev/null | sed 's/^/      /' || true
+          printf '{{.C_INFO}}  [forensic] hub instance labels / annotations / ownerRefs (applyset membership + any cascade owner):{{.C_RESET}}\n'
+          $K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" \
+            -o jsonpath='{"      labels:  "}{.metadata.labels}{"\n      annots:  "}{.metadata.annotations}{"\n      owners:  "}{.metadata.ownerReferences}{"\n"}' 2>/dev/null || true
+          printf '{{.C_INFO}}  [forensic] hub cluster secret fleet_member (must still be control-plane):{{.C_RESET}}\n'
+          $K -n argocd get secret -l argocd.argoproj.io/secret-type=cluster \
+            -o jsonpath='{range .items[*]}      {.metadata.name}  fleet_member={.metadata.labels.fleet_member}{"\n"}{end}' 2>/dev/null || true
+        }
+        # Returns non-zero (and dumps forensics) if the hub instance is deletion-marked.
+        hub_intact() {
+          local K="$1" ts
+          ts=$($K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)
+          if [ -n "$ts" ]; then capture_hub_deleter_forensics "$K" "$ts"; return 1; fi
+          return 0
+        }
+
         # --- Dry-run output ----------------------------------------------------
         printf '{{.C_STEP}}▸ Hub-side instance manifest (would be applied on %s):{{.C_RESET}}\n' "$HUB"
         jq -r '.' "$WORK/hub-instance.json" | sed 's/^/    /'
@@ -2971,15 +2979,26 @@ tasks:
 
         # THE gate: do not detach until the hub demonstrably owns every resource.
         printf '{{.C_STEP}}▸ [LIVE] waiting for adoption-complete (max {{.PIVOT_ADOPT_TIMEOUT_SEC}}s)…{{.C_RESET}}\n'
-        GATE_OK=0; SPOKE_PERTURBED=0; GATE_LOG="$WORK/gate.out"
+        GATE_OK=0; SPOKE_PERTURBED=0; HUB_DELETED=0; GATE_LOG="$WORK/gate.out"
         DEADLINE=$(( $(date +%s) + {{.PIVOT_ADOPT_TIMEOUT_SEC}} ))
         while [ "$(date +%s)" -lt "$DEADLINE" ]; do
           # Fail-closed the moment the pivot perturbs a pre-existing spoke (#1033).
           if ! spokes_intact hub_k; then SPOKE_PERTURBED=1; break; fi
+          # Fail-closed + capture forensics the moment the hub instance is deletion-marked
+          # (the 14:07 regression). Checked every iteration so we catch it within one
+          # interval instead of polling a terminating CR for the full timeout.
+          if ! hub_intact hub_k; then HUB_DELETED=1; break; fi
           if adoption_gate hub_k >"$GATE_LOG" 2>&1; then GATE_OK=1; break; fi
           sleep {{.PIVOT_ADOPT_INTERVAL_SEC}}
         done
         cat "$GATE_LOG" 2>/dev/null || true
+        if [ "$HUB_DELETED" = 1 ]; then
+          printf '{{.C_ERR}}✗ HUB INSTANCE DELETION-MARKED during adoption — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  The deleter forensics are dumped above. Restarting kind to resume prior management…{{.C_RESET}}\n'
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          printf '{{.C_ERR}}  Something deleted {{.HUB_KIND}}/%s on the hub. The anti-prune annotations should stop an ArgoCD prune; if it recurs, the forensics above name the actual deleter.{{.C_RESET}}\n' "$HUB"
+          exit 1
+        fi
         if [ "$SPOKE_PERTURBED" = 1 ]; then
           printf '{{.C_ERR}}✗ PIVOT PERTURBED A SPOKE INSTANCE — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
           printf '{{.C_INFO}}  Restarting kind so it reconciles the spoke(s) back to desired state…{{.C_RESET}}\n'

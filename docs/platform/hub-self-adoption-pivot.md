@@ -347,17 +347,38 @@ same `eks:` AccessDenied (Blocker #1).
    `hub:pivot` snapshots pre-existing spoke instances and fails closed (abort + restart
    kind) the instant any acquires a `deletionTimestamp` during adoption — in the gate
    loop and as a final pre-detach assertion. Defense-in-depth behind #7.
-9. 🟢 **Hub ACK capability-role self-manage — IMPLEMENTED (Blocker #1 fix).**
-   `hub:create-mgmt-roles` now attaches an inline policy `ack-self-manage-hub` to
-   `{{HUB}}-ack-capability-role` granting `eks:DescribeCluster` /
-   `UpdateClusterConfig` / `UpdateClusterVersion` / tag reads on the hub cluster ARN
-   and `eks:Describe/Update/DeletePodIdentityAssociation` (+ `List`/`Create` on the
-   cluster) on `podidentityassociation/{{HUB}}/*`. Single-account, no CARM role map, so
-   the hub's ACK EKS controller reconciles the adopted hub CRs AS the capability role;
+9. 🟢 **Hub ACK capability-role self-manage — RE-IMPLEMENTED IN THE RGD, gated to
+   control-plane (Blocker #1 fix).** The grant lives as a `SelfManageHub` **inline policy
+   on `${schema.spec.name}-ack-capability-role` in `rg-eks.yaml`**, built with a CEL
+   **ternary that returns the whole map** (`${ cond ? {3 keys} : {2 keys} }` — space-form
+   standalone, plain CEL, no `Maps.merge` extension and no `${{` opener), **gated on
+   `schema.spec.fleetMember == "control-plane"`**. Render-validated on a real kro cluster:
+   the control-plane instance gets `{AssumeWorkloadRoles, ManageIRSARoles, SelfManageHub}`,
+   the spoke instance gets `{AssumeWorkloadRoles, ManageIRSARoles}` (no `SelfManageHub`),
+   all policy docs valid JSON with ARNs correctly interpolated. It grants
+   `eks:DescribeCluster` /
+   `UpdateClusterConfig` / `UpdateClusterVersion` / `ListPodIdentityAssociations` /
+   `CreatePodIdentityAssociation` + tag reads on the hub's own cluster ARN, and
+   `eks:Describe/Update/DeletePodIdentityAssociation` + tag reads on
+   `podidentityassociation/${name}/*`.
+   - **Why control-plane-only:** only the hub self-adopts its own `EksCluster` into its
+     own kro graph, so only the control-plane capability role needs rights on its OWN
+     cluster ARN. A spoke never self-adopts (its control plane is hub-managed), so a spoke
+     capability role with `eks:*` on its own cluster would be a pure least-privilege
+     over-grant — hence the `fleetMember` gate.
+   - **Why the RGD, not the Taskfile (corrects the first attempt):** on event
+     `38cd39ef` (2026-10-12) the imperative `aws iam put-role-policy ack-self-manage-hub`
+     in `hub:create-mgmt-roles` **silently did not survive** — the role is itself a
+     kro/ACK-managed IAM Role (`app.kubernetes.io/managed-by: kro`), so ACK reconciles it
+     back to its RGD-defined `inlinePolicies` on every pass, stripping any out-of-band
+     policy. Live proof: post-rollback the role carried only `AssumeWorkloadRoles` +
+     `ManageIRSARoles`, and the adopted `cluster.eks/peeks-hub` stayed
+     `AccessDeniedException … eks:DescribeCluster`. The imperative block is removed; the
+     RGD inline policy is durable. `ManageIRSARoles` already grants `iam:PutRolePolicy`
+     on `role/${name}-*` (matches this role), so no new IAM surface is required.
    AWS's managed `AmazonEKSACKPolicy` deliberately withholds self-reference on the
    cluster's own ARN, so this explicit, hub-scoped grant is what lets the adopted
-   `cluster.eks` + 5 pod-identity-association children reach `synced` → the adoption
-   gate reaches GREEN. Best-effort/re-applied-in-`hub:seed` (same as `ack-assume-role`).
+   `cluster.eks` + pod-identity children reach `synced` → the gate reaches GREEN.
    Independent of #7/#8.
 10. 🟢 **Automatic pivot on install — IMPLEMENTED.** New gated `install:pivot` task runs
     `hub:pivot` (LIVE, `PIVOT_DETACH_MODE=stop`) as the **final** step of
@@ -369,3 +390,22 @@ same `eks:` AccessDenied (Blocker #1).
     workshop tail (cloudfront, overlay wiring, spokes:enable, idc, ray) runs afterward
     against the self-managed hub (none of it needs kind). Fail-closed via #8's
     spoke-integrity guard; depends on #9 for the adoption gate to pass.
+11. 🟢 **Hub-instance anti-prune + deleter forensics — IMPLEMENTED (14:07 regression).**
+    On event `38cd39ef` the hub's OWN `EksCluster/peeks-hub` instance acquired a
+    `deletionTimestamp` ~3 min after adoption, and the gate kept polling the terminating
+    CR for the full 27 min because it only watched the spokes + child-sync, never the hub
+    instance itself. Two changes:
+    - **Prevention:** the adopted `hub-instance.json` now carries
+      `argocd.argoproj.io/compare-options: IgnoreExtraneous` +
+      `argocd.argoproj.io/sync-options: Prune=false`. The hub instance is created
+      imperatively by the pivot (not from git), so an auto-sync/self-heal ArgoCD App with
+      pruning enabled is the prime suspect; these annotations neutralise that path.
+    - **Detection + forensics:** a `hub_intact` check runs every gate iteration and, the
+      instant a `deletionTimestamp` appears, dumps `capture_hub_deleter_forensics`
+      (instance managed-fields, events mentioning the hub, every ArgoCD App tracking an
+      `EksCluster` with its `autoPrune/selfHeal` flags + per-resource `status`/
+      `requiresPruning`, all ApplicationSets, the instance's labels/annotations/ownerRefs,
+      and the hub cluster-secret `fleet_member`), then fails closed (abort + restart
+      kind). The next run **names the deleter** instead of guessing. If the anti-prune
+      annotations prove insufficient, the forensics identify the real actor for a
+      follow-up fix.
