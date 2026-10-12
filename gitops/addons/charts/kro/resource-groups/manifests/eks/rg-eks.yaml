@@ -685,7 +685,9 @@ spec:
         spec:
           name: ${schema.spec.name}/config
           secretString:
-            name: ${schema.spec.name}-config-data
+            # CEL reference (not a literal) so kro creates this only after the k8s
+            # Secret exists; ACK does not watch it and backs off up to ~16 min.
+            name: ${clusterConfigK8sSecret.metadata.name}
             namespace: ${schema.spec.name}
             key: config
       readyWhen:
@@ -745,7 +747,9 @@ spec:
         spec:
           name: ${schema.spec.name}/config
           secretString:
-            name: ${schema.spec.name}-config-data
+            # CEL reference (not a literal) so kro creates this only after the k8s
+            # Secret exists; ACK does not watch it and backs off up to ~16 min.
+            name: ${clusterConfigK8sSecretFleet.metadata.name}
             namespace: ${schema.spec.name}
             key: config
 
