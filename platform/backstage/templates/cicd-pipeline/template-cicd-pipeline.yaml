@@ -59,6 +59,12 @@ spec:
           pattern: '^\.(/[a-zA-Z0-9_-]+)+/?$'
           ui:help: 'Path to deployment manifests relative to repository root'
   steps:
+    - id: fetchSystem
+      name: Fetch System
+      action: catalog:fetch
+      input:
+        entityRef: system:default/system-info
+
     - id: validate-parameters
       name: Validate Parameters
       action: debug:log
@@ -67,15 +73,9 @@ spec:
           Validating template parameters:
           - Application Name: ${{ parameters.appname }}
           - AWS Region: ${{ parameters.aws_region }}
-          - Cluster Name: ${{ parameters.cluster_name }}
+          - Cluster Name: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
           - Dockerfile Path: ${{ parameters.dockerfile_path }}
           - Deployment Path: ${{ parameters.deployment_path }}
-
-    - id: fetchSystem
-      name: Fetch System
-      action: catalog:fetch
-      input:
-        entityRef: system:default/system-info
 
     - action: fetch:template
       name: Fetch Base
@@ -254,7 +254,7 @@ spec:
         url: https://console.aws.amazon.com/ecr/repositories/private/${{ steps['fetchSystem'].output.entity.spec.aws_account_id }}/${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}/${{ parameters.appname }}?region=${{ parameters.aws_region }}
         icon: cloud
       - title: EKS Cluster
-        url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ parameters.cluster_name }}
+        url: https://console.aws.amazon.com/eks/home?region=${{ parameters.aws_region }}#/clusters/${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
         icon: cloud
     text:
       - title: GitOps-based Kro CI/CD Pipeline
@@ -312,7 +312,7 @@ spec:
           - **ArgoCD Project**: ${{ parameters.appname }}-project
           - **GitOps Repository**: ${{ parameters.appname }}-cicd
           - **AWS Region**: ${{ parameters.aws_region }}
-          - **EKS Cluster**: ${{ parameters.cluster_name }}
+          - **EKS Cluster**: ${{ steps['fetchSystem'].output.entity.spec.hub_cluster_name }}
           
           ## 🔗 **Next Steps**
           1. **Monitor ArgoCD**: Watch the application sync progress
