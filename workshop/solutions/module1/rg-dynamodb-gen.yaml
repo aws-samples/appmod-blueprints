@@ -57,6 +57,9 @@ spec:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
           argocd.argoproj.io/sync-options: "Ignore=true,SkipDryRunOnMissingResource=true"
+          # Explicit dependency on the selector: kro deletes by dependency wave, so
+          # the selector (ACK's role for this Table) is kept until the Table is gone.
+          peeks/depends-on: ${iamroleselector.metadata.name}
       spec:
         tableName: ${schema.spec.name}
         billingMode: PAY_PER_REQUEST
