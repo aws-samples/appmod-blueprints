@@ -22,7 +22,7 @@ vars:
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   K8S_VERSION:
-    sh: yq '.hub.kubernetesVersion // "1.37"' {{.CONFIG_FILE}}
+    sh: yq '.hub.kubernetesVersion' {{.CONFIG_FILE}}
   DOMAIN:
     sh: yq '.domain // ""' {{.CONFIG_FILE}}
   # Platform consumption (OAP-style). If platform.ref is unset, the platform IS

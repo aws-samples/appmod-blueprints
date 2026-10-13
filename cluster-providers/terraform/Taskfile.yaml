@@ -102,7 +102,7 @@ tasks:
       - |
         cat > {{.TFVARS}} <<EOF
         cluster_name            = "$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
-        kubernetes_version      = "$(yq '.hub.kubernetesVersion // "1.37"' {{.CONFIG_FILE}})"
+        kubernetes_version      = "$(yq '.hub.kubernetesVersion' {{.CONFIG_FILE}})"
         vpc_cidr                = "$(yq '.hub.vpcCidr // "10.0.0.0/16"' {{.CONFIG_FILE}})"
         aws_region              = "$(yq '.aws.region' {{.CONFIG_FILE}})"
         aws_account_id          = "$(yq '.aws.accountId' {{.CONFIG_FILE}})"
