@@ -552,9 +552,10 @@ spec:
                   env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
     # The Rollout's Services. Unlike the other resources, they carry no Argo CD
-    # tracking-id: app repos created before this change still ship their own copy
-    # of both Services, Argo CD sets the annotation to its own value there, and kro
-    # would set it back on every reconcile, so the app would never stay Synced.
+    # tracking-id: on stacks whose GitLab app repos were created before #1047,
+    # those repos still ship their own copy of both Services. Argo CD sets the
+    # annotation to its own value there, and kro would set it back on every
+    # reconcile, so the app would never stay Synced.
     #
     # <name>: the Ingress backend and in-cluster Service. Argo Rollouts does not
     # modify it (there is no stableService), so kro owns all of it.
