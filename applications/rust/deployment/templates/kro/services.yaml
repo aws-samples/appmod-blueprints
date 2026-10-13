@@ -1,25 +1,6 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: rust-microservice-<environment>
-spec:
-  selector:
-    app: rust-microservice-<environment>
-  ports:
-    - port: 8080
-      targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: rust-microservice-<environment>-preview
-spec:
-  selector:
-    app: rust-microservice-<environment>
-  ports:
-    - port: 8080
-      targetPort: 8080
----
+# The AppmodService creates rust-microservice-<environment> and
+# rust-microservice-<environment>-preview (the Rollout's Services) itself.
+#
 # Environment-independent name for in-cluster clients (the next-js frontend uses
 # http://rust-microservice.team-rust.svc.cluster.local:8080). The KubeVela
 # template creates a Service with this name; this keeps the kro path compatible.
