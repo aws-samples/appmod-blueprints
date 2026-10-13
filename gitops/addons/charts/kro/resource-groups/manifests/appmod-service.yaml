@@ -738,7 +738,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
+                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://${schema.metadata.name}-preview:${string(schema.spec.port)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -776,7 +776,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); echo \"Time per request: $RESULT ms (threshold ${schema.spec.performanceGate.extraArgs} ms)\"; if [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ]; then echo PASS; exit 0; else echo FAIL; exit 1; fi"
+                              - "RESULT=$(ab -n 1000 -c 10 http://${schema.metadata.name}-preview:${string(schema.spec.port)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); echo \"Time per request: $RESULT ms (threshold ${schema.spec.performanceGate.extraArgs} ms)\"; if [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ]; then echo PASS; exit 0; else echo FAIL; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -818,7 +818,7 @@ spec:
                             args:
                               - "run"
                               - "-t"
-                              - "http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}"
+                              - "http://${schema.metadata.name}-preview:${string(schema.spec.port)}"
                               - "/benchmark.yaml"
                             volumeMounts:
                               - name: benchmark-config
@@ -948,7 +948,7 @@ spec:
         data:
           benchmark.yaml: |
             config:
-              target: "http://${schema.metadata.name}:${string(schema.spec.targetPort)}"
+              target: "http://${schema.metadata.name}:${string(schema.spec.port)}"
               phases:
                 - duration: 5
                   arrivalRate: 1
