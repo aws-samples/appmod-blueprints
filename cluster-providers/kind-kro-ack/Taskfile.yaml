@@ -2892,8 +2892,25 @@ tasks:
         #       AWS API (aws eks delete-cluster), so retain loses nothing on teardown and
         #       closes every graceful-delete path the IgnoreExtraneous/Prune=false annotations
         #       (Argo-CD-only) do not cover.
+        #   .spec.createArgocdClusterSecret = "false"  — [#1033 pnz1990, verified live on
+        #       kro 0.9.4-eks-1] the hub's ArgoCD registration Secret (argocd/<hub>, the object
+        #       the clusters-kro matrix selects on fleet_member=control-plane) is created on the
+        #       hub by `hub:seed` (kubectl apply) and kept current by the fleet-secret
+        #       ExternalSecret — it is NOT a kro-owned object there (its managedFields are
+        #       kubectl-client-side-apply + externalsecrets…/fleet-secret-<hub>, no kro labels).
+        #       hub:claim sets this "true" only for the KIND bootstrap (ESO cannot register the
+        #       hub to itself yet — chicken-and-egg), which renders the argocdSecret node into
+        #       KIND's argocd ns. If the adopted hub-side instance kept "true", its fresh kro
+        #       applyset would pull argocd/<hub> INTO the hub EksCluster graph, coupling the
+        #       fleet-identity label to the very instance being adopted → the churn that empties
+        #       the clusters-kro matrix and deletion-marks the spokes. Forcing "false" keeps the
+        #       hub instance on the fleet-secret path (clusterConfigK8sSecretFleet /
+        #       clusterConfigSecretFleet → ESO), so the registration Secret is NEVER
+        #       re-materialised by the pivot and the matrix never empties. kind keeps "true" for
+        #       its own bootstrap; nothing flips on the hub. This is the RGD's documented
+        #       mainline (createArgocdClusterSecret default="false"), not a workaround.
         kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o json \
-          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, annotations: {"argocd.argoproj.io/compare-options": "IgnoreExtraneous", "argocd.argoproj.io/sync-options": "Prune=false"}}, spec} | .spec.fleetMember = "control-plane" | .spec.deletionPolicy = "retain"' \
+          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, annotations: {"argocd.argoproj.io/compare-options": "IgnoreExtraneous", "argocd.argoproj.io/sync-options": "Prune=false"}}, spec} | .spec.fleetMember = "control-plane" | .spec.deletionPolicy = "retain" | .spec.createArgocdClusterSecret = "false"' \
           > "$WORK/hub-instance.json"
         printf '{{.C_OK}}✓ serialized kind %s/%s spec -> hub-side manifest{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
 
@@ -3262,7 +3279,7 @@ tasks:
         fi
         if [ "$SPOKE_PERTURBED" = 1 ]; then
           printf '{{.C_ERR}}✗ PIVOT PERTURBED A SPOKE INSTANCE — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
-          printf '{{.C_INFO}}  Orphaning the hub-side instance (retain → no AWS delete), then restarting kind so it reconciles the spoke(s) back to desired state…{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Orphaning the hub-side instance (retain → no AWS delete), then restarting kind. NOTE: a deletion-marked spoke CR cannot be un-marked — it completes deletion; with deletionPolicy=retain the AWS EKS cluster survives and kind re-creates the CR (delete-then-recreate, not in-place recovery).{{.C_RESET}}\n'
           orphan_hub_instance hub_k
           [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
           printf '{{.C_ERR}}  A spoke was deletion-marked during adoption — this must not happen; investigate the fleetMember label on the hub cluster secret before retrying.{{.C_RESET}}\n'

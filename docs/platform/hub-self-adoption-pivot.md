@@ -409,3 +409,43 @@ same `eks:` AccessDenied (Blocker #1).
       kind). The next run **names the deleter** instead of guessing. If the anti-prune
       annotations prove insufficient, the forensics identify the real actor for a
       follow-up fix.
+
+12. 🟢 **Non-mutating adoption — the hub instance never owns the registration Secret
+    (`createArgocdClusterSecret:"false"` on the hub-side manifest).**
+    Root cause of the spoke deletion-marking, isolated with @pnz1990 on kro `0.9.4-eks-1`:
+    kro adopts a pre-existing Secret **in place** (same UID), so re-asserting the instance is
+    not itself the deleter. The real coupling is ownership. On the hub the ArgoCD registration
+    Secret (`argocd/<hub>`, carrying the `fleet_member: control-plane` label the `clusters-kro`
+    matrix selects on) is created by `hub:seed` (`kubectl apply`) and kept current by the
+    fleet-secret `ExternalSecret` — it is **never a kro-owned object there** (verified live:
+    `managedFields` = `kubectl-client-side-apply` + `externalsecrets…/fleet-secret-<hub>`, no
+    kro labels). `hub:claim` sets `createArgocdClusterSecret:"true"` only for the **kind**
+    bootstrap (ESO cannot register the hub to itself yet — chicken-and-egg), which renders the
+    `argocdSecret` node into **kind's** `argocd` namespace. If the adopted hub-side instance
+    kept `"true"`, its fresh kro applyset would pull `argocd/<hub>` INTO the hub EksCluster
+    graph, coupling the fleet-identity label to the very instance being adopted — the churn
+    that empties the matrix and deletion-marks the spokes.
+
+    **INVARIANT:** the hub registration Secret and its `fleet_member: control-plane` label are
+    invariant across the pivot — never deleted, recreated, re-derived, or momentarily absent.
+    Adoption transfers **management**, not fleet identity; kind is only suspended
+    (`docker stop`), never mutated.
+
+    **Fix:** the adopt projection forces `.spec.createArgocdClusterSecret = "false"` on the
+    hub-side manifest (alongside `fleetMember=control-plane` / `deletionPolicy=retain`). The
+    hub instance stays on the fleet-secret path (`clusterConfigK8sSecretFleet` /
+    `clusterConfigSecretFleet` → ESO) and never materialises the registration Secret, so the
+    matrix never empties. kind keeps `"true"` for its own bootstrap; nothing flips on the hub.
+    This is the RGD's documented mainline (`createArgocdClusterSecret default="false"`, the
+    Crossplane/Terraform spoke flow), not a workaround — `"true"` on the hub is the exception.
+
+    **Caveat (@pnz1990).** On the fleet path the hub-side instance also renders
+    `clusterConfigSecretFleet` (ACK `secretsmanager` Secret `<hub>/config`). ACK does not push a
+    changed `secretString` to an existing Secrets Manager secret, so `<hub>/config` keeps the
+    content `hub:seed`/kind wrote — ESO keeps building the same registration Secret (good for
+    continuity). If the fleet blob (e.g. `fleet_member` derived from `fleetMember`) must land, a
+    one-time `aws secretsmanager put-secret-value` is required. Tracked for validation.
+
+    (The earlier snapshot/restore "continuity guard" is superseded by this root-cause fix and
+    was shelved — it enforced the invariant behaviourally; `createArgocdClusterSecret:"false"`
+    prevents the perturbation at the source.)
