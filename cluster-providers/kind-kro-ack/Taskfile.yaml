@@ -2773,6 +2773,19 @@ tasks:
       `kind delete cluster`). No graceful CR delete, so no finalizer runs and
       deletion-policy is never consulted (the rg-eks.yaml retain gap is irrelevant to
       the pivot; it only matters for the `task destroy` graceful path).
+
+      [#1033 GitOps-asserted hub] By default (HUB_PIVOT_GITOPS=true) the hub EksCluster
+      is NOT applied by a one-shot `kubectl apply` (which the hub's own reconcilers pruned
+      ~40s later on events e9e08cb4/38cd39ef — nothing re-asserted it). Instead the pivot
+      COMMITS the rendered EksCluster manifest into the GitLab fleet-config overlay repo
+      (self-adoption/hub/<hub>.yaml) and applies a dedicated `hub-self-adoption` ArgoCD
+      Application (destination = the registered hub cluster NAME — never the loopback,
+      which the EKS ArgoCD capability disables — with selfHeal:true + prune:false). The
+      hub instance is thus DESIRED STATE FROM GIT: if anything deletes it, ArgoCD re-asserts
+      it (selfHeal); nothing ever prunes it (prune:false + the IgnoreExtraneous/Prune=false
+      annotations on the manifest). This runs as the FINAL workshop step (overlay already
+      wired). If HUB_PIVOT_GITOPS=false, or fleet-config is unreachable (bare provider use,
+      no GitLab), the pivot falls back to the imperative `kubectl apply` (v2 behaviour).
     vars:
       PIVOT_DRY_RUN: '{{.PIVOT_DRY_RUN | default "true"}}'
       PIVOT_CONFIRM: '{{.PIVOT_CONFIRM | default "no"}}'
@@ -2782,6 +2795,10 @@ tasks:
       PIVOT_ADOPT_TIMEOUT_SEC: '{{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}}'
       PIVOT_ADOPT_INTERVAL_SEC: '{{.PIVOT_ADOPT_INTERVAL_SEC | default "20"}}'
       PIVOT_DETACH_MODE: '{{.PIVOT_DETACH_MODE | default "stop"}}'
+      # [#1033] GitOps-assert the adopted hub EksCluster (commit to fleet-config + a
+      # selfHeal/Prune=false ArgoCD Application) instead of a one-shot kubectl apply.
+      # Falls back to imperative apply when false or when fleet-config is unreachable.
+      HUB_PIVOT_GITOPS: '{{.HUB_PIVOT_GITOPS | default "true"}}'
     cmds:
       - task: hub:kubeconfig
       - |
@@ -2983,6 +3000,13 @@ tasks:
         # kro delete cascades to the ACK children as RETAIN (orphan) — never an AWS Delete.
         orphan_hub_instance() {
           local K="$1"
+          # [#1033 GitOps] If the hub-self-adoption Application is asserting the instance,
+          # remove it FIRST so selfHeal cannot recreate the CR we are about to orphan. Strip
+          # the argocd cascade finalizer and delete non-cascading (--cascade=orphan) so
+          # deleting the App does NOT itself prune/delete the EksCluster — the orphan below
+          # handles the CR explicitly (retain → no AWS delete).
+          $K -n argocd patch application hub-self-adoption --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+          $K -n argocd delete application hub-self-adoption --cascade=orphan --wait=false --ignore-not-found >/dev/null 2>&1 || true
           # Belt-and-suspenders: re-assert retain on the hub-side ACK children before removal.
           for gk in $CHILD_GKS; do
             $K -n "$NS" annotate "$gk" -l kro.run/owned=true services.k8s.aws/deletion-policy=retain --overwrite >/dev/null 2>&1 || true
@@ -3062,19 +3086,123 @@ tasks:
         printf '{{.C_STEP}}▸ [LIVE] adopting on hub (adopt-or-create)…{{.C_RESET}}\n'
         [ -s "$WORK/ec2-adopt.yaml" ] && hub_k apply -f "$WORK/ec2-adopt.yaml"
         hub_k create namespace "$NS" --dry-run=client -o yaml | hub_k apply -f -
-        hub_k apply -f "$WORK/hub-instance.json"
+
+        # [#1033 GitOps-asserted hub] Prefer committing the EksCluster to the GitLab
+        # fleet-config overlay and letting the hub's OWN ArgoCD assert it (selfHeal +
+        # prune:false), so the instance is DESIRED-STATE-FROM-GIT and nothing can prune the
+        # one-shot-applied CR (the e9e08cb4/38cd39ef failure: the bare apply was deleted ~40s
+        # later with no re-asserter). Falls back to the imperative apply when
+        # HUB_PIVOT_GITOPS=false or fleet-config/credential are not resolvable (bare provider
+        # use, no GitLab). The overlay is already wired at this point (pivot runs last).
+        HUB_GITOPS_ACTIVE=0
+        if [ "{{.HUB_PIVOT_GITOPS}}" = "true" ]; then
+          # Resolve GitLab coordinates the same way set-overlay-repo / spokes:enable-kro do.
+          # errexit OFF around resolution so an empty optional field never aborts the pivot.
+          set +e
+          GIT_DOMAIN=$( { [ -f "{{.ROOT_DIR}}/private/git-domain" ] && cat "{{.ROOT_DIR}}/private/git-domain"; } || yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' )
+          GIT_USERNAME=$(yq '.gitUsername // "user1"' {{.CONFIG_FILE}} 2>/dev/null); [ -n "$GIT_USERNAME" ] || GIT_USERNAME=user1
+          GIT_PASSWORD=$(yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$')
+          [ -n "$GIT_PASSWORD" ] || GIT_PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$HUB/secrets"  --region "$REGION" --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty')
+          [ -n "$GIT_PASSWORD" ] || GIT_PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$HUB/keycloak" --region "$REGION" --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty')
+          set -e
+          if [ -n "$GIT_DOMAIN" ] && [ -n "$GIT_PASSWORD" ]; then
+            FLEET_URL="https://$GIT_USERNAME:$GIT_PASSWORD@$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git"
+            printf '{{.C_STEP}}▸ [LIVE] GitOps adoption: committing hub EksCluster to fleet-config…{{.C_RESET}}\n'
+            PUSHED=0
+            if git ls-remote "$FLEET_URL" >/dev/null 2>&1; then
+              REPO_DIR=$(mktemp -d)
+              if git clone "$FLEET_URL" "$REPO_DIR" >/dev/null 2>&1 && [ -d "$REPO_DIR/.git" ]; then
+                # self-adoption/hub/<hub>.yaml is OUTSIDE every appset's scan path
+                # (clusters-kro reads gitops/fleet/spoke-values/...), so no appset ever
+                # treats it as its own child → only the dedicated App below manages it.
+                mkdir -p "$REPO_DIR/self-adoption/hub"
+                yq -p=json -o=yaml '.' "$WORK/hub-instance.json" > "$REPO_DIR/self-adoption/hub/$HUB.yaml"
+                if ( cd "$REPO_DIR"; git add -A; \
+                     git -c user.email=pivot@peeks.local -c user.name=peeks-pivot \
+                       commit -m "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1 || true; \
+                     git push "$FLEET_URL" HEAD:main >/dev/null 2>&1 ); then PUSHED=1; fi
+              fi
+              rm -rf "$REPO_DIR"
+            fi
+            if [ "$PUSHED" = 1 ]; then
+              # ArgoCD repo credential for fleet-config (idempotent; set-overlay-repo made it).
+              cat <<SECEOF | hub_k apply -f - >/dev/null 2>&1 || true
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: fleet-config-repo
+          namespace: argocd
+          labels:
+            argocd.argoproj.io/secret-type: repository
+        stringData:
+          type: git
+          url: https://$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git
+          username: "$GIT_USERNAME"
+          password: "$GIT_PASSWORD"
+        SECEOF
+              # Dedicated hub self-adoption Application. destination.name = the registered
+              # hub cluster NAME — the EKS ArgoCD capability DISABLES the in-cluster loopback
+              # (https://kubernetes.default.svc), so a name-based destination is REQUIRED.
+              # selfHeal re-asserts the EksCluster if anything deletes it; prune:false
+              # guarantees ArgoCD itself NEVER deletes it. The committed manifest already
+              # carries deletionPolicy:retain, so even a selfHeal-driven delete/recreate on
+              # the ACK children orphans (never AWS-deletes) the live cluster.
+              if cat <<APPEOF | hub_k apply -f -
+        apiVersion: argoproj.io/v1alpha1
+        kind: Application
+        metadata:
+          name: hub-self-adoption
+          namespace: argocd
+        spec:
+          project: default
+          destination:
+            name: "$HUB"
+            namespace: "$NS"
+          source:
+            repoURL: https://$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git
+            targetRevision: main
+            path: self-adoption/hub
+          syncPolicy:
+            automated:
+              selfHeal: true
+              prune: false
+            syncOptions:
+              - CreateNamespace=true
+              - ServerSideApply=true
+        APPEOF
+              then
+                HUB_GITOPS_ACTIVE=1
+                printf '{{.C_OK}}✓ hub EksCluster committed to fleet-config + hub-self-adoption Application applied (selfHeal, prune=false — desired-state-from-git, un-prunable).{{.C_RESET}}\n'
+              fi
+            fi
+          fi
+        fi
+        if [ "$HUB_GITOPS_ACTIVE" != 1 ]; then
+          printf '{{.C_INFO}}  [LIVE] GitOps assertion unavailable (HUB_PIVOT_GITOPS={{.HUB_PIVOT_GITOPS}}; needs fleet-config reachable + a GitLab credential) — imperative apply (v2 fallback; no re-asserter).{{.C_RESET}}\n'
+          hub_k apply -f "$WORK/hub-instance.json"
+        fi
 
         # THE gate: do not detach until the hub demonstrably owns every resource.
         printf '{{.C_STEP}}▸ [LIVE] waiting for adoption-complete (max {{.PIVOT_ADOPT_TIMEOUT_SEC}}s)…{{.C_RESET}}\n'
-        GATE_OK=0; SPOKE_PERTURBED=0; HUB_DELETED=0; GATE_LOG="$WORK/gate.out"
+        GATE_OK=0; SPOKE_PERTURBED=0; HUB_DELETED=0; HUB_FORENSICS_DONE=0; GATE_LOG="$WORK/gate.out"
         DEADLINE=$(( $(date +%s) + {{.PIVOT_ADOPT_TIMEOUT_SEC}} ))
         while [ "$(date +%s)" -lt "$DEADLINE" ]; do
           # Fail-closed the moment the pivot perturbs a pre-existing spoke (#1033).
           if ! spokes_intact hub_k; then SPOKE_PERTURBED=1; break; fi
-          # Fail-closed + capture forensics the moment the hub instance is deletion-marked
-          # (the 14:07 regression). Checked every iteration so we catch it within one
-          # interval instead of polling a terminating CR for the full timeout.
-          if ! hub_intact hub_k; then HUB_DELETED=1; break; fi
+          # Hub-instance deletion handling (the 14:07 regression):
+          #  - imperative mode: fail-closed immediately (no re-asserter) + dump forensics.
+          #  - GitOps mode (HUB_GITOPS_ACTIVE): the hub-self-adoption Application re-asserts
+          #    the instance via selfHeal, so a deletion is self-recovered — do NOT fail-closed.
+          #    Capture forensics ONCE (so we still name any deleter) then keep polling; the
+          #    adoption_gate below simply shows notready during the brief recreate window.
+          if [ "$HUB_GITOPS_ACTIVE" = 1 ]; then
+            if [ "$HUB_FORENSICS_DONE" != 1 ] && ! hub_intact hub_k; then
+              HUB_FORENSICS_DONE=1
+              printf '{{.C_INFO}}  (GitOps mode) hub instance was deletion-marked — ArgoCD selfHeal will re-assert it from git; continuing (not fail-closed).{{.C_RESET}}\n'
+            fi
+          else
+            if ! hub_intact hub_k; then HUB_DELETED=1; break; fi
+          fi
           if adoption_gate hub_k >"$GATE_LOG" 2>&1; then GATE_OK=1; break; fi
           sleep {{.PIVOT_ADOPT_INTERVAL_SEC}}
         done
