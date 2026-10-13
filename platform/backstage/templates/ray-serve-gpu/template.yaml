@@ -60,8 +60,7 @@ spec:
         rayServeFile:
           title: Ray Serve Config (ZIP)
           type: string
-          default: "https://github.com/aws-samples/appmod-blueprints/raw/refs/heads/main/gitops/workloads/ray/gpu-serve-transformers.zip"
-          ui:help: 'URL to the Ray Serve application zip file (vLLM)'
+          ui:help: "Optional. URL to a custom Ray Serve application ZIP (vLLM). Leave blank to use the workshop's configured revision (workshop_git_branch)."
       required:
         - name
     - title: Resource Configuration
@@ -150,6 +149,7 @@ spec:
           aws_region: ${{ steps['fetchSystem'].output.entity.spec.aws_region }}
           resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
           model_s3_bucket: ${{ steps['fetchSystem'].output.entity.spec.model_s3_bucket }}
+          workshop_git_branch: ${{ steps['fetchSystem'].output.entity.spec.workshop_git_branch }}
           created_by: ${{ user.entity.metadata.name | default("unknown") }}
 
     - id: publish
