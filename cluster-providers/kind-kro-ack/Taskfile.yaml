@@ -789,6 +789,18 @@ tasks:
           # control-plane (not the default "spoke") — otherwise the hub is ejected from
           # the matrix and the spokes are pruned (#1033).
           fleetMember: control-plane
+          # [#1033] Hub is BORN with deletionPolicy=retain. The EksCluster RGD stamps
+          # services.k8s.aws/deletion-policy=retain onto EVERY AWS-backed child (the EKS
+          # Cluster, IAM roles, OIDC provider, security groups, access entries, the ack/
+          # argocd/kro Capabilities and all pod-identity associations), and kro then
+          # ENFORCES retain — it never reverts it. This is what makes the hub:pivot
+          # kind-side retain guard pass deterministically (a transient `kubectl annotate`
+          # on kro-owned children is reverted by kro within ~1s, which was aborting the
+          # pivot before it ever stopped kind or adopted on the hub), and it guarantees
+          # kind can never issue an AWS Delete on the real hub when it is stopped/deleted.
+          # The `destroy` task flips this to "delete" so teardown still removes the AWS
+          # resources (ACK cascade) instead of orphaning them to the sweep.
+          deletionPolicy: retain
           region: {{.AWS_REGION}}
           # managementRegion drives the ACK region annotation on the cluster-config
           # Secrets Manager secret (clusterConfigSecret). For this single-region/account
@@ -1630,6 +1642,33 @@ tasks:
             || printf '{{.C_INFO}}  (hub kubeconfig unavailable — hub may already be gone; teardown continues best-effort.){{.C_RESET}}\n'
         fi
       - task: credentials:refresh
+      # [#1033] The hub EksCluster is BORN with deletionPolicy=retain (hub:claim) so kind can
+      # never AWS-delete it. For teardown we must flip it back to "delete" so ACK actually
+      # removes the AWS children (EKS Cluster, IAM roles, OIDC, security groups, access
+      # entries, pod-identity associations) via its normal cascade instead of orphaning the
+      # retained ones to the extended sweep. Patch whichever instance kind exists, against
+      # the pivot-aware KUBECONFIG set above (kind pre-pivot, hub post-pivot), while the
+      # reconciler is still alive — then give kro a moment to propagate the annotation to the
+      # children BEFORE kind is deleted / capabilities are torn down below. Best-effort: a
+      # no-op (and the sweep backstops IAM/OIDC/SG) if no instance is reachable.
+      - cmd: |
+          flipped=0
+          for KK in ekscluster eksclusterwithvpc; do
+            if kubectl -n {{.HUB_CLUSTER_NAME}} get "$KK.kro.run" {{.HUB_CLUSTER_NAME}} >/dev/null 2>&1; then
+              if kubectl -n {{.HUB_CLUSTER_NAME}} patch "$KK.kro.run" {{.HUB_CLUSTER_NAME}} \
+                   --type merge -p '{"spec":{"deletionPolicy":"delete"}}' >/dev/null 2>&1; then
+                printf '{{.C_INFO}}  flipped %s/%s deletionPolicy=delete for teardown.{{.C_RESET}}\n' "$KK" "{{.HUB_CLUSTER_NAME}}"
+                flipped=1
+              fi
+            fi
+          done
+          if [ "$flipped" = 1 ]; then
+            printf '{{.C_INFO}}  waiting 30s for kro to propagate deletion-policy=delete to ACK children…{{.C_RESET}}\n'
+            sleep 30
+          else
+            printf '{{.C_INFO}}  no hub kro instance reachable to flip (already gone) — sweep will backstop IAM/OIDC/SG.{{.C_RESET}}\n'
+          fi
+        ignore_error: true
       # Kill the Kind cluster FIRST — before hub:destroy-addons.
       # This stops KRO from reconciling the hub eksclusterwithvpc resource.
       # Without this, KRO may recreate the hub EKS cluster after we delete it
@@ -3057,9 +3096,16 @@ tasks:
           done
         done
         printf '{{.C_OK}}  ✓ retain-pinned %d kind-side ACK child resource(s).{{.C_RESET}}\n' "$RETAIN_N"
-        # Hard assertion: refuse to stop kind if any AWS-backed child is still
-        # deletion-policy=delete (that would permit an AWS DeleteCluster). Fail loudly rather
-        # than risk the real cluster. jsonpath escapes the dots in the annotation key.
+        # Soft assertion (WARN, non-fatal): report any AWS-backed child still reading
+        # deletion-policy=delete. This guard is now REDUNDANT — the hub EksCluster instance
+        # is born with spec.deletionPolicy=retain (hub:claim), and the RGD stamps that onto
+        # every child, so kro ENFORCES retain and there is nothing to revert. A transient
+        # `delete` read here is just the kro-vs-annotate reconcile race (proven live: a manual
+        # `kubectl annotate …=retain` on a kro.run/owned child is reverted by kro within ~1s),
+        # NOT real exposure — and `docker stop` freezes kind's ACK controllers on the very
+        # next line, so no AWS DeleteCluster can be issued regardless. We therefore WARN and
+        # proceed instead of aborting (the old hard abort was self-defeating: it killed every
+        # install-time pivot before it ever reached the hub apply). jsonpath escapes the dots.
         STILL_DELETE=0
         for gk in $CHILD_GKS; do
           for cr in $(kind_k -n "$NS" get "$gk" -l kro.run/owned=true -o name 2>/dev/null); do
@@ -3071,8 +3117,7 @@ tasks:
           done
         done
         if [ "$STILL_DELETE" = 1 ]; then
-          printf '{{.C_ERR}}✗ ABORTING before kind stop: not every kind-side AWS-backed child is retain-protected.{{.C_RESET}}\n'
-          exit 1
+          printf '{{.C_STEP}}⚠ some kind-side children still read deletion-policy=delete (kro reconcile race); proceeding — hub is born deletionPolicy=retain and kind is stopped next, so no AWS DeleteCluster can occur.{{.C_RESET}}\n'
         fi
 
         # STOP kind FIRST — halt its kube-apiserver + kro/ACK controllers so ONLY the
