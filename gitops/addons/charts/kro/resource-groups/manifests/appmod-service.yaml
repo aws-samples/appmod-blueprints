@@ -551,43 +551,56 @@ spec:
                     - containerPort: ${schema.spec.targetPort}
                   env: "${(size(schema.spec.env) > 0 ? schema.spec.env : [{\"name\": \"ENVIRONMENT\", \"value\": \"production\"}]).filter(e, e.name != \"APP_BASE_PATH\") + [{\"name\": \"APP_BASE_PATH\", \"value\": schema.spec.ingress.path}]}"
 
-    # Services removed from Kro - Argo Rollouts will create and manage them automatically
-    # - id: service
-    #   template:
-    #     apiVersion: v1
-    #     kind: Service
-    #     metadata:
-    #       name: ${schema.metadata.name}
-    #       ownerReferences:
-    #         - apiVersion: kro.run/v1alpha1
-    #           kind: ${schema.kind}
-    #           name: ${schema.metadata.name}
-    #           uid: ${schema.metadata.uid}
-    #           blockOwnerDeletion: true
-    #           controller: false
-    #       annotations:
-    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-    #     spec:
-    #       selector:
-    #         app: ${schema.metadata.name}
-    #       ports:
-    #         - port: ${schema.spec.port}
-    #           targetPort: ${schema.spec.targetPort}
+    # The Rollout's Services. Unlike the other resources, they carry no Argo CD
+    # tracking-id: on stacks whose GitLab app repos were created before #1047,
+    # those repos still ship their own copy of both Services. Argo CD sets the
+    # annotation to its own value there, and kro would set it back on every
+    # reconcile, so the app would never stay Synced.
+    #
+    # <name>: the Ingress backend and in-cluster Service. Argo Rollouts does not
+    # modify it (there is no stableService), so kro owns all of it.
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.metadata.name}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          selector:
+            app: ${schema.metadata.name}
+          ports:
+            - port: ${schema.spec.port}
+              targetPort: ${schema.spec.targetPort}
 
-    # - id: previewservice
-    #   template:
-    #     apiVersion: v1
-    #     kind: Service
-    #     metadata:
-    #       name: ${schema.metadata.name}-preview
-    #       annotations:
-    #         argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-    #     spec:
-    #       selector:
-    #         app: ${schema.metadata.name}
-    #       ports:
-    #         - port: ${schema.spec.port}
-    #           targetPort: ${schema.spec.targetPort}
+    # <name>-preview: the Rollout's canaryService. Deliberately no spec.selector:
+    # Argo Rollouts sets it to the canary pods (rollouts-pod-template-hash).
+    # Service.spec.selector is an atomic map, so a selector applied by kro would
+    # take back the whole map on every reconcile and strip the hash, and the
+    # gates would reach stable pods.
+    - id: previewservice
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.metadata.name}-preview
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+        spec:
+          ports:
+            - port: ${schema.spec.port}
+              targetPort: ${schema.spec.targetPort}
 
     - id: ingress
       includeWhen:
@@ -726,7 +739,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
+                              - "set -e; echo 'Fetching response...'; RESPONSE=$(wget -qO- http://${schema.metadata.name}-preview:${string(schema.spec.port)}${schema.spec.functionalGate.path} 2>&1); echo 'Response received:'; echo \"$RESPONSE\"; echo ''; echo 'Testing for: ${schema.spec.functionalGate.extraArgs}'; if echo \"$RESPONSE\" | grep -q '${schema.spec.functionalGate.extraArgs}'; then echo 'PASS: Found ${schema.spec.functionalGate.extraArgs}'; exit 0; else echo 'FAIL: ${schema.spec.functionalGate.extraArgs} not found'; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -764,7 +777,7 @@ spec:
                             command: ["sh"]
                             args:
                               - "-c"
-                              - "RESULT=$(ab -n 1000 -c 10 http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); echo \"Time per request: $RESULT ms (threshold ${schema.spec.performanceGate.extraArgs} ms)\"; if [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ]; then echo PASS; exit 0; else echo FAIL; exit 1; fi"
+                              - "RESULT=$(ab -n 1000 -c 10 http://${schema.metadata.name}-preview:${string(schema.spec.port)}${schema.spec.functionalGate.path} 2>/dev/null | grep -o 'Time per request:[^[]*' | head -1 | awk '{print int($4)}'); echo \"Time per request: $RESULT ms (threshold ${schema.spec.performanceGate.extraArgs} ms)\"; if [ \"$RESULT\" -lt ${schema.spec.performanceGate.extraArgs} ]; then echo PASS; exit 0; else echo FAIL; exit 1; fi"
                         restartPolicy: Never
                     backoffLimit: 0
 
@@ -806,7 +819,7 @@ spec:
                             args:
                               - "run"
                               - "-t"
-                              - "http://${schema.metadata.name}-preview:${string(schema.spec.targetPort)}"
+                              - "http://${schema.metadata.name}-preview:${string(schema.spec.port)}"
                               - "/benchmark.yaml"
                             volumeMounts:
                               - name: benchmark-config
@@ -936,7 +949,7 @@ spec:
         data:
           benchmark.yaml: |
             config:
-              target: "http://${schema.metadata.name}:${string(schema.spec.targetPort)}"
+              target: "http://${schema.metadata.name}:${string(schema.spec.port)}"
               phases:
                 - duration: 5
                   arrivalRate: 1
