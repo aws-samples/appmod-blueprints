@@ -123,7 +123,14 @@ spec:
           dbInstanceIdentifier: ${schema.spec.resourcePrefix}-${schema.metadata.name}-instance
           dbInstanceClass: ${schema.spec.instanceClass}
           engine: aurora-mysql
-          dbClusterIdentifier: ${cluster.spec.dbClusterIdentifier}
+          # Reference the cluster identifier by its deterministic schema-derived
+          # value rather than ${cluster.spec.dbClusterIdentifier}. Referencing the
+          # `cluster` node makes KRO defer creating this DBInstance until the
+          # cluster node's readyWhen (ACK.ResourceSynced == True) passes — but an
+          # Aurora DBCluster never reaches ResourceSynced=True with zero member
+          # instances, so the instance is never created and the graph deadlocks.
+          # This value resolves identically to the cluster node's dbClusterIdentifier.
+          dbClusterIdentifier: ${schema.spec.resourcePrefix}-${schema.metadata.name}-cluster
           dbSubnetGroupName: ${subnetgroup.spec.name}
 
     - id: externalsecret
