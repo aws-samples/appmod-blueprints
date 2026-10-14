@@ -79,6 +79,11 @@ spec:
   # rather than silently defaulting to secure/HTTPS. Requires the insecure
   # schema field on EksclusterWithVpc (rg-eks-vpc.yaml) to accept this value.
   insecure: {{ $cluster.insecure | default $.Values.global.insecure | default "false" | quote }}
+  # Per-cluster fleet-config value wins; else inherit the hub's setting (threaded
+  # via global from the hub cluster secret's enable_default_nodepools annotation);
+  # else default to "true" (generic built-in NodePools). The PEEKS workshop hub
+  # sets "false", so its spokes inherit "false" and run only the *-peeks pools.
+  enableDefaultNodePools: {{ $cluster.enableDefaultNodePools | default $.Values.global.enableDefaultNodePools | default "true" | quote }}
   # Platform-wide AWS tags applied to every AWS resource this graph creates (EKS
   # cluster, VPC, NAT gateway, EIP) through the EksclusterWithVpc `awsTags` schema
   # field (rg-eks-vpc.yaml). Threaded from config.local.yaml's `platformTags` ->
