@@ -163,9 +163,11 @@ spec:
           # provisioning race until the out-of-band S3 bucket exists; each failed
           # attempt leaves a Pod that Argo does NOT garbage-collect by default,
           # leaving ~30 Failed pods behind in ray-system on a healthy deployment.
-          # OnWorkflowSuccess keeps the pods of a genuinely failed workflow (so it
-          # stays debuggable) but cleans the benign retry failures of one that
-          # ultimately succeeded.
+          # OnWorkflowSuccess keeps every pod of a genuinely failed workflow (so it
+          # stays debuggable), and on success GCs ALL of that workflow's pods — not
+          # only the retry failures but the download/upload pods and their logs too
+          # (no labelSelector). That's fine here: a succeeded run needs no debugging
+          # and the stack doesn't archive pod logs.
           podGC:
             strategy: OnWorkflowSuccess
           
