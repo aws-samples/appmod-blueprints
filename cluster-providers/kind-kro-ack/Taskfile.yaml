@@ -232,9 +232,21 @@ tasks:
       # claims. See workshop/ for the reference consumer.
       # Crossplane provider bring-up for the hub's OWN observability (AMP/RDS/Grafana).
       - task: install:post-sync
-      - task: hub:wait-for-full-sync
-      # Wait for ALL Crossplane providers (including ec2) to be Healthy.
-      - task: hub:wait-for-providers
+      # ── Perf lever #1 (kro-ack): NEITHER the global full-sync wait NOR the
+      #    Crossplane-providers wait is a precondition for the consumer declaring
+      #    spokes. KRO-provisioned spokes are created by the hub's ACK EKS
+      #    capability — ready UPSTREAM here (ack:install / kro:install /
+      #    kro:apply-rgds / hub:create-mgmt-roles / hub:claim) — NOT by Crossplane.
+      #    The Crossplane providers at this point serve only the hub's OWN
+      #    observability (AMP/RDS/Grafana) + agentcore, which converge on their own.
+      #    Forensics (v0.4.0-rc2, a kro-ack deploy): the old blocking full-sync gate
+      #    sat ~17 min solely on crossplane-base (the providers app), then
+      #    hub:wait-for-providers confirmed Healthy in ~2 s. So move BOTH waits into
+      #    a non-blocking background settle (which KEEPS the crossplane-base
+      #    force-sync remediation) and return "hub bootstrap complete" immediately →
+      #    the consumer declares spokes ~25 min sooner so spoke provisioning (~21 min)
+      #    overlaps the hub settle instead of queuing after it.
+      - task: install:hub-settle-bg
       - task: install:finalize
       - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
@@ -280,6 +292,34 @@ tasks:
       - hub:restart-langfuse
       - hub:restart-backstage
       - urls
+
+  # ── Perf lever #1 (background settle launcher) ──────────────────────────────
+  # Launch hub:settle in the background so `task install` returns immediately after
+  # install:post-sync. For kro-ack the KRO/ACK spoke machinery is already ready
+  # upstream, so neither the full-sync wait nor the Crossplane-providers wait needs
+  # to block the install return — both move here. Non-blocking by design.
+  install:hub-settle-bg:
+    internal: true
+    desc: Launch the hub settle (full-sync + crossplane-base remediation) in the background (non-blocking)
+    cmds:
+      - |
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # `task kind-kro-ack:hub:settle` below needs the ROOT Taskfile. In an included
+        # Taskfile {{.ROOT_DIR}} is the repo root (expanded at template time, before any
+        # shell runs — the backgrounded subshell cannot change it).
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ hub settle not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`: go-task runs
+        # cmds through the mvdan/sh interpreter, which KILLS its background jobs when the
+        # task body exits. The outer `sh` exits at once, orphaning the subshell so the
+        # ~40-min settle outlives go-task. REPO_ROOT is passed via the environment (not
+        # interpolated) so paths with spaces/quotes are safe. (Same idiom as
+        # install:phase1-observability-bg — see its comment block.)
+        REPO_ROOT="$REPO_ROOT" \
+          sh -c '( cd "$REPO_ROOT" && task kind-kro-ack:hub:settle > /tmp/hub-full-sync-settle.log 2>&1 ) &'
+        printf '{{.C_INFO}}  Lever #1: hub addons + Crossplane providers settling in background (log: /tmp/hub-full-sync-settle.log); install continues — KRO/ACK spoke machinery is already ready.{{.C_RESET}}\n'
 
   kind:create:
     desc: Create Kind cluster (skips if exists)
@@ -1297,6 +1337,65 @@ tasks:
       # task hub:restart-identity-pods, which waits for all PIAs Ready first.
       - printf '{{.C_OK}}✓ Crossplane provider pod identities created (providers credentialed on startup/phase1 restart).{{.C_RESET}}\n'
 
+  # ── Perf lever #1 (background settle) + straggler diagnostics ───────────────
+  # Self-contained settle: waits for the hub addons AND Crossplane providers to
+  # converge, logging the NAMES of every out-of-sync app on each poll (not only on
+  # timeout). Run in the background by install:hub-settle-bg so it never blocks
+  # `task install`. Uses its OWN kubeconfig (/tmp/hub-settle-kubeconfig) so it cannot
+  # race the foreground tasks that share {{.ROOT_DIR}}/private/hub-kubeconfig
+  # (urls, restart-langfuse, restart-backstage). Preserves the hub:wait-for-providers
+  # remediation: force-syncs crossplane-base once if it is still OutOfSync after ~5 min
+  # (unsticks the provider-credential chicken-and-egg for hub observability/agentcore
+  # — NOT a spoke precondition).
+  hub:settle:
+    internal: true
+    desc: "Settle hub addons + Crossplane providers (logs out-of-sync names each poll). Safe to background."
+    vars:
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+    cmds:
+      - |
+        KC=/tmp/hub-settle-kubeconfig
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null 2>&1
+        TIMEOUT=2400
+        INTERVAL=30
+        ELAPSED=0
+        FORCED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          APP_OUTPUT=$(KUBECONFIG="$KC" kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
+          OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
+          printf '  [%ss] %s/%s synced, %s unknown/spoke, %s out-of-sync\n' "$ELAPSED" "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+          # Straggler diagnostics: name the apps still OutOfSync so a slow run shows
+          # WHICH app is lagging (e.g. crossplane-base) without extra live tooling.
+          if [ "$OUTOFSYNC" -gt 0 ]; then
+            echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          fi
+          # Remediation (ported from hub:wait-for-providers): if crossplane-base is
+          # still OutOfSync after ~5 min, force a sync once to unstick the provider
+          # credential bootstrap. Hub observability/agentcore only — not spokes.
+          if [ "$FORCED" -eq 0 ] && [ "$ELAPSED" -ge 300 ]; then
+            CB=$(echo "$APP_OUTPUT" | awk -v n="crossplane-base-{{.HUB_CLUSTER_NAME}}" '$1==n && $2!="Synced"')
+            if [ -n "$CB" ]; then
+              printf '  Force-syncing crossplane-base (still OutOfSync after 5min)...\n'
+              KUBECONFIG="$KC" kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+              FORCED=1
+            fi
+          fi
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+            break
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '⚠ Hub settle timed out after %ss. %s app(s) still out-of-sync:\n' "$TIMEOUT" "$OUTOFSYNC"
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+        fi
+        rm -f "$KC"
+
   hub:wait-for-sync:
     desc: Wait for hub ArgoCD apps to sync
     vars:
@@ -1322,6 +1421,11 @@ tasks:
           UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s unknown, %s out-of-sync (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$ELAPSED"
+          # Straggler diagnostics: name the OutOfSync apps ~every 2 min so a slow run
+          # shows WHICH app is lagging (not just a count) without extra tooling.
+          if [ "$OUTOFSYNC" -gt 0 ] && [ $((ELAPSED % 120)) -lt $INTERVAL ]; then
+            echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          fi
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             printf '{{.C_OK}}✓ All %s apps synced (within %s tolerance, %s unknown).{{.C_RESET}}\n' "$SYNCED" "{{.MAX_OUTOFSYNC}}" "$UNKNOWN"
             break
