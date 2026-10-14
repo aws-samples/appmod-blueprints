@@ -209,10 +209,27 @@ tasks:
       # Phase 1 (parallel): identity restart || observability seeding || Playwright prefetch
       - task: install:post-sync
       - 'printf "{{.C_INFO}}  [%ds] post-sync done (identity restart || observability seed){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      - task: hub:wait-for-full-sync
-      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-full-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
+      # ── Perf lever #1: providers Healthy is the ONLY hub precondition the
+      #    consumer's spoke provisioning needs. Gate on it DIRECTLY and FIRST
+      #    (hub:wait-for-providers force-syncs crossplane-base — the app that
+      #    forensics showed held the old blocking full-sync gate for ~17 min — and
+      #    confirms every provider Healthy), THEN let the remaining hub addons
+      #    (backstage, langfuse, the agentic stack, …) settle in the BACKGROUND.
+      #    Previously hub:wait-for-full-sync ran here and BLOCKED for ~37 min before
+      #    hub:wait-for-providers (which then took ~2 s because the full-sync wait had
+      #    already converged crossplane-base). That serialized a ~25-min wall that
+      #    gates nothing downstream: the consumer only needs providers + overlay to
+      #    declare spokes, and the long-tail hub apps converge on their own anyway
+      #    (observed finishing 00:34–01:16, i.e. during/after the spoke wait).
+      #    Returning "hub bootstrap complete" as soon as providers are Healthy lets
+      #    the consumer declare spokes ~25 min sooner so the ~21-min spoke
+      #    provisioning OVERLAPS the hub settle instead of queuing after it.
       - task: hub:wait-for-providers
+      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-providers done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Non-blocking: launch the full-sync settle in the background (logs per-poll
+      # straggler app names to /tmp/hub-full-sync-settle.log) and return immediately.
+      - task: install:hub-settle-bg
+      - 'printf "{{.C_INFO}}  [%ds] hub settle backgrounded{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Phase 1b (parallel): langfuse restart || urls — all independent
       - task: install:finalize
       # NOTE: spoke enablement and fleet-overlay wiring are CONSUMER concerns (the
@@ -227,6 +244,34 @@ tasks:
     deps:
       - hub:restart-langfuse
       - urls
+
+  # ── Perf lever #1 (background settle launcher) ──────────────────────────────
+  # Launch hub:settle in the background so `task install` returns as soon as the
+  # Crossplane providers are Healthy (the only hub precondition for spoke
+  # provisioning). The remaining hub addons converge on their own and overlap the
+  # consumer's spoke provisioning. Non-blocking by design — see the DAG note above.
+  install:hub-settle-bg:
+    internal: true
+    desc: Launch the hub full-sync settle in the background (non-blocking)
+    cmds:
+      - |
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # `task kind-crossplane:hub:settle` below needs the ROOT Taskfile. In an
+        # included Taskfile {{.ROOT_DIR}} is the repo root (expanded at template
+        # time, before any shell runs — the backgrounded subshell cannot change it).
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ hub settle not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`: go-task
+        # runs cmds through the mvdan/sh interpreter, which KILLS its background jobs
+        # when the task body exits. The outer `sh` exits at once, orphaning the
+        # subshell so the ~40-min settle outlives go-task. REPO_ROOT is passed via
+        # the environment (not interpolated) so paths with spaces/quotes are safe.
+        # (Same idiom as install:phase1-observability-bg — see its comment block.)
+        REPO_ROOT="$REPO_ROOT" \
+          sh -c '( cd "$REPO_ROOT" && task kind-crossplane:hub:settle > /tmp/hub-full-sync-settle.log 2>&1 ) &'
+        printf '{{.C_INFO}}  Lever #1: hub addons settling in background (log: /tmp/hub-full-sync-settle.log); install continues.{{.C_RESET}}\n'
 
   install:post-sync:
     internal: true
@@ -910,6 +955,11 @@ tasks:
           UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s out-of-sync, %s unknown/spoke (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$OUTOFSYNC" "$UNKNOWN" "$ELAPSED"
+          # Straggler diagnostics: name the OutOfSync apps ~every 2 min so a slow
+          # run shows WHICH app is lagging (not just a count) without extra tooling.
+          if [ "$OUTOFSYNC" -gt 0 ] && [ $((ELAPSED % 120)) -lt $INTERVAL ]; then
+            echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          fi
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             if [ "$OUTOFSYNC" -gt 0 ]; then
               printf '{{.C_STEP}}▸ %s app(s) still OutOfSync (within tolerance):{{.C_RESET}}\n' "$OUTOFSYNC"
@@ -1030,6 +1080,50 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n langfuse langfuse --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
+
+  # ── Perf lever #1 (background settle) + straggler diagnostics ───────────────
+  # Self-contained settle: waits for the hub addons to converge, logging the NAMES
+  # of every out-of-sync app on each poll (not only on timeout). Run in the
+  # background by install:hub-settle-bg so it never blocks `task install`.
+  # Uses its OWN kubeconfig at /tmp/hub-settle-kubeconfig so it cannot race the
+  # foreground tasks that share {{.ROOT_DIR}}/private/hub-kubeconfig (urls,
+  # restart-langfuse) which fetch-then-rm that shared path.
+  hub:settle:
+    internal: true
+    desc: "Settle the hub addons (logs out-of-sync app names each poll). Safe to background."
+    vars:
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+    cmds:
+      - |
+        KC=/tmp/hub-settle-kubeconfig
+        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null 2>&1
+        TIMEOUT=2400
+        INTERVAL=30
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          APP_OUTPUT=$(KUBECONFIG="$KC" kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
+          OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
+          printf '  [%ss] %s/%s synced, %s unknown/spoke, %s out-of-sync\n' "$ELAPSED" "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+          # Straggler diagnostics: name the apps still OutOfSync so a slow run shows
+          # WHICH app is lagging (e.g. crossplane-base) without extra live tooling.
+          if [ "$OUTOFSYNC" -gt 0 ]; then
+            echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          fi
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+            break
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '⚠ Hub settle timed out after %ss. %s app(s) still out-of-sync:\n' "$TIMEOUT" "$OUTOFSYNC"
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+        fi
+        rm -f "$KC"
 
   hub:wait-for-full-sync:
     desc: Wait for ALL apps (including spokes) to sync after provider restart
