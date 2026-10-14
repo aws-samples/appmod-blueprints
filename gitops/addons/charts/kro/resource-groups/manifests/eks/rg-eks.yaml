@@ -62,6 +62,15 @@ spec:
       # own insecure setting via the clusters-kro appset/chart. See
       # kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
+      # Whether EKS Auto Mode's built-in "general-purpose" + "system" NodePools
+      # are enabled on this cluster. "true" (default) preserves the generic /
+      # standalone behaviour (built-ins on, no custom pools required). A consumer
+      # that ships its own custom NodePools (e.g. the PEEKS workshop's *-peeks
+      # pools) sets this to "false" via its instance/overlay so that only the
+      # custom pools exist and unpinned platform workloads (Argo EventBus, CI
+      # WorkflowTemplates) schedule onto the stable custom pools instead of a
+      # consolidation-prone built-in general-purpose node.
+      enableDefaultNodePools: string | default="true"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
       # Optional extra AWS tags merged into the EKS Cluster tags (SpringClean
@@ -364,9 +373,13 @@ spec:
           computeConfig:
             enabled: true
             nodeRoleARN: ${nodeRole.status.ackResourceMetadata.arn}
-            nodePools:
-              - system
-              - general-purpose
+            # Built-in EKS Auto Mode NodePools, gated by the schema toggle.
+            # "true" (default) -> [system, general-purpose] (generic behaviour).
+            # "false" -> [] so only consumer-supplied custom NodePools exist.
+            # Single-quoted + dyn() on both branches mirrors the proven CEL idiom
+            # used by appmod-service.yaml (ternary type unification; the bare ' : '
+            # would otherwise be parsed as a YAML mapping separator).
+            nodePools: '${schema.spec.enableDefaultNodePools == "true" ? dyn(["system", "general-purpose"]) : dyn([])}'
           kubernetesNetworkConfig:
             ipFamily: ipv4
             elasticLoadBalancing:

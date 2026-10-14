@@ -24,6 +24,7 @@ spec:
   fleetSecretManagerSecretNameSuffix: {{ .Values.fleetSecretManagerSecretNameSuffix | default "argocd-secret" }}
   domainName: {{ .Values.domainName | default $.Values.global.domainName | default "example.com" }}
   resourcePrefix: {{ .Values.resourcePrefix | default $.Values.global.resourcePrefix | default "peeks" }}
+  enableDefaultNodePools: {{ .Values.enableDefaultNodePools | default "true" | quote }}
   cidr:
     vpcCidr: {{ .Values.vpcCidr | default "10.0.0.0/16" | quote }}
     publicSubnet1Cidr: {{ .Values.publicSubnet1Cidr | default "10.0.1.0/24" | quote }}
