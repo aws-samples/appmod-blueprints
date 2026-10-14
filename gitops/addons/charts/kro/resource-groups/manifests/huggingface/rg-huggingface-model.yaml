@@ -158,6 +158,16 @@ spec:
         spec:
           serviceAccountName: ${serviceAccount.metadata.name}
           entrypoint: download-and-upload
+          # Reap the wait-bucket retry-attempt pods once the workflow succeeds.
+          # The wait-bucket step retries (retryPolicy: Always, limit 40) through the
+          # provisioning race until the out-of-band S3 bucket exists; each failed
+          # attempt leaves a Pod that Argo does NOT garbage-collect by default,
+          # leaving ~30 Failed pods behind in ray-system on a healthy deployment.
+          # OnWorkflowSuccess keeps the pods of a genuinely failed workflow (so it
+          # stays debuggable) but cleans the benign retry failures of one that
+          # ultimately succeeded.
+          podGC:
+            strategy: OnWorkflowSuccess
           
           templates:
             - name: download-and-upload
