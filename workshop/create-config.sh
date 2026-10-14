@@ -316,7 +316,7 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
   # NodePools so the hub runs ONLY its custom *-peeks pools (keeps unpinned
   # EventBus/CI off the small, consolidation-prone built-in node). Generic
   # consumers omit this key -> rg-eks.yaml default "true" keeps the built-ins.
-  printf '  enableDefaultNodePools: false\n'           >> "$OUTPUT_FILE"
+  printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
   printf '  network:\n'                                >> "$OUTPUT_FILE"
   printf '    vpcId: "%s"\n' "$HUB_VPC_ID"             >> "$OUTPUT_FILE"
   printf '    subnetIds:\n'                            >> "$OUTPUT_FILE"
@@ -333,7 +333,7 @@ else
   printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"          >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
   # Workshop opt-in (see note above): hub runs only its custom *-peeks pools.
-  printf '  enableDefaultNodePools: false\n'           >> "$OUTPUT_FILE"
+  printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
 fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
