@@ -9,3 +9,21 @@
 # This file is intentionally kept (as an empty override) because the hub
 # platform-manifests-bootstrap Application still references this valueFile path;
 # add hub-only NodePool overrides here if ever needed.
+
+# Lever #2 (warm capacity) — HUB ONLY. The hub carries the heavy first wave of
+# platform addons (gitlab, backstage, langfuse, bifrost, argo-workflows, keycloak);
+# a warm general-purpose-peeks node means those pods do not each wait ~1-2 min for a
+# cold Karpenter node. Pause pods hold a negative priority, so any real workload
+# preempts them instantly (near-zero steady cost beyond the one warm node), and
+# Karpenter re-provisions to stay warm. Enabled here (control-plane) only — spokes
+# keep the chart default (disabled). Tune replicas/resources to taste; set
+# enabled:false to turn off.
+warmCapacity:
+  enabled: true
+  replicas: 1
+  nodeSelector:
+    karpenter.sh/nodepool: general-purpose-peeks
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"

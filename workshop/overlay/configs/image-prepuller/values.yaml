@@ -2,3 +2,19 @@
 # general-purpose is already amd64, this aligns it to the tuned pool. Generic keeps default.
 nodeSelector:
   karpenter.sh/nodepool: general-purpose-peeks
+
+# Lever #2 (image pre-pull): warm the node image cache with the HEAVY hub first-wave
+# images so those addons do not each pay a cold multi-hundred-MB/GB pull when they
+# first schedule. The prepuller is hub-only (control-plane), so these are only pulled
+# on the hub. NOTE: overriding `images` REPLACES the generic list, so the generic
+# ray/jupyter entries are re-listed here. Only images with an exactly-resolvable ref
+# are included — gitlab and langfuse resolve their tag from the chart appVersion and
+# are left as a follow-up (a wrong tag would pre-pull a layer the app never uses).
+images:
+  - public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu
+  - jupyter/base-notebook:latest
+  - jupyter/datascience-notebook:latest
+  - public.ecr.aws/seb-demo/backstage:cnoe-1.1
+  - quay.io/keycloak/keycloak:26.3.3
+  - quay.io/argoproj/workflow-controller:v3.6.7
+  - quay.io/argoproj/argocli:v3.6.7
