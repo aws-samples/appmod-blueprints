@@ -1645,6 +1645,16 @@ tasks:
       # children BEFORE kind is deleted / capabilities are torn down below. Best-effort: a
       # no-op (and the sweep backstops IAM/OIDC/SG) if no instance is reachable.
       - cmd: |
+          # [#1033] On a PIVOTED stack the hub EksCluster is asserted by the `hub-self-adoption`
+          # ArgoCD Application (selfHeal:true) whose git manifest carries deletionPolicy:retain.
+          # If we flip the live instance to deletionPolicy=delete while that App is still
+          # running, selfHeal reverts the patch back to retain → ACK orphans (never deletes) the
+          # AWS children → IAM/OIDC/SG/access-entries leak to the sweep. So REMOVE the asserter
+          # FIRST: strip its argocd cascade finalizer and delete it non-cascading
+          # (--cascade=orphan) so deleting the App does not itself prune the EksCluster — the
+          # flip below then sticks. No-op on a non-pivoted stack (App absent).
+          kubectl -n argocd patch application hub-self-adoption --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+          kubectl -n argocd delete application hub-self-adoption --cascade=orphan --wait=false --ignore-not-found >/dev/null 2>&1 || true
           flipped=0
           for KK in ekscluster eksclusterwithvpc; do
             if kubectl -n {{.HUB_CLUSTER_NAME}} get "$KK.kro.run" {{.HUB_CLUSTER_NAME}} >/dev/null 2>&1; then
@@ -1656,8 +1666,19 @@ tasks:
             fi
           done
           if [ "$flipped" = 1 ]; then
-            printf '{{.C_INFO}}  waiting 30s for kro to propagate deletion-policy=delete to ACK children…{{.C_RESET}}\n'
-            sleep 30
+            # Wait on the REAL condition (not a fixed sleep): kro propagating deletion-policy=delete
+            # onto the ACK EKS Cluster child's annotation. Bounded to ~60s; proceed anyway if slow
+            # (the sweep still backstops IAM/OIDC/SG).
+            printf '{{.C_INFO}}  waiting for kro to propagate deletion-policy=delete to the ACK EKS Cluster child…{{.C_RESET}}\n'
+            for i in $(seq 1 30); do
+              if kubectl -n {{.HUB_CLUSTER_NAME}} get cluster.eks.services.k8s.aws \
+                   -o jsonpath='{range .items[*]}{.metadata.annotations.services\.k8s\.aws/deletion-policy}{"\n"}{end}' 2>/dev/null \
+                   | grep -qx delete; then
+                printf '{{.C_OK}}  ✓ deletion-policy=delete propagated to ACK EKS Cluster (after %ds).{{.C_RESET}}\n' "$((i*2))"
+                break
+              fi
+              [ "$i" = 30 ] && printf '{{.C_INFO}}  propagation not confirmed within 60s — continuing (sweep backstops residue).{{.C_RESET}}\n' || sleep 2
+            done
           else
             printf '{{.C_INFO}}  no hub kro instance reachable to flip (already gone) — sweep will backstop IAM/OIDC/SG.{{.C_RESET}}\n'
           fi
@@ -2803,13 +2824,18 @@ tasks:
       (stop=default, recoverable; delete=`kind delete cluster`). No graceful CR delete,
       so no finalizer runs and no AWS Delete is ever issued.
 
-      By default (HUB_PIVOT_GITOPS=true) the hub EksCluster is asserted via GitOps —
-      committed to the fleet-config overlay (self-adoption/hub/<hub>.yaml) and reconciled
-      by a dedicated `hub-self-adoption` ArgoCD Application (destination = the hub cluster
+      By default (HUB_PIVOT_GITOPS=true) the hub EksCluster is asserted via GitOps. The
+      provider is CONSUMER-AGNOSTIC: it reads the overlay repo the consumer wired into
+      <hub>/config (overlay_repo_url/revision/basepath) and REUSES the ArgoCD repo
+      credential the consumer registered (argocd/fleet-config-repo) — it never assumes a
+      specific consumer's GitLab/IDE/CloudFront or writes a repo password of its own. It
+      commits self-adoption/hub/<hub>.yaml to that overlay and a dedicated
+      `hub-self-adoption` ArgoCD Application reconciles it (destination = the hub cluster
       NAME, since the EKS ArgoCD capability disables the loopback; selfHeal:true,
-      prune:false) — so the instance is desired-state-from-git and can never be pruned.
-      Falls back to imperative `kubectl apply` when HUB_PIVOT_GITOPS=false or fleet-config
-      is unreachable (bare provider, no GitLab).
+      prune:false) — desired-state-from-git, so the instance can never be pruned. The live
+      pivot is REFUSED up front (nothing mutated) if no overlay repo is wired or the repo
+      credential is absent. HUB_PIVOT_GITOPS=false is a deliberate operator override that
+      adopts imperatively with no re-asserter (no automatic fallback).
     vars:
       PIVOT_DRY_RUN: '{{.PIVOT_DRY_RUN | default "true"}}'
       PIVOT_CONFIRM: '{{.PIVOT_CONFIRM | default "no"}}'
@@ -3039,6 +3065,43 @@ tasks:
           printf '{{.C_ERR}}✗ Refusing live pivot without PIVOT_CONFIRM=yes.{{.C_RESET}}\n'; exit 1
         fi
 
+        # --- Consumer-agnostic precondition (fail-closed, BEFORE any mutation) -------------
+        # A cluster provider reads inputs ONLY from config.yaml + <hub>/config; it never
+        # assumes or writes a specific consumer's systems (workshop GitLab, IDE, CloudFront).
+        # So the GitOps adoption uses the overlay repo the CONSUMER wired into <hub>/config
+        # (overlay_repo_url/revision/basepath) and REUSES the ArgoCD repo credential the
+        # consumer already registered (argocd/fleet-config-repo) — the provider resolves no
+        # GitLab URL and writes no repo password of its own. Refuse the live pivot UP FRONT
+        # (before stopping kind, so a refusal mutates nothing) if either is missing. The
+        # explicit operator override HUB_PIVOT_GITOPS=false adopts imperatively with no
+        # re-asserter and skips this requirement.
+        OVERLAY_URL=""; OVERLAY_REV="main"; OVERLAY_BP=""; REPO_USER=""; REPO_PASS=""
+        if [ "{{.HUB_PIVOT_GITOPS}}" = "true" ]; then
+          # Refresh the hub kubeconfig so the credential read is reliable standalone or in-install.
+          aws eks update-kubeconfig --name "$HUB" --region "$REGION" --alias "$HUB" --kubeconfig "$HUBKC" >/dev/null 2>&1 || true
+          set +e
+          HUB_CFG=$(aws secretsmanager get-secret-value --secret-id "$HUB/config" --region "$REGION" --query 'SecretString' --output text 2>/dev/null)
+          OVERLAY_URL=$(printf '%s' "$HUB_CFG" | jq -r '(.metadata | fromjson).overlay_repo_url      // ""'     2>/dev/null)
+          OVERLAY_REV=$(printf '%s' "$HUB_CFG" | jq -r '(.metadata | fromjson).overlay_repo_revision // "main"' 2>/dev/null)
+          OVERLAY_BP=$( printf '%s' "$HUB_CFG" | jq -r '(.metadata | fromjson).overlay_repo_basepath  // ""'     2>/dev/null)
+          REPO_USER=$(hub_k -n argocd get secret fleet-config-repo -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null)
+          REPO_PASS=$(hub_k -n argocd get secret fleet-config-repo -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)
+          set -e
+          [ -n "$OVERLAY_REV" ] && [ "$OVERLAY_REV" != "null" ] || OVERLAY_REV=main
+          [ "$OVERLAY_BP" = "null" ] && OVERLAY_BP="" || true
+          if [ -z "$OVERLAY_URL" ] || [ "$OVERLAY_URL" = "null" ]; then
+            printf '{{.C_ERR}}✗ Refusing live pivot: no overlay repo wired in %s/config (overlay_repo_url empty).{{.C_RESET}}\n' "$HUB"
+            printf '{{.C_INFO}}  A cluster provider is consumer-agnostic — it adopts the hub via the overlay repo the CONSUMER wires into <hub>/config (e.g. the workshop set-overlay-repo step) and reuses the ArgoCD repo credential the consumer registered. Wire the overlay first, then re-run. (Operator override: HUB_PIVOT_GITOPS=false adopts imperatively with no re-asserter.){{.C_RESET}}\n'
+            exit 1
+          fi
+          if [ -z "$REPO_PASS" ]; then
+            printf '{{.C_ERR}}✗ Refusing live pivot: overlay repo wired (%s) but no ArgoCD repo credential argocd/fleet-config-repo to reuse.{{.C_RESET}}\n' "$OVERLAY_URL"
+            printf '{{.C_INFO}}  The consumer must register the overlay repo credential before the pivot (its set-overlay-repo step). Re-run once it exists.{{.C_RESET}}\n'
+            exit 1
+          fi
+          printf '{{.C_OK}}  ✓ consumer-supplied overlay repo + reusable ArgoCD credential present — %s @ %s.{{.C_RESET}}\n' "$OVERLAY_URL" "$OVERLAY_REV"
+        fi
+
         # Identify this cluster's kind node containers (label set by kind).
         KIND_NODES=$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}" 2>/dev/null || true)
 
@@ -3070,65 +3133,48 @@ tasks:
         [ -s "$WORK/ec2-adopt.yaml" ] && hub_k apply -f "$WORK/ec2-adopt.yaml"
         hub_k create namespace "$NS" --dry-run=client -o yaml | hub_k apply -f -
 
-        # Prefer committing the EksCluster to the GitLab fleet-config overlay and letting the
-        # hub's OWN ArgoCD assert it (selfHeal + prune:false) — desired-state-from-git, so the
-        # CR can never be pruned (a one-shot kubectl apply has no re-asserter if something
-        # deletes it). Falls back to imperative apply when HUB_PIVOT_GITOPS=false or
-        # fleet-config/credential are not resolvable. The overlay is already wired (pivot runs last).
+        # Commit the EksCluster to the CONSUMER's overlay repo and let the hub's OWN ArgoCD
+        # assert it (selfHeal + prune:false) — desired-state-from-git, so the CR can never be
+        # pruned (a one-shot kubectl apply has no re-asserter if something deletes it).
+        # Coordinates + credential were resolved and validated in the consumer-agnostic
+        # precondition above: the provider reads overlay_repo_url/revision/basepath from
+        # <hub>/config and reuses the ArgoCD repo credential argocd/fleet-config-repo the
+        # consumer registered — it never builds a GitLab URL or writes a repo password itself.
         HUB_GITOPS_ACTIVE=0
         if [ "{{.HUB_PIVOT_GITOPS}}" = "true" ]; then
-          # Resolve GitLab coordinates the same way set-overlay-repo / spokes:enable-kro do.
-          # errexit OFF around resolution so an empty optional field never aborts the pivot.
-          set +e
-          GIT_DOMAIN=$( { [ -f "{{.ROOT_DIR}}/private/git-domain" ] && cat "{{.ROOT_DIR}}/private/git-domain"; } || yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' )
-          GIT_USERNAME=$(yq '.gitUsername // "user1"' {{.CONFIG_FILE}} 2>/dev/null); [ -n "$GIT_USERNAME" ] || GIT_USERNAME=user1
-          GIT_PASSWORD=$(yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$')
-          [ -n "$GIT_PASSWORD" ] || GIT_PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$HUB/secrets"  --region "$REGION" --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty')
-          [ -n "$GIT_PASSWORD" ] || GIT_PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$HUB/keycloak" --region "$REGION" --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty')
-          set -e
-          if [ -n "$GIT_DOMAIN" ] && [ -n "$GIT_PASSWORD" ]; then
-            FLEET_URL="https://$GIT_USERNAME:$GIT_PASSWORD@$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git"
-            printf '{{.C_STEP}}▸ [LIVE] GitOps adoption: committing hub EksCluster to fleet-config…{{.C_RESET}}\n'
-            PUSHED=0
-            if git ls-remote "$FLEET_URL" >/dev/null 2>&1; then
-              REPO_DIR=$(mktemp -d)
-              if git clone "$FLEET_URL" "$REPO_DIR" >/dev/null 2>&1 && [ -d "$REPO_DIR/.git" ]; then
-                # self-adoption/hub/<hub>.yaml is OUTSIDE every appset's scan path
-                # (clusters-kro reads gitops/fleet/spoke-values/...), so no appset ever
-                # treats it as its own child → only the dedicated App below manages it.
-                mkdir -p "$REPO_DIR/self-adoption/hub"
-                yq -p=json -o=yaml '.' "$WORK/hub-instance.json" > "$REPO_DIR/self-adoption/hub/$HUB.yaml"
-                if ( cd "$REPO_DIR"; git add -A; \
-                     git -c user.email=pivot@peeks.local -c user.name=peeks-pivot \
-                       commit -m "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1 || true; \
-                     git push "$FLEET_URL" HEAD:main >/dev/null 2>&1 ); then PUSHED=1; fi
-              fi
-              rm -rf "$REPO_DIR"
+          # Authenticated push URL = overlay URL + the reused credential (never logged).
+          OVERLAY_HOSTPATH=${OVERLAY_URL#https://}
+          if [ -n "$REPO_USER" ]; then PUSH_URL="https://$REPO_USER:$REPO_PASS@$OVERLAY_HOSTPATH"; else PUSH_URL="https://$REPO_PASS@$OVERLAY_HOSTPATH"; fi
+          # Manifest path inside the overlay repo (honour basepath if the overlay nests).
+          REL_DIR="self-adoption/hub"; [ -n "$OVERLAY_BP" ] && REL_DIR="${OVERLAY_BP%/}/self-adoption/hub"
+          printf '{{.C_STEP}}▸ [LIVE] GitOps adoption: committing hub EksCluster to the overlay repo (%s @ %s, path %s)…{{.C_RESET}}\n' "$OVERLAY_URL" "$OVERLAY_REV" "$REL_DIR"
+          PUSHED=0
+          if git ls-remote "$PUSH_URL" >/dev/null 2>&1; then
+            REPO_DIR=$(mktemp -d)
+            if git clone --branch "$OVERLAY_REV" --single-branch "$PUSH_URL" "$REPO_DIR" >/dev/null 2>&1 && [ -d "$REPO_DIR/.git" ]; then
+              # self-adoption/hub/<hub>.yaml is OUTSIDE every appset's scan path
+              # (clusters-kro reads gitops/fleet/spoke-values/...), so no appset ever
+              # treats it as its own child → only the dedicated App below manages it.
+              mkdir -p "$REPO_DIR/$REL_DIR"
+              yq -p=json -o=yaml '.' "$WORK/hub-instance.json" > "$REPO_DIR/$REL_DIR/$HUB.yaml"
+              if ( cd "$REPO_DIR"; git add -A; \
+                   git -c user.email=pivot@peeks.local -c user.name=peeks-pivot \
+                     commit -m "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1 || true; \
+                   git push "$PUSH_URL" "HEAD:$OVERLAY_REV" >/dev/null 2>&1 ); then PUSHED=1; fi
             fi
-            if [ "$PUSHED" = 1 ]; then
-              # ArgoCD repo credential for fleet-config (idempotent; set-overlay-repo made it).
-              cat <<SECEOF | hub_k apply -f - >/dev/null 2>&1 || true
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          name: fleet-config-repo
-          namespace: argocd
-          labels:
-            argocd.argoproj.io/secret-type: repository
-        stringData:
-          type: git
-          url: https://$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git
-          username: "$GIT_USERNAME"
-          password: "$GIT_PASSWORD"
-        SECEOF
-              # Dedicated hub self-adoption Application. destination.name = the registered
-              # hub cluster NAME — the EKS ArgoCD capability DISABLES the in-cluster loopback
-              # (https://kubernetes.default.svc), so a name-based destination is REQUIRED.
-              # selfHeal re-asserts the EksCluster if anything deletes it; prune:false
-              # guarantees ArgoCD itself NEVER deletes it. The committed manifest already
-              # carries deletionPolicy:retain, so even a selfHeal-driven delete/recreate on
-              # the ACK children orphans (never AWS-deletes) the live cluster.
-              if cat <<APPEOF | hub_k apply -f -
+            rm -rf "$REPO_DIR"
+          fi
+          if [ "$PUSHED" = 1 ]; then
+            # Dedicated hub self-adoption Application. source.repoURL = the overlay URL;
+            # ArgoCD authenticates with the CONSUMER-registered argocd/fleet-config-repo
+            # credential (the provider neither writes nor owns that Secret). destination.name =
+            # the registered hub cluster NAME — the EKS ArgoCD capability DISABLES the in-cluster
+            # loopback (https://kubernetes.default.svc), so a name-based destination is REQUIRED.
+            # selfHeal re-asserts the EksCluster if anything deletes it; prune:false guarantees
+            # ArgoCD itself NEVER deletes it. The committed manifest carries deletionPolicy:retain,
+            # so even a selfHeal-driven delete/recreate on the ACK children orphans (never
+            # AWS-deletes) the live cluster.
+            if cat <<APPEOF | hub_k apply -f -
         apiVersion: argoproj.io/v1alpha1
         kind: Application
         metadata:
@@ -3140,9 +3186,9 @@ tasks:
             name: "$HUB"
             namespace: "$NS"
           source:
-            repoURL: https://$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git
-            targetRevision: main
-            path: self-adoption/hub
+            repoURL: "$OVERLAY_URL"
+            targetRevision: "$OVERLAY_REV"
+            path: "$REL_DIR"
           syncPolicy:
             automated:
               selfHeal: true
@@ -3151,15 +3197,22 @@ tasks:
               - CreateNamespace=true
               - ServerSideApply=true
         APPEOF
-              then
-                HUB_GITOPS_ACTIVE=1
-                printf '{{.C_OK}}✓ hub EksCluster committed to fleet-config + hub-self-adoption Application applied (selfHeal, prune=false — desired-state-from-git, un-prunable).{{.C_RESET}}\n'
-              fi
+            then
+              HUB_GITOPS_ACTIVE=1
+              printf '{{.C_OK}}✓ hub EksCluster committed to the overlay repo + hub-self-adoption Application applied (selfHeal, prune=false — desired-state-from-git, un-prunable).{{.C_RESET}}\n'
             fi
           fi
-        fi
-        if [ "$HUB_GITOPS_ACTIVE" != 1 ]; then
-          printf '{{.C_INFO}}  [LIVE] GitOps assertion unavailable (HUB_PIVOT_GITOPS={{.HUB_PIVOT_GITOPS}}; needs fleet-config reachable + a GitLab credential) — imperative apply (v2 fallback; no re-asserter).{{.C_RESET}}\n'
+          if [ "$HUB_GITOPS_ACTIVE" != 1 ]; then
+            printf '{{.C_ERR}}✗ [LIVE] GitOps adoption could not commit to the overlay repo (%s) — ABORTING; kind NOT discarded. There is NO imperative fallback here (that was the two-behaviour coupling this change removes); restart kind and retry once the overlay is reachable.{{.C_RESET}}\n' "$OVERLAY_URL"
+            [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+            exit 1
+          fi
+        else
+          # Deliberate operator override (HUB_PIVOT_GITOPS=false): adopt imperatively with no
+          # git re-asserter. Documented escape hatch for a bare provider with no overlay repo —
+          # NOT an automatic fallback (the implicit fallback that made the provider behave two
+          # ways has been removed).
+          printf '{{.C_INFO}}  [LIVE] HUB_PIVOT_GITOPS=false — imperative adopt on the hub (operator override; no re-asserter).{{.C_RESET}}\n'
           hub_k apply -f "$WORK/hub-instance.json"
         fi
 
