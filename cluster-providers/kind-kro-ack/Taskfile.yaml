@@ -283,7 +283,7 @@ tasks:
         # `sh` exits at once, orphaning the subshell so it outlives go-task. REPO_ROOT is
         # passed via the environment so paths with spaces/quotes are safe.
         REPO_ROOT="$REPO_ROOT" \
-          sh -c '( cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
+          sh -c '( cd "$REPO_ROOT" && exec task kind-kro-ack:secrets-manager:seed-observability ) >> /tmp/observability-seed.log 2>&1 < /dev/null &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:finalize:
@@ -311,14 +311,15 @@ tasks:
           printf '{{.C_ERR}}✗ hub settle not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
           exit 1
         fi
-        # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`: go-task runs
-        # cmds through the mvdan/sh interpreter, which KILLS its background jobs when the
-        # task body exits. The outer `sh` exits at once, orphaning the subshell so the
-        # ~40-min settle outlives go-task. REPO_ROOT is passed via the environment (not
-        # interpolated) so paths with spaces/quotes are safe. (Same idiom as
-        # install:phase1-observability-bg — see its comment block.)
+        # DETACH so the ~40-min settle BOTH outlives go-task AND releases the install's
+        # stdout/stderr: `exec task` replaces the subshell (no wrapper shell lingers),
+        # the redirect is applied to the SUBSHELL — `) >> log 2>&1` — so go-task's own
+        # fds are closed (not just task's), and `< /dev/null` detaches stdin. Otherwise
+        # the orphaned subshell keeps the SSM `tslog | tee` pipe open and cfn-signal
+        # blocks until the settle ends, up to 40 min (review #1053 §2). REPO_ROOT via
+        # env so paths with spaces are safe. (Same idiom as install:phase1-observability-bg.)
         REPO_ROOT="$REPO_ROOT" \
-          sh -c '( cd "$REPO_ROOT" && task kind-kro-ack:hub:settle > /tmp/hub-full-sync-settle.log 2>&1 ) &'
+          sh -c '( cd "$REPO_ROOT" && exec task kind-kro-ack:hub:settle ) >> /tmp/hub-full-sync-settle.log 2>&1 < /dev/null &'
         printf '{{.C_INFO}}  Lever #1: hub addons + Crossplane providers settling in background (log: /tmp/hub-full-sync-settle.log); install continues — KRO/ACK spoke machinery is already ready.{{.C_RESET}}\n'
 
   kind:create:
@@ -1348,7 +1349,9 @@ tasks:
   # (unsticks the provider-credential chicken-and-egg for hub observability/agentcore
   # — NOT a spoke precondition).
   hub:settle:
-    internal: true
+    # NOT internal: the background launcher invokes it from the CLI as
+    # `task kind-kro-ack:hub:settle`; go-task rejects CLI calls to internal tasks
+    # (exit 202), which silently skipped the entire settle (review #1053 §1).
     desc: "Settle hub addons + Crossplane providers (logs out-of-sync names each poll). Safe to background."
     vars:
       MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
