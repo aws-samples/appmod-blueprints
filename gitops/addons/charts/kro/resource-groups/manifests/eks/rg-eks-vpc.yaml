@@ -49,9 +49,9 @@ spec:
       # repeat it. See kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
       # Forwarded to the nested EksCluster. "true" (default) keeps the built-in
-      # Auto Mode NodePools; "false" leaves only consumer-supplied custom pools.
-      # See rg-eks.yaml for the full rationale.
-      enableDefaultNodePools: string | default="true"
+      # Built-in general-purpose NodePool toggle; "false" keeps only the "system"
+      # built-in (drops general-purpose). See rg-eks.yaml for the full rationale.
+      enableGeneralPurposeNodePool: string | default="true"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
       # Optional extra AWS tags, merged on top of the built-in tags of every AWS
@@ -217,7 +217,7 @@ spec:
           createArgocdClusterSecret: ${schema.spec.createArgocdClusterSecret}
           domainName: ${schema.spec.domainName}
           insecure: ${schema.spec.insecure}
-          enableDefaultNodePools: ${schema.spec.enableDefaultNodePools}
+          enableGeneralPurposeNodePool: ${schema.spec.enableGeneralPurposeNodePool}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
           awsTags: ${schema.spec.?awsTags.orValue({})}

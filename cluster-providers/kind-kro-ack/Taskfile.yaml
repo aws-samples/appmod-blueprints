@@ -742,13 +742,13 @@ tasks:
         echo "[hub:claim] injecting spec.awsTags=$PLATFORM_TAGS_JSON"
         # Built-in Auto Mode NodePools toggle (consumer-agnostic: read from config).
         # Default "true" = generic behaviour (built-in general-purpose + system).
-        # The PEEKS workshop sets hub.enableDefaultNodePools=false in config.local.yaml
-        # so the hub runs ONLY its custom *-peeks pools; unpinned platform workloads
-        # (Argo EventBus, CI WorkflowTemplates) then avoid the small, consolidation-
-        # prone built-in general-purpose node that caused jetstream quorum loss.
-        HUB_ENABLE_DEFAULT_NODEPOOLS=$(yq '.hub.enableDefaultNodePools // "true"' {{.CONFIG_FILE}} 2>/dev/null || echo "true")
-        if [ "$HUB_ENABLE_DEFAULT_NODEPOOLS" = "null" ] || [ -z "$HUB_ENABLE_DEFAULT_NODEPOOLS" ]; then HUB_ENABLE_DEFAULT_NODEPOOLS="true"; fi
-        echo "[hub:claim] enableDefaultNodePools=$HUB_ENABLE_DEFAULT_NODEPOOLS"
+        # The PEEKS workshop sets hub.enableGeneralPurposeNodePool=false in config.local.yaml
+        # so the hub drops the built-in general-purpose pool (keeps system + its *-peeks
+        # pools); unpinned platform workloads (Argo EventBus, CI WorkflowTemplates) then
+        # avoid the small, consolidation-prone built-in node that caused jetstream quorum loss.
+        HUB_ENABLE_GP_NODEPOOL=$(yq '.hub.enableGeneralPurposeNodePool | tostring' {{.CONFIG_FILE}} 2>/dev/null || echo "true")
+        if [ "$HUB_ENABLE_GP_NODEPOOL" = "null" ] || [ -z "$HUB_ENABLE_GP_NODEPOOL" ]; then HUB_ENABLE_GP_NODEPOOL="true"; fi
+        echo "[hub:claim] enableGeneralPurposeNodePool=$HUB_ENABLE_GP_NODEPOOL"
         cat <<EOF | PLATFORM_TAGS_JSON="$PLATFORM_TAGS_JSON" yq '.spec.awsTags = (strenv(PLATFORM_TAGS_JSON) | from_json)' - | kubectl apply -f -
         apiVersion: kro.run/v1alpha1
         kind: $KIND
@@ -780,7 +780,7 @@ tasks:
           # Use placeholder when empty (CloudFront mode) — hub:seed overwrites via cluster secret.
           domainName: '{{if .DOMAIN}}{{.DOMAIN}}{{else}}cluster.local{{end}}'
           resourcePrefix: {{.RESOURCE_PREFIX}}
-          enableDefaultNodePools: "$HUB_ENABLE_DEFAULT_NODEPOOLS"
+          enableGeneralPurposeNodePool: "$HUB_ENABLE_GP_NODEPOOL"
           argocdCapability:
             enabled: "true"
             idcInstanceArn: {{.IDC_INSTANCE_ARN}}
