@@ -250,11 +250,13 @@ class _FakeRds:
     """Stateful fake: delete removes from the live set so the reaper's drain polls
     resolve on the first attempt (hermetic, no sleeping)."""
 
-    def __init__(self, instances=(), clusters=(), subnet_groups=()):
-        self.instances = {i: {"DBInstanceIdentifier": i, "DeletionProtection": False} for i in instances}
-        self.clusters = {c: {"DBClusterIdentifier": c, "DeletionProtection": False} for c in clusters}
+    def __init__(self, instances=(), clusters=(), subnet_groups=(), protected=()):
+        prot = set(protected)
+        self.instances = {i: {"DBInstanceIdentifier": i, "DeletionProtection": i in prot} for i in instances}
+        self.clusters = {c: {"DBClusterIdentifier": c, "DeletionProtection": c in prot} for c in clusters}
         self.subnet_groups = {s: {"DBSubnetGroupName": s} for s in subnet_groups}
         self.deleted = {"instances": [], "clusters": [], "subnet_groups": []}
+        self.modified = []
 
     def describe_db_instances(self):
         return {"DBInstances": list(self.instances.values())}
@@ -266,10 +268,10 @@ class _FakeRds:
         return {"DBSubnetGroups": list(self.subnet_groups.values())}
 
     def modify_db_instance(self, **k):
-        pass
+        self.modified.append(("instance", k.get("DBInstanceIdentifier")))
 
     def modify_db_cluster(self, **k):
-        pass
+        self.modified.append(("cluster", k.get("DBClusterIdentifier")))
 
     def delete_db_instance(self, DBInstanceIdentifier, **k):
         self.instances.pop(DBInstanceIdentifier, None)
@@ -301,21 +303,67 @@ def test_rds_reaps_prefixed_devlake_aurora_and_subnet_group():
     # Regression for the real teardown bug: the DBs are named `<prefix>-devlake-*`,
     # so the old `startswith("devlake")` match missed them and the Aurora + its ENI
     # survived, failing the CFN VPC delete. The reaper must now delete the member
-    # instance, the Aurora cluster, and the devlake DB subnet group — and leave an
-    # unrelated subnet group alone.
+    # instance, the Aurora cluster, and the prefix-anchored devlake DB subnet group.
+    # A BARE `devlake-*` subnet group (no VpcId / vpc_is_ours ownership signal) is
+    # left alone — it could belong to another deployment (review #1051 §1).
     _force_stdlib_resilience()
     rds = _FakeRds(
         instances=["peeks-devlake-mysql-instance-1"],
         clusters=["peeks-devlake-mysql-cluster"],
-        subnet_groups=["devlake-mysql-subnet-group", "peeks-other-subnet-group"],
+        subnet_groups=["peeks-devlake-mysql-subnet-group", "devlake-mysql-subnet-group", "peeks-other-subnet-group"],
     )
     ctx = _ctx(rds=rds, ec2=_FakeEc2NoEni(), prefix="peeks")
     rds_reaper.reap(ctx)
     assert rds.deleted["instances"] == ["peeks-devlake-mysql-instance-1"]
     assert rds.deleted["clusters"] == ["peeks-devlake-mysql-cluster"]
-    assert rds.deleted["subnet_groups"] == ["devlake-mysql-subnet-group"]
-    assert "peeks-other-subnet-group" in rds.subnet_groups  # unrelated SG group untouched
+    assert rds.deleted["subnet_groups"] == ["peeks-devlake-mysql-subnet-group"]
+    assert "devlake-mysql-subnet-group" in rds.subnet_groups      # bare, unverified -> left alone
+    assert "peeks-other-subnet-group" in rds.subnet_groups        # unrelated SG group untouched
     assert "ENI drained" in _joined(ctx)
+
+
+def test_rds_does_not_touch_other_prefix_devlake():
+    # review #1051 §1 (blocker): with prefix `peeks`, another deployment's
+    # `acme-devlake-*` resources must NOT match. The old substring test would have
+    # deleted them with deletion protection cleared and no final snapshot.
+    _force_stdlib_resilience()
+    rds = _FakeRds(
+        instances=["acme-devlake-mysql-instance-1"],
+        clusters=["acme-devlake-mysql-cluster"],
+        subnet_groups=["acme-devlake-mysql-subnet-group"],
+    )
+    ctx = _ctx(rds=rds, ec2=_FakeEc2NoEni(), prefix="peeks")
+    rds_reaper.reap(ctx)
+    assert rds.deleted == {"instances": [], "clusters": [], "subnet_groups": []}
+    assert "No DevLake RDS resources to delete" in _joined(ctx)
+
+
+def test_rds_skips_deletion_protected_and_never_clears_it():
+    # review #1051 §2 (high): a protected match is the strongest sign it isn't ours
+    # (the workshop never sets protection). Skip it, log it, NEVER clear protection.
+    _force_stdlib_resilience()
+    rds = _FakeRds(
+        instances=["peeks-devlake-mysql-instance-1"],
+        clusters=["peeks-devlake-mysql-cluster"],
+        subnet_groups=["peeks-devlake-mysql-subnet-group"],
+        protected=["peeks-devlake-mysql-instance-1", "peeks-devlake-mysql-cluster"],
+    )
+    ctx = _ctx(rds=rds, ec2=_FakeEc2NoEni(), prefix="peeks")
+    rds_reaper.reap(ctx)
+    assert rds.deleted["instances"] == []
+    assert rds.deleted["clusters"] == []
+    assert rds.modified == []  # deletion protection never cleared
+    assert "DeletionProtection=ON" in _joined(ctx)
+
+
+def test_rds_rerun_deletes_leftover_subnet_group():
+    # review #1051 §3 (medium): a re-run after the DBs are already gone, with only
+    # the subnet group left, must still delete it (the old early-return skipped it).
+    _force_stdlib_resilience()
+    rds = _FakeRds(instances=[], clusters=[], subnet_groups=["peeks-devlake-mysql-subnet-group"])
+    ctx = _ctx(rds=rds, ec2=_FakeEc2NoEni(), prefix="peeks")
+    rds_reaper.reap(ctx)
+    assert rds.deleted["subnet_groups"] == ["peeks-devlake-mysql-subnet-group"]
 
 
 def test_rds_noop_when_no_devlake_resources():

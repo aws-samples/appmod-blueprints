@@ -4,7 +4,7 @@ Left behind, that ENI pins the private subnet (and then the VPC itself), so
 CloudFormation's VPC delete fails with `DependencyViolation`. Observed twice in a
 real pivot teardown: first the private subnet, then the VPC.
 
-Root causes this reaper now covers (it previously matched only
+Root causes this reaper covers (it previously matched only
 `DBInstanceIdentifier.startswith("devlake")` and deleted standalone instances):
 
   * DevLake is deployed WITH the resource prefix, so the real identifiers are
@@ -18,6 +18,14 @@ Root causes this reaper now covers (it previously matched only
   * The delete must *drain* its ENI before the VPC reaper (§14) / CFN VPC delete
     runs, or the subnet stays pinned. We poll (best-effort, bounded) for drain.
 
+Safety (review #1051): ownership is **prefix-anchored**, never a bare `"devlake"
+in name` substring — the prefix exists so several deployments can share an
+account, and a substring match would let one deployment's sweep delete another's
+DevLake. We also NEVER clear `DeletionProtection` (the workshop never sets it, so
+a protected DB is the strongest signal it isn't ours): a protected match is
+skipped and logged, not force-deleted. CFN-managed resources
+(`aws:cloudformation:*` tag) are always skipped.
+
 The DevLake security group (`<prefix>-devlake-mysql-sg-*`) is cleared by the
 IDE/hub VPC SG reaper (§15), which now succeeds precisely because the ENI has been
 drained here first.
@@ -26,18 +34,56 @@ drained here first.
 from ..resilience import poll_until, run_delete
 
 
-def _is_devlake(identifier, prefix):
-    """DevLake DB/cluster/subnet-group names: `<prefix>-devlake-*` (prefixed, the
-    real shape) OR a bare `devlake*` (legacy / fixed `${metadata.name}` names)."""
-    i = (identifier or "").lower()
-    return "devlake" in i or i.startswith(f"{prefix}-devlake")
+def _tags_of(resource):
+    """RDS `describe_db_{instances,clusters}` return `TagList=[{Key,Value}]`.
+    Normalise to a lower-cased key -> value dict (empty when absent)."""
+    return {(t.get("Key") or "").lower(): (t.get("Value") or "")
+            for t in (resource.get("TagList") or [])}
+
+
+def _cfn_managed(tags):
+    return any(k.startswith("aws:cloudformation:") for k in tags)
+
+
+def _owned_devlake(name, tags, prefix):
+    """Is this RDS instance/cluster THIS deployment's DevLake, and safe to delete?
+
+    - `<prefix>-devlake-*` (the real #959 shape) is sufficient on its own.
+    - A legacy bare `devlake-*` / `devlake` name is matched ONLY with a positive,
+      *prefix-scoped* ownership signal — the ACK `eks:eks-capability-arn` tag,
+      which names `<prefix>-hub`. Never matched on the substring alone, so one
+      deployment's sweep cannot delete another deployment's DevLake.
+    - A resource carrying any `aws:cloudformation:*` tag is Layer-1 CFN-managed and
+      always skipped (consistent with finalnet/verify/delete_vpc_sgs).
+    """
+    n = (name or "").lower()
+    p = (prefix or "").lower()
+    if _cfn_managed(tags):
+        return False
+    if n.startswith(f"{p}-devlake-"):
+        return True
+    if n == "devlake" or n.startswith("devlake-"):
+        return f"{p}-hub" in tags.get("eks:eks-capability-arn", "").lower()
+    return False
+
+
+def _owned_devlake_subnet_group(sg, ctx):
+    """Subnet-group ownership. `describe_db_subnet_groups` carries no TagList, so
+    legacy bare names fall back to `vpc_is_ours(VpcId)` as the ownership signal."""
+    n = (sg.get("DBSubnetGroupName") or "").lower()
+    p = (ctx.prefix or "").lower()
+    if n.startswith(f"{p}-devlake-"):
+        return True
+    if n == "devlake" or n.startswith("devlake-"):
+        vio = getattr(ctx, "vpc_is_ours", None)
+        return bool(vio and vio(sg.get("VpcId")))
+    return False
 
 
 def _devlake_instances(ctx):
     try:
-        return [d["DBInstanceIdentifier"]
-                for d in ctx.rds.describe_db_instances().get("DBInstances", [])
-                if _is_devlake(d["DBInstanceIdentifier"], ctx.prefix)]
+        return [d for d in ctx.rds.describe_db_instances().get("DBInstances", [])
+                if _owned_devlake(d.get("DBInstanceIdentifier"), _tags_of(d), ctx.prefix)]
     except Exception as e:
         ctx.log(f"RDS describe instances: {e}")
         return []
@@ -45,12 +91,29 @@ def _devlake_instances(ctx):
 
 def _devlake_clusters(ctx):
     try:
-        return [c["DBClusterIdentifier"]
-                for c in ctx.rds.describe_db_clusters().get("DBClusters", [])
-                if _is_devlake(c["DBClusterIdentifier"], ctx.prefix)]
+        return [c for c in ctx.rds.describe_db_clusters().get("DBClusters", [])
+                if _owned_devlake(c.get("DBClusterIdentifier"), _tags_of(c), ctx.prefix)]
     except Exception as e:
         ctx.log(f"RDS describe clusters: {e}")
         return []
+
+
+def _devlake_subnet_groups(ctx):
+    try:
+        return [sg for sg in ctx.rds.describe_db_subnet_groups().get("DBSubnetGroups", [])
+                if _owned_devlake_subnet_group(sg, ctx)]
+    except Exception as e:
+        ctx.log(f"RDS describe subnet groups: {e}")
+        return []
+
+
+def _deletable(resources, id_key):
+    """Split owned resources into (deletable, protected). We never clear
+    DeletionProtection: a protected match is left for an operator and reported."""
+    deletable, protected = [], []
+    for r in resources:
+        (protected if r.get("DeletionProtection") else deletable).append(r[id_key])
+    return deletable, protected
 
 
 def _no_devlake_eni(ctx):
@@ -76,42 +139,43 @@ def _c(code):
 
 
 def reap(ctx):
-    """§4. Delete the DevLake Aurora stack (instances → cluster → subnet group) and
-    wait for its ENI to drain, so the downstream VPC delete isn't blocked."""
+    """§4. Delete THIS deployment's DevLake Aurora stack (instances -> cluster ->
+    subnet group) and wait for its ENI to drain, so the downstream VPC delete isn't
+    blocked. Ownership is prefix-anchored; protected DBs are skipped, not cleared."""
     log, rds = ctx.log, ctx.rds
 
     instances = _devlake_instances(ctx)
     clusters = _devlake_clusters(ctx)
-    if not instances and not clusters:
+    subnet_groups = _devlake_subnet_groups(ctx)
+    if not instances and not clusters and not subnet_groups:
         log("No DevLake RDS resources to delete")
         return
 
+    del_instances, prot_instances = _deletable(instances, "DBInstanceIdentifier")
+    del_clusters, prot_clusters = _deletable(clusters, "DBClusterIdentifier")
+    for ident in prot_instances:
+        log(f"  SKIP RDS instance {ident}: DeletionProtection=ON — not force-deleting (left as residue)")
+    for ident in prot_clusters:
+        log(f"  SKIP RDS cluster {ident}: DeletionProtection=ON — not force-deleting (left as residue)")
+
     # 1) Member / standalone instances first (Aurora: members must be gone before
-    #    the cluster can be deleted). Clear deletion-protection defensively.
-    for ident in instances:
-        try:
-            rds.modify_db_instance(DBInstanceIdentifier=ident,
-                                   DeletionProtection=False, ApplyImmediately=True)
-        except Exception:
-            pass
+    #    the cluster can delete). No modify_db_instance — we never clear protection.
+    for ident in del_instances:
         kind, code, _ = run_delete(lambda i=ident: rds.delete_db_instance(
             DBInstanceIdentifier=i, SkipFinalSnapshot=True, DeleteAutomatedBackups=True))
         log(f"  Deleting RDS instance {ident}: {kind}{_c(code)}")
 
-    # 2) Wait for instances to drain so the cluster delete isn't ResourceInUse
-    #    (~15 min ceiling; best-effort — §16 re-sweep is the backstop).
-    if instances:
-        drained = poll_until(lambda: not _devlake_instances(ctx), attempts=45, delay=20.0)
+    # 2) Wait for the deletable instances to drain so the cluster delete isn't
+    #    ResourceInUse (~15 min ceiling; best-effort — §16 re-sweep is the backstop).
+    if del_instances:
+        drained = poll_until(
+            lambda: not _deletable(_devlake_instances(ctx), "DBInstanceIdentifier")[0],
+            attempts=45, delay=20.0)
         if not drained:
             log("DevLake RDS instances still present after wait — cluster delete may requeue")
 
     # 3) Aurora clusters, now that their members are gone.
-    for ident in clusters:
-        try:
-            rds.modify_db_cluster(DBClusterIdentifier=ident,
-                                  DeletionProtection=False, ApplyImmediately=True)
-        except Exception:
-            pass
+    for ident in del_clusters:
         kind, code, _ = run_delete(lambda i=ident: rds.delete_db_cluster(
             DBClusterIdentifier=i, SkipFinalSnapshot=True))
         log(f"  Deleting RDS cluster {ident}: {kind}{_c(code)}")
@@ -124,13 +188,16 @@ def reap(ctx):
         log("DevLake RDS ENI still present after wait — §14/§16 backstop will re-drive")
 
     # 5) DB subnet group (lingers; name-collides on reused accounts, issue #8).
-    #    Safe only once the DBs above are gone.
-    try:
-        for sg in rds.describe_db_subnet_groups().get("DBSubnetGroups", []):
+    #    Delete ONLY after the owning clusters are actually gone, else RDS returns
+    #    InvalidDBSubnetGroupStateFault (classified 'permanent', never retried) and
+    #    the group leaks. Collected up front so a re-run with only the group left
+    #    (instances/clusters already gone) still reaches this step (review #1051 §3).
+    if subnet_groups:
+        if del_clusters and not poll_until(lambda: not _devlake_clusters(ctx), attempts=30, delay=20.0):
+            log("DevLake RDS clusters still present after wait — subnet group delete may requeue (§16 backstop)")
+        for sg in subnet_groups:
             name = sg["DBSubnetGroupName"]
-            if not _is_devlake(name, ctx.prefix):
-                continue
             kind, code, _ = run_delete(lambda n=name: rds.delete_db_subnet_group(DBSubnetGroupName=n))
             log(f"  Deleting RDS subnet group {name}: {kind}{_c(code)}")
-    except Exception as e:
-        log(f"RDS subnet groups: {e}")
+            if kind not in ("deleted", "gone"):
+                log(f"  RDS subnet group {name} not removed ({kind}{_c(code)}) — left as residue")
