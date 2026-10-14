@@ -241,9 +241,15 @@ tasks:
 
   install:finalize:
     internal: true
-    deps:
-      - hub:restart-langfuse
-      - urls
+    # Keycloak-dependent steps must run AFTER Keycloak is configured (review #1053 §3/§4):
+    # restart-langfuse picks up the client secret the keycloak-config PostSync hook
+    # writes, and the consumer's idc:configure needs the platform realm live. Sequential
+    # cmds (not parallel deps) so the narrow gate runs FIRST — and because finalize is
+    # foreground, this also gives idc:configure its Keycloak head start before return.
+    cmds:
+      - task: hub:wait-for-keycloak
+      - task: hub:restart-langfuse
+      - task: urls
 
   # ── Perf lever #1 (background settle launcher) ──────────────────────────────
   # Launch hub:settle in the background so `task install` returns as soon as the
@@ -906,7 +912,7 @@ tasks:
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
         [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
         printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}\n'
-        for i in $(seq 1 60); do
+        for i in $(seq 1 120); do   # 120 x 15s = 30min cap (was 60 = 15min; measured crossplane-base ~17min, review #1053 §5)
           UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ')
           TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
           [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL" && exit 0
@@ -918,7 +924,8 @@ tasks:
           fi
           sleep 15
         done
-        printf '{{.C_WARN}}  Providers not all Healthy after 15min — continuing anyway.{{.C_RESET}}\n'
+        UNHEALTHY_LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null)
+        printf '{{.C_ERR}}⚠ Crossplane providers NOT all Healthy after 30min — continuing, but spoke provisioning may stall. Unhealthy: %s{{.C_RESET}}\n' "${UNHEALTHY_LIST:-<none-listed>}"
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:wait-for-sync:
@@ -1072,6 +1079,29 @@ tasks:
       - sleep 90
       - printf '{{.C_OK}}✓ Pod Identity credentials ready.{{.C_RESET}}\n'
 
+  hub:wait-for-keycloak:
+    desc: "Narrow gate — wait for keycloak-<hub> Synced/Healthy with its config op Succeeded (bounded 15min, non-fatal). Much shorter than the global full-sync; what Keycloak-dependent steps actually need (review #1053 §3/§4)."
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        APP="keycloak-{{.HUB_CLUSTER_NAME}}"
+        TIMEOUT=900; INTERVAL=15; ELAPSED=0
+        printf '{{.C_STEP}}▸ Waiting for %s to be configured (Synced/Healthy, op Succeeded)...{{.C_RESET}}\n' "$APP"
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          SYNC=$(KUBECONFIG=$KC kubectl get application.argoproj.io "$APP" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+          HEALTH=$(KUBECONFIG=$KC kubectl get application.argoproj.io "$APP" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+          OP=$(KUBECONFIG=$KC kubectl get application.argoproj.io "$APP" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+          if [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ] && [ "$OP" = "Succeeded" ]; then
+            printf '{{.C_OK}}✓ %s configured (Synced/Healthy, op Succeeded).{{.C_RESET}}\n' "$APP"
+            break
+          fi
+          [ $((ELAPSED % 60)) -eq 0 ] && printf '{{.C_INFO}}  [%ss] %s sync=%s health=%s op=%s{{.C_RESET}}\n' "$ELAPSED" "$APP" "${SYNC:-?}" "${HEALTH:-?}" "${OP:-?}"
+          sleep $INTERVAL; ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        [ $ELAPSED -ge $TIMEOUT ] && printf '{{.C_WARN}}⚠ %s not fully configured after %ss (sync=%s health=%s op=%s) — continuing; Keycloak-dependent steps (Langfuse restart, idc:configure) may need a retry (review #1053 §3/§4).{{.C_RESET}}\n' "$APP" "$TIMEOUT" "${SYNC:-?}" "${HEALTH:-?}" "${OP:-?}"
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
   hub:restart-langfuse:
     desc: Restart Langfuse to pick up Keycloak client secret (created by config job after initial deploy)
     cmds:
@@ -1099,7 +1129,12 @@ tasks:
     cmds:
       - |
         KC=/tmp/hub-settle-kubeconfig
-        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null 2>&1
+        STATUS=/tmp/hub-full-sync-settle.status
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '✗ hub:settle: could not update kubeconfig for {{.HUB_CLUSTER_NAME}} — aborting settle (addons still converge via ArgoCD auto-sync; review #1053 §6).\n'
+          printf 'kubeconfig-error\n' > "$STATUS"
+          exit 1
+        fi
         TIMEOUT=2400
         INTERVAL=30
         ELAPSED=0
@@ -1117,14 +1152,16 @@ tasks:
           fi
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+            printf 'ok\n' > "$STATUS"
             break
           fi
           sleep $INTERVAL
           ELAPSED=$((ELAPSED + INTERVAL))
         done
         if [ $ELAPSED -ge $TIMEOUT ]; then
-          printf '⚠ Hub settle timed out after %ss. %s app(s) still out-of-sync:\n' "$TIMEOUT" "$OUTOFSYNC"
+          printf '⚠ Hub settle timed out after %ss. %s app(s) still out-of-sync (review #1053 §6):\n' "$TIMEOUT" "$OUTOFSYNC"
           echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          printf 'timeout\n' > "$STATUS"
         fi
         rm -f "$KC"
 
