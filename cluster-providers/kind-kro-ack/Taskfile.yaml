@@ -1783,11 +1783,23 @@ tasks:
             echo "  ✓ deleted AMP workspace $WS_ID"
           done
           # 6ei. AMP scrapers (created by observability bootstrap, not deleted with workspace).
-          for SCRAPER_ID in $(aws amp list-scrapers --region "$REGION" \
-                --query 'scrapers[].scraperId' --output text 2>/dev/null | tr '\t' '\n'); do
+          #      Scrapers are regional, so only delete ours: the scraper's source EKS cluster
+          #      must be the hub, a ${PREFIX}-spoke-dev/-prod spoke, or a cluster tagged
+          #      platform.gitops.io/prefix=${PREFIX}. Other stacks' scrapers are left alone.
+          OWNED_CLUSTERS=" $HUB ${PREFIX}-spoke-dev ${PREFIX}-spoke-prod "
+          for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
+            T=$(aws eks describe-cluster --name "$C" --region "$REGION" \
+              --query 'cluster.tags."platform.gitops.io/prefix"' --output text 2>/dev/null || true)
+            [ "$T" = "$PREFIX" ] && OWNED_CLUSTERS="$OWNED_CLUSTERS$C "
+          done
+          aws amp list-scrapers --region "$REGION" \
+                --query 'scrapers[].[scraperId, source.eksConfiguration.clusterArn]' \
+                --output text 2>/dev/null | while read -r SCRAPER_ID CLUSTER_ARN; do
             [ -z "$SCRAPER_ID" ] && continue
+            CLUSTER="${CLUSTER_ARN##*/}"
+            case "$OWNED_CLUSTERS" in *" $CLUSTER "*) ;; *) continue ;; esac
             aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>/dev/null || true
-            echo "  ✓ deleted AMP scraper $SCRAPER_ID"
+            echo "  ✓ deleted AMP scraper $SCRAPER_ID ($CLUSTER)"
           done
           # 6eii. DevLake RDS instance (created by KubeVela in kind-kro-ack path).
           #       Named devlake-mysql-db-* and scoped to the peeks VPC. Not ACK-tagged.
@@ -1844,17 +1856,28 @@ tasks:
           # 6i. IDE VPC non-default security groups (created by workshop, not by CFN).
           #     These include ALB SGs, EKS cluster SGs, RDS SGs, AMG SGs, k8s-traffic SGs.
           #     If left, they block CFN's VPC deletion → DELETE_FAILED on VPC subnet.
-          #     We only delete SGs in the CFN-managed workshop VPC, identified by the
-          #     aws:cloudformation:stack-name tag on the VPC.
+          #     We only delete SGs in THIS stack's CFN-managed workshop VPC: its
+          #     platform.gitops.io/prefix tag is ${PREFIX} (the template stamps it), or,
+          #     on stacks that predate that tag, it has none and the stack is named
+          #     ${PREFIX}-workshop or ${PREFIX}-workshop-<suffix> (self-paced, Workshop
+          #     Studio ${PREFIX}-workshop-team-stack). Never a stack-name substring:
+          #     "peeks-workshop" matches every workshop stack in the account.
           for VPC_ID in $(aws ec2 describe-vpcs --region "$REGION" \
                 --filters "Name=tag:aws:cloudformation:stack-id,Values=*" \
                 --query 'Vpcs[].VpcId' --output text 2>/dev/null | tr '\t' '\n'); do
             [ -z "$VPC_ID" ] && continue
-            # Check if this VPC belongs to our workshop stack (has the stack tag)
+            # Check if this VPC belongs to our workshop stack (prefix tag, else stack name)
             STACK_TAG=$(aws ec2 describe-vpcs --region "$REGION" --vpc-ids "$VPC_ID" \
               --query "Vpcs[0].Tags[?Key=='aws:cloudformation:stack-name'].Value | [0]" \
               --output text 2>/dev/null || true)
-            echo "$STACK_TAG" | grep -qi "tCaT\|peeks-workshop" || continue
+            OWNER_TAG=$(aws ec2 describe-vpcs --region "$REGION" --vpc-ids "$VPC_ID" \
+              --query "Vpcs[0].Tags[?Key=='platform.gitops.io/prefix'].Value | [0]" \
+              --output text 2>/dev/null || true)
+            case "$OWNER_TAG" in
+              ""|None) case "$STACK_TAG" in "${PREFIX}-workshop"|"${PREFIX}-workshop-"*) ;; *) continue ;; esac ;;
+              "$PREFIX") ;;
+              *) continue ;;
+            esac
             echo "  Cleaning SGs in workshop VPC $VPC_ID..."
             # Revoke cross-SG rules first, then delete. Skip the stack's own SGs
             # (tagged aws:cloudformation:stack-name, e.g. the IDE and its EFS SG):

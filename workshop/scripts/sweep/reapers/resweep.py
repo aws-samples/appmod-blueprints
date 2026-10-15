@@ -12,33 +12,17 @@ from . import elb
 def run(ctx):
     log, ec2, cf, amp, rds, elbv2 = ctx.log, ctx.ec2, ctx.cf, ctx.amp, ctx.rds, ctx.elbv2
     hub = ctx.hub
-    _is_our_ide_vpc, _delete_vpc_sgs = ctx.is_our_ide_vpc, ctx.delete_vpc_sgs
+    _delete_vpc_sgs = ctx.delete_vpc_sgs
     try:
-        def _find_ide_vpc():
-            """The IDE VPC of THIS workshop. Requires the CFN stack name to reference
-            this deployment, and refuses to guess when ambiguous (SAFETY: never pick a
-            VPC just because it carries an aws:cloudformation:* tag)."""
-            if ctx.hub_vpc_id:
-                return ctx.hub_vpc_id
-            matches = [
-                v["VpcId"]
-                for v in ec2.describe_vpcs().get("Vpcs", [])
-                if _is_our_ide_vpc({t["Key"]: t["Value"] for t in v.get("Tags", [])})
-            ]
-            if len(matches) == 1:
-                return matches[0]
-            if not matches:
-                log("  [re-sweep] No IDE VPC identified for this deployment — skipping IDE VPC steps")
-            else:
-                log(f"  [re-sweep] {len(matches)} candidate IDE VPCs ({', '.join(matches)}) — "
-                    "ambiguous, refusing to guess; skipping IDE VPC steps")
-            return None
+        # The IDE VPC of THIS workshop (shared with §15; refuses to guess when ambiguous).
+        ide_vpc = ctx.find_ide_vpc("[re-sweep] ")
 
-        ide_vpc = _find_ide_vpc()
-
-        # 16a. AMP scrapers (recreated by the AMP capability / addon)
+        # 16a. AMP scrapers (recreated by the AMP capability / addon). Only ours: scrapers
+        #      are regional, and other deployments' scrapers live in the same region.
         try:
             for s in amp.list_scrapers().get("scrapers", []):
+                if not ctx.scraper_is_ours(s):
+                    continue
                 try:
                     amp.delete_scraper(scraperId=s["scraperId"])
                     log(f"  [re-sweep] Deleted recreated AMP scraper {s['scraperId']}")

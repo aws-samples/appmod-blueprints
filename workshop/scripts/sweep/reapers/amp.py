@@ -1,11 +1,12 @@
 """AMP reaper (§5): managed scrapers create amp_collector ENIs that persist 5+ min
-after deletion, blocking subnet deletion; also delete prefixed workspaces."""
+after deletion, blocking subnet deletion; also delete prefixed workspaces.
+Scrapers are regional, so only ours (source cluster = our hub or a spoke) are deleted."""
 
 
 def reap(ctx):
     log, amp, prefix = ctx.log, ctx.amp, ctx.prefix
     try:
-        scrapers = amp.list_scrapers().get("scrapers", [])
+        scrapers = [s for s in amp.list_scrapers().get("scrapers", []) if ctx.scraper_is_ours(s)]
         for s in scrapers:
             try:
                 amp.delete_scraper(scraperId=s["scraperId"])
