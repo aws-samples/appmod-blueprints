@@ -312,10 +312,11 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
   printf '  adminRoleName: "%s"\n' "$ADMIN_ROLE_NAME"   >> "$OUTPUT_FILE"
   printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
-  # Workshop opt-in: disable the built-in Auto Mode general-purpose + system
-  # NodePools so the hub runs ONLY its custom *-peeks pools (keeps unpinned
-  # EventBus/CI off the small, consolidation-prone built-in node). Generic
-  # consumers omit this key -> rg-eks.yaml default "true" keeps the built-ins.
+  # Workshop opt-in: drop the built-in Auto Mode general-purpose NodePool so the
+  # hub's general-purpose capacity is ONLY its custom general-purpose-peeks pool
+  # (keeps unpinned EventBus/CI off the small, consolidation-prone built-in node).
+  # The built-in "system" pool stays on (anchors the default NodeClass). Generic
+  # consumers omit this key -> rg-eks.yaml default "true" keeps the built-in.
   printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
   printf '  network:\n'                                >> "$OUTPUT_FILE"
   printf '    vpcId: "%s"\n' "$HUB_VPC_ID"             >> "$OUTPUT_FILE"
@@ -332,7 +333,7 @@ else
   printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
   printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"          >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
-  # Workshop opt-in (see note above): hub runs only its custom *-peeks pools.
+  # Workshop opt-in (see note above): hub general-purpose = only general-purpose-peeks (built-in system stays).
   printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
 fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"

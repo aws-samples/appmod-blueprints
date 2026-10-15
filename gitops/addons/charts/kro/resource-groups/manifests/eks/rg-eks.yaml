@@ -73,14 +73,18 @@ spec:
       # own insecure setting via the clusters-kro appset/chart. See
       # kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
-      # Whether EKS Auto Mode's built-in "general-purpose" + "system" NodePools
-      # are enabled on this cluster. "true" (default) preserves the generic /
-      # standalone behaviour (built-ins on, no custom pools required). A consumer
-      # that ships its own custom NodePools (e.g. the PEEKS workshop's *-peeks
-      # pools) sets this to "false" via its instance/overlay so that only the
-      # custom pools exist and unpinned platform workloads (Argo EventBus, CI
-      # WorkflowTemplates) schedule onto the stable custom pools instead of a
-      # consolidation-prone built-in general-purpose node.
+      # Whether EKS Auto Mode's built-in "general-purpose" NodePool is enabled on
+      # this cluster. Any value other than "false" (default "true") preserves the
+      # generic / standalone behaviour (built-in general-purpose on). A consumer
+      # that ships its own general-purpose-class pool (e.g. the PEEKS workshop's
+      # general-purpose-peeks pool) sets this to "false" via its instance/overlay
+      # so the built-in general-purpose is dropped and unpinned platform workloads
+      # (Argo EventBus, CI WorkflowTemplates) schedule onto the stable custom pool
+      # instead of a consolidation-prone built-in general-purpose node. The
+      # built-in "system" pool always stays on (it anchors the `default` NodeClass
+      # the custom pools reference). NOTE: a generic consumer that sets "false"
+      # but keeps the generic image-prepuller (pinned to the built-in
+      # general-purpose pool) gets a 0-pod DaemonSet — repoint it to its own pool.
       enableGeneralPurposeNodePool: string | default="true"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
@@ -418,7 +422,7 @@ spec:
             # Single-quoted + dyn() on both branches mirrors the proven CEL idiom
             # used by appmod-service.yaml (ternary type unification; the bare ' : '
             # would otherwise be parsed as a YAML mapping separator).
-            nodePools: '${schema.spec.enableGeneralPurposeNodePool == "true" ? dyn(["system", "general-purpose"]) : dyn(["system"])}'
+            nodePools: '${schema.spec.enableGeneralPurposeNodePool == "false" ? dyn(["system"]) : dyn(["system", "general-purpose"])}'
           kubernetesNetworkConfig:
             ipFamily: ipv4
             elasticLoadBalancing:
