@@ -1,34 +1,52 @@
 # Bootstrap NodePools. Defaults keep the chart self-contained for `helm template`.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# enableGeneralPurposeNodePool — GATE for customNodepools.pools below.
+# enableGeneralPurposeNodePool — GATE for fallbackNodepools.pools below.
+# (customNodepools.pools is the consumer list and is ALWAYS rendered — see below.)
 #
 # Threaded from the cluster-secret annotation `enable_general_purpose_nodepool`
 # (via the registry valuesObject). It mirrors the cluster's own
 # enableGeneralPurposeNodePool setting:
 #   "true"  (default) → the EKS Auto Mode built-in `general-purpose` pool is KEPT
-#                        → customNodepools.pools are NOT rendered. The generic
-#                          solution is unchanged and relies on the built-in pools.
+#                        → fallbackNodepools are NOT added. The generic solution is
+#                          unchanged and relies on the built-in pools. (The consumer's
+#                          customNodepools.pools still render if the overlay sets them.)
 #   "false"           → the built-in `general-purpose` pool was DROPPED at cluster
-#                        creation → customNodepools.pools ARE rendered so an
-#                        untainted `general-purpose-peeks` exists from sync-wave -1.
-#                        Without this, every add-on (cert-manager, keycloak,
+#                        creation → fallbackNodepools are appended to the consumer list
+#                        so an untainted `general-purpose-peeks` exists on the app's
+#                        first sync. Without it, every add-on (cert-manager, keycloak,
 #                        load-balancer-controller, …) is Pending because the only
 #                        remaining pools (built-in `system`, gpu, trainium) are all
 #                        tainted — the fresh-hub bootstrap deadlock.
 #
-# Default "true" is the SAFE value: if the annotation is absent, nothing extra is
-# rendered and generic-solution behavior is preserved.
+# Default "true" is the SAFE value: if the annotation is absent, no fallback pools are
+# added and generic-solution behavior is preserved.
 enableGeneralPurposeNodePool: "true"
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# customNodepools.pools — custom Karpenter NodePools, rendered at sync-wave -1
-# ONLY when the gate above is "false". These are opinionated, workshop-tuned pools
-# (a daytime do-not-disrupt budget, a 48h termination grace, `managed-by: peeks`
-# labels). Adopters who drop the built-in general-purpose pool but want different
-# replacements can retune or empty this list (`customNodepools.pools: []`).
+# customNodepools.pools — the CONSUMER's custom Karpenter NodePools. ALWAYS rendered,
+# on every cluster, regardless of the gate (exactly as on main). The workshop overlay
+# fills this from configs/ so the hub and every spoke get the -peeks pools that add-on
+# configs pin to via nodeSelector. The generic solution leaves it empty and relies on
+# the EKS Auto Mode built-in system/general-purpose pools.
+#   OPT-OUT NOTE: emptying this on a cluster whose add-ons select the -peeks pools
+#   leaves those pods Pending — only empty it if nothing pins to them.
 # ─────────────────────────────────────────────────────────────────────────────
 customNodepools:
+  pools: []
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# fallbackNodepools.pools — built-in DEFAULT pools, appended to the consumer list
+# ONLY when enableGeneralPurposeNodePool == "false" (the built-in general-purpose pool
+# was dropped at cluster creation). Any name the consumer already defines wins, so
+# nothing is duplicated. This covers the fresh-hub bootstrap window before the overlay
+# is wired. These are opinionated, workshop-tuned pools (a daytime do-not-disrupt
+# budget, a 48h termination grace, `managed-by: peeks` labels); retune to taste.
+#   OPT-OUT NOTE: emptying this on a "false" cluster brings back the fresh-hub
+#   deadlock (no untainted pool at bootstrap) — only empty it if the consumer list
+#   already supplies an untainted pool.
+# ─────────────────────────────────────────────────────────────────────────────
+fallbackNodepools:
   pools:
     - name: general-purpose-peeks
       spec:
