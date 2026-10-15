@@ -9,3 +9,26 @@
 # This file is intentionally kept (as an empty override) because the hub
 # platform-manifests-bootstrap Application still references this valueFile path;
 # add hub-only NodePool overrides here if ever needed.
+
+# Lever #2 (warm capacity) — HUB ONLY. The hub carries the heavy first wave of
+# platform addons (gitlab, backstage, keycloak, argo-workflows), which are pinned to
+# the tuned system-peeks pool. A warm system-peeks node means those pods do not each
+# wait ~1-2 min for a cold Karpenter node. Pause pods hold a negative priority, so any
+# real workload preempts them instantly (near-zero steady cost beyond the one warm
+# node), and Karpenter re-provisions to stay warm. Enabled here (control-plane) only —
+# spokes keep the chart default (disabled). Tune replicas/resources to taste; set
+# enabled:false to turn off.
+warmCapacity:
+  enabled: true
+  replicas: 1
+  # Target system-peeks — the pool the heavy first-wave addons actually run on. It
+  # carries the CriticalAddonsOnly:NoSchedule taint, so the toleration is required.
+  nodeSelector:
+    karpenter.sh/nodepool: system-peeks
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"

@@ -2,3 +2,11 @@
 # general-purpose is already amd64, this aligns it to the tuned pool. Generic keeps default.
 nodeSelector:
   karpenter.sh/nodepool: general-purpose-peeks
+
+# NOTE (lever #2 follow-up): pre-pulling the heavy hub first-wave images was reverted
+# here. Those addons run on system-peeks, not general-purpose-peeks, and the two argo
+# images (workflow-controller, argocli) are distroless (no shell) so they break the
+# prepuller's `sh -c` init container. Doing this correctly needs a second prepuller
+# instance pinned to system-peeks with a shell-free pull command (one DaemonSet = one
+# image list = one pool). Tracked as a follow-up; this PR keeps lever #2 to warm
+# capacity only.
