@@ -280,6 +280,16 @@ $overlay/overlays/environments/<env>/<addon>/values.yaml      # per-env
 $overlay/overlays/clusters/<cluster>/<addon>/values.yaml      # per-cluster
 ```
 
+> **Overlay basepath — seed at fleet-config ROOT (`OVERLAY_BASEPATH=""`), not under
+> `gitops/`.** The bootstrap appsets read `$overlay/<OVERLAY_BASEPATH>overlays/*` with the
+> basepath **as-is** and intentionally do **not** apply the `gitops/` fallback to the
+> `$overlay` (only the `$overlay` `fleet/*` reads keep the `… or fleetRepoBasepath`
+> fallback). This differs from the base solution, whose own `$defaults` overrides read
+> under `gitops/` (`addonsRepoBasepath`). So a bring-your-own fleet-config must place
+> `overlays/environments/<env>/{enabled-addons,overrides}.yaml` at the repo **root**; filing
+> them under `gitops/` by analogy with the base solution resolves nothing. (Validated e2e
+> 2026-10-07: OAP addons fan out to hub+spokes with the overlay seeded at root.)
+
 > **⚠️ No lifecycle for agent-authored overrides (known gap).** This overlay is
 > the **highest-precedence** layer for **both** planes, and the autonomous agent
 > commits to it at volume. Nothing retires those entries: a year of incidents
@@ -739,11 +749,17 @@ This document is the single design reference; the process around it:
 - **What enforces the human merge-gate (the control the whole design rests on).**
   "The agent proposes, a human merges" is enforced by **GitLab configuration, not
   by the agent**:
-  - the `gitlab-mcp` **PAT is scoped** to pushing a branch and opening an MR —
-    **not** merging;
-  - fleet-config uses **protected branches** so the bot identity **cannot approve
-    or merge its own MR**;
-  - a human reviewer merges; Argo CD then applies.
+  - the bot identity is a **Developer (access level 30)** on every repo — it can
+    push a branch and open an MR, but **not** merge;
+  - **every** repo (fleet-config AND the app repos) has `main` **protected**, with
+    push/merge gated to Maintainer (40) and force-push disabled, so the bot
+    **cannot approve, merge, or force-push its own MR** on any repo the bridge can
+    route to;
+  - a human (the repo Owner) merges; Argo CD then applies.
+
+  Note: the `gitlab-mcp` PAT carries `api` scope (needed to open MRs via the API),
+  and `api` **can** also merge — so the token scope is **not** the control. The
+  merge-gate is the **Developer role + branch protection** above.
 
   This matters more here than elsewhere because fleet-config is the
   **highest-precedence** layer for *both* planes — a merged agent MR outranks every
@@ -777,7 +793,9 @@ enabledAddons:
   oam_components: true
   langfuse: true
   otel_collector: true      # requires langfuse: true (coupled — §6.2/§8.3/#53)
-  aiops_agent: true         # requires the umbrella + above
+  agent_core: true          # AgentCore memory provider (OAP crossplane-agentcore)
+  amp_incident: true        # AMP incident RGD — MUST be set with aiops_agent, else the agent's AmpIncident CR has no RGD
+  aiops_agent: true         # requires the umbrella + all of the above
 ```
 
 Commit + push → the fleet ESO stamps `enable_*` labels → Argo CD renders the OAP

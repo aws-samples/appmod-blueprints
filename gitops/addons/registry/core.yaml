@@ -289,7 +289,12 @@ external-secrets:
     argocd.argoproj.io/sync-wave: '-1'
   syncPolicy:
     automated:
-      selfHeal: false
+      # selfHeal:true so a transient admission failure during a fresh-cluster sync
+      # (e.g. the Kyverno fail-closed webhook race, see issue #1035) self-recovers
+      # instead of leaving the operation wedged and requiring a manual terminate-op.
+      # Safe here: prune:false means ArgoCD only adds/updates to match Git, never deletes
+      # (so it never fights the chart over the external-secrets-sa ServiceAccount).
+      selfHeal: true
       allowEmpty: true
       prune: false
     retry:

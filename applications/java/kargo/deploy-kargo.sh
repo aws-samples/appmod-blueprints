@@ -43,10 +43,25 @@ if ! aws eks list-pod-identity-associations --cluster-name "$HUB_CLUSTER" --regi
     --cluster-name "$HUB_CLUSTER" --namespace kargo --service-account kargo-controller \
     --role-arn "$KARGO_ROLE_ARN" --region "$AWS_REGION" >/dev/null
   echo "  ✓ pod identity association created"
-  # Restart kargo controller to pick up the new credentials
-  kubectl rollout restart deployment -n kargo 2>/dev/null || true
-  kubectl rollout status deployment -n kargo --timeout=60s 2>/dev/null || true
 fi
+
+# The Warehouse lists ECR tags with this pod identity (Kargo's ECR "ambient
+# credentials": Kargo gets and refreshes the 12 h ECR tokens itself). The
+# controller reads the identity once, at start-up, and a new role/association
+# takes a few seconds to apply, so restart it until it starts with working
+# AWS credentials.
+kargo_has_aws_identity() {
+  kubectl -n kargo get pods -l app.kubernetes.io/component=controller \
+    -o jsonpath='{.items[*].spec.containers[*].env[*].name}' | grep -qw AWS_CONTAINER_CREDENTIALS_FULL_URI &&
+  ! kubectl -n kargo logs deployment/kargo-controller 2>/dev/null | grep -q "AWS credentials integration will be disabled"
+}
+for _ in 1 2 3; do
+  kargo_has_aws_identity && break
+  sleep 15
+  kubectl -n kargo rollout restart deployment kargo-controller 2>/dev/null || true
+  kubectl -n kargo rollout status deployment kargo-controller --timeout=120s 2>/dev/null || true
+done
+kargo_has_aws_identity || echo "  ! kargo-controller has no working pod identity; the Warehouse can't list ECR images"
 
 # Deploy the project (creates namespace)
 echo "Creating Kargo project..."
@@ -63,23 +78,10 @@ sleep 10
 echo "Creating Kargo warehouse..."
 envsubst < warehouse.yaml | kubectl apply -f -
 
-# Kargo Warehouse uses a Kubernetes Secret for ECR authentication when
-# discovering image tags — Pod-Identity credentials are not consumed
-# by the Warehouse controller. Create (or refresh) the ECR secret so
-# the Warehouse can list tags without 401 Unauthorized errors.
-# The ECR token expires after 12 h; the secret is re-created here each
-# time deploy-kargo.sh is run, which covers re-runs and long events.
-KARGO_NS="java-app-kargo"
-ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${RESOURCE_PREFIX:-peeks}/java"
-echo "Creating Kargo ECR image credential secret..."
-ECR_PWD=$(aws ecr get-login-password --region "$AWS_REGION")
-kubectl -n "$KARGO_NS" delete secret ecr-creds --ignore-not-found >/dev/null 2>&1
-kubectl -n "$KARGO_NS" create secret generic ecr-creds \
-  --from-literal=repoURL="$ECR_REPO" \
-  --from-literal=username=AWS \
-  --from-literal=password="$ECR_PWD"
-kubectl -n "$KARGO_NS" label secret ecr-creds kargo.akuity.io/cred-type=image --overwrite
-echo "  ✓ ECR credential secret created"
+# Earlier versions of this script stored a static ECR token in an `ecr-creds`
+# Secret. Kargo uses a matching Secret instead of the pod identity, and that
+# token expires after 12 h, so remove it.
+kubectl -n java-app-kargo delete secret ecr-creds --ignore-not-found
 
 # Deploy the promotion task
 echo "Creating Kargo promotion task..."

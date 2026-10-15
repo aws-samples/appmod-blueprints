@@ -2,18 +2,38 @@
 # Exclude system namespaces from policy validation to prevent webhook timeouts
 
 config:
-  # Exclude critical system namespaces from Kyverno validation
-  excludeNamespaces:
-    - kube-system
-    - kube-public
-    - kube-node-lease
-    - kyverno
-    - argocd
-    - crossplane-system
-    - argo-events
-    - cert-manager
-    - external-secrets
-    - ingress-nginx
+  # Exempt platform/system namespaces from the Kyverno admission webhooks.
+  #
+  # NOTE: `config.excludeNamespaces` (used previously here) is NOT a valid key in the
+  # Kyverno 3.x chart — it was silently ignored, so these namespaces were never actually
+  # excluded (the live `validate.kyverno.svc-fail` webhook only carried kube-system/kyverno).
+  # The supported mechanism is `config.webhooks.namespaceSelector`, which the chart writes
+  # into the `kyverno` ConfigMap and the admission controller uses to build the dynamic
+  # resource webhook's namespaceSelector.
+  #
+  # Why this matters: the resource webhook is fail-closed (`failurePolicy: Fail`) and
+  # intercepts Deployments/Pods/etc. cluster-wide. On a freshly provisioned cluster, core
+  # addons (e.g. external-secrets, wave -1) sync concurrently with Kyverno (wave 3) — waves
+  # only order within a single ArgoCD Application, not across Applications. While the Kyverno
+  # admission controller is still cold-starting, `kyverno-svc` has no endpoints and the
+  # fail-closed webhook rejects those addons' Deployment creation, wedging the sync for hours.
+  # Excluding the platform namespaces here makes that race structurally impossible.
+  webhooks:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - kyverno
+            - argocd
+            - crossplane-system
+            - argo-events
+            - cert-manager
+            - external-secrets
+            - ingress-nginx
 
 # Increase webhook timeout to handle slow validations
 webhookTimeout: 30

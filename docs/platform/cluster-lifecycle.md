@@ -65,13 +65,22 @@ What they do:
    exactly what will be deleted.
 3. `argocd app sync <app> --prune` — the explicit destructive step.
 4. (KRO only) After a successful prune, remove the `clusters/<name>.json`
-   marker and the `multi-acct` CARM mapping, so the now-empty app is cleaned up.
+   marker, the `multi-acct` CARM mapping, the fleet member file and the
+   per-cluster overlay. Then delete the `clusters-kro-<name>` and
+   `fleet-secret-<name>` Applications and the Argo CD cluster Secret: both
+   ApplicationSets are `create-update`, so they never delete those Applications.
 
 > KRO ordering matters: the per-cluster app is `clusters-kro-<name>`, generated
 > from the `clusters/<name>.json` marker. The appset uses
 > `preserveResourcesOnDeletion: true`, so deleting the marker **before** pruning
 > would *orphan* the `EksclusterWithVpc` instead of deleting it. The task removes
 > the spec first, prunes through the still-existing app, then removes the marker.
+
+Once a KRO spoke is gone, `task spokes:sweep-kro -- <cluster-name>` removes what
+outlives it: the IAM roles and policies kept by `deletion-policy: retain` or
+created by the spoke's own Crossplane, its `IAMRoleSelector`s and hub namespace,
+secrets left scheduled for deletion, and the EKS log group. It waits for the
+deletion to finish first. (`task destroy` sweeps all of this itself.)
 
 ### Manual equivalent
 

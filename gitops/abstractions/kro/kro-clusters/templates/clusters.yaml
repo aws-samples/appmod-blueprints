@@ -48,6 +48,11 @@ spec:
   # (names are arbitrary — see cluster-providers/README.md).
   resourcePrefix: {{ $cluster.resourcePrefix | default $.Values.global.resourcePrefix | default "peeks" | quote }}
   tenant: {{ $cluster.tenant | default "tenant1" | quote }}
+  # Fleet role of this cluster. Defaults to "spoke" (every cluster the clusters-kro
+  # appset creates is a spoke); a control-plane entry may override. The RGD forwards
+  # this to the nested EksCluster, which stamps the ArgoCD cluster-secret
+  # `fleet_member` label — the hub's matrix selector keys on control-plane (#1033).
+  fleetMember: {{ $cluster.fleetMember | default "spoke" | quote }}
   environment: {{ $cluster.environment | default "staging" | quote }}
   # delete (default) tears IAM roles/OIDC down with the cluster — safe for
   # test/workshop events even on prod clusters. Set retain per-cluster only for
