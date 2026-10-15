@@ -47,7 +47,7 @@ All already annotated `adoption-policy: adopt-or-create` (✅ = #855):
 | `OpenIDConnectProvider` | ARN | ✅ best-effort |
 | `AccessEntry` ×N | cluster+principalARN | ✅ |
 | `PodIdentityAssociation` ×N | cluster+ns+sa | ✅ |
-| `Capability` (ack, kro, argocd) | cluster+name | n/a (`deletePropagationPolicy: RETAIN`) |
+| `Capability` (ack, kro, argocd) | cluster+name | ✅ |
 | `SecurityGroup` (ingress http/https) | AWS ID | ⚠️ Class 2 (see below) |
 
 > **Caveat — ingress SecurityGroups are Class 2.** `ingressHttpSecurityGroup` /
