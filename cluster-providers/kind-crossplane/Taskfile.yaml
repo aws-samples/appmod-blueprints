@@ -128,6 +128,8 @@ vars:
     sh: printf '\033[1;33m'
   C_ERR:
     sh: printf '\033[1;31m'
+  C_WARN:
+    sh: printf '\033[0;33m'
   C_RESET:
     sh: printf '\033[0m'
   ARGOCD_VERSION:
@@ -209,10 +211,27 @@ tasks:
       # Phase 1 (parallel): identity restart || observability seeding || Playwright prefetch
       - task: install:post-sync
       - 'printf "{{.C_INFO}}  [%ds] post-sync done (identity restart || observability seed){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      - task: hub:wait-for-full-sync
-      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-full-sync done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Wait for ALL Crossplane providers (including ec2) to be Healthy before spoke provisioning
+      # ── Perf lever #1: providers Healthy is the ONLY hub precondition the
+      #    consumer's spoke provisioning needs. Gate on it DIRECTLY and FIRST
+      #    (hub:wait-for-providers force-syncs crossplane-base — the app that
+      #    forensics showed held the old blocking full-sync gate for ~17 min — and
+      #    confirms every provider Healthy), THEN let the remaining hub addons
+      #    (backstage, langfuse, the agentic stack, …) settle in the BACKGROUND.
+      #    Previously hub:wait-for-full-sync ran here and BLOCKED for ~37 min before
+      #    hub:wait-for-providers (which then took ~2 s because the full-sync wait had
+      #    already converged crossplane-base). That serialized a ~25-min wall that
+      #    gates nothing downstream: the consumer only needs providers + overlay to
+      #    declare spokes, and the long-tail hub apps converge on their own anyway
+      #    (observed finishing 00:34–01:16, i.e. during/after the spoke wait).
+      #    Returning "hub bootstrap complete" as soon as providers are Healthy lets
+      #    the consumer declare spokes ~25 min sooner so the ~21-min spoke
+      #    provisioning OVERLAPS the hub settle instead of queuing after it.
       - task: hub:wait-for-providers
+      - 'printf "{{.C_INFO}}  [%ds] hub:wait-for-providers done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Non-blocking: launch the full-sync settle in the background (logs per-poll
+      # straggler app names to /tmp/hub-full-sync-settle.log) and return immediately.
+      - task: install:hub-settle-bg
+      - 'printf "{{.C_INFO}}  [%ds] hub settle backgrounded{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Phase 1b (parallel): langfuse restart || urls — all independent
       - task: install:finalize
       # NOTE: spoke enablement and fleet-overlay wiring are CONSUMER concerns (the
@@ -224,9 +243,59 @@ tasks:
 
   install:finalize:
     internal: true
-    deps:
-      - hub:restart-langfuse
-      - urls
+    # Keycloak-dependent steps must run AFTER Keycloak is configured (review #1053 §3/§4):
+    # restart-langfuse picks up the client secret the keycloak-config PostSync hook
+    # writes, and the consumer's idc:configure needs the platform realm live. Sequential
+    # cmds (not parallel deps) so the narrow gate runs FIRST — and because finalize is
+    # foreground, this also gives idc:configure its Keycloak head start before return.
+    cmds:
+      - task: hub:wait-for-keycloak
+      - task: hub:restart-langfuse
+      - task: urls
+
+  # ── Perf lever #1 (background settle launcher) ──────────────────────────────
+  # Launch hub:settle in the background so `task install` returns as soon as the
+  # Crossplane providers are Healthy (the only hub precondition for spoke
+  # provisioning). The remaining hub addons converge on their own and overlap the
+  # consumer's spoke provisioning. Non-blocking by design — see the DAG note above.
+  install:hub-settle-bg:
+    internal: true
+    desc: Launch the hub full-sync settle in the background (non-blocking)
+    cmds:
+      - |
+        REPO_ROOT="{{.ROOT_DIR}}"
+        # `task kind-crossplane:hub:settle` below needs the ROOT Taskfile. In an
+        # included Taskfile {{.ROOT_DIR}} is the repo root (expanded at template
+        # time, before any shell runs — the backgrounded subshell cannot change it).
+        if [ ! -f "$REPO_ROOT/Taskfile.yaml" ]; then
+          printf '{{.C_ERR}}✗ hub settle not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
+          exit 1
+        fi
+        # DETACH so the ~40-min settle BOTH outlives go-task AND releases the install's
+        # stdout/stderr: `exec task` replaces the subshell (no wrapper shell lingers),
+        # the redirect is applied to the SUBSHELL — `) >> log 2>&1` — so go-task's own
+        # fds are closed (not just task's), and `< /dev/null` detaches stdin. Otherwise
+        # the orphaned subshell keeps the SSM `tslog | tee` pipe open and cfn-signal
+        # blocks until the settle ends, up to 40 min (review #1053 §2). REPO_ROOT via
+        # env so paths with spaces are safe. (Same idiom as install:phase1-observability-bg.)
+        # setsid (review #1053 hardening): run the settle in its OWN session so a
+        # group-wide SIGINT/SIGTERM — e.g. SSM killing the caller's process group on
+        # executionTimeout — doesn't reach the detached settle. flock -n gives the
+        # single-instance guard (a second `task install` skips a duplicate settle).
+        # CRITICAL (review #1053 §3): the `&` is INSIDE sh -c and the redirect lands on
+        # the backgrounded subshell, so sh -c returns at ONCE and releases go-task's
+        # stdout (the SSM `tslog | tee` pipe). If the `&` sits OUTSIDE sh -c (prior
+        # form), the outer sh keeps that stdout for the whole settle and cfn-signal
+        # blocks up to 40 min. exec leaves no wrapper shell holding fds. Degrades
+        # gracefully where setsid/flock are absent (the IDE has both; util-linux).
+        if command -v setsid >/dev/null 2>&1 && command -v flock >/dev/null 2>&1; then
+          REPO_ROOT="$REPO_ROOT" \
+            sh -c '( cd "$REPO_ROOT" && exec setsid flock -n /tmp/hub-settle.lock task kind-crossplane:hub:settle ) >> /tmp/hub-full-sync-settle.log 2>&1 < /dev/null &'
+        else
+          REPO_ROOT="$REPO_ROOT" \
+            sh -c '( cd "$REPO_ROOT" && exec task kind-crossplane:hub:settle ) >> /tmp/hub-full-sync-settle.log 2>&1 < /dev/null &'
+        fi
+        printf '{{.C_INFO}}  Lever #1: hub addons settling in background (log: /tmp/hub-full-sync-settle.log); install continues.{{.C_RESET}}\n'
 
   install:post-sync:
     internal: true
@@ -281,7 +350,7 @@ tasks:
         # REPO_ROOT is passed through the environment (not interpolated into the script
         # string) so paths containing spaces or quotes are safe.
         REPO_ROOT="$REPO_ROOT" \
-          sh -c '( cd "$REPO_ROOT" && task kind-crossplane:secrets-manager:seed-observability >> /tmp/observability-seed.log 2>&1 ) &'
+          sh -c '( cd "$REPO_ROOT" && exec task kind-crossplane:secrets-manager:seed-observability ) >> /tmp/observability-seed.log 2>&1 < /dev/null &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
 
   install:phase1-playwright-prefetch:
@@ -860,9 +929,9 @@ tasks:
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
         [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
         printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}\n'
-        for i in $(seq 1 60); do
-          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ')
-          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        for i in $(seq 1 120); do   # 120 x 15s = 30min cap (was 60 = 15min; measured crossplane-base ~17min, review #1053 §5)
+          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ' || true)
+          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
           [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL" && exit 0
           [ $((i % 4)) -eq 0 ] &&             printf '{{.C_INFO}}  [%ds] %s/%s providers Healthy...{{.C_RESET}}\n' "$((i*15))" "$((TOTAL-UNHEALTHY))" "$TOTAL"
           # After 5min, force-sync crossplane-base to unblock stuck ArgoCD retry loops
@@ -872,7 +941,8 @@ tasks:
           fi
           sleep 15
         done
-        printf '{{.C_WARN}}  Providers not all Healthy after 15min — continuing anyway.{{.C_RESET}}\n'
+        UNHEALTHY_LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null)
+        printf '{{.C_ERR}}⚠ Crossplane providers NOT all Healthy after 30min — continuing, but spoke provisioning may stall. Unhealthy: %s{{.C_RESET}}\n' "${UNHEALTHY_LIST:-<none-listed>}"
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
   hub:wait-for-sync:
@@ -910,6 +980,11 @@ tasks:
           UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
           OUTOFSYNC=$((TOTAL - SYNCED))
           printf '{{.C_INFO}}  Apps: %s/%s synced, %s out-of-sync, %s unknown/spoke (%ss elapsed){{.C_RESET}}\n' "$SYNCED" "$TOTAL" "$OUTOFSYNC" "$UNKNOWN" "$ELAPSED"
+          # Straggler diagnostics: name the OutOfSync apps ~every 2 min so a slow
+          # run shows WHICH app is lagging (not just a count) without extra tooling.
+          if [ "$OUTOFSYNC" -gt 0 ] && [ $((ELAPSED % 120)) -lt $INTERVAL ]; then
+            echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          fi
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
             if [ "$OUTOFSYNC" -gt 0 ]; then
               printf '{{.C_STEP}}▸ %s app(s) still OutOfSync (within tolerance):{{.C_RESET}}\n' "$OUTOFSYNC"
@@ -952,6 +1027,13 @@ tasks:
         printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
         printf '  User:       user1 / {{.USER_PASSWORD}}\n'
         printf '  Keycloak:   admin / {{.KC_ADMIN_PASSWORD}}\n'
+        # Log discoverability (review #1053): point to the background settle log + its
+        # status marker so the hub-settle outcome is findable from the final summary.
+        if [ -f /tmp/hub-full-sync-settle.log ]; then
+          printf '\n{{.C_INFO}}Hub settle (background){{.C_RESET}}\n'
+          printf '  log:    /tmp/hub-full-sync-settle.log\n'
+          printf '  status: %s\n' "$(cat /tmp/hub-full-sync-settle.status 2>/dev/null || echo 'running')"
+        fi
 
 
   hub:restart-identity-pods:
@@ -1021,6 +1103,37 @@ tasks:
       - sleep 90
       - printf '{{.C_OK}}✓ Pod Identity credentials ready.{{.C_RESET}}\n'
 
+  hub:wait-for-keycloak:
+    desc: "Narrow gate — wait for keycloak-<hub> Synced/Healthy with its config op Succeeded (bounded 15min, non-fatal). Much shorter than the global full-sync; what Keycloak-dependent steps actually need (review #1053 §3/§4)."
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        APP="keycloak-{{.HUB_CLUSTER_NAME}}"
+        TIMEOUT=900; INTERVAL=15; ELAPSED=0
+        # set +e (review #1053 §1): under go-task's errexit a single transient kubectl
+        # read (SYNC/HEALTH/OP) would abort the whole gate — and the step is non-fatal.
+        set +e
+        printf '{{.C_STEP}}▸ Waiting for %s to be configured (Synced/Healthy, op Succeeded)...{{.C_RESET}}\n' "$APP"
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          SYNC=$(KUBECONFIG=$KC kubectl get application.argoproj.io "$APP" -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)
+          HEALTH=$(KUBECONFIG=$KC kubectl get application.argoproj.io "$APP" -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)
+          OP=$(KUBECONFIG=$KC kubectl get application.argoproj.io "$APP" -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null)
+          if [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ] && [ "$OP" = "Succeeded" ]; then
+            printf '{{.C_OK}}✓ %s configured (Synced/Healthy, op Succeeded).{{.C_RESET}}\n' "$APP"
+            break
+          fi
+          [ $((ELAPSED % 60)) -eq 0 ] && printf '{{.C_INFO}}  [%ss] %s sync=%s health=%s op=%s{{.C_RESET}}\n' "$ELAPSED" "$APP" "${SYNC:-?}" "${HEALTH:-?}" "${OP:-?}"
+          sleep $INTERVAL; ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        # if … fi, not `[ ] && printf` (review #1053 §1): the && list returns 1 on the
+        # SUCCESS path (ELAPSED < TIMEOUT), which go-task reads as a task failure and
+        # aborts `task install` before the Keycloak-dependent restarts + idc:configure.
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '{{.C_WARN}}⚠ %s not fully configured after %ss (sync=%s health=%s op=%s) — continuing; Keycloak-dependent steps (Langfuse restart, idc:configure) may need a retry (review #1053 §3/§4).{{.C_RESET}}\n' "$APP" "$TIMEOUT" "${SYNC:-?}" "${HEALTH:-?}" "${OP:-?}"
+        fi
+      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+
   hub:restart-langfuse:
     desc: Restart Langfuse to pick up Keycloak client secret (created by config job after initial deploy)
     cmds:
@@ -1030,6 +1143,73 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n langfuse langfuse --timeout=120s 2>/dev/null || true
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
+
+  # ── Perf lever #1 (background settle) + straggler diagnostics ───────────────
+  # Self-contained settle: waits for the hub addons to converge, logging the NAMES
+  # of every out-of-sync app on each poll (not only on timeout). Run in the
+  # background by install:hub-settle-bg so it never blocks `task install`.
+  # Uses its OWN per-run kubeconfig (mktemp, see below) so it cannot race the
+  # foreground tasks that share {{.ROOT_DIR}}/private/hub-kubeconfig (urls,
+  # restart-langfuse) which fetch-then-rm that shared path.
+  hub:settle:
+    # NOT internal: the background launcher invokes it from the CLI as
+    # `task kind-crossplane:hub:settle`; go-task rejects CLI calls to internal tasks
+    # (exit 202), which silently skipped the entire settle (review #1053 §1).
+    desc: "Settle the hub addons (logs out-of-sync app names each poll). Safe to background."
+    vars:
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+    cmds:
+      - |
+        STATUS=/tmp/hub-full-sync-settle.status
+        # Single-instance is enforced by the launcher's `flock -n /tmp/hub-settle.lock`
+        # (install:hub-settle-bg), NOT here: go-task's shell cannot redirect fd 9, so an
+        # in-body `exec 9>LOCK` returns 1 and errexit kills the settle before it starts
+        # (review #1053 §2). A direct manual `task kind-crossplane:hub:settle` is not guarded,
+        # which is fine — the mktemp kubeconfig below keeps concurrent runs from colliding.
+        # Per-run private kubeconfig (review #1053 "re-runs collide"): a FIXED shared path
+        # let the first settle to finish `rm` a concurrent run's kubeconfig. mktemp + an
+        # EXIT trap give each run its own file, cleaned up however the run ends.
+        KC=$(mktemp)
+        trap 'rm -f "$KC"' EXIT
+        # Run header (review #1053): keep appended runs separated in the shared log.
+        printf '=== settle start %s (pid %s) ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$"
+        # Mark running up front (review #1053 §6) so a re-run's `urls` doesn't show the
+        # PREVIOUS run's terminal status while this one is still in flight.
+        printf 'running\n' > "$STATUS"
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null; then
+          printf '✗ hub:settle: could not update kubeconfig for {{.HUB_CLUSTER_NAME}} — aborting settle (addons still converge via ArgoCD auto-sync; review #1053 §6).\n'
+          printf 'kubeconfig-error\n' > "$STATUS"
+          exit 1
+        fi
+        TIMEOUT=2400
+        INTERVAL=30
+        ELAPSED=0
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          APP_OUTPUT=$(KUBECONFIG="$KC" kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
+          TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
+          SYNCED=$(echo "$APP_OUTPUT" | awk '$2 == "Synced"' | wc -l | tr -d ' ')
+          UNKNOWN=$(echo "$APP_OUTPUT" | awk '$2 == "Unknown"' | wc -l | tr -d ' ')
+          OUTOFSYNC=$((TOTAL - SYNCED - UNKNOWN))
+          printf '  [%ss] %s/%s synced, %s unknown/spoke, %s out-of-sync\n' "$ELAPSED" "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+          # Straggler diagnostics: name the apps still OutOfSync so a slow run shows
+          # WHICH app is lagging (e.g. crossplane-base) without extra live tooling.
+          if [ "$OUTOFSYNC" -gt 0 ]; then
+            echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          fi
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
+            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+            printf 'ok\n' > "$STATUS"
+            break
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          printf '⚠ Hub settle timed out after %ss. %s app(s) still out-of-sync (review #1053 §6):\n' "$TIMEOUT" "$OUTOFSYNC"
+          echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
+          printf 'timeout\n' > "$STATUS"
+        fi
+        # $KC is removed by the EXIT trap set above.
 
   hub:wait-for-full-sync:
     desc: Wait for ALL apps (including spokes) to sync after provider restart
