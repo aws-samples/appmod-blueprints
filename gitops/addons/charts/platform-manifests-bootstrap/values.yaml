@@ -1,27 +1,32 @@
 # Bootstrap NodePools. Defaults keep the chart self-contained for `helm template`.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# customNodepools.pools — custom Karpenter NodePools applied at sync-wave -1
-# (before the platform add-ons that need a schedulable node).
+# enableGeneralPurposeNodePool — GATE for customNodepools.pools below.
 #
-# WHY THESE SHIP ENABLED BY DEFAULT
-# The platform can be deployed with the EKS Auto Mode built-in `general-purpose`
-# pool DISABLED (enableGeneralPurposeNodePool="false" — the workshop does this to
-# apply its own reconciliation policy). When the built-in general-purpose pool is
-# gone, SOMETHING untainted must still exist at bootstrap, otherwise every add-on
-# (cert-manager, keycloak, load-balancer-controller, …) is Pending because the only
-# remaining pools (built-in `system`, plus `gpu`/`trainium`) are all tainted. The
-# replacement pools below are therefore shipped as a DEFAULT so a fresh cluster
-# always has an untainted `general-purpose-peeks` pool from wave -1 — not only once
-# a GitOps overlay is wired (which happens later and left a bootstrap gap).
+# Threaded from the cluster-secret annotation `enable_general_purpose_nodepool`
+# (via the registry valuesObject). It mirrors the cluster's own
+# enableGeneralPurposeNodePool setting:
+#   "true"  (default) → the EKS Auto Mode built-in `general-purpose` pool is KEPT
+#                        → customNodepools.pools are NOT rendered. The generic
+#                          solution is unchanged and relies on the built-in pools.
+#   "false"           → the built-in `general-purpose` pool was DROPPED at cluster
+#                        creation → customNodepools.pools ARE rendered so an
+#                        untainted `general-purpose-peeks` exists from sync-wave -1.
+#                        Without this, every add-on (cert-manager, keycloak,
+#                        load-balancer-controller, …) is Pending because the only
+#                        remaining pools (built-in `system`, gpu, trainium) are all
+#                        tainted — the fresh-hub bootstrap deadlock.
 #
-# FOR USERS OF THE GENERIC SOLUTION (NOT the workshop)
-# These are opinionated, workshop-tuned pools (a daytime do-not-disrupt budget, a
-# 48h termination grace, `managed-by: peeks` labels). If you keep the built-in
-# general-purpose pool (enableGeneralPurposeNodePool="true", the default) you do
-# NOT need them — set `customNodepools.pools: []` to ship none, or replace/retune
-# the entries below to whatever your environment prefers. They are a convenience
-# default, not a requirement of the platform.
+# Default "true" is the SAFE value: if the annotation is absent, nothing extra is
+# rendered and generic-solution behavior is preserved.
+enableGeneralPurposeNodePool: "true"
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# customNodepools.pools — custom Karpenter NodePools, rendered at sync-wave -1
+# ONLY when the gate above is "false". These are opinionated, workshop-tuned pools
+# (a daytime do-not-disrupt budget, a 48h termination grace, `managed-by: peeks`
+# labels). Adopters who drop the built-in general-purpose pool but want different
+# replacements can retune or empty this list (`customNodepools.pools: []`).
 # ─────────────────────────────────────────────────────────────────────────────
 customNodepools:
   pools:
@@ -123,27 +128,3 @@ customNodepools:
             terminationGracePeriod: 48h
 gpu:
   enabled: true
-
-# warmCapacity (lever #2): optional "overprovisioning" to keep spare node capacity
-# warm so the first wave of platform addons does not each wait ~1-2 min for a cold
-# Karpenter node. A low/negative-priority pause Deployment reserves capacity; the
-# instant a real workload needs the space it preempts the pause pods (near-zero
-# steady cost beyond the warm node), and Karpenter provisions a replacement to stay
-# warm. Default OFF (generic solution ships no warm pool); consumers enable + size
-# it via their overlay. Rendered early (chart is sync-wave -1) so nodes are warm
-# before the heavy wave lands.
-warmCapacity:
-  enabled: false
-  replicas: 1
-  priorityClassName: warm-capacity-overprovisioning
-  priorityValue: -10
-  image: registry.k8s.io/pause:3.9
-  # nodeSelector/tolerations target where the warm nodes should be kept (e.g. the
-  # tuned general-purpose pool). Empty = scheduler/Karpenter default placement.
-  nodeSelector: {}
-  tolerations: []
-  # Sized to reserve ~one general-purpose node by default; tune per consumer.
-  resources:
-    requests:
-      cpu: "1"
-      memory: "2Gi"

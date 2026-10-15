@@ -1,14 +1,22 @@
 {{- /*
-Custom Karpenter NodePools, rendered from a caller-supplied list.
+Custom Karpenter NodePools, rendered from `customNodepools.pools`.
 
-The generic solution ships NO custom pools (default empty) and relies on the EKS
-Auto Mode built-in `system` / `general-purpose` NodePools. Consumers that need
-tuned pools — e.g. the workshop's stability-oriented pools with a daytime
-"do-not-disrupt" budget and a longer termination grace — supply the full pool
-definitions via their own overlay (see workshop/overlay/.../platform-manifests/values.yaml).
+GATED on enableGeneralPurposeNodePool: these pools render ONLY when the cluster
+was created WITHOUT the EKS Auto Mode built-in `general-purpose` pool
+(enableGeneralPurposeNodePool="false"). In that case something untainted must
+exist at bootstrap or every add-on is unschedulable; the default pools in
+values.yaml (general-purpose-peeks / system-peeks) provide it from sync-wave -1,
+independent of any later overlay wiring.
+
+When the built-in general-purpose pool IS kept (enableGeneralPurposeNodePool="true",
+the generic-solution default), these pools are NOT rendered — the generic solution
+is unchanged and keeps relying on the built-in pools. The value is threaded from
+the cluster-secret annotation `enable_general_purpose_nodepool` via the registry
+valuesObject; it defaults to "true" (safe: render nothing) when absent.
 
 Each entry: { name: <string>, spec: <karpenter.sh/v1 NodePool spec> }.
 */ -}}
+{{- if eq (toString .Values.enableGeneralPurposeNodePool) "false" }}
 {{- range .Values.customNodepools.pools }}
 ---
 apiVersion: karpenter.sh/v1
@@ -17,4 +25,5 @@ metadata:
   name: {{ .name }}
 spec:
   {{- toYaml .spec | nindent 2 }}
+{{- end }}
 {{- end }}
