@@ -84,7 +84,7 @@ spec:
   # global for this key, so spokes default to "true" unless a fleet-config entry
   # sets it -- the hub-side toggle alone does not propagate to spokes. hasKey keeps
   # a YAML boolean false from being swallowed by Helm's `default`.
-  enableGeneralPurposeNodePool: {{ (ternary ($cluster.enableGeneralPurposeNodePool | toString) (default "true" $.Values.global.enableGeneralPurposeNodePool | toString) (hasKey $cluster "enableGeneralPurposeNodePool")) | quote }}
+  enableGeneralPurposeNodePool: {{ (ternary ($cluster.enableGeneralPurposeNodePool | toString) "true" (hasKey $cluster "enableGeneralPurposeNodePool")) | quote }}
   # Platform-wide AWS tags applied to every AWS resource this graph creates (EKS
   # cluster, VPC, NAT gateway, EIP) through the EksclusterWithVpc `awsTags` schema
   # field (rg-eks-vpc.yaml). Threaded from config.local.yaml's `platformTags` ->
