@@ -692,8 +692,10 @@ ack-efs:
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
-# Bootstrap NodePools created EARLY (sync-wave -1) so any pools exist before addons
-# that target them schedule. The generic solution creates only the GPU/Trainium pools
+# Bootstrap NodePools, created on this app's first sync (sync-wave -1 is on the
+# generated Application; nothing orders it ahead of the addon ApplicationSets).
+# Addon pods that target these pools simply stay Pending until the pools exist.
+# The generic solution creates only the GPU/Trainium pools
 # (a real capability with no built-in equivalent) and relies on the EKS Auto Mode
 # built-in system/general-purpose pools for everything else. Consumers that need tuned
 # pools supply them via their overlay as customNodepools.pools (e.g. the workshop's
