@@ -182,10 +182,22 @@ tasks:
       #       with the hub still managed by kind, and the pivot fail-closes by restarting kind
       #       (never a CFN CREATE_FAILED, review #1). kind-kro-ack only; disable with
       #       HUB_PIVOT_ON_INSTALL=false. ignore_error + the inner guard both keep it non-fatal.
+      #   (c) the pivot must also END inside the install's time budget. The self-paced
+      #       template's SSM step kills `task install` at 7000 s (IDE WaitCondition: 7200 s),
+      #       and a kill skips hub:pivot's EXIT trap: kind stays stopped mid-gate and the stack
+      #       ends CREATE_FAILED. So the adoption gate gets what is left of INSTALL_BUDGET_SEC,
+      #       minus 300 s for the pivot's own steps (or its abort), and at most
+      #       PIVOT_ADOPT_TIMEOUT_SEC; with less than 120 s left the pivot is skipped.
       - cmd: |
           if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "{{.HUB_PIVOT_ON_INSTALL | default "true"}}" = "true" ]; then
-            printf '{{.C_STEP}}▸ [#1033] Final step: hub self-adoption pivot (detaching from kind)…{{.C_RESET}}\n'
-            if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop ); then
+            GATE_SEC=$(( {{.INSTALL_BUDGET_SEC | default "6600"}} - ($(date +%s) - {{.INSTALL_START}}) - 300 ))
+            if [ "$GATE_SEC" -gt {{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}} ]; then GATE_SEC={{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}}; fi
+            if [ "$GATE_SEC" -lt 120 ]; then
+              printf '{{.C_INFO}}  ⚠ hub pivot skipped (non-fatal): the install budget ({{.INSTALL_BUDGET_SEC | default "6600"}}s) is nearly used up. The workshop is fully functional with the hub still managed by kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+              exit 0
+            fi
+            printf '{{.C_STEP}}▸ [#1033] Final step: hub self-adoption pivot (detaching from kind, adoption gate max %ss)…{{.C_RESET}}\n' "$GATE_SEC"
+            if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop PIVOT_ADOPT_TIMEOUT_SEC="$GATE_SEC" ); then
               printf '{{.C_OK}}  ✓ hub pivoted — kind bootstrap detached (stopped & recoverable).{{.C_RESET}}\n'
             else
               printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind; the pivot fail-closed and restarted kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
