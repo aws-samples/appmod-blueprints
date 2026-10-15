@@ -1283,9 +1283,21 @@ tasks:
     desc: Seed hub Crossplane provider creds (provider-aws-iam/eks pod identities) so crossplane-base can provision
     internal: true
     status:
-      # Skip once Crossplane has already provisioned a downstream provider role — i.e. the
-      # providers are credentialed and working, so the bootstrap is done.
-      - aws iam get-role --role-name {{.HUB_CLUSTER_NAME}}-CrossplaneAMPProviderRole >/dev/null 2>&1
+      # Skip only when the pod identity associations this task actually creates both
+      # exist. The previous guard checked for {{.HUB_CLUSTER_NAME}}-CrossplaneAMPProviderRole,
+      # a role Crossplane creates downstream — but that role SURVIVES `task destroy`
+      # (the teardown sweep does not remove Crossplane-provisioned provider roles),
+      # while the pod identity associations do NOT. On a destroy->reinstall against a
+      # reused account the stale role made this task self-skip, so the provider-aws-iam
+      # /eks PIAs were never recreated and every Crossplane AWS provider came up
+      # credential-less ("cannot retrieve the AWS credentials"), degrading ~15 apps.
+      # Gate on the real artifact instead: both PIAs present => done.
+      - |
+        for SA in provider-aws-iam provider-aws-eks; do
+          ID=$(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --query "associations[?serviceAccount=='$SA' && namespace=='crossplane-system'] | [0].associationId" --output text 2>/dev/null)
+          [ -n "$ID" ] && [ "$ID" != "None" ] || exit 1
+        done
     cmds:
       - printf '{{.C_STEP}}▸ Bootstrapping Crossplane provider pod identities (iam/eks)...{{.C_RESET}}\n'
       - |
