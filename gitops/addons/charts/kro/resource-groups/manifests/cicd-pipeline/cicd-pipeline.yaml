@@ -2180,6 +2180,21 @@ spec:
             container: 
               image: alpine:3.20
               command: ["/bin/sh", "-c"]
+              # What an earlier run left in the namespace (both optional), so a re-run can keep
+              # the webhook connection and its key instead of rotating them.
+              env:
+              - name: EXISTING_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: devlake-webhook-secret
+                    key: DEVLAKE_TOKEN
+                    optional: true
+              - name: EXISTING_HOOK_ID
+                valueFrom:
+                  configMapKeyRef:
+                    name: devlake-webhook-id
+                    key: DEVLAKE_HOOK_ID
+                    optional: true
               args:
               - |
                 apk add curl jq >/dev/null 2>&1
@@ -2187,6 +2202,12 @@ spec:
                 resp=$(curl -X GET $BASE_URL/proceed-db-migration)
                 
                 projectName="{{inputs.parameters.appname}}"
+                # Re-runs must converge. A run that stopped after the creates below (node lost, workflow
+                # deleted and recreated by kro, or a retry of this step) would otherwise fail every retry:
+                # DevLake rejects a second project or webhook with the same name. Reuse the project.
+                project=$(curl -s $BASE_URL/projects/$projectName)
+                blueprintID=$(echo "$project" | jq -r '.blueprint.id // empty' 2>/dev/null)
+                blueprintName=$(echo "$project" | jq -r '.blueprint.name // empty' 2>/dev/null)
                 
                 projectCreateRequest=$(
                   cat <<EOF
@@ -2208,11 +2229,23 @@ spec:
                 }
                 EOF
                 )
-                projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/projects -d "$projectCreateRequest")
-                blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
-                blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
+                if [ -z "$blueprintID" ]; then
+                  projectCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/projects -d "$projectCreateRequest")
+                  blueprintID=$(echo $projectCreateResponse | jq -r '.blueprint.id')
+                  blueprintName=$(echo $projectCreateResponse | jq -r '.blueprint.name')
+                fi
                 
                 webhookName="$projectName"_webhook
+                # DevLake returns a webhook's API key only when it is created. Keep the webhook if the
+                # Secret an earlier run wrote holds its key; otherwise replace it (the next step writes
+                # the new key).
+                webhookID=$(curl -s $BASE_URL/plugins/webhook/connections/by-name/$webhookName | jq -r '.id // empty' 2>/dev/null)
+                webhookApiKey=""
+                if [ -n "$webhookID" ] && [ "$webhookID" = "$EXISTING_HOOK_ID" ] && [ -n "$EXISTING_TOKEN" ]; then
+                  webhookApiKey="$EXISTING_TOKEN"
+                elif [ -n "$webhookID" ]; then
+                  curl -s -X DELETE $BASE_URL/plugins/webhook/connections/$webhookID >/dev/null
+                fi
                 webhookCreateRequest=$(
                   cat <<EOF
                 {
@@ -2220,9 +2253,11 @@ spec:
                 }
                 EOF
                 )
-                webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/plugins/webhook/connections -d "$webhookCreateRequest")
-                webhookID=$(echo $webhookCreateResponse | jq -r '.id')
-                webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
+                if [ -z "$webhookApiKey" ]; then
+                  webhookCreateResponse=$(curl -X POST -H "Content-Type: application/json" $BASE_URL/plugins/webhook/connections -d "$webhookCreateRequest")
+                  webhookID=$(echo $webhookCreateResponse | jq -r '.id')
+                  webhookApiKey=$(echo $webhookCreateResponse | jq -r '.apiKey.apiKey')
+                fi
                 for id in "$blueprintID" "$webhookID"; do
                   case "$id" in ''|*[!0-9]*) echo "DevLake setup failed: blueprint id '$blueprintID', webhook connection id '$webhookID'" >&2; exit 1;; esac
                 done
