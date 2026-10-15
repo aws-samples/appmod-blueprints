@@ -63,7 +63,11 @@ def _owned_devlake(name, tags, prefix):
     if n.startswith(f"{p}-devlake-"):
         return True
     if n == "devlake" or n.startswith("devlake-"):
-        return f"{p}-hub" in tags.get("eks:eks-capability-arn", "").lower()
+        # N1 (review #1051): compare the capability-name segment EXACTLY, not as a
+        # substring. `f"{p}-hub" in arn` also matched another deployment's
+        # .../capability/team-peeks-hub/... — the same cross-prefix class as #1.
+        arn = tags.get("eks:eks-capability-arn", "").lower()
+        return arn.split(":capability/", 1)[-1].split("/", 1)[0] == f"{p}-hub"
     return False
 
 

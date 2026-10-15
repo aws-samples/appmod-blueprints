@@ -7,6 +7,7 @@ import time
 
 from ..resilience import poll_until
 from . import elb
+from . import rds as rds_reaper
 
 
 def run(ctx):
@@ -57,17 +58,33 @@ def run(ctx):
         except Exception as e:
             log(f"  [re-sweep] ALB: {e}")
 
-        # 16c. RDS (recreated by ACK)
+        # 16c. RDS (recreated by ACK). Reuses rds._owned_devlake so §16c is
+        #      prefix-anchored exactly like §4: the bare startswith("devlake")
+        #      both MISSED the real <prefix>-devlake-* names §16c exists to catch
+        #      AND could reach another deployment's DB (review #1051 §6a / N1).
+        #      Already-`deleting` resources are skipped so an in-flight delete
+        #      isn't re-issued and mis-classified.
         try:
+            prefix = ctx.prefix
             for db in rds.describe_db_instances()["DBInstances"]:
-                if db["DBInstanceIdentifier"].startswith("devlake") \
+                ident = db["DBInstanceIdentifier"]
+                if rds_reaper._owned_devlake(ident, rds_reaper._tags_of(db), prefix) \
                    and db["DBInstanceStatus"] not in ("deleting",):
                     rds.delete_db_instance(
-                        DBInstanceIdentifier=db["DBInstanceIdentifier"],
+                        DBInstanceIdentifier=ident,
                         SkipFinalSnapshot=True,
                         DeleteAutomatedBackups=True,
                     )
-                    log(f"  [re-sweep] Deleting recreated RDS {db['DBInstanceIdentifier']}")
+                    log(f"  [re-sweep] Deleting recreated RDS instance {ident}")
+            for dbc in rds.describe_db_clusters()["DBClusters"]:
+                ident = dbc["DBClusterIdentifier"]
+                if rds_reaper._owned_devlake(ident, rds_reaper._tags_of(dbc), prefix) \
+                   and dbc.get("Status") not in ("deleting",):
+                    rds.delete_db_cluster(
+                        DBClusterIdentifier=ident,
+                        SkipFinalSnapshot=True,
+                    )
+                    log(f"  [re-sweep] Deleting recreated RDS cluster {ident}")
         except Exception as e:
             log(f"  [re-sweep] RDS: {e}")
 
