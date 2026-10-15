@@ -100,3 +100,16 @@ argocd app diff <app> && argocd app sync <app> --prune
   the diff, and confirm before syncing with `--prune`.
 - For full teardown use `task destroy`, never prune.
 - ArgoCD CLI auth errors: `argocd-refresh-token && source ~/.bashrc.d/platform.sh`.
+
+## Cluster providers are consumer-agnostic (review rule, PR #1033)
+
+**A cluster provider (`cluster-providers/*`) reads inputs ONLY from `config.yaml` and `<hub>/config`. It never assumes or writes to a specific consumer's systems — the workshop GitLab, the IDE, CloudFront, etc. The consumer supplies values through those inputs.**
+
+Why: the same provider is used by multiple consumers (the PEEKS workshop, OAP, a bare operator). If the provider hard-codes a consumer's GitLab (`$GIT_DOMAIN/$GIT_USERNAME/fleet-config.git`) or writes that consumer's Secrets (`argocd/fleet-config-repo`), it (a) behaves two different ways depending on whether that GitLab exists, and (b) becomes a second writer of a Secret the consumer already owns. Both are bugs.
+
+Concretely, for the `kind-kro-ack` `hub:pivot` (the hub self-adoption pivot):
+- Read `overlay_repo_url` / `overlay_repo_revision` / `overlay_repo_basepath` from `<hub>/config` (the consumer wires these via its own `set-overlay-repo` step).
+- **Reuse** the ArgoCD repo credential the consumer already registered (`argocd/fleet-config-repo`) to authenticate the git push — never resolve a GitLab domain/password or write that Secret from the provider.
+- **Refuse the live pivot** if no overlay repo is wired (don't silently fall back to a one-shot `kubectl apply` — that is the two-behaviour coupling). An explicit `HUB_PIVOT_GITOPS=false` operator override may adopt imperatively (no re-asserter), but it is never an automatic fallback.
+
+This must land before hubs are pivoted in the wild: once hubs are pivoted, changing the provider↔consumer contract means migrating live hubs.

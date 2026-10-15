@@ -175,6 +175,23 @@ tasks:
         else
           printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
         fi
+      # [#1033] FINAL step — hub self-adoption pivot (detach from the ephemeral kind bootstrap
+      # cluster). Runs LAST, after overlay wiring + spokes + idc + ray are all up, so:
+      #   (a) the fleet-config overlay is wired and the hub is fully settled before we detach;
+      #   (b) a pivot FAILURE is NON-FATAL — the workshop is already complete and functional
+      #       with the hub still managed by kind, and the pivot fail-closes by restarting kind
+      #       (never a CFN CREATE_FAILED, review #1). kind-kro-ack only; disable with
+      #       HUB_PIVOT_ON_INSTALL=false. ignore_error + the inner guard both keep it non-fatal.
+      - cmd: |
+          if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "{{.HUB_PIVOT_ON_INSTALL | default "true"}}" = "true" ]; then
+            printf '{{.C_STEP}}▸ [#1033] Final step: hub self-adoption pivot (detaching from kind)…{{.C_RESET}}\n'
+            if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop ); then
+              printf '{{.C_OK}}  ✓ hub pivoted — kind bootstrap detached (stopped & recoverable).{{.C_RESET}}\n'
+            else
+              printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind; the pivot fail-closed and restarted kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+            fi
+          fi
+        ignore_error: true
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   # ============================================================

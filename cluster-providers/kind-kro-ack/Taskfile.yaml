@@ -750,6 +750,25 @@ tasks:
           name: {{.HUB_CLUSTER_NAME}}
           tenant: platform
           environment: control-plane
+          # Fleet role: the hub MUST be control-plane — the clusters-kro ApplicationSet
+          # matrix selects the hub via matchLabels{fleet_member: control-plane}. Set
+          # explicitly so the hub:pivot self-adoption (#775) serializes it into the hub
+          # instance spec and the EksCluster RGD stamps the ArgoCD cluster secret
+          # control-plane (not the default "spoke") — otherwise the hub is ejected from
+          # the matrix and the spokes are pruned (#1033).
+          fleetMember: control-plane
+          # [#1033] Hub is BORN with deletionPolicy=retain. The EksCluster RGD stamps
+          # services.k8s.aws/deletion-policy=retain onto EVERY AWS-backed child (the EKS
+          # Cluster, IAM roles, OIDC provider, security groups, access entries, the ack/
+          # argocd/kro Capabilities and all pod-identity associations), and kro then
+          # ENFORCES retain — it never reverts it. This is what makes the hub:pivot
+          # kind-side retain guard pass deterministically (a transient `kubectl annotate`
+          # on kro-owned children is reverted by kro within ~1s, which was aborting the
+          # pivot before it ever stopped kind or adopted on the hub), and it guarantees
+          # kind can never issue an AWS Delete on the real hub when it is stopped/deleted.
+          # The `destroy` task flips this to "delete" so teardown still removes the AWS
+          # resources (ACK cascade) instead of orphaning them to the sweep.
+          deletionPolicy: retain
           region: {{.AWS_REGION}}
           # managementRegion drives the ACK region annotation on the cluster-config
           # Secrets Manager secret (clusterConfigSecret). For this single-region/account
@@ -1574,8 +1593,84 @@ tasks:
             printf '{{.C_INFO}}  Secrets, AMP, OIDC and VPC cleanup.{{.C_RESET}}\n'
             exit 1
           fi
-      - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
-      - task: credentials:refresh
+      - |
+        # [#1033] Pivot-aware kubeconfig. After a hub self-adoption pivot kind is stopped
+        # (detach=stop) or gone (detach=delete), so `kind get kubeconfig` fails and the kind
+        # steps must be skipped (review #2). Detect that and point the Taskfile-wide KUBECONFIG
+        # at the HUB instead — the hub's own kro/ACK now manage it, and the hub EKS cluster is
+        # deleted below via the AWS API (aws eks delete-cluster), not through kind. On a
+        # non-pivoted stack the kind branch runs and behaves exactly as before.
+        if docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}" | grep -q . \
+           && kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}} 2>/dev/null; then
+          printf '{{.C_INFO}}  kind running — using kind kubeconfig for teardown.{{.C_RESET}}\n'
+          printf 'kind' > /tmp/peeks-destroy-mode
+        else
+          printf '{{.C_INFO}}  kind not running (pivoted/stopped/gone) — using hub kubeconfig for teardown.{{.C_RESET}}\n'
+          printf 'hub' > /tmp/peeks-destroy-mode
+          aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --kubeconfig {{.KUBECONFIG}} --alias {{.KIND_CLUSTER_NAME}} 2>/dev/null \
+            || printf '{{.C_INFO}}  (hub kubeconfig unavailable — hub may already be gone; teardown continues best-effort.){{.C_RESET}}\n'
+        fi
+      # [#1033 N4] credentials:refresh writes IDE/participant AWS creds into ack-system and
+      # rollout-restarts it. On a PIVOTED stack KUBECONFIG points at the HUB, whose ACK runs on
+      # capability roles and needs none of this; it also hard-fails when the hub is already gone
+      # (the task has no ignore_error). Only refresh on the kind kubeconfig.
+      - cmd: |
+          if [ "$(cat /tmp/peeks-destroy-mode 2>/dev/null)" = "kind" ]; then
+            ( cd "{{.ROOT_DIR}}" && task kind-kro-ack:credentials:refresh )
+          else
+            printf '{{.C_INFO}}  skipping credentials:refresh (hub/pivoted kubeconfig — hub ACK uses capability roles; review #1033 N4).{{.C_RESET}}\n'
+          fi
+        ignore_error: true
+      # [#1033 N5] The hub EksCluster is BORN with deletionPolicy=retain (hub:claim) so kind can
+      # never AWS-delete it. We flip it back to "delete" here as a DEFENSIVE measure: it only
+      # has an effect if the instance CR is ever GRACEFULLY deleted via k8s (deletionTimestamp
+      # set → ACK finalizer honours the policy). destroy does NOT gracefully delete the CR — it
+      # removes the hub via the AWS API (aws eks delete-capability / delete-cluster below) and
+      # `kind delete cluster` is not a graceful CR delete either — so the flip does NOT by itself
+      # drive the ACK cascade, and IAM/OIDC/SG residue is owned by the extended sweep regardless.
+      # The flip simply guarantees that IF something later gracefully deletes the retained CR, it
+      # won't orphan. Patch whichever instance kind exists, against the pivot-aware KUBECONFIG set
+      # above (kind pre-pivot, hub post-pivot). Best-effort: a no-op if no instance is reachable.
+      - cmd: |
+          # [#1033] On a PIVOTED stack the hub EksCluster is asserted by the `hub-self-adoption`
+          # ArgoCD Application (selfHeal:true) whose git manifest carries deletionPolicy:retain.
+          # If we flip the live instance to deletionPolicy=delete while that App is still
+          # running, selfHeal reverts the patch back to retain → ACK orphans (never deletes) the
+          # AWS children → IAM/OIDC/SG/access-entries leak to the sweep. So REMOVE the asserter
+          # FIRST: strip its argocd cascade finalizer and delete it non-cascading
+          # (--cascade=orphan) so deleting the App does not itself prune the EksCluster — the
+          # flip below then sticks. No-op on a non-pivoted stack (App absent).
+          kubectl -n argocd patch application hub-self-adoption --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+          kubectl -n argocd delete application hub-self-adoption --cascade=orphan --wait=false --ignore-not-found >/dev/null 2>&1 || true
+          flipped=0
+          for KK in ekscluster eksclusterwithvpc; do
+            if kubectl -n {{.HUB_CLUSTER_NAME}} get "$KK.kro.run" {{.HUB_CLUSTER_NAME}} >/dev/null 2>&1; then
+              if kubectl -n {{.HUB_CLUSTER_NAME}} patch "$KK.kro.run" {{.HUB_CLUSTER_NAME}} \
+                   --type merge -p '{"spec":{"deletionPolicy":"delete"}}' >/dev/null 2>&1; then
+                printf '{{.C_INFO}}  flipped %s/%s deletionPolicy=delete for teardown.{{.C_RESET}}\n' "$KK" "{{.HUB_CLUSTER_NAME}}"
+                flipped=1
+              fi
+            fi
+          done
+          if [ "$flipped" = 1 ]; then
+            # Wait on the REAL condition (not a fixed sleep): kro propagating deletion-policy=delete
+            # onto the ACK EKS Cluster child's annotation. Bounded to ~60s; proceed anyway if slow
+            # (the sweep still backstops IAM/OIDC/SG).
+            printf '{{.C_INFO}}  waiting for kro to propagate deletion-policy=delete to the ACK EKS Cluster child…{{.C_RESET}}\n'
+            for i in $(seq 1 30); do
+              if kubectl -n {{.HUB_CLUSTER_NAME}} get cluster.eks.services.k8s.aws \
+                   -o jsonpath='{range .items[*]}{.metadata.annotations.services\.k8s\.aws/deletion-policy}{"\n"}{end}' 2>/dev/null \
+                   | grep -qx delete; then
+                printf '{{.C_OK}}  ✓ deletion-policy=delete propagated to ACK EKS Cluster (after %ds).{{.C_RESET}}\n' "$((i*2))"
+                break
+              fi
+              [ "$i" = 30 ] && printf '{{.C_INFO}}  propagation not confirmed within 60s — continuing (sweep backstops residue).{{.C_RESET}}\n' || sleep 2
+            done
+          else
+            printf '{{.C_INFO}}  no hub kro instance reachable to flip (already gone) — sweep will backstop IAM/OIDC/SG.{{.C_RESET}}\n'
+          fi
+        ignore_error: true
       # Kill the Kind cluster FIRST — before hub:destroy-addons.
       # This stops KRO from reconciling the hub eksclusterwithvpc resource.
       # Without this, KRO may recreate the hub EKS cluster after we delete it
@@ -2511,6 +2606,15 @@ tasks:
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
         }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
+        # [#1033 Deliverable #9] The hub self-manage grant (eks:Describe/manage on the
+        # hub's OWN cluster + pod-identity ARNs) is NO LONGER applied imperatively here.
+        # This capability role is a kro/ACK-managed IAM Role, so ACK reconciles it back to
+        # its RGD-defined inlinePolicies on every pass and an out-of-band put-role-policy
+        # was silently stripped (observed live: role carried only AssumeWorkloadRoles +
+        # ManageIRSARoles after reconcile → adopted cluster/PIA children stayed
+        # AccessDenied). The grant now lives durably in rg-eks.yaml as the `SelfManageHub`
+        # inlinePolicy on ${schema.spec.name}-ack-capability-role, gated to the
+        # control-plane hub (fleetMember=="control-plane"). See the RGD for details.
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
 
@@ -2696,3 +2800,542 @@ tasks:
             done
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
+
+  hub:pivot:
+    desc: >-
+      [#775] Self-adopt the hub EksCluster from the ephemeral kind cluster onto the hub
+      EKS cluster itself, then stop/delete kind. DRY-RUN by default (PIVOT_DRY_RUN=true):
+      prints the hub-side manifest + plan and mutates nothing. The live pivot
+      (PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes) stops kind first (single reconciler — no
+      dual-controller conflict), adopts on the hub, gates on adoption-complete (instance
+      ACTIVE + every kro-owned child synced), then detaches per PIVOT_DETACH_MODE
+      (stop=default, recoverable; delete=`kind delete cluster`). No graceful CR delete,
+      so no finalizer runs and no AWS Delete is ever issued.
+
+      By default (HUB_PIVOT_GITOPS=true) the hub EksCluster is asserted via GitOps. The
+      provider is CONSUMER-AGNOSTIC: it reads the overlay repo the consumer wired into
+      <hub>/config (overlay_repo_url/revision/basepath) and REUSES the ArgoCD repo
+      credential the consumer registered (argocd/fleet-config-repo) — it never assumes a
+      specific consumer's GitLab/IDE/CloudFront or writes a repo password of its own. It
+      commits self-adoption/hub/<hub>.yaml to that overlay and a dedicated
+      `hub-self-adoption` ArgoCD Application reconciles it (destination = the hub cluster
+      NAME, since the EKS ArgoCD capability disables the loopback; selfHeal:true,
+      prune:false) — desired-state-from-git, so the instance can never be pruned. The live
+      pivot is REFUSED up front (nothing mutated) if no overlay repo is wired or the repo
+      credential is absent. HUB_PIVOT_GITOPS=false is a deliberate operator override that
+      adopts imperatively with no re-asserter (no automatic fallback).
+    vars:
+      PIVOT_DRY_RUN: '{{.PIVOT_DRY_RUN | default "true"}}'
+      PIVOT_CONFIRM: '{{.PIVOT_CONFIRM | default "no"}}'
+      KINDKC: '{{.ROOT_DIR}}/private/kubeconfig'
+      HUBKC: '{{.ROOT_DIR}}/private/hub-kubeconfig'
+      HUB_KIND: '{{if .HUB_VPC_ID}}EksCluster{{else}}EksclusterWithVpc{{end}}'
+      PIVOT_ADOPT_TIMEOUT_SEC: '{{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}}'
+      PIVOT_ADOPT_INTERVAL_SEC: '{{.PIVOT_ADOPT_INTERVAL_SEC | default "20"}}'
+      PIVOT_DETACH_MODE: '{{.PIVOT_DETACH_MODE | default "stop"}}'
+      # GitOps-assert the adopted hub EksCluster (commit to fleet-config + selfHeal/prune=false
+      # Application) instead of a one-shot kubectl apply; imperative fallback when false/unreachable.
+      HUB_PIVOT_GITOPS: '{{.HUB_PIVOT_GITOPS | default "true"}}'
+    cmds:
+      - task: hub:kubeconfig
+      - |
+        set -euo pipefail
+        HUB='{{.HUB_CLUSTER_NAME}}'; NS="$HUB"
+        KINDKC='{{.KINDKC}}'; HUBKC='{{.HUBKC}}'; REGION='{{.AWS_REGION}}'
+        kind_k() { KUBECONFIG="$KINDKC" kubectl "$@"; }
+        hub_k()  { KUBECONFIG="$HUBKC"  kubectl "$@"; }
+
+        printf '{{.C_STEP}}▸ hub:pivot ({{if eq .PIVOT_DRY_RUN "true"}}DRY-RUN{{else}}LIVE{{end}}) for %s{{.C_RESET}}\n' "$HUB"
+
+        # --- Preconditions (fail-closed) --------------------------------------
+        if ! kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}✗ kind has no {{.HUB_KIND}}/%s in ns %s — nothing to pivot (already pivoted?).{{.C_RESET}}\n' "$HUB" "$NS"
+          exit 1
+        fi
+        for rgd in ekscluster.kro.run vpc.kro.run; do
+          hub_k get resourcegraphdefinition "$rgd" >/dev/null 2>&1 \
+            || { printf '{{.C_ERR}}✗ hub missing RGD %s — hub ACK/KRO addons not synced yet.{{.C_RESET}}\n' "$rgd"; exit 1; }
+        done
+        for cap in ack kro; do
+          st=$(aws eks describe-capability --cluster-name "$HUB" --capability-name "$cap" --region "$REGION" \
+                 --query 'capability.status' --output text 2>/dev/null || echo UNKNOWN)
+          printf '{{.C_INFO}}  hub capability %-4s = %s{{.C_RESET}}\n' "$cap" "$st"
+        done
+
+        # --- 1. Serialize kind EksCluster spec -> hub-side manifest ------------
+        WORK=$(mktemp -d)
+        # [#1033 N3] EXIT trap. Under `set -e`, a failure AFTER kind is stopped (the ec2 /
+        # namespace apply, the clone mkdir/yq, or the imperative apply) would otherwise leave
+        # kind stopped with the hub half-adopted — while the workshop prints "fail-closed and
+        # restarted kind", which would be false. On any non-zero exit once kind has been
+        # stopped, restart kind and orphan the hub-side instance (retain → no AWS delete) so we
+        # return to single-manager (kind) state. DETACHED=1 (set at a successful detach) makes it
+        # a no-op; explicit abort branches set ABORT_HANDLED=1 so they aren't double-handled.
+        DETACHED=0; KIND_STOPPED=0; ABORT_HANDLED=0
+        pivot_cleanup() {
+          rc=$?
+          rm -rf "$WORK" 2>/dev/null || true
+          if [ "$DETACHED" != 1 ] && [ "$ABORT_HANDLED" != 1 ] && [ "$KIND_STOPPED" = 1 ] && [ "$rc" != 0 ]; then
+            printf '{{.C_ERR}}✗ pivot aborted unexpectedly (rc=%s) after kind was stopped — restarting kind + orphaning hub-side instance (retain → no AWS delete)…{{.C_RESET}}\n' "$rc"
+            [ -n "$KIND_NODES" ] && docker start $KIND_NODES >/dev/null 2>&1 || true
+            ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
+          orphan_hub_instance hub_k 2>/dev/null || true
+          fi
+        }
+        trap pivot_cleanup EXIT
+        # Project to a CLEAN manifest (apiVersion/kind/name/namespace/spec only): the kind
+        # instance's finalizers, kro.run/* labels and applyset annotations MUST be dropped —
+        # the hub kro assigns its own; applying them verbatim would hand it a foreign applyset.
+        # Inject two anti-prune ArgoCD annotations so no App treats the adopted CR as extraneous
+        # or prunes it: compare-options=IgnoreExtraneous, sync-options=Prune=false.
+        # Force three spec fields regardless of what the kind instance carried:
+        #   fleetMember=control-plane  — else it defaults to "spoke" on the hub, ejecting the
+        #       hub from the clusters-kro matrix (the relabel this PR fixes).
+        #   deletionPolicy=retain      — any graceful delete of the hub-side instance would
+        #       otherwise DeleteCluster the hub itself; destroy deletes the hub via the AWS API,
+        #       so retain loses nothing on teardown and closes every graceful-delete path.
+        #   createArgocdClusterSecret=false  — [verified live, kro 0.9.4-eks-1] the hub's ArgoCD
+        #       registration Secret (argocd/<hub>, the object the clusters-kro matrix selects on
+        #       fleet_member) is owned by hub:seed + the fleet-secret ExternalSecret, NOT kro.
+        #       hub:claim sets "true" only for the kind bootstrap (ESO can't yet register the hub
+        #       to itself). Keeping "true" on the adopted instance would pull that Secret into the
+        #       hub kro graph and churn the fleet_member label — the exact cause of spoke deletion.
+        #       "false" keeps it on the ESO path, so the pivot never re-materialises it. This is
+        #       the RGD's documented default, not a workaround.
+        kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o json \
+          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, annotations: {"argocd.argoproj.io/compare-options": "IgnoreExtraneous", "argocd.argoproj.io/sync-options": "Prune=false"}}, spec} | .spec.fleetMember = "control-plane" | .spec.deletionPolicy = "retain" | .spec.createArgocdClusterSecret = "false"' \
+          > "$WORK/hub-instance.json"
+        printf '{{.C_OK}}✓ serialized kind %s/%s spec -> hub-side manifest{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
+
+        # --- 2. (fallback path) ec2 adoption-fields manifests ------------------
+        if [ "{{.HUB_KIND}}" = "EksclusterWithVpc" ]; then
+          printf '{{.C_INFO}}  EksclusterWithVpc path — generating Class-2 ec2 adoption manifests{{.C_RESET}}\n'
+          SRC_KUBECONFIG="$KINDKC" VPC_CR_NAME="$HUB" VPC_CR_NS="$NS" REGION="$REGION" \
+            bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-adopt-ec2.sh' \
+            > "$WORK/ec2-adopt.yaml" || true
+        else
+          printf '{{.C_INFO}}  EksCluster (pre-created VPC) path — no Class-2 ec2 adoption needed{{.C_RESET}}\n'
+          : > "$WORK/ec2-adopt.yaml"
+        fi
+
+        # --- 3. Inventory kind-side AWS-backed children (informational) --------
+        # The pivot ADOPTS these on the hub, then discards kind WITHOUT a graceful CR delete,
+        # so no deletionTimestamp is set, no ACK finalizer runs and no AWS Delete is called.
+        printf '{{.C_STEP}}▸ kind-side AWS-backed children (will be adopted on the hub)…{{.C_RESET}}\n'
+        # CHILD_GKS = the ACK (AWS-backed) children of the EksCluster kro graph — they honour
+        # services.k8s.aws/deletion-policy, so these are the set the retain guard pins before
+        # kind stops. (Cluster-scoped Crossplane IAM roles are platform GitOps, not children here.)
+        CHILD_GKS="cluster.eks.services.k8s.aws accessentry.eks.services.k8s.aws securitygroup.ec2.services.k8s.aws podidentityassociation.eks.services.k8s.aws role.iam.services.k8s.aws policies.iam.services.k8s.aws openidconnectprovider.iam.services.k8s.aws capabilities.eks.services.k8s.aws secrets.secretsmanager.services.k8s.aws vpc.ec2.services.k8s.aws subnet.ec2.services.k8s.aws natgateway.ec2.services.k8s.aws elasticipaddress.ec2.services.k8s.aws internetgateway.ec2.services.k8s.aws routetable.ec2.services.k8s.aws"
+        # CHILD_GKS_INFO = non-ACK kro children — inventoried for completeness; not an AWS-delete
+        # risk (ESO only syncs; the underlying AWS secret is the secrets.secretsmanager ACK above).
+        CHILD_GKS_INFO="externalsecret.external-secrets.io"
+        for gk in $CHILD_GKS $CHILD_GKS_INFO; do
+          for cr in $(kind_k -n "$NS" get "$gk" -l kro.run/owned=true -o name 2>/dev/null); do
+            printf '{{.C_INFO}}  • %s{{.C_RESET}}\n' "$cr"
+          done
+        done
+
+        # adoption_gate <kubeconfig-accessor-fn>: prints per-child readiness on the hub;
+        # returns 0 only if the hub instance is ACTIVE AND every AWS-backed child reports
+        # synced/ready. Call ONLY in a condition context (returns non-zero by design).
+        adoption_gate() {
+          local K="$1"; local notready=0 st cr ok
+          st=$($K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o jsonpath='{.status.state}' 2>/dev/null || true)
+          printf '{{.C_INFO}}  hub instance {{.HUB_KIND}}/%s state=%s{{.C_RESET}}\n' "$HUB" "${st:-<none>}"
+          [ "$st" = "ACTIVE" ] || notready=1
+          for gk in $CHILD_GKS; do
+            for cr in $($K -n "$NS" get "$gk" -l kro.run/owned=true -o name 2>/dev/null); do
+              ok=$($K -n "$NS" get "$cr" -o jsonpath='{range .status.conditions[*]}{.type}={.status} {end}' 2>/dev/null \
+                    | grep -oE '(ACK\.ResourceSynced|Synced|Ready)=True' | head -1 || true)
+              if [ -n "$ok" ]; then
+                printf '{{.C_OK}}    ✓ %-55s synced{{.C_RESET}}\n' "$cr"
+              else
+                printf '{{.C_ERR}}    ✗ %-55s NOT synced{{.C_RESET}}\n' "$cr"
+                notready=1
+              fi
+            done
+          done
+          return $notready
+        }
+
+        # --- Spoke-integrity guard --------------------------------------------
+        # The pivot must be inert to the spoke instances the hub already manages
+        # (clusters-kro -> EksclusterWithVpc/EksCluster). Capture the baseline now; the gate
+        # below fails-closed if any spoke acquires a deletionTimestamp during the pivot — kind
+        # is never discarded while a spoke is being pruned, and is restarted to drive them back.
+        SPOKE_GKS="eksclusterwithvpc.kro.run ekscluster.kro.run"
+        spoke_instances() {
+          local K="$1" gk
+          for gk in $SPOKE_GKS; do
+            $K get "$gk" -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null || true
+          done | grep -v "^$NS/$HUB\$" | sort -u
+        }
+        SPOKE_BASELINE=$(spoke_instances hub_k || true)
+        if [ -n "$SPOKE_BASELINE" ]; then
+          printf '{{.C_INFO}}  spoke instances the pivot must NOT perturb:{{.C_RESET}}\n'
+          printf '%s\n' "$SPOKE_BASELINE" | sed 's/^/    • /'
+        else
+          printf '{{.C_INFO}}  no pre-existing spoke instances on the hub (nothing to protect).{{.C_RESET}}\n'
+        fi
+        # Returns non-zero (and prints) if any baseline spoke instance is deletion-marked.
+        spokes_intact() {
+          local K="$1" si ns name ts gk bad=0
+          [ -z "$SPOKE_BASELINE" ] && return 0
+          while IFS= read -r si; do
+            [ -z "$si" ] && continue
+            ns=${si%%/*}; name=${si#*/}
+            for gk in $SPOKE_GKS; do
+              ts=$($K -n "$ns" get "$gk" "$name" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)
+              if [ -n "$ts" ]; then
+                printf '{{.C_ERR}}    ✗ spoke %s/%s deletion-marked (%s) — pivot perturbed a spoke!{{.C_RESET}}\n' "$ns" "$name" "$ts"
+                bad=1
+              fi
+            done
+          done < <(printf '%s\n' "$SPOKE_BASELINE")
+          return $bad
+        }
+
+        # --- Hub-instance integrity guard + deleter forensics -----------------
+        # Detect a deletionTimestamp on the hub's OWN instance immediately and snapshot who
+        # issued the delete, so a regression names the deleter instead of us guessing. The
+        # anti-prune annotations on hub-instance.json are the primary defence; this is the
+        # fail-closed net + evidence collector.
+        capture_hub_deleter_forensics() {
+          local K="$1" ts="$2"
+          printf '{{.C_ERR}}  ✗ HUB instance {{.HUB_KIND}}/%s is DELETION-MARKED (%s) — capturing deleter forensics:{{.C_RESET}}\n' "$HUB" "$ts"
+          printf '{{.C_INFO}}  [forensic] hub instance (managed-fields show the last writer per field):{{.C_RESET}}\n'
+          $K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o yaml --show-managed-fields 2>&1 | sed 's/^/      /'
+          printf '{{.C_INFO}}  [forensic] events mentioning %s (ArgoCD prune emits a Delete/Prune event here):{{.C_RESET}}\n' "$HUB"
+          $K get events -A --sort-by=.metadata.creationTimestamp 2>/dev/null | grep -i "$HUB" | tail -40 | sed 's/^/      /' || true
+          printf '{{.C_INFO}}  [forensic] ArgoCD Applications tracking an EksCluster (prune flag + per-resource status = the smoking gun):{{.C_RESET}}\n'
+          $K get applications.argoproj.io -A -o json 2>/dev/null \
+            | jq -r '.items[] | . as $a | (($a.status.resources // [])[] | select(.kind=="EksCluster")) as $r | "\($a.metadata.namespace)/\($a.metadata.name) autoPrune=\($a.spec.syncPolicy.automated.prune // false) selfHeal=\($a.spec.syncPolicy.automated.selfHeal // false) -> \($r.namespace)/\($r.name) status=\($r.status // "n/a") requiresPruning=\($r.requiresPruning // "n/a")"' 2>/dev/null | sed 's/^/      /' || true
+          printf '{{.C_INFO}}  [forensic] all ApplicationSets (a generator pruning the hub out of its matrix would show here):{{.C_RESET}}\n'
+          $K get applicationsets.argoproj.io -A 2>/dev/null | sed 's/^/      /' || true
+          printf '{{.C_INFO}}  [forensic] hub instance labels / annotations / ownerRefs (applyset membership + any cascade owner):{{.C_RESET}}\n'
+          $K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" \
+            -o jsonpath='{"      labels:  "}{.metadata.labels}{"\n      annots:  "}{.metadata.annotations}{"\n      owners:  "}{.metadata.ownerReferences}{"\n"}' 2>/dev/null || true
+          printf '{{.C_INFO}}  [forensic] hub cluster secret fleet_member (must still be control-plane):{{.C_RESET}}\n'
+          $K -n argocd get secret -l argocd.argoproj.io/secret-type=cluster \
+            -o jsonpath='{range .items[*]}      {.metadata.name}  fleet_member={.metadata.labels.fleet_member}{"\n"}{end}' 2>/dev/null || true
+        }
+        # Returns non-zero (and dumps forensics) if the hub instance is deletion-marked.
+        hub_intact() {
+          local K="$1" ts
+          ts=$($K -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)
+          if [ -n "$ts" ]; then capture_hub_deleter_forensics "$K" "$ts"; return 1; fi
+          return 0
+        }
+
+        # orphan_hub_instance <kubeconfig-accessor-fn>: remove the adopted hub-side instance
+        # from the hub WITHOUT deleting any AWS resource, so an aborted pivot can restart kind
+        # and return to single-manager (kind-only) state instead of leaving BOTH kind and the
+        # hub reconciling the same AWS resources (review #4 dual-manager). Safe because the
+        # adopted instance carries deletionPolicy: retain (forced in the projection), so the
+        # kro delete cascades to the ACK children as RETAIN (orphan) — never an AWS Delete.
+        orphan_hub_instance() {
+          local K="$1"
+          # [#1033 GitOps] If the hub-self-adoption Application is asserting the instance,
+          # remove it FIRST so selfHeal cannot recreate the CR we are about to orphan. Strip
+          # the argocd cascade finalizer and delete non-cascading (--cascade=orphan) so
+          # deleting the App does NOT itself prune/delete the EksCluster — the orphan below
+          # handles the CR explicitly (retain → no AWS delete).
+          $K -n argocd patch application hub-self-adoption --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+          $K -n argocd delete application hub-self-adoption --cascade=orphan --wait=false --ignore-not-found >/dev/null 2>&1 || true
+          # Belt-and-suspenders: re-assert retain on the hub-side ACK children before removal.
+          for gk in $CHILD_GKS; do
+            $K -n "$NS" annotate "$gk" -l kro.run/owned=true services.k8s.aws/deletion-policy=retain --overwrite >/dev/null 2>&1 || true
+          done
+          # Remove the kro instance (non-blocking); children orphan via retain.
+          $K -n "$NS" delete {{.HUB_KIND}}.kro.run "$HUB" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+          # Force-clear the kro finalizer if the delete wedges, so the CR actually leaves the
+          # hub and the hub stops reconciling it (restores single-manager state after restart).
+          $K -n "$NS" patch {{.HUB_KIND}}.kro.run "$HUB" --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+          printf '{{.C_INFO}}  orphaned hub-side %s/%s (retain → no AWS delete); hub will stop reconciling it.{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
+        }
+
+        # --- Dry-run output ----------------------------------------------------
+        printf '{{.C_STEP}}▸ Hub-side instance manifest (would be applied on %s):{{.C_RESET}}\n' "$HUB"
+        jq -r '.' "$WORK/hub-instance.json" | sed 's/^/    /'
+        if [ -s "$WORK/ec2-adopt.yaml" ]; then
+          printf '{{.C_STEP}}▸ ec2 adoption manifests:{{.C_RESET}}\n'; sed 's/^/    /' "$WORK/ec2-adopt.yaml"
+        fi
+        printf '{{.C_STEP}}▸ Pivot plan: retain-pin kind-side ACK children (deletion-policy=retain → kind can never AWS-delete) -> stop kind nodes (docker stop) -> apply manifest on hub (adopt-or-create, single reconciler; fleetMember=control-plane, deletionPolicy=retain) -> WAIT adoption-complete (instance ACTIVE + every kro-owned child synced) -> detach=%s (stop: leave kind stopped & recoverable | delete: kind delete cluster). No kubectl delete of the CR, and retain on both sides means no path issues an AWS Delete.{{.C_RESET}}\n' '{{.PIVOT_DETACH_MODE}}'
+
+        if [ "{{.PIVOT_DRY_RUN}}" = "true" ]; then
+          printf '{{.C_OK}}✓ DRY-RUN complete — nothing mutated. Re-run with PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes to execute.{{.C_RESET}}\n'
+          exit 0
+        fi
+
+        # --- LIVE path (experimental, gated) -----------------------------------
+        if [ "{{.PIVOT_CONFIRM}}" != "yes" ]; then
+          printf '{{.C_ERR}}✗ Refusing live pivot without PIVOT_CONFIRM=yes.{{.C_RESET}}\n'; exit 1
+        fi
+
+        # --- Consumer-agnostic precondition (fail-closed, BEFORE any mutation) -------------
+        # A cluster provider reads inputs ONLY from config.yaml + <hub>/config; it never
+        # assumes or writes a specific consumer's systems (workshop GitLab, IDE, CloudFront).
+        # So the GitOps adoption uses the overlay repo the CONSUMER wired into <hub>/config
+        # (overlay_repo_url/revision/basepath) and REUSES the ArgoCD repo credential the
+        # consumer already registered (argocd/fleet-config-repo) — the provider resolves no
+        # GitLab URL and writes no repo password of its own. Refuse the live pivot UP FRONT
+        # (before stopping kind, so a refusal mutates nothing) if either is missing. The
+        # explicit operator override HUB_PIVOT_GITOPS=false adopts imperatively with no
+        # re-asserter and skips this requirement.
+        OVERLAY_URL=""; OVERLAY_REV="main"; OVERLAY_BP=""; REPO_USER=""; REPO_PASS=""
+        if [ "{{.HUB_PIVOT_GITOPS}}" = "true" ]; then
+          # Refresh the hub kubeconfig so the credential read is reliable standalone or in-install.
+          aws eks update-kubeconfig --name "$HUB" --region "$REGION" --alias "$HUB" --kubeconfig "$HUBKC" >/dev/null 2>&1 || true
+          set +e
+          HUB_CFG=$(aws secretsmanager get-secret-value --secret-id "$HUB/config" --region "$REGION" --query 'SecretString' --output text 2>/dev/null)
+          OVERLAY_URL=$(printf '%s' "$HUB_CFG" | jq -r '(.metadata | fromjson).overlay_repo_url      // ""'     2>/dev/null)
+          OVERLAY_REV=$(printf '%s' "$HUB_CFG" | jq -r '(.metadata | fromjson).overlay_repo_revision // "main"' 2>/dev/null)
+          OVERLAY_BP=$( printf '%s' "$HUB_CFG" | jq -r '(.metadata | fromjson).overlay_repo_basepath  // ""'     2>/dev/null)
+          REPO_USER=$(hub_k -n argocd get secret fleet-config-repo -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null)
+          REPO_PASS=$(hub_k -n argocd get secret fleet-config-repo -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)
+          set -e
+          [ -n "$OVERLAY_REV" ] && [ "$OVERLAY_REV" != "null" ] || OVERLAY_REV=main
+          [ "$OVERLAY_BP" = "null" ] && OVERLAY_BP="" || true
+          if [ -z "$OVERLAY_URL" ] || [ "$OVERLAY_URL" = "null" ]; then
+            printf '{{.C_ERR}}✗ Refusing live pivot: no overlay repo wired in %s/config (overlay_repo_url empty).{{.C_RESET}}\n' "$HUB"
+            printf '{{.C_INFO}}  A cluster provider is consumer-agnostic — it adopts the hub via the overlay repo the CONSUMER wires into <hub>/config (e.g. the workshop set-overlay-repo step) and reuses the ArgoCD repo credential the consumer registered. Wire the overlay first, then re-run. (Operator override: HUB_PIVOT_GITOPS=false adopts imperatively with no re-asserter.){{.C_RESET}}\n'
+            exit 1
+          fi
+          if [ -z "$REPO_PASS" ]; then
+            printf '{{.C_ERR}}✗ Refusing live pivot: overlay repo wired (%s) but no ArgoCD repo credential argocd/fleet-config-repo to reuse.{{.C_RESET}}\n' "$OVERLAY_URL"
+            printf '{{.C_INFO}}  The consumer must register the overlay repo credential before the pivot (its set-overlay-repo step). Re-run once it exists.{{.C_RESET}}\n'
+            exit 1
+          fi
+          # [#1033 S2] Reachability check INSIDE the precondition (before kind is stopped) so an
+          # unreachable / mis-authenticated overlay refuses up front with no stop/start cycle.
+          # Credential handling: GIT_ASKPASS feeds the password out-of-band so it is NEVER on
+          # git's argv (ps-visible) and needs no URL-encoding — the probed URL carries no secret.
+          OVERLAY_HOSTPATH="${OVERLAY_URL#https://}"
+          ASKPASS=$(mktemp); printf '#!/bin/sh\nexec echo "$REPO_PASS"\n' > "$ASKPASS"; chmod +x "$ASKPASS"
+          if ! GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 REPO_PASS="$REPO_PASS" \
+                 git -c credential.username="${REPO_USER:-x-access-token}" ls-remote "https://$OVERLAY_HOSTPATH" >/dev/null 2>&1; then
+            rm -f "$ASKPASS"
+            printf '{{.C_ERR}}✗ Refusing live pivot: overlay repo %s is not reachable with the registered ArgoCD credential (checked up front, before stopping kind).{{.C_RESET}}\n' "$OVERLAY_URL"
+            exit 1
+          fi
+          rm -f "$ASKPASS"
+          printf '{{.C_OK}}  ✓ consumer-supplied overlay repo + reusable ArgoCD credential present and reachable — %s @ %s.{{.C_RESET}}\n' "$OVERLAY_URL" "$OVERLAY_REV"
+        fi
+
+        # Identify this cluster's kind node containers (label set by kind).
+        KIND_NODES=$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}" 2>/dev/null || true)
+
+        # BEFORE stopping kind, pin every kind-side AWS-backed ACK child to
+        # services.k8s.aws/deletion-policy=retain — a declarative guarantee that kind's ACK can
+        # never issue an AWS Delete on the real hub resources, whatever sets a deletionTimestamp
+        # (stray delete, owner-ref cascade, prune, or a docker-stop race). retain = ACK drops its
+        # finalizer and orphans (preserves) the live AWS resource.
+        # [#1033 N6] Pin retain at the SOURCE first. On a pre-PR kind instance the children's
+        # services.k8s.aws/deletion-policy is OWNED by kro.run/applyset, so a bare `kubectl
+        # annotate` on the children is reverted by kro and the "retain-pinned N" log is a no-op.
+        # Patch the kind INSTANCE spec and let kro propagate deletion-policy=retain down to the
+        # ACK children (same propagation-wait shape as destroy), THEN keep the direct child
+        # annotate below as belt-and-suspenders.
+        printf '{{.C_STEP}}▸ [LIVE] pinning kind instance %s deletionPolicy=retain (kro propagates to children)…{{.C_RESET}}\n' "$HUB"
+        kind_k -n "$NS" patch {{.HUB_KIND}}.kro.run "$HUB" --type merge -p '{"spec":{"deletionPolicy":"retain"}}' >/dev/null 2>&1 || true
+        for i in $(seq 1 30); do
+          if kind_k -n "$NS" get cluster.eks.services.k8s.aws \
+               -o jsonpath='{range .items[*]}{.metadata.annotations.services\.k8s\.aws/deletion-policy}{"\n"}{end}' 2>/dev/null \
+               | grep -qx retain; then
+            printf '{{.C_OK}}  ✓ kro propagated deletion-policy=retain to the kind-side ACK EKS Cluster (after %ds).{{.C_RESET}}\n' "$((i*2))"
+            break
+          fi
+          [ "$i" = 30 ] && printf '{{.C_INFO}}  retain propagation not confirmed within 60s — the direct child annotate below still pins it.{{.C_RESET}}\n' || sleep 2
+        done
+        printf '{{.C_STEP}}▸ [LIVE] pinning kind-side ACK children to deletion-policy=retain (never delete AWS on kind stop)…{{.C_RESET}}\n'
+        RETAIN_N=0
+        for gk in $CHILD_GKS; do
+          for cr in $(kind_k -n "$NS" get "$gk" -l kro.run/owned=true -o name 2>/dev/null); do
+            if kind_k -n "$NS" annotate "$cr" services.k8s.aws/deletion-policy=retain --overwrite >/dev/null 2>&1; then
+              RETAIN_N=$((RETAIN_N+1))
+            fi
+          done
+        done
+        printf '{{.C_OK}}  ✓ retain-pinned %d kind-side ACK child resource(s).{{.C_RESET}}\n' "$RETAIN_N"
+
+        # STOP kind FIRST — halt its kube-apiserver + kro/ACK controllers so ONLY the
+        # hub reconciles the adopted resources (no dual-manager conflict). docker stop
+        # preserves etcd in the container fs -> recoverable with `docker start`.
+        printf '{{.C_STEP}}▸ [LIVE] stopping kind nodes so only the hub reconciles…{{.C_RESET}}\n'
+        if [ -n "$KIND_NODES" ]; then docker stop $KIND_NODES; \
+          else printf '{{.C_INFO}}  no running kind nodes for {{.KIND_CLUSTER_NAME}} (already stopped?).{{.C_RESET}}\n'; fi
+        KIND_STOPPED=1  # [#1033 N3] from here, an unexpected exit must restart kind (EXIT trap)
+
+        # ADOPT on the hub (kind is down -> single reconciler, no conflict).
+        printf '{{.C_STEP}}▸ [LIVE] adopting on hub (adopt-or-create)…{{.C_RESET}}\n'
+        [ -s "$WORK/ec2-adopt.yaml" ] && hub_k apply -f "$WORK/ec2-adopt.yaml"
+        hub_k create namespace "$NS" --dry-run=client -o yaml | hub_k apply -f -
+
+        # Commit the EksCluster to the CONSUMER's overlay repo and let the hub's OWN ArgoCD
+        # assert it (selfHeal + prune:false) — desired-state-from-git, so the CR can never be
+        # pruned (a one-shot kubectl apply has no re-asserter if something deletes it).
+        # Coordinates + credential were resolved and validated in the consumer-agnostic
+        # precondition above: the provider reads overlay_repo_url/revision/basepath from
+        # <hub>/config and reuses the ArgoCD repo credential argocd/fleet-config-repo the
+        # consumer registered — it never builds a GitLab URL or writes a repo password itself.
+        HUB_GITOPS_ACTIVE=0
+        if [ "{{.HUB_PIVOT_GITOPS}}" = "true" ]; then
+          # Authenticated push URL = overlay URL + the reused credential (never logged).
+          OVERLAY_HOSTPATH=${OVERLAY_URL#https://}
+          if [ -n "$REPO_USER" ]; then PUSH_URL="https://$REPO_USER:$REPO_PASS@$OVERLAY_HOSTPATH"; else PUSH_URL="https://$REPO_PASS@$OVERLAY_HOSTPATH"; fi
+          # Manifest path inside the overlay repo (honour basepath if the overlay nests).
+          REL_DIR="self-adoption/hub"; [ -n "$OVERLAY_BP" ] && REL_DIR="${OVERLAY_BP%/}/self-adoption/hub"
+          printf '{{.C_STEP}}▸ [LIVE] GitOps adoption: committing hub EksCluster to the overlay repo (%s @ %s, path %s)…{{.C_RESET}}\n' "$OVERLAY_URL" "$OVERLAY_REV" "$REL_DIR"
+          PUSHED=0
+          if git ls-remote "$PUSH_URL" >/dev/null 2>&1; then
+            REPO_DIR=$(mktemp -d)
+            if git clone --branch "$OVERLAY_REV" --single-branch "$PUSH_URL" "$REPO_DIR" >/dev/null 2>&1 && [ -d "$REPO_DIR/.git" ]; then
+              # self-adoption/hub/<hub>.yaml is OUTSIDE every appset's scan path
+              # (clusters-kro reads gitops/fleet/spoke-values/...), so no appset ever
+              # treats it as its own child → only the dedicated App below manages it.
+              mkdir -p "$REPO_DIR/$REL_DIR"
+              yq -p=json -o=yaml '.' "$WORK/hub-instance.json" > "$REPO_DIR/$REL_DIR/$HUB.yaml"
+              if ( cd "$REPO_DIR"; git add -A; \
+                   git -c user.email=pivot@peeks.local -c user.name=peeks-pivot \
+                     commit -m "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1 || true; \
+                   git push "$PUSH_URL" "HEAD:$OVERLAY_REV" >/dev/null 2>&1 ); then PUSHED=1; fi
+            fi
+            rm -rf "$REPO_DIR"
+          fi
+          if [ "$PUSHED" = 1 ]; then
+            # Dedicated hub self-adoption Application. source.repoURL = the overlay URL;
+            # ArgoCD authenticates with the CONSUMER-registered argocd/fleet-config-repo
+            # credential (the provider neither writes nor owns that Secret). destination.name =
+            # the registered hub cluster NAME — the EKS ArgoCD capability DISABLES the in-cluster
+            # loopback (https://kubernetes.default.svc), so a name-based destination is REQUIRED.
+            # selfHeal re-asserts the EksCluster if anything deletes it; prune:false guarantees
+            # ArgoCD itself NEVER deletes it. The committed manifest carries deletionPolicy:retain,
+            # so even a selfHeal-driven delete/recreate on the ACK children orphans (never
+            # AWS-deletes) the live cluster.
+            if cat <<APPEOF | hub_k apply -f -
+        apiVersion: argoproj.io/v1alpha1
+        kind: Application
+        metadata:
+          name: hub-self-adoption
+          namespace: argocd
+        spec:
+          project: default
+          destination:
+            name: "$HUB"
+            namespace: "$NS"
+          source:
+            repoURL: "$OVERLAY_URL"
+            targetRevision: "$OVERLAY_REV"
+            path: "$REL_DIR"
+          syncPolicy:
+            automated:
+              selfHeal: true
+              prune: false
+            syncOptions:
+              - CreateNamespace=true
+              - ServerSideApply=true
+        APPEOF
+            then
+              HUB_GITOPS_ACTIVE=1
+              printf '{{.C_OK}}✓ hub EksCluster committed to the overlay repo + hub-self-adoption Application applied (selfHeal, prune=false — desired-state-from-git, un-prunable).{{.C_RESET}}\n'
+            fi
+          fi
+          if [ "$HUB_GITOPS_ACTIVE" != 1 ]; then
+            printf '{{.C_ERR}}✗ [LIVE] GitOps adoption could not commit to the overlay repo (%s) — ABORTING; kind NOT discarded. There is NO imperative fallback here (that was the two-behaviour coupling this change removes); restart kind and retry once the overlay is reachable.{{.C_RESET}}\n' "$OVERLAY_URL"
+            ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
+            [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+            exit 1
+          fi
+        else
+          # Deliberate operator override (HUB_PIVOT_GITOPS=false): adopt imperatively with no
+          # git re-asserter. Documented escape hatch for a bare provider with no overlay repo —
+          # NOT an automatic fallback (the implicit fallback that made the provider behave two
+          # ways has been removed).
+          printf '{{.C_INFO}}  [LIVE] HUB_PIVOT_GITOPS=false — imperative adopt on the hub (operator override; no re-asserter).{{.C_RESET}}\n'
+          hub_k apply -f "$WORK/hub-instance.json"
+        fi
+
+        # THE gate: do not detach until the hub demonstrably owns every resource.
+        printf '{{.C_STEP}}▸ [LIVE] waiting for adoption-complete (max {{.PIVOT_ADOPT_TIMEOUT_SEC}}s)…{{.C_RESET}}\n'
+        GATE_OK=0; SPOKE_PERTURBED=0; HUB_DELETED=0; HUB_FORENSICS_DONE=0; GATE_LOG="$WORK/gate.out"
+        DEADLINE=$(( $(date +%s) + {{.PIVOT_ADOPT_TIMEOUT_SEC}} ))
+        while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+          # Fail-closed the moment the pivot perturbs a pre-existing spoke (#1033).
+          if ! spokes_intact hub_k; then SPOKE_PERTURBED=1; break; fi
+          # Hub-instance deletion handling (the 14:07 regression):
+          #  - imperative mode: fail-closed immediately (no re-asserter) + dump forensics.
+          #  - GitOps mode (HUB_GITOPS_ACTIVE): the hub-self-adoption Application re-asserts
+          #    the instance via selfHeal, so a deletion is self-recovered — do NOT fail-closed.
+          #    Capture forensics ONCE (so we still name any deleter) then keep polling; the
+          #    adoption_gate below simply shows notready during the brief recreate window.
+          if [ "$HUB_GITOPS_ACTIVE" = 1 ]; then
+            if [ "$HUB_FORENSICS_DONE" != 1 ] && ! hub_intact hub_k; then
+              HUB_FORENSICS_DONE=1
+              printf '{{.C_INFO}}  (GitOps mode) hub instance was deletion-marked — ArgoCD selfHeal will re-assert it from git; continuing (not fail-closed).{{.C_RESET}}\n'
+            fi
+          else
+            if ! hub_intact hub_k; then HUB_DELETED=1; break; fi
+          fi
+          if adoption_gate hub_k >"$GATE_LOG" 2>&1; then GATE_OK=1; break; fi
+          sleep {{.PIVOT_ADOPT_INTERVAL_SEC}}
+        done
+        cat "$GATE_LOG" 2>/dev/null || true
+        if [ "$HUB_DELETED" = 1 ]; then
+          printf '{{.C_ERR}}✗ HUB INSTANCE DELETION-MARKED during adoption — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  The deleter forensics are dumped above. Orphaning the hub-side instance (retain → no AWS delete), then restarting kind to resume prior management…{{.C_RESET}}\n'
+          ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
+          orphan_hub_instance hub_k
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          printf '{{.C_ERR}}  Something deleted {{.HUB_KIND}}/%s on the hub. The anti-prune annotations should stop an ArgoCD prune; if it recurs, the forensics above name the actual deleter.{{.C_RESET}}\n' "$HUB"
+          exit 1
+        fi
+        if [ "$SPOKE_PERTURBED" = 1 ]; then
+          printf '{{.C_ERR}}✗ PIVOT PERTURBED A SPOKE INSTANCE — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Orphaning the hub-side instance (retain → no AWS delete), then restarting kind. NOTE: a deletion-marked spoke CR cannot be un-marked — it completes deletion; with deletionPolicy=retain the AWS EKS cluster survives and kind re-creates the CR (delete-then-recreate, not in-place recovery).{{.C_RESET}}\n'
+          ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
+          orphan_hub_instance hub_k
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          printf '{{.C_ERR}}  A spoke was deletion-marked during adoption — this must not happen; investigate the fleetMember label on the hub cluster secret before retrying.{{.C_RESET}}\n'
+          exit 1
+        fi
+        if [ "$GATE_OK" != 1 ]; then
+          printf '{{.C_ERR}}✗ ADOPTION NOT COMPLETE within timeout — ABORTING; kind NOT discarded.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Orphaning the hub-side instance (retain → no AWS delete), then restarting kind to resume its management (recovering prior state)…{{.C_RESET}}\n'
+          ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
+          orphan_hub_instance hub_k
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          printf '{{.C_ERR}}  Re-run when the hub is healthy; adopt-or-create is idempotent.{{.C_RESET}}\n'
+          exit 1
+        fi
+        printf '{{.C_OK}}✓ adoption-complete gate PASSED — the hub owns every resource.{{.C_RESET}}\n'
+
+        # Final pre-detach assertion: spokes must still be intact right before we make
+        # kind unrecoverable/stopped (#1033). Covers the gate-pass -> detach window.
+        if ! spokes_intact hub_k; then
+          printf '{{.C_ERR}}✗ A spoke was deletion-marked after the gate passed — ABORTING before detach; orphaning hub-side instance then restarting kind.{{.C_RESET}}\n'
+          ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
+          orphan_hub_instance hub_k
+          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          exit 1
+        fi
+
+        # DETACH outcome (PIVOT_DETACH_MODE: stop=default recoverable | delete=permanent).
+        # Neither path sets a deletionTimestamp on the CR, so no finalizer runs and ACK
+        # never issues an AWS Delete; the live resources stay, now solely hub-owned.
+        if [ "{{.PIVOT_DETACH_MODE}}" = "delete" ]; then
+          printf '{{.C_STEP}}▸ [LIVE] PIVOT_DETACH_MODE=delete — discarding kind %s (permanent)…{{.C_RESET}}\n' '{{.KIND_CLUSTER_NAME}}'
+          kind delete cluster --name '{{.KIND_CLUSTER_NAME}}'
+        else
+          printf '{{.C_OK}}▸ [LIVE] PIVOT_DETACH_MODE=stop — leaving kind STOPPED (recoverable via docker start).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  Once validated, re-run with PIVOT_DETACH_MODE=delete to remove kind permanently.{{.C_RESET}}\n'
+        fi
+        DETACHED=1  # [#1033 N3] detach committed (kind intentionally stopped/deleted) — EXIT trap must NOT restart kind
+
+        # Verify the real EKS cluster survived.
+        sleep 5
+        FINAL=$(aws eks describe-cluster --name "$HUB" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null || echo MISSING)
+        if [ "$FINAL" = "ACTIVE" ]; then
+          printf '{{.C_OK}}✓ [LIVE] pivot done. %s ACTIVE and now self-managed by the hub (kind {{if eq .PIVOT_DETACH_MODE "delete"}}deleted{{else}}stopped{{end}}).{{.C_RESET}}\n' "$HUB"
+        else
+          printf '{{.C_ERR}}✗ [LIVE] post-pivot EKS status=%s (expected ACTIVE) — investigate.{{.C_RESET}}\n' "$FINAL"; exit 1
+        fi

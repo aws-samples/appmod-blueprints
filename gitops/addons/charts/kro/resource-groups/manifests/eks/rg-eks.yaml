@@ -15,6 +15,17 @@ spec:
       name: string
       tenant: string
       environment: string
+      # Fleet role of this cluster, stamped onto the ArgoCD cluster-registration
+      # Secret label `fleet_member` (and the <cluster>/config fleet-secret `addons`
+      # blob). The `clusters-kro` ApplicationSet matrix selects the hub via
+      # matchLabels{fleet_member: control-plane} (see gitops/bootstrap/clusters-kro.yaml),
+      # so the hub MUST be "control-plane" and every spoke "spoke". Previously this was
+      # hardcoded "spoke" in the Secret templates below, which — when the hub pivoted to
+      # self-adoption (#775) and reconciled its own EksCluster — relabeled the hub
+      # control-plane -> spoke, ejecting it from the matrix and pruning the spokes (#1033).
+      # Default "spoke" so every spoke is correct with no change; hub:claim sets
+      # "control-plane".
+      fleetMember: string | default="spoke"
       # ACK deletion-policy for this cluster's IAM roles + OIDC provider.
       # "delete" (default) = torn down with the cluster (test/workshop events,
       # even for environment=prod). "retain" = keep the AWS resources on delete
@@ -168,6 +179,16 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            # #775 hub self-adoption pivot: adopt an existing ingress SG instead of a
+            # bare Create that fails Terminal "Resource already exists" on a pivot/re-run
+            # (EC2 rejects a duplicate group-name in a VPC). NO adoption-fields are needed:
+            # ACK's SecurityGroup find resolves the live sg-id from (group-name, vpc-id)
+            # when Status.ID is unset (ec2-controller getSecurityGroupID), and both are in
+            # spec — so the same manifest CREATES on a fresh cluster and ADOPTS on pivot.
+            services.k8s.aws/adoption-policy: adopt-or-create
+            # Honored only on a graceful kubectl-delete (task destroy); the pivot never
+            # graceful-deletes, so this does not affect adoption.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-ingress-http"
           description: "HTTP from anywhere"
@@ -213,6 +234,16 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
+            # #775 hub self-adoption pivot: adopt an existing ingress SG instead of a
+            # bare Create that fails Terminal "Resource already exists" on a pivot/re-run
+            # (EC2 rejects a duplicate group-name in a VPC). NO adoption-fields are needed:
+            # ACK's SecurityGroup find resolves the live sg-id from (group-name, vpc-id)
+            # when Status.ID is unset (ec2-controller getSecurityGroupID), and both are in
+            # spec — so the same manifest CREATES on a fresh cluster and ADOPTS on pivot.
+            services.k8s.aws/adoption-policy: adopt-or-create
+            # Honored only on a graceful kubectl-delete (task destroy); the pivot never
+            # graceful-deletes, so this does not affect adoption.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-ingress-https"
           description: "HTTPS from anywhere"
@@ -354,6 +385,9 @@ spec:
             nodeRoleArn: "${nodeRole.status.ackResourceMetadata.arn}"
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            # deletion-policy=retain (via schema.spec.deletionPolicy) so a graceful
+            # `task destroy --retain` never issues DeleteCluster on the adopted hub.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}"
           roleARN: "${clusterRole.status.ackResourceMetadata.arn}"
@@ -434,6 +468,16 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            # #775 hub self-adoption pivot: OIDC providers are keyed by ARN
+            # (GetOpenIDConnectProvider needs it) and ACK cannot find one from a spec
+            # attribute, so adopt-or-create REQUIRES the ARN in adoption-fields —
+            # otherwise a pivot/re-run hits IAM Terminal "EntityAlreadyExists". The ARN
+            # is derivable: issuer from status minus the https:// scheme, under this
+            # account/partition. On a fresh cluster the ARN does not exist yet ->
+            # GetOpenIDConnectProvider NoSuchEntity -> ACK creates (same as the
+            # cni-metrics-helper Policy adoption-fields pattern above).
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:${schema.spec.aws_partition}:iam::${schema.spec.accountId}:oidc-provider/${ekscluster.status.identity.oidc.issuer.replace("https://", "")}"}
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             # force dependency on ekscluster: the OIDC issuer only exists once ACTIVE
             eksclusterArn: "${ekscluster.status.ackResourceMetadata.arn}"
@@ -510,7 +554,7 @@ spec:
           labels:
             argocd.argoproj.io/secret-type: cluster
             # Compatible fleet-management
-            fleet_member: spoke
+            fleet_member: "${schema.spec.fleetMember}"
             tenant: "${schema.spec.tenant}"
             environment: "${schema.spec.environment}"
             provider: "${schema.spec.provider}"
@@ -676,6 +720,10 @@ spec:
             services.k8s.aws/region: ${schema.spec.managementRegion}
             services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
             services.k8s.aws/adoption-policy: adopt-or-create
+            # [#1033 N2] follow the instance deletionPolicy so a retain-born hub does NOT
+            # let ACK delete <hub>/config (overlay wiring + fleet-secret source) on a
+            # graceful delete. Default "delete" keeps normal installs unchanged.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -721,7 +769,7 @@ spec:
         type: Opaque
         stringData:
           config: |
-            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"aws_private_subnet_ids\":\"${schema.spec.network.subnets.workers.subnet1ID},${schema.spec.network.subnets.workers.subnet2ID}\",\"aws_cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"insecure\":\"${schema.spec.insecure}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"spoke\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
+            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"aws_private_subnet_ids\":\"${schema.spec.network.subnets.workers.subnet1ID},${schema.spec.network.subnets.workers.subnet2ID}\",\"aws_cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"insecure\":\"${schema.spec.insecure}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"${schema.spec.fleetMember}\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
 
     - id: clusterConfigSecretFleet
       includeWhen:
@@ -738,6 +786,10 @@ spec:
             services.k8s.aws/region: ${schema.spec.managementRegion}
             services.k8s.aws/owner-account-id: "${schema.spec.accountId}"
             services.k8s.aws/adoption-policy: adopt-or-create
+            # [#1033 N2] follow the instance deletionPolicy so a retain-born hub does NOT
+            # let ACK delete <hub>/config (overlay wiring + fleet-secret source) on a
+            # graceful delete. Default "delete" keeps normal installs unchanged.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
           ownerReferences:
             - apiVersion: kro.run/v1alpha1
               kind: ${schema.kind}
@@ -809,6 +861,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             # #force dependency on ekscluster (NOT on argocdRole's ACK status ARN).
             # Previously principalARN read ${argocdRole.status.ackResourceMetadata.arn};
             # if ACK had not yet populated the Role's status when KRO evaluated this node,
@@ -846,6 +899,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${schema.spec.name}"
           accessPolicies:
@@ -877,6 +931,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           accessPolicies:
@@ -909,6 +964,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${ekscluster.spec.name}"
           accessPolicies:
@@ -1024,6 +1080,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${schema.spec.name}"
           accessPolicies:
@@ -1057,6 +1114,9 @@ spec:
               controller: false
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
+            # [#1033 N2] follow the instance deletionPolicy so a retain-born hub does NOT
+            # let ACK delete the hub's ESO IAM role on a graceful delete.
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
         spec:
@@ -1096,12 +1156,15 @@ spec:
     # it does not leak on teardown because the association is cluster-scoped and
     # dies with the EKS Cluster (which is delete, not retain).
     #
-    # SCOPE: this adopt-or-create default is applied to PodIdentityAssociations
-    # only. The other ACK resources in this RGD (Cluster, SecurityGroup, Role,
-    # AccessEntry, Capability, Addon) still do a plain Create and are NOT set to
-    # cluster / IAM role is a larger, riskier design decision tracked separately
-    # in https://github.com/aws-samples/appmod-blueprints/issues/775 ("adopt
-    # existing cluster"). Do not widen adopt-or-create beyond PIAs in this PR.
+    # SCOPE / HISTORY: adopt-or-create started here on PodIdentityAssociations only.
+    # #855 then widened it to every name/attribute-keyed resource (Cluster, Role,
+    # AccessEntry, Capability, cni Policy, OIDC). #775 (hub self-adoption pivot)
+    # completes it on the last two create-only nodes — the ingress SecurityGroups
+    # (adopted by group-name+vpc-id, no adoption-fields) and the OIDC provider
+    # (adopted by derived ARN) — so a hub re-apply ADOPTS the live resources in place
+    # instead of colliding with EC2/IAM "already exists". See
+    # https://github.com/aws-samples/appmod-blueprints/issues/775 ("adopt existing
+    # cluster"). Every ACK resource in this RGD is now adopt-or-create.
     ###########################################################
     - id: externalSecretsPodIdentityAssociation
       readyWhen:
@@ -1949,8 +2012,10 @@ spec:
             services.k8s.aws/adoption-policy: adopt-or-create
             services.k8s.aws/adoption-fields: |
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-cni-metrics-helper-policy"}
-            # PRODUCTION SAFETY: add services.k8s.aws/deletion-policy: retain here to retain
-            # the AWS policy when deleting this Kro instance (may be referenced by other resources)
+            # [#1033 N2] follow the instance deletionPolicy so a retain-born hub does NOT
+            # let ACK delete the AWS policy on a graceful delete (default "delete" keeps
+            # normal installs unchanged).
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
           ownerReferences:
@@ -2170,37 +2235,37 @@ spec:
           # schema.spec.name already carries the resource prefix (e.g. peeks-spoke-dev),
           # so do NOT prepend resourcePrefix again (was producing peeks-peeks-...).
           name: "${schema.spec.name}-ack-capability-role"
-          inlinePolicies:
-            AssumeWorkloadRoles: |
-              {
-                "Version": "2012-10-17",
-                "Statement": [
-                  {
-                    "Effect": "Allow",
-                    "Action": ["sts:AssumeRole", "sts:TagSession"],
-                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.resourcePrefix}-cluster-mgmt-*"]
-                  }
-                ]
-              }
-            ManageIRSARoles: |
-              {
-                "Version": "2012-10-17",
-                "Statement": [
-                  {
-                    "Effect": "Allow",
-                    "Action": [
-                      "iam:GetRole", "iam:CreateRole", "iam:DeleteRole",
-                      "iam:TagRole", "iam:UntagRole", "iam:UpdateRole",
-                      "iam:UpdateAssumeRolePolicy",
-                      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
-                      "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
-                      "iam:ListRoleTags", "iam:ListInstanceProfilesForRole",
-                      "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy"
-                    ],
-                    "Resource": ["arn:aws:iam::${schema.spec.accountId}:role/${schema.spec.name}-*"]
-                  }
-                ]
-              }
+          # inlinePolicies is a CEL-conditional map built with a TERNARY that returns the
+          # whole map (NOT Maps.merge). The two base policies are always present; the
+          # control-plane branch additionally includes `SelfManageHub`, the spoke branch
+          # does not. Gated on schema.spec.fleetMember == "control-plane".
+          #
+          # Why a ternary-duplicate and not `.merge()`: `.merge()` is a managed-capability
+          # CEL extension (absent in some kro builds) and the `${{` map-literal opener is
+          # mishandled by some kro versions (strips a brace). The space-form standalone
+          # ternary `${ cond ? {..} : {..} }` is plain CEL — no extension, no `${{`
+          # ambiguity — and was render-validated on a real kro cluster: the control-plane
+          # instance gets {AssumeWorkloadRoles, ManageIRSARoles, SelfManageHub}, the spoke
+          # instance gets {AssumeWorkloadRoles, ManageIRSARoles} (SelfManageHub absent),
+          # all policy docs valid JSON with ARNs correctly interpolated.
+          #
+          # Why gated on control-plane (#1033 Deliverable #9): the hub self-adoption pivot
+          # makes the hub's own ACK capability role reconcile the hub's OWN EksCluster +
+          # pod-identity children. AWS's managed ACK policy deliberately withholds
+          # self-reference on the cluster's own ARN, so without this grant the adopted
+          # cluster.eks + PodIdentityAssociation children fail eks:DescribeCluster /
+          # eks:DescribePodIdentityAssociation (AccessDeniedException) and the pivot never
+          # reaches GREEN. A SPOKE never self-adopts (its control plane is managed by the
+          # hub), so a spoke capability role granting eks:* on its own cluster ARN would be
+          # a pure least-privilege over-grant — hence the fleetMember gate.
+          #
+          # Layer (RGD, not Taskfile): this role is itself a kro/ACK-managed IAM Role, so
+          # ACK reconciles it back to the RGD-defined inlinePolicies on every pass — an
+          # imperative `aws iam put-role-policy` (the earlier #9 attempt) was silently
+          # stripped. Writing it here is durable. ManageIRSARoles already grants
+          # iam:PutRolePolicy on role/${schema.spec.name}-* (which matches this role), so
+          # self-attaching this inline policy needs NO new IAM surface.
+          inlinePolicies: '${ schema.spec.fleetMember == "control-plane" ? {"AssumeWorkloadRoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:" + schema.spec.aws_partition + ":iam::" + schema.spec.accountId + ":role/" + schema.spec.resourcePrefix + "-cluster-mgmt-*\"]}]}", "ManageIRSARoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:" + schema.spec.aws_partition + ":iam::" + schema.spec.accountId + ":role/" + schema.spec.name + "-*\"]}]}", "SelfManageHub": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DescribeOwnCluster\",\"Effect\":\"Allow\",\"Action\":[\"eks:DescribeCluster\",\"eks:UpdateClusterConfig\",\"eks:UpdateClusterVersion\",\"eks:ListPodIdentityAssociations\",\"eks:CreatePodIdentityAssociation\",\"eks:TagResource\",\"eks:ListTagsForResource\"],\"Resource\":\"arn:" + schema.spec.aws_partition + ":eks:" + schema.spec.region + ":" + schema.spec.accountId + ":cluster/" + schema.spec.name + "\"},{\"Sid\":\"ManageOwnPodIdentity\",\"Effect\":\"Allow\",\"Action\":[\"eks:DescribePodIdentityAssociation\",\"eks:UpdatePodIdentityAssociation\",\"eks:DeletePodIdentityAssociation\",\"eks:TagResource\",\"eks:ListTagsForResource\"],\"Resource\":\"arn:" + schema.spec.aws_partition + ":eks:" + schema.spec.region + ":" + schema.spec.accountId + ":podidentityassociation/" + schema.spec.name + "/*\"}]}"} : {"AssumeWorkloadRoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\",\"sts:TagSession\"],\"Resource\":[\"arn:" + schema.spec.aws_partition + ":iam::" + schema.spec.accountId + ":role/" + schema.spec.resourcePrefix + "-cluster-mgmt-*\"]}]}", "ManageIRSARoles": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:CreateRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UntagRole\",\"iam:UpdateRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:AttachRolePolicy\",\"iam:DetachRolePolicy\",\"iam:ListAttachedRolePolicies\",\"iam:ListRolePolicies\",\"iam:ListRoleTags\",\"iam:ListInstanceProfilesForRole\",\"iam:PutRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:GetRolePolicy\"],\"Resource\":[\"arn:" + schema.spec.aws_partition + ":iam::" + schema.spec.accountId + ":role/" + schema.spec.name + "-*\"]}]}"} }'
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
@@ -2313,6 +2378,7 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             services.k8s.aws/region: ${schema.spec.region}
             services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${schema.spec.name}"
           principalARN: "${ackCapabilityRole.status.ackResourceMetadata.arn}"

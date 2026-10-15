@@ -12,6 +12,10 @@ spec:
     spec:
       name: string
       region: string
+      # [#1033 N1] ACK deletion-policy applied to every EC2 node below. Passed down from
+      # EksclusterWithVpc so a retain-born hub's VPC/NAT/EIP/subnets are never AWS-deleted
+      # on an aborted pivot. Default "delete" keeps standalone VPC installs unchanged.
+      deletionPolicy: string | default="delete"
       # Used only for the platform.gitops.io/prefix ownership tag below, so teardown
       # can discover this VPC without relying on the cluster name.
       resourcePrefix: string | default="peeks"
@@ -49,6 +53,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         cidrBlocks: 
         - ${schema.spec.cidr.vpcCidr}
@@ -77,6 +82,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         vpc: ${vpc.status.vpcID}
         tags:
@@ -106,6 +112,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         subnetID: ${publicSubnet1.status.subnetID}
         allocationID: ${eip1.status.allocationID}
@@ -128,6 +135,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         tags: '${[{"key": "Name", "value": schema.spec.name + "-eip1"}] + schema.spec.?awsTags.orValue({}).map(k, k).sort().map(k, {"key": k, "value": schema.spec.awsTags[k]})}'
   - id: publicRoutetable
@@ -147,6 +155,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         vpcID: ${vpc.status.vpcID}
         routes:
@@ -172,6 +181,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         vpcID: ${vpc.status.vpcID}
         routes:
@@ -197,6 +207,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         vpcID: ${vpc.status.vpcID}
         routes:
@@ -222,6 +233,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         availabilityZone: ${schema.spec.region}a
         cidrBlock: ${schema.spec.cidr.publicSubnet1Cidr}
@@ -251,6 +263,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         availabilityZone: ${schema.spec.region}b
         cidrBlock: ${schema.spec.cidr.publicSubnet2Cidr}
@@ -280,6 +293,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         availabilityZone: ${schema.spec.region}a
         cidrBlock: ${schema.spec.cidr.privateSubnet1Cidr}
@@ -308,6 +322,7 @@ spec:
         annotations:
           argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
           services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
       spec:
         availabilityZone: ${schema.spec.region}b
         cidrBlock: ${schema.spec.cidr.privateSubnet2Cidr}

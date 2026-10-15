@@ -13,6 +13,12 @@ spec:
       name: string
       tenant: string | default="auto1"
       environment: string | default="staging"
+      # Fleet role, passed through to the nested EksCluster (which stamps it onto
+      # the ArgoCD cluster-secret label / fleet-secret blob). Default "spoke" so every
+      # spoke is correct unchanged. Must be declared here or kro rejects a
+      # control-plane claim that sets it ("field not declared in schema"). See
+      # rg-eks.yaml for the full rationale (#1033).
+      fleetMember: string | default="spoke"
       deletionPolicy: string | default="delete"
       provider: string | default=""
       region: string | default="us-west-2"
@@ -167,6 +173,9 @@ spec:
         region: ${schema.spec.region}
         resourcePrefix: ${schema.spec.resourcePrefix}
         awsTags: ${schema.spec.?awsTags.orValue({})}
+        # [#1033 N1] propagate deletionPolicy so the hub VPC is born with the same
+        # retain/delete posture as the nested EksCluster (eks sub-instance below).
+        deletionPolicy: ${schema.spec.deletionPolicy}
         cidr:
           vpcCidr: ${schema.spec.cidr.vpcCidr}
           publicSubnet1Cidr: ${schema.spec.cidr.publicSubnet1Cidr}
@@ -198,6 +207,7 @@ spec:
           name: ${schema.spec.name}
           tenant: ${schema.spec.tenant}
           environment: ${schema.spec.environment}
+          fleetMember: ${schema.spec.fleetMember}
           deletionPolicy: ${schema.spec.deletionPolicy}
           provider: ${schema.spec.provider}
           region: ${schema.spec.region}
