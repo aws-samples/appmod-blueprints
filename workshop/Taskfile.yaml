@@ -522,6 +522,7 @@ tasks:
   post-install:
     desc: Workshop post-install steps (IDC/Keycloak federation for ArgoCD SSO)
     cmds:
+      - '[ "{{.IDC_CONFIGURE_SKIP | default "false"}}" != "true" ] || printf "{{.C_INFO}}  IDC_CONFIGURE_SKIP=true: idc:configure skipped, IAM Identity Center not touched.{{.C_RESET}}\n"'
       - task: idc:configure
 
 
@@ -627,6 +628,12 @@ tasks:
     desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
     status:
       - |
+        # IAM Identity Center is one per account. IDC_CONFIGURE_SKIP=true leaves it alone, for a
+        # second stack in an account whose IdC is already federated to another stack's Keycloak:
+        # running this would re-point that IdC to this stack's Keycloak and break the other
+        # stack's SSO. Without the knob, the check below skips only if the git user happens to be
+        # in the identity store already.
+        if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
         IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.AWS_REGION}} \
           --query "Instances[?InstanceArn=='{{.IDC_INSTANCE_ARN}}'].IdentityStoreId" --output text 2>/dev/null)
         aws identitystore list-users --identity-store-id "$IDENTITY_STORE_ID" --region {{.AWS_REGION}} \
