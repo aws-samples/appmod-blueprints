@@ -84,11 +84,12 @@ spec:
   # rather than silently defaulting to secure/HTTPS. Requires the insecure
   # schema field on EksclusterWithVpc (rg-eks-vpc.yaml) to accept this value.
   insecure: {{ $cluster.insecure | default $.Values.global.insecure | default "false" | quote }}
-  # Per-cluster fleet-config value wins, else $.Values.global, else "true"
-  # (generic: both built-in NodePools). NOTE: nothing currently writes a hub->spoke
-  # global for this key, so spokes default to "true" unless a fleet-config entry
-  # sets it -- the hub-side toggle alone does not propagate to spokes. hasKey keeps
-  # a YAML boolean false from being swallowed by Helm's `default`.
+  # Per-cluster fleet-config value wins, else "true". hasKey keeps a YAML boolean
+  # false from being swallowed by Helm's `default`. When "false", only the built-in
+  # general-purpose NodePool is dropped; the built-in "system" pool is always kept.
+  # NOTE: nothing currently writes a hub->spoke global for this key, so spokes
+  # default to "true" unless a fleet-config entry sets it -- the hub-side toggle
+  # alone does not propagate to spokes.
   enableGeneralPurposeNodePool: {{ (ternary ($cluster.enableGeneralPurposeNodePool | toString) "true" (hasKey $cluster "enableGeneralPurposeNodePool")) | quote }}
   # Platform-wide AWS tags applied to every AWS resource this graph creates (EKS
   # cluster, VPC, NAT gateway, EIP) through the EksclusterWithVpc `awsTags` schema
