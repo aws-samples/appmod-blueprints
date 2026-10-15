@@ -2630,7 +2630,7 @@ tasks:
         START=$(date +%s); DEADLINE=$(( START + 90 )); REDELETED=0; STATE=cap; FLAGGED=
         while [ "$(date +%s)" -lt "$DEADLINE" ]; do
           if ! PODS=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system --request-timeout=10s -o json 2>"$ERRF"); then
-            STATE=apierr; break   # real API/kubeconfig/auth error -- NOT a timeout (issue #2)
+            STATE=apierr; break   # real API/kubeconfig/auth error -- NOT a timeout (review finding 2)
           fi
           TOTAL=$(printf '%s' "$PODS" | jq -r "$JQ_TOTAL") || { STATE=apierr; break; }
           FLAGGED=$(printf '%s' "$PODS" | jq -r "$JQ_FLAGGED") || { STATE=apierr; break; }
@@ -2655,7 +2655,7 @@ tasks:
           ok)     printf '  ✓ %s provider-aws pods Ready with Pod Identity creds after %ss.\n' "$TOTAL" "$(( $(date +%s) - START ))" ;;
           apierr) R=$(( DEADLINE - $(date +%s) )); [ "$R" -gt 0 ] || R=0
                   printf '  ⚠ cannot query provider pods (%s); sleeping the remaining %ss of the 90s budget.\n' "$(tail -n 1 "$ERRF" 2>/dev/null)" "$R"; [ "$R" -gt 0 ] && sleep "$R" || true ;;
-          cap)    printf '  ⚠ provider-aws pods not Ready+credentialed within 90s cap -- proceeding (same ceiling as the old sleep 90). Still flagged: %s\n' "$(printf '%s' "$FLAGGED" | tr '\n' ' ')" ;;
+          cap)    printf '  ⚠ provider-aws pods not Ready+credentialed within 90s cap -- proceeding (same ceiling as the old sleep 90). Still flagged: %s\n' "$(printf '%s' "${FLAGGED:-none (no provider-aws pods found)}" | tr '\n' ' ')" ;;
         esac
         rm -f "$KC" "$ERRF"
 
