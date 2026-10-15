@@ -740,6 +740,15 @@ tasks:
         PLATFORM_TAGS_JSON=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
         if [ "$PLATFORM_TAGS_JSON" = "null" ] || [ -z "$PLATFORM_TAGS_JSON" ]; then PLATFORM_TAGS_JSON='{}'; fi
         echo "[hub:claim] injecting spec.awsTags=$PLATFORM_TAGS_JSON"
+        # Built-in Auto Mode NodePools toggle (consumer-agnostic: read from config).
+        # Default "true" = generic behaviour (built-in general-purpose + system).
+        # The PEEKS workshop sets hub.enableGeneralPurposeNodePool=false in config.local.yaml
+        # so the hub drops the built-in general-purpose pool (keeps system + its *-peeks
+        # pools); unpinned platform workloads (Argo EventBus, CI WorkflowTemplates) then
+        # avoid the small, consolidation-prone built-in node that caused jetstream quorum loss.
+        HUB_ENABLE_GP_NODEPOOL=$(yq '.hub.enableGeneralPurposeNodePool | tostring' {{.CONFIG_FILE}} 2>/dev/null || echo "true")
+        if [ "$HUB_ENABLE_GP_NODEPOOL" = "null" ] || [ -z "$HUB_ENABLE_GP_NODEPOOL" ]; then HUB_ENABLE_GP_NODEPOOL="true"; fi
+        echo "[hub:claim] enableGeneralPurposeNodePool=$HUB_ENABLE_GP_NODEPOOL"
         cat <<EOF | PLATFORM_TAGS_JSON="$PLATFORM_TAGS_JSON" yq '.spec.awsTags = (strenv(PLATFORM_TAGS_JSON) | from_json)' - | kubectl apply -f -
         apiVersion: kro.run/v1alpha1
         kind: $KIND
@@ -790,6 +799,7 @@ tasks:
           # Use placeholder when empty (CloudFront mode) — hub:seed overwrites via cluster secret.
           domainName: '{{if .DOMAIN}}{{.DOMAIN}}{{else}}cluster.local{{end}}'
           resourcePrefix: {{.RESOURCE_PREFIX}}
+          enableGeneralPurposeNodePool: "$HUB_ENABLE_GP_NODEPOOL"
           argocdCapability:
             enabled: "true"
             idcInstanceArn: {{.IDC_INSTANCE_ARN}}
@@ -1165,10 +1175,26 @@ tasks:
     cmds:
       - task: hub:kubeconfig
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
+      # Seed-safe: the hub drops the built-in untainted general-purpose NodePool
+      # (enableGeneralPurposeNodePool=false), and the custom *-peeks pools only
+      # arrive via GitOps AFTER apply-root-appset. ESO is helm-installed with
+      # --wait BEFORE that, so without a toleration its pods cannot schedule
+      # (only the CriticalAddonsOnly-tainted `system` pool exists) and the
+      # install deadlocks until timeout. Tolerate CriticalAddonsOnly so ESO
+      # lands on the system pool during seed; Karpenter provisions a system node.
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
           --namespace external-secrets --create-namespace
           --version {{.ESO_VERSION}}
           --set serviceAccount.name=external-secrets-sa
+          --set 'tolerations[0].key=CriticalAddonsOnly'
+          --set 'tolerations[0].operator=Exists'
+          --set 'tolerations[0].effect=NoSchedule'
+          --set 'webhook.tolerations[0].key=CriticalAddonsOnly'
+          --set 'webhook.tolerations[0].operator=Exists'
+          --set 'webhook.tolerations[0].effect=NoSchedule'
+          --set 'certController.tolerations[0].key=CriticalAddonsOnly'
+          --set 'certController.tolerations[0].operator=Exists'
+          --set 'certController.tolerations[0].effect=NoSchedule'
           --wait --timeout 5m
 
   hub:cluster-secret-store:

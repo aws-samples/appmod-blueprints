@@ -73,6 +73,19 @@ spec:
       # own insecure setting via the clusters-kro appset/chart. See
       # kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
+      # Whether EKS Auto Mode's built-in "general-purpose" NodePool is enabled on
+      # this cluster. Any value other than "false" (default "true") preserves the
+      # generic / standalone behaviour (built-in general-purpose on). A consumer
+      # that ships its own general-purpose-class pool (e.g. the PEEKS workshop's
+      # general-purpose-peeks pool) sets this to "false" via its instance/overlay
+      # so the built-in general-purpose is dropped and unpinned platform workloads
+      # (Argo EventBus, CI WorkflowTemplates) schedule onto the stable custom pool
+      # instead of a consolidation-prone built-in general-purpose node. The
+      # built-in "system" pool always stays on (it anchors the `default` NodeClass
+      # the custom pools reference). NOTE: a generic consumer that sets "false"
+      # but keeps the generic image-prepuller (pinned to the built-in
+      # general-purpose pool) gets a 0-pod DaemonSet — repoint it to its own pool.
+      enableGeneralPurposeNodePool: string | default="true"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
       # Optional extra AWS tags merged into the EKS Cluster tags (SpringClean
@@ -398,9 +411,18 @@ spec:
           computeConfig:
             enabled: true
             nodeRoleARN: ${nodeRole.status.ackResourceMetadata.arn}
-            nodePools:
-              - system
-              - general-purpose
+            # Built-in EKS Auto Mode NodePools, gated by the schema toggle.
+            # "true" (default) -> [system, general-purpose] (generic behaviour).
+            # "false" -> [system] only (drops general-purpose). "system" is kept
+            # deliberately: EKS rejects a non-empty nodeRoleARN with an empty
+            # nodePools list, and keeping at least one built-in is what makes EKS
+            # provision the "default" NodeClass + EC2 access entry that the custom
+            # *-peeks pools reference. "system" is tainted CriticalAddonsOnly, so
+            # unpinned EventBus/CI pods still fall through to general-purpose-peeks.
+            # Single-quoted + dyn() on both branches mirrors the proven CEL idiom
+            # used by appmod-service.yaml (ternary type unification; the bare ' : '
+            # would otherwise be parsed as a YAML mapping separator).
+            nodePools: '${schema.spec.enableGeneralPurposeNodePool == "false" ? dyn(["system"]) : dyn(["system", "general-purpose"])}'
           kubernetesNetworkConfig:
             ipFamily: ipv4
             elasticLoadBalancing:

@@ -16,9 +16,10 @@
 # pre-provisioned, multi-day) workshop is in use. Rendered by the generic
 # platform-manifests-bootstrap chart from this caller-supplied list.
 #
-# The built-in system/general-purpose pools remain enabled (they provide the
-# `default` NodeClass these pools reference); the workshop pins its critical
-# addons to these via the per-addon overlays.
+# The built-in "system" pool remains enabled (it provides the `default`
+# NodeClass these pools reference); the built-in "general-purpose" pool is
+# dropped on the hub (enableGeneralPurposeNodePool="false"), and the workshop
+# pins its critical addons to the custom *-peeks pools via the per-addon overlays.
 customNodepools:
   pools:
     - name: general-purpose-peeks
