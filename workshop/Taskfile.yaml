@@ -183,7 +183,7 @@ tasks:
       #       (never a CFN CREATE_FAILED, review #1). kind-kro-ack only; disable with
       #       HUB_PIVOT_ON_INSTALL=false. ignore_error + the inner guard both keep it non-fatal.
       - cmd: |
-          if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "${HUB_PIVOT_ON_INSTALL:-true}" = "true" ]; then
+          if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "{{.HUB_PIVOT_ON_INSTALL | default "true"}}" = "true" ]; then
             printf '{{.C_STEP}}▸ [#1033] Final step: hub self-adoption pivot (detaching from kind)…{{.C_RESET}}\n'
             if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop ); then
               printf '{{.C_OK}}  ✓ hub pivoted — kind bootstrap detached (stopped & recoverable).{{.C_RESET}}\n'

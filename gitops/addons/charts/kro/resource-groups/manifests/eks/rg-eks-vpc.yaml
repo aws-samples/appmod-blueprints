@@ -173,6 +173,9 @@ spec:
         region: ${schema.spec.region}
         resourcePrefix: ${schema.spec.resourcePrefix}
         awsTags: ${schema.spec.?awsTags.orValue({})}
+        # [#1033 N1] propagate deletionPolicy so the hub VPC is born with the same
+        # retain/delete posture as the nested EksCluster (eks sub-instance below).
+        deletionPolicy: ${schema.spec.deletionPolicy}
         cidr:
           vpcCidr: ${schema.spec.cidr.vpcCidr}
           publicSubnet1Cidr: ${schema.spec.cidr.publicSubnet1Cidr}
