@@ -930,8 +930,14 @@ tasks:
         [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
         printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}\n'
         for i in $(seq 1 120); do   # 120 x 15s = 30min cap (was 60 = 15min; measured crossplane-base ~17min, review #1053 §5)
-          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io             -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}'             2>/dev/null | wc -w | tr -d ' ' || true)
-          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
+          # Read provider state into vars FIRST, so a failed kubectl read is caught by its own
+          # exit code (|| { sleep; continue; }) and we keep polling — instead of piping straight
+          # into `wc`, which would mask the failure and count empty output as UNHEALTHY=0 → a
+          # false "all Healthy" pass on a transient read error (review #1053 r4).
+          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { sleep 15; continue; }
+          LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { sleep 15; continue; }
+          UNHEALTHY=$(echo "$NAMES" | wc -w | tr -d ' ')
+          TOTAL=$(echo "$LIST" | awk 'NF>0' | wc -l | tr -d ' ')
           [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL" && exit 0
           [ $((i % 4)) -eq 0 ] &&             printf '{{.C_INFO}}  [%ds] %s/%s providers Healthy...{{.C_RESET}}\n' "$((i*15))" "$((TOTAL-UNHEALTHY))" "$TOTAL"
           # After 5min, force-sync crossplane-base to unblock stuck ArgoCD retry loops
@@ -941,7 +947,7 @@ tasks:
           fi
           sleep 15
         done
-        UNHEALTHY_LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null)
+        UNHEALTHY_LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null || true)
         printf '{{.C_ERR}}⚠ Crossplane providers NOT all Healthy after 30min — continuing, but spoke provisioning may stall. Unhealthy: %s{{.C_RESET}}\n' "${UNHEALTHY_LIST:-<none-listed>}"
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 

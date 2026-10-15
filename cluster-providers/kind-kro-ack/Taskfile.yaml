@@ -2196,9 +2196,14 @@ tasks:
         [ ! -f "$KC" ] && KC={{.ROOT_DIR}}/private/kubeconfig
         printf '{{.C_STEP}}▸ Waiting for all Crossplane providers to be Healthy...{{.C_RESET}}\n'
         for i in $(seq 1 60); do
-          UNHEALTHY=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null || true)
-          UNHEALTHY=$(echo "$UNHEALTHY" | wc -w | tr -d ' ')
-          TOTAL=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+          # Read provider state into vars FIRST so a failed kubectl read is caught by its own
+          # exit code and we keep polling, instead of letting empty output count as UNHEALTHY=0
+          # → a false "all Healthy" pass on a transient read error (review #1053 r4, same as the
+          # kind-crossplane gate).
+          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { sleep 15; continue; }
+          LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { sleep 15; continue; }
+          UNHEALTHY=$(echo "$NAMES" | wc -w | tr -d ' ')
+          TOTAL=$(echo "$LIST" | awk 'NF>0' | wc -l | tr -d ' ')
           if [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ]; then
             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL"
             break
