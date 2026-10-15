@@ -280,7 +280,10 @@ aws-for-fluentbit:
       # Track the latest aws-for-fluent-bit 3.x image (AL2023, fluent-bit v5.x).
       # Bump as new patch/minor releases ship with CVE fixes:
       # https://github.com/aws/aws-for-fluent-bit/releases
-      tag: 3.4.13
+      # 3.4.13 -> 3.5.1: picks up the AL2023 base-image openssl patch
+      # (openssl-libs 3.5.7-2.0.1 -> 3.5.8-1, fixes CVE-2026-14456 /
+      # ALAS2023-2026-2088 and ALAS2023-2026-2136).
+      tag: 3.5.1
 
 cni-metrics-helper:
   namespace: kube-system
