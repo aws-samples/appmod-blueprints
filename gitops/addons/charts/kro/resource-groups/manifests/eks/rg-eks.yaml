@@ -684,6 +684,7 @@ spec:
             alb_controller_mode: "oss"
             ingress_security_groups: "${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}"
             resource_prefix: "${schema.spec.resourcePrefix}"
+            enable_general_purpose_nodepool: "${schema.spec.enableGeneralPurposeNodePool}"
             git_username: "${schema.spec.git_username}"
             # karpenter_namespace: "${schema.spec.addons.karpenter_namespace}"
             # karpenter_node_iam_role_name: "${nodeRole.metadata.name}"

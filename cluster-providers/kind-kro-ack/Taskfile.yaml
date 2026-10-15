@@ -1122,9 +1122,11 @@ tasks:
         RUNTIME_DOMAIN=$(yq '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
         if [ "$RUNTIME_DOMAIN" = "null" ]; then RUNTIME_DOMAIN=""; fi
         # Mirror the hub's enableGeneralPurposeNodePool into the cluster secret so the
-        # wave -1 platform-manifests-bootstrap gate renders the -peeks pools when the
-        # built-in general-purpose pool was dropped. Default "true" (safe: no -peeks).
-        HUB_ENABLE_GP=$(yq '.hub.enableGeneralPurposeNodePool // "true"' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
+        # platform-manifests-bootstrap gate appends the fallback -peeks pools when the
+        # built-in general-purpose pool was dropped. Read with `| tostring` (NOT `//`,
+        # which treats a YAML `false` as unset and would disagree with hub:claim).
+        # Default "true" (safe: no fallback pools).
+        HUB_ENABLE_GP=$(yq '.hub.enableGeneralPurposeNodePool | tostring' {{.CONFIG_FILE}} 2>/dev/null || echo "true")
         if [ -z "$HUB_ENABLE_GP" ] || [ "$HUB_ENABLE_GP" = "null" ]; then HUB_ENABLE_GP="true"; fi
         if [ -z "$RUNTIME_DOMAIN" ]; then
           echo "ERROR: domain is empty — set 'domain' in config.local.yaml before running hub:seed."

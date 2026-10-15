@@ -713,16 +713,16 @@ platform-manifests-bootstrap:
         operator: In
         values: ['true']
   valuesObject:
-    # Gate for the custom (-peeks) NodePools: mirror the cluster's own
+    # Gate for the fallback (-peeks) NodePools: mirror the cluster's own
     # enableGeneralPurposeNodePool from its secret annotation. "true" (default when
-    # absent) keeps the built-in general-purpose pool and renders no custom pools
-    # (generic solution unchanged); "false" renders general-purpose-peeks/system-peeks
-    # at sync-wave -1 so a fresh cluster that dropped the built-in pool still has an
-    # untainted pool for the add-on layer.
+    # absent) keeps the built-in general-purpose pool and adds no fallback pools
+    # (generic solution unchanged); "false" appends general-purpose-peeks/system-peeks
+    # to the consumer list so a fresh cluster that dropped the built-in pool still has
+    # an untainted pool for the add-on layer, created on the app's first sync.
     enableGeneralPurposeNodePool: '{{ default "true" (index .metadata.annotations "enable_general_purpose_nodepool") }}'
-    # Custom Karpenter NodePools are supplied by the consumer's overlay
-    # (customNodepools.pools). The generic solution creates none and relies on the
-    # EKS Auto Mode built-in system/general-purpose pools.
+    # The consumer's custom Karpenter NodePools come from the overlay
+    # (customNodepools.pools) and always render. The generic solution leaves that list
+    # empty and relies on the EKS Auto Mode built-in system/general-purpose pools.
     gpu:
       enabled: true
 
