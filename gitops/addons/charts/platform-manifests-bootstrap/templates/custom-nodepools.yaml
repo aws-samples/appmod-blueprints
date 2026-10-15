@@ -2,7 +2,7 @@
 Karpenter NodePools for the platform.
 
 customNodepools.pools — the CONSUMER's list. ALWAYS rendered, on every cluster,
-  regardless of the gate (exactly as on main). The workshop overlay fills this from
+  regardless of the gate. The workshop overlay fills this from
   configs/ so the hub and every spoke get the -peeks pools that add-on configs pin to
   via nodeSelector. The generic solution leaves it empty and relies on the EKS Auto
   Mode built-in system/general-purpose pools.
@@ -21,11 +21,11 @@ enableGeneralPurposeNodePool is threaded from the cluster-secret annotation
 
 Each entry: { name: <string>, spec: <karpenter.sh/v1 NodePool spec> }.
 */ -}}
-{{- $pools := .Values.customNodepools.pools | default list }}
+{{- $pools := (.Values.customNodepools | default dict).pools | default list }}
 {{- if eq (toString .Values.enableGeneralPurposeNodePool) "false" }}
 {{- $names := list }}
 {{- range $pools }}{{- $names = append $names .name }}{{- end }}
-{{- range .Values.fallbackNodepools.pools }}
+{{- range ((.Values.fallbackNodepools | default dict).pools | default list) }}
 {{- if not (has .name $names) }}{{- $pools = append $pools . }}{{- end }}
 {{- end }}
 {{- end }}

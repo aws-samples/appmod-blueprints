@@ -25,7 +25,7 @@ enableGeneralPurposeNodePool: "true"
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # customNodepools.pools — the CONSUMER's custom Karpenter NodePools. ALWAYS rendered,
-# on every cluster, regardless of the gate (exactly as on main). The workshop overlay
+# on every cluster, regardless of the gate. The workshop overlay
 # fills this from configs/ so the hub and every spoke get the -peeks pools that add-on
 # configs pin to via nodeSelector. The generic solution leaves it empty and relies on
 # the EKS Auto Mode built-in system/general-purpose pools.
