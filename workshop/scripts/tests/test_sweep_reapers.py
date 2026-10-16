@@ -374,3 +374,82 @@ def test_rds_noop_when_no_devlake_resources():
     assert rds.deleted["instances"] == []
     assert rds.deleted["clusters"] == []
     assert "No DevLake RDS resources to delete" in _joined(ctx)
+
+
+def _eni(group_name, vpc_id):
+    # An RDS/DevLake ENI as describe_network_interfaces returns it.
+    return {"Description": "RDSNetworkInterface",
+            "Groups": [{"GroupName": group_name}], "VpcId": vpc_id}
+
+
+class _FakeEc2Eni:
+    """ENI fake that returns the given interfaces and counts describe calls, so a
+    test can assert whether the ENI-drain poll ran at all."""
+
+    def __init__(self, enis=()):
+        self._enis = list(enis)
+        self.describe_calls = 0
+
+    def describe_network_interfaces(self, **k):
+        self.describe_calls += 1
+        return {"NetworkInterfaces": self._enis}
+
+
+def test_rds_cluster_access_denied_surfaced_and_not_waited_on():
+    # The live teardown path (review #1051): the SharedRole CAN delete the instance
+    # (freeing the ENI, which fixes the titled VPC DELETE_FAILED) but is REFUSED on
+    # delete_db_cluster. Two guarantees: the AccessDenied is surfaced, never swallowed
+    # (#932); and because the cluster delete was refused, step 5 must NOT burn its
+    # full ~10 min cluster-gone poll on a cluster that will never disappear.
+    _force_stdlib_resilience()
+
+    class _RdsClusterDenied(_FakeRds):
+        def delete_db_cluster(self, DBClusterIdentifier, **k):
+            raise FakeClientError("AccessDenied", "not authorized to perform: rds:DeleteDBCluster")
+
+    rds = _RdsClusterDenied(
+        instances=["peeks-devlake-mysql-instance-1"],
+        clusters=["peeks-devlake-mysql-cluster"],
+        subnet_groups=["peeks-devlake-mysql-subnet-group"],
+    )
+    ctx = _ctx(rds=rds, ec2=_FakeEc2NoEni(), prefix="peeks")
+    rds_reaper.reap(ctx)
+    out = _joined(ctx)
+    # The instance delete succeeded (this is what frees the ENI → titled bug fixed).
+    assert rds.deleted["instances"] == ["peeks-devlake-mysql-instance-1"]
+    # The cluster delete was refused and surfaced honestly, not swallowed.
+    assert "peeks-devlake-mysql-cluster" not in rds.deleted["clusters"]
+    assert "access_denied" in out and "AccessDenied" in out
+    # The refused cluster is NOT waited on — no 10 min cluster-gone poll.
+    assert "clusters still present after wait" not in out
+
+
+def test_rds_eni_wait_skipped_when_no_db_deleted():
+    # review #1051: a re-run with only the subnet group left deletes no instance or
+    # cluster, so there is no ENI to drain — the ENI poll must not run at all. It
+    # previously ran unconditionally and, with a co-tenant ENI present, burned the
+    # full ceiling on a run that only had to drop a subnet group.
+    _force_stdlib_resilience()
+    ec2 = _FakeEc2Eni([_eni("acme-devlake-mysql-sg-1", "vpc-acme")])
+    rds = _FakeRds(instances=[], clusters=[], subnet_groups=["peeks-devlake-mysql-subnet-group"])
+    ctx = _ctx(rds=rds, ec2=ec2, prefix="peeks")
+    rds_reaper.reap(ctx)
+    assert rds.deleted["subnet_groups"] == ["peeks-devlake-mysql-subnet-group"]
+    assert ec2.describe_calls == 0  # ENI poll never ran — nothing was deleted this run
+
+
+def test_rds_eni_drain_ignores_other_deployments_eni():
+    # review #1051: the ENI-drain predicate is scoped to THIS deployment. A co-tenant
+    # `acme-devlake-*` ENI (different prefix, not our VPC) must not keep us waiting;
+    # once our own DBs are deleted the drain is considered complete.
+    _force_stdlib_resilience()
+    ec2 = _FakeEc2Eni([_eni("acme-devlake-mysql-sg-1", "vpc-acme")])
+    rds = _FakeRds(
+        instances=["peeks-devlake-mysql-instance-1"],
+        clusters=["peeks-devlake-mysql-cluster"],
+        subnet_groups=["peeks-devlake-mysql-subnet-group"],
+    )
+    ctx = _ctx(rds=rds, ec2=ec2, prefix="peeks")
+    rds_reaper.reap(ctx)
+    assert ec2.describe_calls >= 1           # ENI poll DID run (a DB was deleted)
+    assert "ENI drained" in _joined(ctx)     # ...and the co-tenant ENI was ignored

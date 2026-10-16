@@ -121,9 +121,14 @@ def _deletable(resources, id_key):
 
 
 def _no_devlake_eni(ctx):
-    """True once no in-use RDS/DevLake ENI remains — i.e. the Aurora delete has
-    drained its network interface so the subnet/VPC can be deleted. Never blocks
-    teardown on a describe failure (returns True so the caller stops waiting)."""
+    """True once no in-use RDS/DevLake ENI *belonging to this deployment* remains —
+    i.e. the Aurora delete has drained its network interface so the subnet/VPC can be
+    deleted. Scoped to THIS deployment (a prefix-anchored DevLake SG name, or an ENI
+    in a VPC we own) so a co-tenant stack's DevLake/RDS ENI in the same region never
+    makes us wait the full ceiling (review #1051). Never blocks teardown on a describe
+    failure (returns True so the caller stops waiting)."""
+    p = (ctx.prefix or "").lower()
+    vpc_is_ours = getattr(ctx, "vpc_is_ours", None)
     try:
         enis = ctx.ec2.describe_network_interfaces(
             Filters=[{"Name": "interface-type", "Values": ["interface"]}]
@@ -131,7 +136,16 @@ def _no_devlake_eni(ctx):
         for eni in enis:
             desc = (eni.get("Description", "") or "").lower()
             groups = " ".join(g.get("GroupName", "") for g in eni.get("Groups", [])).lower()
-            if "devlake" in groups or "devlake" in desc or "rdsnetworkinterface" in desc.replace(" ", ""):
+            is_rds_eni = ("devlake" in groups or "devlake" in desc
+                          or "rdsnetworkinterface" in desc.replace(" ", ""))
+            if not is_rds_eni:
+                continue
+            # Scope to THIS deployment: a prefix-anchored DevLake SG name, or an ENI
+            # in a VPC we own. A co-tenant's `<other-prefix>-devlake-*` ENI (or any
+            # unrelated RDS ENI) is ignored, so its presence can't make our teardown
+            # wait the full ENI-drain ceiling.
+            ours = (f"{p}-devlake" in groups) or bool(vpc_is_ours and vpc_is_ours(eni.get("VpcId")))
+            if ours:
                 return False
         return True
     except Exception:
@@ -164,14 +178,21 @@ def reap(ctx):
 
     # 1) Member / standalone instances first (Aurora: members must be gone before
     #    the cluster can delete). No modify_db_instance — we never clear protection.
+    #    Track which deletes AWS accepted (deleted/gone): only those have anything to
+    #    drain, so the waits below gate on these — not on what we merely attempted. A
+    #    refused delete (access_denied/permanent) leaves nothing to wait for, so it
+    #    must not burn the full poll ceiling (review #1051).
+    deleted_instances = []
     for ident in del_instances:
         kind, code, _ = run_delete(lambda i=ident: rds.delete_db_instance(
             DBInstanceIdentifier=i, SkipFinalSnapshot=True, DeleteAutomatedBackups=True))
         log(f"  Deleting RDS instance {ident}: {kind}{_c(code)}")
+        if kind in ("deleted", "gone"):
+            deleted_instances.append(ident)
 
-    # 2) Wait for the deletable instances to drain so the cluster delete isn't
+    # 2) Wait for the ACCEPTED instance deletes to drain so the cluster delete isn't
     #    ResourceInUse (~15 min ceiling; best-effort — §16 re-sweep is the backstop).
-    if del_instances:
+    if deleted_instances:
         drained = poll_until(
             lambda: not _deletable(_devlake_instances(ctx), "DBInstanceIdentifier")[0],
             attempts=45, delay=20.0)
@@ -179,25 +200,36 @@ def reap(ctx):
             log("DevLake RDS instances still present after wait — cluster delete may requeue")
 
     # 3) Aurora clusters, now that their members are gone.
+    deleted_clusters = []
     for ident in del_clusters:
         kind, code, _ = run_delete(lambda i=ident: rds.delete_db_cluster(
             DBClusterIdentifier=i, SkipFinalSnapshot=True))
         log(f"  Deleting RDS cluster {ident}: {kind}{_c(code)}")
+        if kind in ("deleted", "gone"):
+            deleted_clusters.append(ident)
 
     # 4) Wait for the Aurora ENI to drain before the VPC reaper / CFN VPC delete
     #    (~10 min ceiling). This is the step that prevents the DependencyViolation.
-    if poll_until(lambda: _no_devlake_eni(ctx), attempts=30, delay=20.0):
-        log("DevLake RDS ENI drained")
-    else:
-        log("DevLake RDS ENI still present after wait — §14/§16 backstop will re-drive")
+    #    Only wait if we actually got a DB delete accepted this run: a refused delete
+    #    leaves no ENI to drain, and a subnet-group-only re-run (instances/clusters
+    #    already gone) has nothing to wait for — otherwise every such run burns the
+    #    full ceiling (review #1051).
+    if deleted_instances or deleted_clusters:
+        if poll_until(lambda: _no_devlake_eni(ctx), attempts=30, delay=20.0):
+            log("DevLake RDS ENI drained")
+        else:
+            log("DevLake RDS ENI still present after wait — §14/§16 backstop will re-drive")
 
     # 5) DB subnet group (lingers; name-collides on reused accounts, issue #8).
     #    Delete ONLY after the owning clusters are actually gone, else RDS returns
     #    InvalidDBSubnetGroupStateFault (classified 'permanent', never retried) and
     #    the group leaks. Collected up front so a re-run with only the group left
     #    (instances/clusters already gone) still reaches this step (review #1051 §3).
+    #    Gate the cluster-gone poll on clusters whose delete was ACCEPTED: a refused
+    #    cluster delete will never go away, so waiting the full ceiling is pointless
+    #    (the subnet delete just fails fast and is logged as residue).
     if subnet_groups:
-        if del_clusters and not poll_until(lambda: not _devlake_clusters(ctx), attempts=30, delay=20.0):
+        if deleted_clusters and not poll_until(lambda: not _devlake_clusters(ctx), attempts=30, delay=20.0):
             log("DevLake RDS clusters still present after wait — subnet group delete may requeue (§16 backstop)")
         for sg in subnet_groups:
             name = sg["DBSubnetGroupName"]
