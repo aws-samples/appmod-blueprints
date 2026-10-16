@@ -2285,51 +2285,131 @@ tasks:
         echo "Updated hub config with AMG URL: $AMG_ENDPOINT"
 
         # Populate spoke scraper values into hub Secrets Manager secret (dynamic, no file commits needed)
+        #
+        # WHY dynamic discovery: spoke clusters are NOT always named
+        # <prefix>-spoke-dev / <prefix>-spoke-prod. In OAP fleets the spokes are
+        # named oap-dev / oap-prod (customer-supplied names), so the old hardcoded
+        # "<prefix>-spoke-dev <prefix>-spoke-prod" loop found nothing, wrote no
+        # annotations, and zero spoke scrapers rendered -> dev/prod infra metrics
+        # never reached AMP. We instead discover every EKS cluster this hub manages
+        # via the fleet tag platform.gitops.io/prefix=<resourcePrefix> (set by the
+        # KRO cluster graph), excluding the hub itself and any kind/bootstrap
+        # cluster. Each discovered spoke is written to a numbered slot (spoke_N_*),
+        # including its REAL name, so the registry can key the scraper map by the
+        # real cluster name regardless of how the spoke was named.
         CONFIG_KEY="{{.HUB_CLUSTER_NAME}}/config"
         CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$CONFIG_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text)
-        SPOKE_DEV_ARN=""
-        SPOKE_DEV_SUBNETS=""
-        SPOKE_DEV_SG=""
-        SPOKE_PROD_ARN=""
-        SPOKE_PROD_SUBNETS=""
-        SPOKE_PROD_SG=""
-        for CLUSTER in {{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod; do
-          SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
-          if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
-            SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
-            SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_ALL_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' '\n' | awk '!seen[$0]++' | head -2 | paste -sd ',' -)
-            if [ -z "$SPOKE_PRIVATE_SUBNETS" ]; then
-              SPOKE_PRIVATE_SUBNETS=$(echo "$SPOKE_ALL_SUBNETS" | tr '\t' '\n' | head -2 | paste -sd ',' -)
-            fi
-            SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
-            echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
-            if [ "$CLUSTER" = "{{.RESOURCE_PREFIX}}-spoke-dev" ]; then
-              SPOKE_DEV_ARN="$SPOKE_ARN"
-              SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
-              SPOKE_DEV_SG="$SPOKE_SG"
-            else
-              SPOKE_PROD_ARN="$SPOKE_ARN"
-              SPOKE_PROD_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
-              SPOKE_PROD_SG="$SPOKE_SG"
-            fi
-          else
-            echo "WARN: Cluster $CLUSTER not found in {{.AWS_REGION}}. Scraper skipped."
-          fi
+        MAX_SLOTS=8
+        # Preallocate empty slots so the registry's missingkey=error template never
+        # trips on an unused slot.
+        I=1
+        while [ "$I" -le "$MAX_SLOTS" ]; do
+          eval "SPOKE_${I}_NAME=''"
+          eval "SPOKE_${I}_ARN=''"
+          eval "SPOKE_${I}_SUBNETS=''"
+          eval "SPOKE_${I}_SG=''"
+          I=$((I + 1))
         done
-        if [ -n "$SPOKE_DEV_ARN" ] || [ -n "$SPOKE_PROD_ARN" ]; then
+        # List all EKS clusters in the region (newline-delimited; robust to empty).
+        ALL_CLUSTERS=$(aws eks list-clusters --region {{.AWS_REGION}} --output json | jq -r '.clusters[]? // empty')
+        # First pass: does ANY cluster carry the fleet prefix tag? If not, this fleet
+        # predates the tag -> fall back to treating every non-hub, non-bootstrap/kind
+        # EKS cluster as a spoke so the fix degrades gracefully.
+        TAG_SEEN="false"
+        if [ -n "$ALL_CLUSTERS" ]; then
+          if printf '%s\n' "$ALL_CLUSTERS" | while IFS= read -r C; do
+               [ -n "$C" ] || continue
+               P=$(aws eks describe-cluster --name "$C" --region {{.AWS_REGION}} --output json 2>/dev/null | jq -r '.cluster.tags["platform.gitops.io/prefix"] // ""')
+               [ -n "$P" ] && echo "tagged" || true
+             done | grep -q "tagged"; then
+            TAG_SEEN="true"
+          fi
+        fi
+        SLOT=0
+        if [ -n "$ALL_CLUSTERS" ]; then
+          # Use a temp file for discovered slots so the while-loop (which runs in a
+          # subshell under a pipe) can hand results back without a lost-subshell trap.
+          SLOT_TMP=$(mktemp)
+          printf '%s\n' "$ALL_CLUSTERS" | while IFS= read -r CLUSTER; do
+            [ -n "$CLUSTER" ] || continue
+            # Never scrape the hub itself, and never a local kind/bootstrap cluster.
+            [ "$CLUSTER" = "{{.HUB_CLUSTER_NAME}}" ] && continue
+            case "$CLUSTER" in
+              *-bootstrap|kind-*) continue ;;
+            esac
+            CDESC=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --output json 2>/dev/null || echo "")
+            [ -n "$CDESC" ] || { echo "WARN: describe-cluster failed for $CLUSTER. Scraper skipped."; continue; }
+            PFX=$(printf '%s' "$CDESC" | jq -r '.cluster.tags["platform.gitops.io/prefix"] // ""')
+            # Keep only clusters this hub manages. When the tag exists anywhere,
+            # require an exact prefix match; otherwise (legacy fleet) keep all.
+            if [ "$TAG_SEEN" = "true" ] && [ "$PFX" != "{{.RESOURCE_PREFIX}}" ]; then
+              continue
+            fi
+            SPOKE_ARN=$(printf '%s' "$CDESC" | jq -r '.cluster.arn // ""')
+            [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ] || { echo "WARN: no ARN for $CLUSTER. Scraper skipped."; continue; }
+            SPOKE_ALL_SUBNETS=$(printf '%s' "$CDESC" | jq -r '.cluster.resourcesVpcConfig.subnetIds[]? // empty' | paste -sd ' ' -)
+            SPOKE_PRIVATE_SUBNETS=""
+            if [ -n "$SPOKE_ALL_SUBNETS" ]; then
+              SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_ALL_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' '\n' | awk '!seen[$0]++' | head -2 | paste -sd ',' -)
+              if [ -z "$SPOKE_PRIVATE_SUBNETS" ]; then
+                SPOKE_PRIVATE_SUBNETS=$(printf '%s' "$SPOKE_ALL_SUBNETS" | tr ' ' '\n' | head -2 | paste -sd ',' -)
+              fi
+            fi
+            SPOKE_SG=$(printf '%s' "$CDESC" | jq -r '.cluster.resourcesVpcConfig.clusterSecurityGroupId // ""')
+            echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
+            # Append as a tab-separated slot record (name arn subnets sg).
+            printf '%s\t%s\t%s\t%s\n' "$CLUSTER" "$SPOKE_ARN" "$SPOKE_PRIVATE_SUBNETS" "$SPOKE_SG" >> "$SLOT_TMP"
+          done
+          # Read discovered slots back into numbered shell vars (max MAX_SLOTS).
+          while IFS="$(printf '\t')" read -r S_NAME S_ARN S_SUBNETS S_SG; do
+            [ -n "$S_NAME" ] || continue
+            SLOT=$((SLOT + 1))
+            if [ "$SLOT" -gt "$MAX_SLOTS" ]; then
+              echo "WARN: more than $MAX_SLOTS spoke clusters discovered; seeding only the first $MAX_SLOTS."
+              SLOT=$MAX_SLOTS
+              break
+            fi
+            eval "SPOKE_${SLOT}_NAME=\$S_NAME"
+            eval "SPOKE_${SLOT}_ARN=\$S_ARN"
+            eval "SPOKE_${SLOT}_SUBNETS=\$S_SUBNETS"
+            eval "SPOKE_${SLOT}_SG=\$S_SG"
+          done < "$SLOT_TMP"
+          rm -f "$SLOT_TMP"
+        fi
+        if [ "$SLOT" -gt 0 ]; then
+          # Build a flat JSON object of all slot annotations with jq, passing every
+          # slot value as a --arg (so no shell quoting leaks into the JSON), then
+          # merge it into the config secret's .metadata. Building the slot object
+          # separately avoids any eval on the JSON payload itself.
+          SLOTS_JSON=$(jq -n \
+            --arg n1 "$SPOKE_1_NAME" --arg a1 "$SPOKE_1_ARN" --arg su1 "$SPOKE_1_SUBNETS" --arg sg1 "$SPOKE_1_SG" \
+            --arg n2 "$SPOKE_2_NAME" --arg a2 "$SPOKE_2_ARN" --arg su2 "$SPOKE_2_SUBNETS" --arg sg2 "$SPOKE_2_SG" \
+            --arg n3 "$SPOKE_3_NAME" --arg a3 "$SPOKE_3_ARN" --arg su3 "$SPOKE_3_SUBNETS" --arg sg3 "$SPOKE_3_SG" \
+            --arg n4 "$SPOKE_4_NAME" --arg a4 "$SPOKE_4_ARN" --arg su4 "$SPOKE_4_SUBNETS" --arg sg4 "$SPOKE_4_SG" \
+            --arg n5 "$SPOKE_5_NAME" --arg a5 "$SPOKE_5_ARN" --arg su5 "$SPOKE_5_SUBNETS" --arg sg5 "$SPOKE_5_SG" \
+            --arg n6 "$SPOKE_6_NAME" --arg a6 "$SPOKE_6_ARN" --arg su6 "$SPOKE_6_SUBNETS" --arg sg6 "$SPOKE_6_SG" \
+            --arg n7 "$SPOKE_7_NAME" --arg a7 "$SPOKE_7_ARN" --arg su7 "$SPOKE_7_SUBNETS" --arg sg7 "$SPOKE_7_SG" \
+            --arg n8 "$SPOKE_8_NAME" --arg a8 "$SPOKE_8_ARN" --arg su8 "$SPOKE_8_SUBNETS" --arg sg8 "$SPOKE_8_SG" \
+            '{
+              spoke_1_name: $n1, spoke_1_cluster_arn: $a1, spoke_1_private_subnet_ids: $su1, spoke_1_security_group_id: $sg1,
+              spoke_2_name: $n2, spoke_2_cluster_arn: $a2, spoke_2_private_subnet_ids: $su2, spoke_2_security_group_id: $sg2,
+              spoke_3_name: $n3, spoke_3_cluster_arn: $a3, spoke_3_private_subnet_ids: $su3, spoke_3_security_group_id: $sg3,
+              spoke_4_name: $n4, spoke_4_cluster_arn: $a4, spoke_4_private_subnet_ids: $su4, spoke_4_security_group_id: $sg4,
+              spoke_5_name: $n5, spoke_5_cluster_arn: $a5, spoke_5_private_subnet_ids: $su5, spoke_5_security_group_id: $sg5,
+              spoke_6_name: $n6, spoke_6_cluster_arn: $a6, spoke_6_private_subnet_ids: $su6, spoke_6_security_group_id: $sg6,
+              spoke_7_name: $n7, spoke_7_cluster_arn: $a7, spoke_7_private_subnet_ids: $su7, spoke_7_security_group_id: $sg7,
+              spoke_8_name: $n8, spoke_8_cluster_arn: $a8, spoke_8_private_subnet_ids: $su8, spoke_8_security_group_id: $sg8
+            }')
           CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq \
-            --arg sda "$SPOKE_DEV_ARN" \
-            --arg sds "$SPOKE_DEV_SUBNETS" \
-            --arg sdsg "$SPOKE_DEV_SG" \
-            --arg spa "$SPOKE_PROD_ARN" \
-            --arg sps "$SPOKE_PROD_SUBNETS" \
-            --arg spsg "$SPOKE_PROD_SG" \
-            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg, spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg} | tojson)')
+            --argjson slots "$SLOTS_JSON" \
+            '.metadata = (.metadata | fromjson | . + $slots | tojson)')
           aws secretsmanager put-secret-value \
             --secret-id "$CONFIG_KEY" \
             --secret-string "$CONFIG_UPDATED" \
             --region {{.AWS_REGION}}
-          echo "Updated hub config with spoke scraper data"
+          echo "Updated hub config with $SLOT spoke scraper slot(s)"
+        else
+          echo "WARN: no spoke clusters discovered in {{.AWS_REGION}}. No scrapers seeded."
         fi
 
         # Update Keycloak SAML client with AMG URL

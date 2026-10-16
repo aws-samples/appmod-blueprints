@@ -26,15 +26,58 @@ observability-aws:
       clusterArn: '{{default "" (index .metadata.annotations "aws_cluster_arn")}}'
       clusterSubnetIds: '{{default "" (index .metadata.annotations "aws_private_subnet_ids")}}'
       clusterSecurityGroupIds: '{{default "" (index .metadata.annotations "aws_cluster_security_group_id")}}'
+    # Generic spoke-scraper slots keyed by the REAL spoke cluster name.
+    # WHY: spokes are not always named <prefix>-spoke-dev/prod — OAP fleets name
+    # them oap-dev/oap-prod. The seed task (secrets-manager:seed-observability)
+    # discovers spokes dynamically by the platform.gitops.io/prefix tag and writes
+    # them into numbered annotations spoke_N_* (incl. spoke_N_name = the real
+    # cluster name). We map up to 8 slots here, keying each map entry by the real
+    # name so the rendered Scraper CR / external_labels.cluster carry the real
+    # cluster name (e.g. oap-dev) rather than a hardcoded peeks-spoke-* label.
+    # Unused slots render an empty key + empty values and are dropped by the chart's
+    # existing guard. (The ApplicationSet controller renders each leaf string
+    # independently, so static numbered slots are used rather than fromJson/range.)
     spokeScrapers:
-      spoke-dev:
-        clusterArn: '{{default "" (index .metadata.annotations "spoke_dev_cluster_arn")}}'
-        subnetIds: '{{default "" (index .metadata.annotations "spoke_dev_private_subnet_ids")}}'
-        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_dev_security_group_id")}}'
-      spoke-prod:
-        clusterArn: '{{default "" (index .metadata.annotations "spoke_prod_cluster_arn")}}'
-        subnetIds: '{{default "" (index .metadata.annotations "spoke_prod_private_subnet_ids")}}'
-        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_prod_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_1_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_1_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_1_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_1_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_1_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_2_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_2_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_2_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_2_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_2_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_3_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_3_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_3_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_3_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_3_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_4_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_4_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_4_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_4_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_4_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_5_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_5_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_5_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_5_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_5_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_6_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_6_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_6_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_6_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_6_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_7_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_7_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_7_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_7_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_7_security_group_id")}}'
+      '{{- default "" (index .metadata.annotations "spoke_8_name") }}':
+        clusterName: '{{default "" (index .metadata.annotations "spoke_8_name")}}'
+        clusterArn: '{{default "" (index .metadata.annotations "spoke_8_cluster_arn")}}'
+        subnetIds: '{{default "" (index .metadata.annotations "spoke_8_private_subnet_ids")}}'
+        securityGroupIds: '{{default "" (index .metadata.annotations "spoke_8_security_group_id")}}'
   ignoreDifferences:
     - group: amp.aws.upbound.io
       kind: Workspace

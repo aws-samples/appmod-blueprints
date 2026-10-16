@@ -1,18 +1,24 @@
 {{- if .Values.spokeScrapers }}
 {{- range $clusterName, $cluster := .Values.spokeScrapers }}
-{{- if and $cluster.clusterArn (ne (default "" $cluster.securityGroupIds) "") (ne $cluster.securityGroupIds "None") }}
+{{- /* Prefer the real spoke name carried in the slot (clusterName); fall back to
+       the map key for back-compat. The registry keys slots by the real name, but
+       deriving it here keeps alias / external_labels correct even if the key ever
+       differs from the real name (e.g. a DNS-safe slot label). */ -}}
+{{- $realName := default $clusterName $cluster.clusterName }}
+{{- /* Skip empty/unused slots (empty key + empty name) and incomplete entries. */ -}}
+{{- if and $realName $cluster.clusterArn (ne (default "" $cluster.securityGroupIds) "") (ne $cluster.securityGroupIds "None") }}
 ---
 apiVersion: amp.aws.upbound.io/v1beta1
 kind: Scraper
 metadata:
-  name: {{ $.Values.resourcePrefix }}-scraper-{{ $clusterName }}
+  name: {{ $.Values.resourcePrefix }}-scraper-{{ $realName }}
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "3"
 spec:
   forProvider:
     region: {{ $.Values.aws.region }}
-    alias: {{ $.Values.resourcePrefix }}-{{ $clusterName }}
+    alias: {{ $realName }}
     source:
       - eks:
           - clusterArn: {{ $cluster.clusterArn }}
@@ -28,7 +34,7 @@ spec:
       - amp:
           - workspaceArnRef:
               name: {{ $.Values.resourcePrefix }}-amp
-    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" (printf "%s-%s" $.Values.resourcePrefix $clusterName) | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
+    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" $realName | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
   providerConfigRef:
     name: default
 {{- end }}
