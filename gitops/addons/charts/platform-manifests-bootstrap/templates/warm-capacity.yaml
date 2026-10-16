@@ -9,7 +9,11 @@ enable and size it via their overlay. The pause Deployment is ordered AFTER the
 NodePools (custom-nodepools.yaml) via its own intra-app sync-wave, so the warm
 node can actually schedule on a freshly-created pool.
 */ -}}
-{{- if .Values.warmCapacity.enabled }}
+{{- /* nil-safe: a merge that drops the chart `warmCapacity` default must not nil-pointer
+       the whole platform-manifests-bootstrap render (which would create ZERO NodePools
+       and take the hub down). `(.Values.warmCapacity | default dict).enabled` is false
+       when the key is absent — same null-safe pattern #1056 adopted. */ -}}
+{{- if (.Values.warmCapacity | default dict).enabled }}
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
