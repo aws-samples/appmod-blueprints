@@ -60,6 +60,10 @@ customNodepools:
 # ---------------------------------------------------------------------------------
 fallbackNodepools:
   pools:
+    # NAME COUPLING: this pool name is also referenced by the image-prepuller route
+    # in gitops/addons/registry/core.yaml (generalPurposeNodepool -> platform-general
+    # when the flag is "false"). If you rename this pool, update that route too, or the
+    # prepuller lands on a pool that doesn't exist (the #4 bug this PR fixed).
     - name: platform-general
       spec:
         # Low weight: any consumer-defined pool (customNodepools.pools) outranks this,
