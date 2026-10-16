@@ -30,7 +30,17 @@ spec:
       # not declared in the RGD schema ("field not declared in schema"), which
       # otherwise blocks EksclusterWithVpc (spoke) creation entirely.
       managementRegion: string | default="us-west-2"
-      k8sVersion: string | default="1.37"
+      # REQUIRED, no default. An EKS version change is an in-place, one-way
+      # control-plane upgrade (ACK maps spec.version -> UpdateClusterVersion), so the
+      # version a cluster runs must be an explicit, deliberate declaration by the
+      # instance owner — never a side effect of a platform release bumping a schema
+      # default. With no default, a bumped release cannot inject a new version into
+      # an instance that omitted the field. Every in-repo path that creates an
+      # EksclusterWithVpc already pins k8sVersion explicitly via its Helm template
+      # (kro-clusters/templates/clusters.yaml, resource-groups-kro/.../claim.yaml),
+      # so this is non-breaking for templated consumers; only a hand-written claim
+      # that omits the field is now rejected at admission (by design).
+      k8sVersion: string | required=true
       accountId: string
       managementAccountId: string
       argoCdHubRoleArn: string

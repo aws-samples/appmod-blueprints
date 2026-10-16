@@ -39,8 +39,7 @@ spec:
                   default: "10.0.0.0/16"
                 kubernetesVersion:
                   type: string
-                  description: EKS Kubernetes version
-                  default: "1.37"
+                  description: EKS Kubernetes version (REQUIRED, no default — an EKS version change is an in-place, one-way control-plane upgrade, so it must be set explicitly by the instance owner rather than inherited from a schema default that a release could bump)
                 autoMode:
                   type: boolean
                   description: Enable EKS Auto Mode (manages compute, storage, networking)
@@ -126,6 +125,7 @@ spec:
               required:
                 - region
                 - clusterName
+                - kubernetesVersion
             status:
               type: object
               properties:
