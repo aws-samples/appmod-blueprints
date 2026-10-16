@@ -632,9 +632,14 @@ tasks:
 
   idc:setup:
     desc: Create IDC groups if they don't exist (idempotent)
+    # IDC_CONFIGURE_SKIP=true leaves the account's shared IAM Identity Center alone (#1073),
+    # as workshop idc:configure does: the vars below and the cmds make no AWS call then.
+    status:
+      - '[ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]'
     vars:
       STORE_ID:
         sh: |
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
           ID=$(yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}})
           if [ -z "$ID" ]; then
             aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text 2>/dev/null || echo ""
@@ -643,6 +648,7 @@ tasks:
           fi
       ADMIN_GROUP:
         sh: |
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
           EXISTING=$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})
           if [ -n "$EXISTING" ]; then echo "$EXISTING"; exit 0; fi
           STORE_ID=$(yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}})
