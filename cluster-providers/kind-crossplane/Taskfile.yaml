@@ -1911,8 +1911,26 @@ tasks:
       # Phase 7: Clean up observability resources (AMP scrapers, AMP workspace, AMG workspace).
       # Scrapers hold ENIs in VPCs and must be deleted before VPC cleanup.
       - cmd: |
-          # Delete AMP scrapers tagged by our platform
-          for SCRAPER_ID in $(aws amp list-scrapers --region {{.AWS_REGION}} --query "scrapers[?starts_with(alias,'{{.RESOURCE_PREFIX}}-')].scraperId" --output text 2>/dev/null); do
+          # Delete our AMP scrapers. Scrapers are regional, so only those whose source EKS
+          # cluster is the hub, a <prefix>-spoke-dev/-prod spoke, or a cluster tagged
+          # platform.gitops.io/prefix=<prefix> (the rule kind-kro-ack destroy 6ei and the
+          # sweep use). Not the alias "<prefix>-*": it also matches a stack whose prefix
+          # extends ours with a dash ("peeks" and "peeks-2").
+          OWNED_CLUSTERS=" {{.HUB_CLUSTER_NAME}} {{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod "
+          for C in $(aws eks list-clusters --region {{.AWS_REGION}} --query 'clusters[]' --output text 2>/dev/null); do
+            T=$(aws eks describe-cluster --name "$C" --region {{.AWS_REGION}} \
+              --query 'cluster.tags."platform.gitops.io/prefix"' --output text 2>/dev/null || true)
+            if [ -n "$T" ] && [ "$T" = "{{.RESOURCE_PREFIX}}" ]; then OWNED_CLUSTERS="$OWNED_CLUSTERS$C "; fi
+          done
+          # Prints "<scraperId> <status>" for each of our scrapers.
+          our_scrapers() {
+            aws amp list-scrapers --region {{.AWS_REGION}} \
+              --query 'scrapers[].[scraperId, source.eksConfiguration.clusterArn, status.statusCode]' \
+              --output text 2>/dev/null | while read -r ID ARN STATUS; do
+                case "$OWNED_CLUSTERS" in *" ${ARN##*/} "*) echo "$ID $STATUS" ;; esac
+              done
+          }
+          for SCRAPER_ID in $(our_scrapers | cut -d' ' -f1); do
             echo "Deleting AMP scraper $SCRAPER_ID"
             aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region {{.AWS_REGION}} 2>/dev/null || true
           done
@@ -1934,7 +1952,7 @@ tasks:
           done
           # Wait for scrapers to fully delete (they hold ENIs in VPCs)
           for i in $(seq 1 40); do
-            REMAINING=$(aws amp list-scrapers --region {{.AWS_REGION}} --query "scrapers[?starts_with(alias,'{{.RESOURCE_PREFIX}}-') && status.statusCode!='DELETION_FAILED'] | length(@)" --output text 2>/dev/null || echo "0")
+            REMAINING=$(our_scrapers | grep -vc ' DELETION_FAILED$' || true)
             [ "$REMAINING" = "0" ] && break
             echo "Waiting for $REMAINING scraper(s) to delete... ($i/40)"
             sleep 15
@@ -1946,9 +1964,21 @@ tasks:
       # IGW, route tables, security groups). Tear them down by Crossplane tag so
       # subsequent VPC deletes succeed.
       - cmd: |
-          # Find any VPCs tagged by the Crossplane EC2 provider for our clusters
+          # Find the VPCs tagged by the Crossplane EC2 provider for our clusters. The
+          # Composition tags each VPC and EIP with platform.gitops.io/cluster=<clusterName>
+          # and platform.gitops.io/prefix=<prefix>. Our clusters: the hub, the workshop's
+          # <prefix>-spoke-dev/-prod, and any cluster whose VPC carries our prefix tag. Not
+          # the literal spoke-dev/spoke-prod: the workshop names its spokes <prefix>-spoke-*,
+          # and the literals match another stack's spokes. The IDE VPC has the prefix tag
+          # but no cluster tag, so it is never selected.
+          OWNED_CLUSTERS="{{.HUB_CLUSTER_NAME}},{{.RESOURCE_PREFIX}}-spoke-dev,{{.RESOURCE_PREFIX}}-spoke-prod"
+          for C in $(aws ec2 describe-vpcs --region {{.AWS_REGION}} \
+              --filters "Name=tag:platform.gitops.io/prefix,Values={{.RESOURCE_PREFIX}}" \
+              --query "Vpcs[].Tags[?Key=='platform.gitops.io/cluster'].Value[]" --output text 2>/dev/null); do
+            OWNED_CLUSTERS="$OWNED_CLUSTERS,$C"
+          done
           VPCS=$(aws ec2 describe-vpcs --region {{.AWS_REGION}} \
-            --filters "Name=tag:platform.gitops.io/cluster,Values={{.HUB_CLUSTER_NAME}},spoke-dev,spoke-prod" \
+            --filters "Name=tag:platform.gitops.io/cluster,Values=$OWNED_CLUSTERS" \
             --query 'Vpcs[].VpcId' --output text 2>/dev/null)
           if [ -z "$VPCS" ]; then
             echo "No tagged Crossplane VPCs found — skipping VPC orphan cleanup"
@@ -1997,7 +2027,7 @@ tasks:
           done
           # Release EIPs tagged by Crossplane for our clusters
           for EIP in $(aws ec2 describe-addresses --region {{.AWS_REGION}} \
-              --filters "Name=tag:platform.gitops.io/cluster,Values={{.HUB_CLUSTER_NAME}},spoke-dev,spoke-prod" \
+              --filters "Name=tag:platform.gitops.io/cluster,Values=$OWNED_CLUSTERS" \
               --query 'Addresses[].AllocationId' --output text 2>/dev/null); do
             echo "Releasing EIP $EIP"
             aws ec2 release-address --allocation-id "$EIP" --region {{.AWS_REGION}} 2>/dev/null || true
