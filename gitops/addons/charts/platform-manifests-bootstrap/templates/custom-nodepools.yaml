@@ -1,15 +1,35 @@
 {{- /*
-Custom Karpenter NodePools, rendered from a caller-supplied list.
+Karpenter NodePools for the platform.
 
-The generic solution ships NO custom pools (default empty) and relies on the EKS
-Auto Mode built-in `system` / `general-purpose` NodePools. Consumers that need
-tuned pools — e.g. the workshop's stability-oriented pools with a daytime
-"do-not-disrupt" budget and a longer termination grace — supply the full pool
-definitions via their own overlay (see workshop/overlay/.../platform-manifests/values.yaml).
+customNodepools.pools — the CONSUMER's list. ALWAYS rendered, on every cluster,
+  regardless of the gate. The workshop overlay fills this from
+  configs/ so the hub and every spoke get the -peeks pools that add-on configs pin to
+  via nodeSelector. The generic solution leaves it empty and relies on the EKS Auto
+  Mode built-in system/general-purpose pools.
+
+fallbackNodepools.pools — built-in DEFAULT pools, appended to the consumer list ONLY
+  when the cluster was created WITHOUT the EKS Auto Mode built-in general-purpose pool
+  (enableGeneralPurposeNodePool="false"). Any name the consumer already defines wins,
+  so nothing is duplicated. This covers the fresh-hub bootstrap window before the
+  overlay is wired: without an untainted pool every add-on (cert-manager, keycloak,
+  load-balancer-controller, …) is unschedulable. The pools are created on the app's
+  first sync; add-on pods stay Pending until then.
+
+enableGeneralPurposeNodePool is threaded from the cluster-secret annotation
+`enable_general_purpose_nodepool` via the registry valuesObject; it defaults to "true"
+(render only the consumer list) when absent, so the generic solution is unchanged.
 
 Each entry: { name: <string>, spec: <karpenter.sh/v1 NodePool spec> }.
 */ -}}
-{{- range .Values.customNodepools.pools }}
+{{- $pools := (.Values.customNodepools | default dict).pools | default list }}
+{{- if eq (toString .Values.enableGeneralPurposeNodePool) "false" }}
+{{- $names := list }}
+{{- range $pools }}{{- $names = append $names .name }}{{- end }}
+{{- range ((.Values.fallbackNodepools | default dict).pools | default list) }}
+{{- if not (has .name $names) }}{{- $pools = append $pools . }}{{- end }}
+{{- end }}
+{{- end }}
+{{- range $pools }}
 ---
 apiVersion: karpenter.sh/v1
 kind: NodePool
