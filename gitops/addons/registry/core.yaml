@@ -437,6 +437,10 @@ image-prepuller:
   valuesObject:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+      # Route the prepuller's node pool from the cluster's own flag: when the
+      # built-in general-purpose pool is dropped ("false"), target the neutral
+      # platform-general fallback instead of a pool that no longer exists.
+      generalPurposeNodepool: '{{ if eq (default "true" (index .metadata.annotations "enable_general_purpose_nodepool")) "false" }}platform-general{{ else }}general-purpose{{ end }}'
 
 aws-efs-csi-driver:
   namespace: kube-system

@@ -12,11 +12,11 @@
 #                          unchanged and relies on the built-in pools. (The consumer's
 #                          customNodepools.pools still render if the overlay sets them.)
 #   "false"           → the built-in `general-purpose` pool was DROPPED at cluster
-#                        creation → fallbackNodepools are appended to the consumer list
-#                        so an untainted `general-purpose-peeks` exists on the app's
-#                        first sync. Without it, every add-on (cert-manager, keycloak,
-#                        load-balancer-controller, …) is Pending because the only
-#                        remaining pools (built-in `system`, gpu, trainium) are all
+#                        creation → the neutral `platform-general` fallback pool is
+#                        appended to the consumer list so an untainted pool exists on
+#                        the app's first sync. Without it, every add-on (cert-manager,
+#                        keycloak, load-balancer-controller, …) is Pending because the
+#                        only remaining pools (built-in `system`, gpu, trainium) are all
 #                        tainted — the fresh-hub bootstrap deadlock.
 #
 # Default "true" is the SAFE value: if the annotation is absent, no fallback pools are
@@ -36,43 +36,42 @@ customNodepools:
   pools: []
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# fallbackNodepools.pools — built-in DEFAULT pools, appended to the consumer list
-# ONLY when enableGeneralPurposeNodePool == "false" (the built-in general-purpose pool
-# was dropped at cluster creation). Any name the consumer already defines wins, so
-# nothing is duplicated. This covers the fresh-hub bootstrap window before the overlay
-# is wired. These are opinionated, workshop-tuned pools (a daytime do-not-disrupt
-# budget, a 48h termination grace, `managed-by: peeks` labels); retune to taste.
-#   OPT-OUT NOTE: emptying this on a "false" cluster brings back the fresh-hub
-#   deadlock (no untainted pool at bootstrap) — only empty it if the consumer list
-#   already supplies an untainted pool.
-# ─────────────────────────────────────────────────────────────────────────────
+# fallbackNodepools.pools -- the generic REPLACEMENT pool, appended to the consumer
+# list ONLY when enableGeneralPurposeNodePool == "false" (the EKS Auto Mode built-in
+# general-purpose pool was dropped at cluster creation). Any name the consumer already
+# defines wins, so nothing is duplicated.
+#
+# ARCHITECTURE RULE: if the platform removes capacity, it provides the replacement.
+# This is ONE neutral pool, not consumer tuning: no prefix, a low weight so any
+# consumer pool outranks it, standard consolidation (no schedules, no long grace, no
+# consumer labels), untainted, on the built-in `default` NodeClass. It only has to keep
+# the add-on layer schedulable on a fresh "false" cluster before the consumer overlay
+# is wired. Consumers tune their own pools in their overlay (customNodepools.pools) at a
+# higher weight -- those simply outrank this fallback, so no name-based skip is needed.
+#
+# No fallback *system* pool is needed: the built-in `system` pool stays on (it also
+# provides the `default` NodeClass this pool references).
+#   OPT-OUT NOTE: emptying this on a "false" cluster brings back the fresh-hub deadlock
+#   (no untainted pool at bootstrap) -- only empty it if the consumer list already
+#   supplies an untainted pool.
+#
+# NOTE: `platform-general` deliberately avoids the Auto Mode names (system,
+# general-purpose, default) so it never collides with a built-in pool/NodeClass.
+# ---------------------------------------------------------------------------------
 fallbackNodepools:
   pools:
-    - name: general-purpose-peeks
+    - name: platform-general
       spec:
-        # Prefer this tuned pool over the built-in general-purpose (weight 0) so
-        # unpinned workloads land here and inherit the do-not-disrupt budget instead
-        # of the built-in's default consolidation. Adjust to your own precedence.
-        weight: 100
+        # Low weight: any consumer-defined pool (customNodepools.pools) outranks this,
+        # so the fallback is a floor, not a preference.
+        weight: 10
         disruption:
           consolidationPolicy: WhenEmptyOrUnderutilized
           consolidateAfter: 5m
-          budgets:
-            # Daytime hours (06:00-20:00): block ALL voluntary disruption.
-            # A budget with no schedule is ALWAYS active, so an unscheduled
-            # `nodes: "0"` would permanently mask the nightly window below (issue #892).
-            - nodes: "0"
-              schedule: "0 6 * * *"
-              duration: 14h
-            # Nightly consolidation window (20:00-22:00): allow up to 30%.
-            - nodes: "30%"
-              schedule: "0 20 * * *"
-              duration: 2h
         template:
           metadata:
             labels:
               node-type: general-purpose
-              managed-by: peeks
           spec:
             nodeClassRef:
               group: eks.amazonaws.com
@@ -91,58 +90,6 @@ fallbackNodepools:
               - key: "eks.amazonaws.com/instance-generation"
                 operator: Gt
                 values: ["5"]
-              - key: "eks.amazonaws.com/instance-size"
-                operator: In
-                values: ["xlarge", "2xlarge", "4xlarge", "8xlarge"]
-            terminationGracePeriod: 48h
-    - name: system-peeks
-      spec:
-        # Prefer this tuned system pool over the built-in system (weight 0) for
-        # critical add-ons that tolerate the CriticalAddonsOnly taint. Adjust to taste.
-        weight: 100
-        disruption:
-          consolidationPolicy: WhenEmptyOrUnderutilized
-          consolidateAfter: 5m
-          budgets:
-            # Daytime hours (06:00-20:00): block ALL voluntary disruption.
-            # A budget with no schedule is ALWAYS active, so an unscheduled
-            # `nodes: "0"` would permanently mask the nightly window below (issue #892).
-            - nodes: "0"
-              schedule: "0 6 * * *"
-              duration: 14h
-            # Nightly consolidation window (20:00-22:00): allow up to 30%.
-            - nodes: "30%"
-              schedule: "0 20 * * *"
-              duration: 2h
-        template:
-          metadata:
-            labels:
-              node-type: system
-              managed-by: peeks
-          spec:
-            nodeClassRef:
-              group: eks.amazonaws.com
-              kind: NodeClass
-              name: default
-            requirements:
-              - key: "karpenter.sh/capacity-type"
-                operator: In
-                values: ["on-demand"]
-              - key: "kubernetes.io/arch"
-                operator: In
-                values: ["amd64"]
-              - key: "eks.amazonaws.com/instance-category"
-                operator: In
-                values: ["c", "m", "r"]
-              - key: "eks.amazonaws.com/instance-generation"
-                operator: Gt
-                values: ["5"]
-              - key: "eks.amazonaws.com/instance-size"
-                operator: In
-                values: ["xlarge", "2xlarge"]
-            taints:
-              - key: CriticalAddonsOnly
-                effect: NoSchedule
-            terminationGracePeriod: 48h
+
 gpu:
   enabled: true
