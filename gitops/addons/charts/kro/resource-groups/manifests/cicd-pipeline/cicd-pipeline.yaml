@@ -3179,7 +3179,10 @@ spec:
                     path: /argo-events/${schema.spec.name}
                     pathType: Prefix
 
-    # PodDisruptionBudget for eventbus to prevent Karpenter disruptions
+    # PodDisruptionBudget for the 3-replica JetStream EventBus: one pod at a time, so a
+    # drain or consolidation keeps quorum (2 of 3). maxUnavailable: 0 allowed no eviction
+    # at all, so a node hosting an EventBus pod could never be drained or replaced.
+    # AlwaysAllow: a pod that isn't Ready (e.g. on a failing node) never blocks the drain.
     - id: eventbuspdb
       readyWhen:
         - ${eventbuspdb.metadata.name != ""}
@@ -3202,7 +3205,8 @@ spec:
           annotations:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
         spec:
-          maxUnavailable: 0
+          maxUnavailable: 1
+          unhealthyPodEvictionPolicy: AlwaysAllow
           selector:
             matchLabels:
               controller: eventbus-controller
