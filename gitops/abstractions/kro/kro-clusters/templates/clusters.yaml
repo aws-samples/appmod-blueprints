@@ -61,7 +61,7 @@ spec:
   provider: {{ $cluster.provider | default "" | quote }}
   region: {{ $cluster.region | default "us-west-2" | quote }}
   managementRegion: {{ $cluster.region | default "us-west-2" | quote }}
-  k8sVersion: {{ $cluster.k8sVersion | default "1.34" | quote }}
+  k8sVersion: {{ $cluster.k8sVersion | default "1.37" | quote }}
   # Per-cluster fleet-config value wins; else fall back to the SAME global.accountId
   # for both fields (there is only one global account identity — managementAccountId
   # is not a separate global concept). Mirrors the Crossplane claim.yaml pattern

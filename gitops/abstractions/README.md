@@ -36,7 +36,7 @@ Composite kind: `XPlatformCluster`
 | `region` | string | (required) | AWS region |
 | `clusterName` | string | (required) | Cluster name, also used as `crossplane.io/external-name` |
 | `vpcCidr` | string | `10.0.0.0/16` | VPC CIDR block |
-| `kubernetesVersion` | string | `1.32` | EKS Kubernetes version |
+| `kubernetesVersion` | string | `1.37` | EKS Kubernetes version |
 | `autoMode` | boolean | `true` | Enable EKS Auto Mode (managed compute, storage, networking) |
 | `resourcePrefix` | string | | Prefix for resource tagging and identification |
 | `managedNodeGroup.enabled` | boolean | `false` | Create a managed node group alongside Auto Mode |
@@ -125,7 +125,7 @@ clusters:
     region: us-west-2
     clusterName: spoke-us-west-2
     vpcCidr: "10.1.0.0/16"
-    kubernetesVersion: "1.32"
+    kubernetesVersion: "1.37"
     autoMode: true
 ```
 

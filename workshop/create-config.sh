@@ -84,7 +84,7 @@
 #   CLUSTER_PROVIDER  (default: from CFN parameter or "kind-kro-ack")
 #   REPO_URL          (default: https://github.com/aws-samples/appmod-blueprints)
 #   REPO_REVISION     (default: $WORKSHOP_GIT_BRANCH)
-#   K8S_VERSION       (default: 1.35)
+#   K8S_VERSION       (default: 1.37)
 #   FORCE             (default: false) — set to true to overwrite existing config
 #   ADMIN_ROLE_NAME   (default: derived from WS_PARTICIPANT_ROLE_ARN or caller identity)
 #   HUB_VPC_ID        (default: from CDK bootstrap env) — OPTIONAL: install the hub into
@@ -150,7 +150,7 @@ if [ -z "$CLUSTER_PROVIDER" ]; then
     --output text 2>/dev/null | grep -v "^None$" || true)
 fi
 CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-kind-kro-ack}"
-K8S_VERSION="${K8S_VERSION:-1.35}"
+K8S_VERSION="${K8S_VERSION:-1.37}"
 VPC_CIDR="${VPC_CIDR:-10.1.0.0/16}"
 FORCE="${FORCE:-false}"
 

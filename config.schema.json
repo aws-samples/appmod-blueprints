@@ -78,7 +78,7 @@
         "kubernetesVersion": {
           "type": "string",
           "pattern": "^[0-9]+\\.[0-9]+$",
-          "default": "1.35",
+          "default": "1.37",
           "description": "EKS Kubernetes version"
         },
         "vpcCidr": {
