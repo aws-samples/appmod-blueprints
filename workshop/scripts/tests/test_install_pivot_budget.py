@@ -67,17 +67,23 @@ def _gate(call):
 
 
 def test_gate_gets_only_the_remaining_budget(tmp_path):
-    # 80 min in: 6600 - 4800 - 300 = 1500 s left for the adoption gate
-    calls, _ = _run(tmp_path, elapsed=4800)
+    # ~92 min in: 6600 - 5500 - 300 = 800 s left, which is BELOW the 900 s cap, so the
+    # gate gets the remaining budget (not the cap). This exercises the remaining-budget
+    # branch now that the install cap defaults to 900 s (was 1800 s).
+    calls, _ = _run(tmp_path, elapsed=5500)
     assert len(calls) == 1 and calls[0].startswith("kind-kro-ack:hub:pivot PIVOT_DRY_RUN=false")
-    assert 1490 <= _gate(calls[0]) <= 1500
+    assert 790 <= _gate(calls[0]) <= 800
 
 
-def test_gate_is_capped_at_the_provider_timeout(tmp_path):
-    # a short re-run of `task install` keeps the provider's 1800 s, or an explicit override
+def test_gate_is_capped_at_the_install_cap(tmp_path):
+    # a short re-run of `task install` is capped at the install cap, now 900 s by default.
     calls, _ = _run(tmp_path, elapsed=600)
-    assert _gate(calls[0]) == 1800
-    calls, _ = _run(tmp_path, elapsed=600, PIVOT_ADOPT_TIMEOUT_SEC="900")
+    assert _gate(calls[0]) == 900
+    # the cap is overridable via the install-cap knob HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC.
+    calls, _ = _run(tmp_path, elapsed=600, HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC="1800")
+    assert _gate(calls[-1]) == 1800
+    # regression guard (review #1098): the OLD knob name no longer moves the install cap.
+    calls, _ = _run(tmp_path, elapsed=600, PIVOT_ADOPT_TIMEOUT_SEC="1800")
     assert _gate(calls[-1]) == 900
 
 
@@ -86,6 +92,6 @@ def test_pivot_is_skipped_when_the_budget_is_used_up(tmp_path):
     calls, out = _run(tmp_path, elapsed=6557)
     assert calls == []
     assert "hub pivot skipped (non-fatal)" in out
-    # a larger budget (another template, or a manual install) still pivots
+    # a larger budget (another template, or a manual install) still pivots, capped at 900 s
     calls, _ = _run(tmp_path, elapsed=6557, INSTALL_BUDGET_SEC="99999")
-    assert _gate(calls[0]) == 1800
+    assert _gate(calls[0]) == 900
