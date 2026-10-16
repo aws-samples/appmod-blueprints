@@ -1550,7 +1550,11 @@ tasks:
           if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
             ADMIN_INSTANCE_ARN_LINE="    adminInstanceRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$INSTANCE_ROLE"
           fi
-          cat > "$XP_VALUES" <<EOF
+          # Render this spoke's entry, then merge it into the existing clusters map
+          # (preserves the other spokes already written, e.g. spoke-dev when enabling
+          # spoke-prod), as spokes:enable-kro does for kro-clusters/values.yaml.
+          XP_ENTRY=$(mktemp)
+          cat > "$XP_ENTRY" <<EOF
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
@@ -1567,6 +1571,10 @@ tasks:
         $ADMIN_ARN_LINE
         $ADMIN_INSTANCE_ARN_LINE
         EOF
+          [ -f "$XP_VALUES" ] || printf 'clusters: {}\n' > "$XP_VALUES"
+          CLUSTER={{.CLUSTER}} XP_ENTRY="$XP_ENTRY" \
+            yq -i '.clusters[strenv(CLUSTER)] = load(strenv(XP_ENTRY)).clusters[strenv(CLUSTER)]' "$XP_VALUES"
+          rm -f "$XP_ENTRY"
         fi
         # Fleet member file: only Crossplane/Terraform spokes need a fleet-secret
         # ArgoCD registration. KRO spokes do NOT (their cluster Secret is created by
