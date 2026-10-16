@@ -1730,7 +1730,7 @@ tasks:
           for C in $(aws eks list-clusters --region {{.AWS_REGION}} --query 'clusters[]' --output text 2>/dev/null); do
             T=$(aws eks describe-cluster --name "$C" --region {{.AWS_REGION}} \
               --query 'cluster.tags."platform.gitops.io/prefix"' --output text 2>/dev/null || true)
-            [ -n "$T" ] && [ "$T" = "{{.RESOURCE_PREFIX}}" ] && OWNED_CLUSTERS="$OWNED_CLUSTERS$C "
+            if [ -n "$T" ] && [ "$T" = "{{.RESOURCE_PREFIX}}" ]; then OWNED_CLUSTERS="$OWNED_CLUSTERS$C "; fi
           done
           # Prints "<scraperId> <status>" for each of our scrapers.
           our_scrapers() {

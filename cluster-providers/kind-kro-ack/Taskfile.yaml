@@ -1790,7 +1790,7 @@ tasks:
           for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
             T=$(aws eks describe-cluster --name "$C" --region "$REGION" \
               --query 'cluster.tags."platform.gitops.io/prefix"' --output text 2>/dev/null || true)
-            [ "$T" = "$PREFIX" ] && OWNED_CLUSTERS="$OWNED_CLUSTERS$C "
+            if [ "$T" = "$PREFIX" ]; then OWNED_CLUSTERS="$OWNED_CLUSTERS$C "; fi
           done
           aws amp list-scrapers --region "$REGION" \
                 --query 'scrapers[].[scraperId, source.eksConfiguration.clusterArn]' \
@@ -1822,7 +1822,7 @@ tasks:
           for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
             OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
               --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
-            [ -n "$OI" ] && ACTIVE_OIDCS="$ACTIVE_OIDCS ${OI##*/}"
+            if [ -n "$OI" ]; then ACTIVE_OIDCS="$ACTIVE_OIDCS ${OI##*/}"; fi
           done
           for ARN in $(aws iam list-open-id-connect-providers \
                 --query 'OpenIDConnectProviderList[].Arn' --output text 2>/dev/null | tr '\t' '\n'); do
@@ -1834,7 +1834,7 @@ tasks:
             # Skip if this is an active cluster's OIDC
             KEEP=false
             for AO in $ACTIVE_OIDCS; do
-              [ "$AO" = "$OIDC_ID" ] && { KEEP=true; break; }
+              if [ "$AO" = "$OIDC_ID" ]; then KEEP=true; break; fi
             done
             $KEEP && { echo "  skip active cluster OIDC $OIDC_ID"; continue; }
             aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>/dev/null || true
