@@ -301,7 +301,7 @@ clusters:
   hub:
     name: hub
     region: us-west-2
-    kubernetes_version: "1.32"
+    kubernetes_version: "1.37"
     environment: control-plane
     tenant: control-plane
     auto_mode: true                    # EKS Auto Mode (no managed node groups)
@@ -645,7 +645,7 @@ module "hub" {
   hub_config_path   = "./my-hub-config.yaml"
   cluster_name      = "my-hub"
   region            = "us-west-2"
-  kubernetes_version = "1.32"
+  kubernetes_version = "1.37"
 
   # Optional: customize VPC, EKS Auto Mode settings, etc.
   vpc_cidr          = "10.0.0.0/16"
@@ -1133,7 +1133,7 @@ Create an externally consumable Terraform module that provisions the hub EKS clu
   variable "kubernetes_version" {
     description = "EKS Kubernetes version"
     type        = string
-    default     = "1.32"
+    default     = "1.37"
   }
   variable "appmod_blueprints_repo" {
     description = "appmod-blueprints repo URL"

@@ -42,7 +42,7 @@ clusters:
   my-spoke:
     clusterName: my-spoke
     vpcCidr: "10.3.0.0/16"
-    kubernetesVersion: "1.35"
+    kubernetesVersion: "1.37"
     autoMode: true
     resourcePrefix: peeks
     # region: us-east-1        # Optional, defaults to hub region
@@ -55,7 +55,7 @@ clusters:
   my-spoke:
     clusterName: my-spoke
     vpcCidr: "10.3.0.0/16"
-    kubernetesVersion: "1.35"
+    kubernetesVersion: "1.37"
     autoMode: true
     resourcePrefix: peeks
 ```

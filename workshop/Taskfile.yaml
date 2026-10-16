@@ -22,7 +22,7 @@ vars:
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
   K8S_VERSION:
-    sh: yq '.hub.kubernetesVersion // "1.35"' {{.CONFIG_FILE}}
+    sh: yq '.hub.kubernetesVersion // "1.37"' {{.CONFIG_FILE}}
   DOMAIN:
     sh: yq '.domain // ""' {{.CONFIG_FILE}}
   # Platform consumption (OAP-style). If platform.ref is unset, the platform IS
@@ -182,10 +182,22 @@ tasks:
       #       with the hub still managed by kind, and the pivot fail-closes by restarting kind
       #       (never a CFN CREATE_FAILED, review #1). kind-kro-ack only; disable with
       #       HUB_PIVOT_ON_INSTALL=false. ignore_error + the inner guard both keep it non-fatal.
+      #   (c) the pivot must also END inside the install's time budget. The self-paced
+      #       template's SSM step kills `task install` at 7000 s (IDE WaitCondition: 7200 s),
+      #       and a kill skips hub:pivot's EXIT trap: kind stays stopped mid-gate and the stack
+      #       ends CREATE_FAILED. So the adoption gate gets what is left of INSTALL_BUDGET_SEC,
+      #       minus 300 s for the pivot's own steps (or its abort), and at most
+      #       PIVOT_ADOPT_TIMEOUT_SEC; with less than 120 s left the pivot is skipped.
       - cmd: |
           if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "{{.HUB_PIVOT_ON_INSTALL | default "true"}}" = "true" ]; then
-            printf '{{.C_STEP}}▸ [#1033] Final step: hub self-adoption pivot (detaching from kind)…{{.C_RESET}}\n'
-            if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop ); then
+            GATE_SEC=$(( {{.INSTALL_BUDGET_SEC | default "6600"}} - ($(date +%s) - {{.INSTALL_START}}) - 300 ))
+            if [ "$GATE_SEC" -gt {{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}} ]; then GATE_SEC={{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}}; fi
+            if [ "$GATE_SEC" -lt 120 ]; then
+              printf '{{.C_INFO}}  ⚠ hub pivot skipped (non-fatal): the install budget ({{.INSTALL_BUDGET_SEC | default "6600"}}s) is nearly used up. The workshop is fully functional with the hub still managed by kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+              exit 0
+            fi
+            printf '{{.C_STEP}}▸ [#1033] Final step: hub self-adoption pivot (detaching from kind, adoption gate max %ss)…{{.C_RESET}}\n' "$GATE_SEC"
+            if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop PIVOT_ADOPT_TIMEOUT_SEC="$GATE_SEC" ); then
               printf '{{.C_OK}}  ✓ hub pivoted — kind bootstrap detached (stopped & recoverable).{{.C_RESET}}\n'
             else
               printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind; the pivot fail-closed and restarted kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
@@ -522,6 +534,7 @@ tasks:
   post-install:
     desc: Workshop post-install steps (IDC/Keycloak federation for ArgoCD SSO)
     cmds:
+      - '[ "{{.IDC_CONFIGURE_SKIP | default "false"}}" != "true" ] || printf "{{.C_INFO}}  IDC_CONFIGURE_SKIP=true: idc:configure skipped, IAM Identity Center not touched.{{.C_RESET}}\n"'
       - task: idc:configure
 
 
@@ -627,6 +640,12 @@ tasks:
     desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
     status:
       - |
+        # IAM Identity Center is one per account. IDC_CONFIGURE_SKIP=true skips this whole task
+        # (the federation and the admin-group sync), for a second stack in an account whose IdC
+        # is already federated to another stack's Keycloak: running it would re-point that IdC
+        # to this stack's Keycloak and break the other stack's SSO. Without the knob, the check
+        # below skips only if the git user happens to be in the identity store already.
+        if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
         IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.AWS_REGION}} \
           --query "Instances[?InstanceArn=='{{.IDC_INSTANCE_ARN}}'].IdentityStoreId" --output text 2>/dev/null)
         aws identitystore list-users --identity-store-id "$IDENTITY_STORE_ID" --region {{.AWS_REGION}} \
@@ -636,7 +655,11 @@ tasks:
       IDC_INSTANCE_ID:
         sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
       KC_ADMIN_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
+        # go-task resolves these vars before status:, so the knob gates this read too. With
+        # IDC_CONFIGURE_SKIP=true the task makes no AWS call.
+        sh: |
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
+          aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
       KEYCLOAK_DNS:
         # One path for both exposure modes: the domain is a static config value in each
         # case, whether it was supplied by the consumer or reserved from CloudFront before
@@ -1538,7 +1561,11 @@ tasks:
           if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
             ADMIN_INSTANCE_ARN_LINE="    adminInstanceRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$INSTANCE_ROLE"
           fi
-          cat > "$XP_VALUES" <<EOF
+          # Render this spoke's entry, then merge it into the existing clusters map
+          # (preserves the other spokes already written, e.g. spoke-dev when enabling
+          # spoke-prod), as spokes:enable-kro does for kro-clusters/values.yaml.
+          XP_ENTRY=$(mktemp)
+          cat > "$XP_ENTRY" <<EOF
         clusters:
           {{.CLUSTER}}:
             clusterName: {{.CLUSTER}}
@@ -1555,6 +1582,10 @@ tasks:
         $ADMIN_ARN_LINE
         $ADMIN_INSTANCE_ARN_LINE
         EOF
+          [ -f "$XP_VALUES" ] || printf 'clusters: {}\n' > "$XP_VALUES"
+          CLUSTER={{.CLUSTER}} XP_ENTRY="$XP_ENTRY" \
+            yq -i '.clusters[strenv(CLUSTER)] = load(strenv(XP_ENTRY)).clusters[strenv(CLUSTER)]' "$XP_VALUES"
+          rm -f "$XP_ENTRY"
         fi
         # Fleet member file: only Crossplane/Terraform spokes need a fleet-secret
         # ArgoCD registration. KRO spokes do NOT (their cluster Secret is created by
@@ -1958,10 +1989,9 @@ tasks:
           --kubeconfig {{.REPO}}/private/hub-kubeconfig >/dev/null 2>&1 || true
         KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
         if command -v argocd >/dev/null 2>&1; then
-          # Try to refresh the ArgoCD token first (in case session expired).
-          # argocd-refresh-token uses Playwright + IDC SSO to get a fresh token.
-          # shellcheck source=/dev/null
-          source "{{.REPO}}/scripts/argocd-refresh-token.sh" 2>/dev/null || true
+          # Uses the caller's existing Argo CD session, if any. No SSO sign-in here: the
+          # Identity Center identity source is account-wide and may be another stack's
+          # Keycloak. Without a session, the kubectl patch below does the prune.
           argocd app get "$APP" --refresh >/dev/null 2>&1 || true
           if argocd app sync "$APP" --prune --timeout 600; then
             PRUNED=true

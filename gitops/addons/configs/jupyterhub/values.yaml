@@ -29,12 +29,16 @@ jupyterhub:
     service:
       type: ClusterIP
 
+  # The platform ships its own Ingress for JupyterHub (templates/ingress.yaml:
+  # ALB, ingressClassName: platform, named "jupyterhub"). Leaving the upstream
+  # chart's ingress enabled here renders a SECOND Ingress named "jupyterhub" in
+  # the same namespace, so ArgoCD reports
+  #   RepeatedResourceWarning: Ingress/jupyterhub/jupyterhub appeared 2 times
+  # and the application never syncs. Keep the upstream ingress disabled; the
+  # custom nginx annotations below are also wrong for this platform (it uses ALB,
+  # not nginx) and are intentionally dropped.
   ingress:
-    enabled: true
-    annotations:
-      kubernetes.io/ingress.class: nginx
-      nginx.ingress.kubernetes.io/rewrite-target: /$2
-      nginx.ingress.kubernetes.io/use-regex: 'true'
+    enabled: false
 
   singleuser:
     defaultUrl: '/lab'

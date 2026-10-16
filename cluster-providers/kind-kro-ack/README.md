@@ -18,7 +18,7 @@ Zero-Terraform bootstrap for the hub cluster using KRO ResourceGraphDefinitions 
 ```yaml
 hub:
   clusterName: hub
-  kubernetesVersion: "1.32"
+  kubernetesVersion: "1.37"
   vpcCidr: "10.0.0.0/16"
   adminRoleName: Admin  # IAM role for cluster admin access entry
 aws:

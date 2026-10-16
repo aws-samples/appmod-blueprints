@@ -79,6 +79,12 @@ Full workshop installation. Runs from the `workshop/` directory.
 
 **Total: ~60-70 minutes** on a fresh account.
 
+**Environment overrides** (read by `task install`, as an env var or `task install VAR=value`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IDC_CONFIGURE_SKIP` | `false` | `true` skips `idc:configure`, so IAM Identity Center (one per account) is never touched. Use it for a second stack in an account whose Identity Center is already federated to another stack's Keycloak |
+
 ---
 
 ## Troubleshooting

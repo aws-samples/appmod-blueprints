@@ -24,7 +24,7 @@ def run(ctx):
                 if a.get("AssociationId"):
                     continue
                 tags = {t["Key"]: t["Value"] for t in a.get("Tags", [])}
-                if tags.get(OWNER_PREFIX_TAG) == prefix or any(prefix in str(v) for v in tags.values()):
+                if ctx.eip_is_ours(tags):
                     try:
                         ec2.release_address(AllocationId=a["AllocationId"])
                         log(f"  [verify] Released freed EIP {a.get('PublicIp')}")
@@ -85,7 +85,7 @@ def run(ctx):
                 if a.get("AssociationId"):
                     continue
                 tags = {t["Key"]: t["Value"] for t in a.get("Tags", [])}
-                if tags.get(OWNER_PREFIX_TAG) == prefix or any(prefix in str(v) for v in tags.values()):
+                if ctx.eip_is_ours(tags):
                     _add(f"eip:{a.get('PublicIp')}")
         except Exception:
             pass
