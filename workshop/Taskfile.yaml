@@ -628,11 +628,11 @@ tasks:
     desc: Configure IDC with Keycloak as external IdP and sync users via SCIM
     status:
       - |
-        # IAM Identity Center is one per account. IDC_CONFIGURE_SKIP=true leaves it alone, for a
-        # second stack in an account whose IdC is already federated to another stack's Keycloak:
-        # running this would re-point that IdC to this stack's Keycloak and break the other
-        # stack's SSO. Without the knob, the check below skips only if the git user happens to be
-        # in the identity store already.
+        # IAM Identity Center is one per account. IDC_CONFIGURE_SKIP=true skips this whole task
+        # (the federation and the admin-group sync), for a second stack in an account whose IdC
+        # is already federated to another stack's Keycloak: running it would re-point that IdC
+        # to this stack's Keycloak and break the other stack's SSO. Without the knob, the check
+        # below skips only if the git user happens to be in the identity store already.
         if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
         IDENTITY_STORE_ID=$(aws sso-admin list-instances --region {{.AWS_REGION}} \
           --query "Instances[?InstanceArn=='{{.IDC_INSTANCE_ARN}}'].IdentityStoreId" --output text 2>/dev/null)
@@ -643,7 +643,11 @@ tasks:
       IDC_INSTANCE_ID:
         sh: echo "{{.IDC_INSTANCE_ARN}}" | awk -F'/' '{print $NF}' | sed 's/^ssoins-//'
       KC_ADMIN_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
+        # go-task resolves these vars before status:, so the knob gates this read too. With
+        # IDC_CONFIGURE_SKIP=true the task makes no AWS call.
+        sh: |
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
+          aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text | jq -r '.keycloak_admin_password'
       KEYCLOAK_DNS:
         # One path for both exposure modes: the domain is a static config value in each
         # case, whether it was supplied by the consumer or reserved from CloudFront before
