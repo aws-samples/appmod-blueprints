@@ -83,7 +83,7 @@ Full workshop installation. Runs from the `workshop/` directory.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `IDC_CONFIGURE_SKIP` | `false` | `true` skips `idc:configure`, so IAM Identity Center (one per account) is never touched. Use it for a second stack in an account whose Identity Center is already federated to another stack's Keycloak |
+| `IDC_CONFIGURE_SKIP` | `false` | `true` skips `idc:configure`, so IAM Identity Center (one per account) is never touched. Use it for a second stack in an account whose Identity Center is already federated to another stack's Keycloak. `setup-env` also writes it to `~/.bashrc.d/platform.sh`, so the IDE's `argocd-refresh-token` never re-points Identity Center either |
 
 ---
 
