@@ -2164,8 +2164,11 @@ tasks:
             [ -z "$SCRAPER_ID" ] && continue
             CLUSTER="${CLUSTER_ARN##*/}"
             case "$OWNED_CLUSTERS" in *" $CLUSTER "*) ;; *) continue ;; esac
-            aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>/dev/null || true
-            echo "  ✓ deleted AMP scraper $SCRAPER_ID ($CLUSTER)"
+            if ERR=$(aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>&1); then
+              echo "  ✓ deleted AMP scraper $SCRAPER_ID ($CLUSTER)"
+            else
+              echo "  ⚠ AMP scraper $SCRAPER_ID ($CLUSTER) not deleted ($(awserr "$ERR"))"
+            fi
           done
           # 6eii. DevLake RDS instance (created by KubeVela in kind-kro-ack path).
           #       Named devlake-mysql-db-* and scoped to the peeks VPC. Not ACK-tagged.

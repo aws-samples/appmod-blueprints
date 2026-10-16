@@ -39,16 +39,21 @@ FIXTURE = {
                    {"alias": f"{PREFIX}-other-amp", "workspaceId": "ws-denied"}],
     "dbs": ["devlake-ok", "devlake-denied"],
     "oidc": ["OKOKOK", "DENIEDDENIED"],
+    # AMP scrapers of this stack's hub and dev spoke (6ei): one delete allowed, one denied.
+    "scrapers": [{"scraperId": "s-okok", "source": {"eksConfiguration": {
+                      "clusterArn": f"arn:aws:eks:{REGION}:{ACCT}:cluster/{PREFIX}-hub"}}},
+                 {"scraperId": "s-denied", "source": {"eksConfiguration": {
+                      "clusterArn": f"arn:aws:eks:{REGION}:{ACCT}:cluster/{PREFIX}-spoke-dev"}}}],
     "log_groups": [f"/aws/eks/{HUB}/cluster", f"/aws/eks/{HUB}/capability/kro",
                    f"/aws/eks/{PREFIX}-spoke-dev/cluster", f"/aws/eks/{PREFIX}-spoke-prod/cluster"],
     # Denied deletes: one of each kind, and three of the four log groups.
-    "deny": [f"{PREFIX}-denied", "ws-denied", "devlake-denied", "DENIEDDENIED",
+    "deny": [f"{PREFIX}-denied", "ws-denied", "devlake-denied", "DENIEDDENIED", "s-denied",
              f"/aws/eks/{HUB}/cluster", f"/aws/eks/{HUB}/capability/kro",
              f"/aws/eks/{PREFIX}-spoke-dev/cluster"],
 }
-DENIED = [FIXTURE["secrets"][1], "ws-denied", "devlake-denied", "DENIEDDENIED",
+DENIED = [FIXTURE["secrets"][1], "ws-denied", "devlake-denied", "DENIEDDENIED", "s-denied",
           *FIXTURE["log_groups"][:3]]
-ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", FIXTURE["log_groups"][3]]
+ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", "s-okok", FIXTURE["log_groups"][3]]
 
 FAKE_AWS = r'''#!{python} -I
 import json, os, sys
@@ -67,7 +72,8 @@ OPS = {"delete-secret": ("secret-id", "DeleteSecret"),
        "delete-workspace": ("workspace-id", "DeleteWorkspace"),
        "delete-db-instance": ("db-instance-identifier", "DeleteDBInstance"),
        "delete-open-id-connect-provider": ("open-id-connect-provider-arn", "DeleteOpenIDConnectProvider"),
-       "delete-log-group": ("log-group-name", "DeleteLogGroup")}
+       "delete-log-group": ("log-group-name", "DeleteLogGroup"),
+       "delete-scraper": ("scraper-id", "DeleteScraper")}
 if op in OPS:
     key, api = OPS[op]
     target = opts.get(key, "")
@@ -85,7 +91,7 @@ if not op.startswith(("describe-", "list-", "get-")):
 out = {
     ("secretsmanager", "list-secrets"): {"SecretList": [{"ARN": a} for a in fx["secrets"]]},
     ("amp", "list-workspaces"): {"workspaces": fx["workspaces"]},
-    ("amp", "list-scrapers"): {"scrapers": []},
+    ("amp", "list-scrapers"): {"scrapers": fx.get("scrapers", [])},
     ("rds", "describe-db-instances"): {"DBInstances": [{"DBInstanceIdentifier": d} for d in fx["dbs"]]},
     ("sts", "get-caller-identity"): {"Account": fx["acct"]},
     ("eks", "list-clusters"): {"clusters": []},
@@ -106,6 +112,8 @@ def text(v):
     if v is None:
         return "None"
     if isinstance(v, list):
+        if v and all(isinstance(x, list) for x in v):  # rows, as the CLI's text output prints them
+            return "\n".join(text(x) for x in v)
         return "\t".join(text(x) for x in v)
     return str(v)
 if opts.get("output") == "text":
