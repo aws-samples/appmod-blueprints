@@ -42,7 +42,7 @@ identityCenter:
   adminGroupId: ""  # Optional, created by idc:setup if empty
 ```
 
-**IDC prerequisite**: An Identity Center instance must exist in your account/organization. The `idc:setup` task creates groups and users automatically. With `IDC_CONFIGURE_SKIP=true` (for example a second stack in an account whose Identity Center another stack already uses) it does nothing and makes no AWS call.
+**IDC prerequisite**: An Identity Center instance must exist in your account/organization. The `idc:setup` task creates groups and users automatically. With `IDC_CONFIGURE_SKIP=true` (for example a second stack in an account whose Identity Center another stack already uses) it prints a notice, creates nothing and makes no Identity Center call. It then also leaves `identityCenter.identityStoreId` and `identityCenter.adminGroupId` unset, and `hub:claim` maps the Argo CD capability's ADMIN SSO group from `adminGroupId`, so set both keys in `config.local.yaml` yourself when you use the knob.
 
 ## Task Commands
 

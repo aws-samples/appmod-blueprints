@@ -210,6 +210,7 @@ def test_kind_kro_ack_idc_setup_honours_the_knob(tmp_path, form):
         res, svcs = run("IDC_CONFIGURE_SKIP=true")
     assert res.returncode == 0, res.stderr
     assert not [s for s in svcs if s in IDC_SERVICES], svcs
+    assert "idc:setup skipped" in res.stdout, res.stdout  # the operator can see the knob took effect
 
     res, svcs = run()  # no knob: it still talks to Identity Center
     assert "identitystore" in svcs, (svcs, res.stderr[-400:])
