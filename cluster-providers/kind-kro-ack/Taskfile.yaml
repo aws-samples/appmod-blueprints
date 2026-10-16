@@ -998,6 +998,8 @@ tasks:
       - task: hub:cluster-secret-store
       - task: hub:seed-secret
       - task: hub:apply-root-appset
+      # The Argo CD capability exists now (hub:apply-root-appset waited for its CRDs).
+      - task: secrets-manager:seed-argocd-url
       - task: hub:create-mgmt-roles
 
   hub:kubeconfig:
@@ -1122,6 +1124,56 @@ tasks:
           --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
         || aws secretsmanager put-secret-value \
           --secret-id "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}}
+
+  secrets-manager:seed-argocd-url:
+    desc: Fill aws_argocd_url in <hub>/config from the Argo CD capability when it is still empty
+    cmds:
+      - |
+        # secrets-manager:seed resolves the capability URL too, but on a fresh install it runs
+        # minutes before the Argo CD capability is created, so it stores "" and nothing writes
+        # the key later: Backstage's argocd_hostname then falls back to the ingress domain,
+        # which does not serve Argo CD. hub:seed calls this once the capability's CRDs are
+        # served. Only an EMPTY value is filled, and only this key is merged (re-running the
+        # whole seed would drop the keys other tasks merged in since). Idempotent, non-fatal.
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null) || CONFIG_EXISTING=""
+        if [ -z "$CONFIG_EXISTING" ]; then
+          printf '{{.C_ERR}}⚠ %s not readable — aws_argocd_url not checked.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 0
+        fi
+        STORED=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .aws_argocd_url // ""') || {
+          printf '{{.C_ERR}}⚠ %s metadata is not JSON — aws_argocd_url not checked.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 0
+        }
+        if [ -n "$STORED" ]; then
+          printf '{{.C_OK}}✓ aws_argocd_url already set in %s.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Resolving the Argo CD capability URL for aws_argocd_url...{{.C_RESET}}\n'
+        URL=""
+        for _ in $(seq 1 30); do
+          URL=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd \
+                --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null \
+              | sed 's|https://||') || URL=""
+          if [ -n "$URL" ] && [ "$URL" != "None" ]; then break; fi
+          URL=""
+          sleep 10
+        done
+        if [ -z "$URL" ]; then
+          printf '{{.C_ERR}}⚠ Argo CD capability URL not available — aws_argocd_url stays empty; re-run task kind-kro-ack:secrets-manager:seed-argocd-url.{{.C_RESET}}\n'
+          exit 0
+        fi
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq --arg u "$URL" \
+          '.metadata = (.metadata // "{}" | (if type == "string" then fromjson else . end) | .aws_argocd_url = $u | tojson)')
+        if aws secretsmanager put-secret-value \
+            --secret-id "$SECRET_KEY" \
+            --secret-string "$CONFIG_UPDATED" \
+            --region {{.AWS_REGION}} >/dev/null; then
+          printf '{{.C_OK}}✓ aws_argocd_url set in %s (Argo CD capability endpoint).{{.C_RESET}}\n' "$SECRET_KEY"
+        else
+          printf '{{.C_ERR}}⚠ could not update %s — aws_argocd_url stays empty; re-run task kind-kro-ack:secrets-manager:seed-argocd-url.{{.C_RESET}}\n' "$SECRET_KEY"
+        fi
 
   secrets-manager:seed-keycloak:
     desc: Seed keycloak passwords
