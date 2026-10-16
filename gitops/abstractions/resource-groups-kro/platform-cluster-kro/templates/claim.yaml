@@ -16,7 +16,7 @@ spec:
   provider: kro-ack
   region: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
   managementRegion: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
-  k8sVersion: {{ .Values.kubernetesVersion | quote }}
+  k8sVersion: {{ .Values.kubernetesVersion | default "1.37" | quote }}
   accountId: {{ .Values.accountId | default $.Values.global.accountId | quote }}
   managementAccountId: {{ .Values.managementAccountId | default $.Values.global.accountId | quote }}
   argoCdHubRoleArn: {{ .Values.argoCdHubRoleArn | default $.Values.global.argoCDRoleArn | default "" }}
