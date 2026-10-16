@@ -258,6 +258,24 @@ ArgoCD picks up the changes automatically:
 
 See [gitops/fleet/README.md](gitops/fleet/README.md) for detailed field reference and value layering.
 
+### Change the Kubernetes version
+
+The Kubernetes version string appears in many files across this repo, but **almost all of them are schema defaults, fallbacks, templates, or documentation examples that you should NOT edit**. There is exactly **one place to change per cluster**, and it is the only value that actually drives provisioning:
+
+| Cluster | Single source of truth (edit here) | Field |
+|---------|------------------------------------|-------|
+| **Hub** | your `config.local.yaml` (your copy of [`config.yaml`](../config.yaml); gitignored — never edit `config.yaml` directly) | `hub.kubernetesVersion` |
+| **Spoke** (overlay / customer-managed git repo) | `gitops/fleet/spoke-values/<tenant>/crossplane-clusters/values.yaml` (Crossplane) or `.../kro-clusters/values.yaml` (KRO) | `clusters.<name>.kubernetesVersion` (Crossplane) / `clusters.<name>.k8sVersion` (KRO) |
+
+Set the value in that one file, commit (for the spoke overlay) or re-run the install/update (for the hub), and the version flows everywhere else automatically — every provider Taskfile reads `hub.kubernetesVersion` from your config via `yq`, and the fleet ApplicationSets read the spoke value from the overlay. You do **not** need to touch any of the following:
+
+- **Passthrough plumbing** — the provider Taskfile `yq` reads and the Crossplane/KRO claim + cluster templates simply read and forward the single source-of-truth value above. Editing them has no effect: they take whatever you set in your config / spoke overlay.
+- **Schema / variable defaults** — the `kubernetesVersion` defaults baked into `config.schema.json`, `cluster-providers/terraform/variables.tf`, and the Crossplane XRD. These only apply when the real knob above is *absent*; when you set it, they are never used.
+- **Backstage cluster-template default** (`platform/backstage/templates/eks-cluster-template/template.yaml`) — only the pre-filled default in the self-service scaffolder form; a developer picks the version in the form at creation time.
+- **Documentation examples** — the version strings in this and other READMEs (`gitops/`, `gitops/abstractions/`, `gitops/fleet/`, `docs/`) and in the commented-out worked examples in the `spoke-values/.../values.yaml` sample blocks. These are illustrative only.
+
+Keeping all of those aligned to the same version (as this repo does) is purely for consistency — the authoritative value a running cluster gets always comes from the single source-of-truth field in the table above.
+
 ### Per-cluster addon exception
 
 Create `gitops/overlays/clusters/<cluster>/addon-overrides.yaml`:
