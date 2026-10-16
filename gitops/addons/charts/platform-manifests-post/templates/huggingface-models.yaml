@@ -9,6 +9,13 @@
 {{- $region = .Values.global.region | default "us-west-2" }}
 {{- $clusterName = .Values.global.clusterName | default "peeks-hub" }}
 {{- end }}
+{{- /* IAM names are account-wide. A stack with a non-default prefix names its model roles and
+       policies <cluster>-<model>-..., so it never adopts (and rewrites) another stack's. The
+       default prefix keeps the legacy unprefixed names, so existing stacks keep their roles. */}}
+{{- $iamNamePrefix := "" }}
+{{- if ne $resourcePrefix "peeks" }}
+{{- $iamNamePrefix = printf "%s-" $clusterName }}
+{{- end }}
 {{- range .Values.huggingfaceModels }}
 ---
 apiVersion: kro.run/v1alpha1
@@ -25,5 +32,8 @@ spec:
   accountId: {{ $accountId | quote }}
   region: {{ $region | quote }}
   clusterName: {{ $clusterName | quote }}
+{{- if $iamNamePrefix }}
+  iamNamePrefix: {{ $iamNamePrefix | quote }}
+{{- end }}
 {{- end }}
 {{- end }}
