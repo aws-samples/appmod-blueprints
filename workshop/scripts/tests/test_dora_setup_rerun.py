@@ -6,7 +6,8 @@ The step's script is read verbatim from the RGD's dora-setup WorkflowTemplate, i
 parameters are filled in, and it runs with sh. `curl` is a fake DevLake that keeps its
 projects, blueprints and webhook connections in a JSON file and answers like DevLake
 v1.0.3-beta7 (a second project or webhook with the same name is rejected; a webhook's API key
-is returned only when it is created). `apk` is a no-op. No cluster, no network.
+is returned only when it is created; a blueprint PATCH applies the body's `name` and rejects an
+empty one). `apk` is a no-op. No cluster, no network.
 
 Run:  python -m pytest workshop/scripts/tests/test_dora_setup_rerun.py -q
 """
@@ -30,25 +31,28 @@ BASE = "http://devlake.test:8080"
 
 FAKE_CURL = r'''#!PYTHON
 import itertools, json, os, re, sys
-args, method, data, url = sys.argv[1:], None, None, None
+args, method, data, url, outfile, wfmt = sys.argv[1:], None, None, None, None, None
 i = 0
 while i < len(args):
     a = args[i]
-    if a in ("-X", "-H", "-d"):
+    if a in ("-X", "-H", "-d", "-o", "-w"):
         if a == "-X": method = args[i + 1]
         if a == "-d": data = args[i + 1]
+        if a == "-o": outfile = args[i + 1]
+        if a == "-w": wfmt = args[i + 1]
         i += 2; continue
     if a.startswith("http"): url = a
     i += 1
 method = method or ("POST" if data else "GET")
 if os.environ.get("FAKE_DEVLAKE_DOWN") == "1":
+    sys.stdout.write((wfmt or "").replace("%{http_code}", "000"))
     sys.exit(7)  # connection refused
 path = re.sub(r"^https?://[^/]+", "", url)
 f = os.environ["FAKE_DEVLAKE_STATE"]
 st = json.load(open(f))
 st["calls"].append(f"{method} {path}")
 err = lambda msg: {"success": False, "message": msg}
-out = {"success": True, "message": "success"}
+out, code = {"success": True, "message": "success"}, 200
 m = lambda p: re.fullmatch(p, path)
 if m(r"/proceed-db-migration"):
     pass
@@ -78,18 +82,29 @@ elif m(r"/plugins/webhook/connections") and method == "POST":
         st["connections"][str(cid)] = {"id": cid, "name": name, "key": f"key-{cid}"}
         out = {"id": cid, "name": name, "apiKey": {"apiKey": f"key-{cid}"}}
 elif m(r"/plugins/webhook/connections/(\d+)") and method == "DELETE":
-    st["connections"].pop(m(r"/plugins/webhook/connections/(\d+)").group(1), None)
+    if os.environ.get("FAKE_DEVLAKE_DELETE_FAILS") == "1":
+        out, code = err("internal error"), 500
+    else:
+        st["connections"].pop(m(r"/plugins/webhook/connections/(\d+)").group(1), None)
 elif m(r"/blueprints/(\d+)") and method == "PATCH":
     bp = st["blueprints"].get(m(r"/blueprints/(\d+)").group(1))
-    if bp:
-        bp["connections"] = [c["connectionId"] for c in json.loads(data)["connections"]]
-        out = dict(bp)
-    else:
+    body = json.loads(data)
+    if not bp:
         out = err("blueprint not found")
+    elif not body.get("name"):
+        out = err("Key: 'Blueprint.Name' Error:Field validation for 'Name' failed on the 'required' tag")
+    else:
+        bp["name"] = body["name"]
+        bp["connections"] = [c["connectionId"] for c in body["connections"]]
+        out = dict(bp)
 else:
     out = err(f"unexpected {method} {path}")
+if out.get("success") is False and code == 200:
+    code = 400
 json.dump(st, open(f, "w"))
-print(json.dumps(out))
+if outfile != "/dev/null":
+    print(json.dumps(out))
+sys.stdout.write((wfmt or "").replace("%{http_code}", str(code)))
 '''
 
 
@@ -137,7 +152,8 @@ def devlake(tmp_path):
                 timeout=60, env=dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
                                      FAKE_DEVLAKE_STATE=str(state),
                                      FAKE_DEVLAKE_DOWN="1" if down else "0", **env))
-            return res.returncode, res.stdout.strip().splitlines()[-1:] or [""], res.stderr
+            # all of stdout: it is the step's result, which the next step splits on '|'
+            return res.returncode, res.stdout.strip().splitlines() or [""], res.stderr
 
         def state(self):
             return json.loads(state.read_text())
@@ -168,10 +184,12 @@ def test_rerun_after_an_interrupted_setup_converges(devlake):
     assert list(st["connections"]) == [hook] and hook != "2"        # webhook replaced ...
     assert key == st["connections"][hook]["key"]                    # ... with a key we know
     assert st["blueprints"]["1"]["connections"] == [int(hook)]      # and attached
+    assert st["blueprints"]["1"]["name"] == "java-Blueprint"        # PATCH kept its name
+    assert "Replacing webhook connection 2: DELETE HTTP 200" in err
 
 
 def test_retry_after_a_partial_create_converges(devlake):
-    # DevLake is down: the step fails, so Argo retries it (#1026), and nothing is created
+    # DevLake is down: the step fails, so Argo retries it (#1029), and nothing is created
     rc, _, err = devlake.run(down=True)
     assert rc != 0 and "DevLake setup failed" in err
     # an attempt created the project, then DevLake restarted before the webhook POST
@@ -183,6 +201,7 @@ def test_retry_after_a_partial_create_converges(devlake):
     assert bp == "1" and list(st["projects"]) == ["java"]
     assert st["connections"][hook]["key"] == key
     assert st["blueprints"]["1"]["connections"] == [int(hook)]
+    assert st["blueprints"]["1"]["name"] == "java-Blueprint"
 
 
 def test_rerun_after_a_completed_setup_keeps_the_webhook(devlake):
@@ -198,3 +217,21 @@ def test_rerun_after_a_completed_setup_keeps_the_webhook(devlake):
     new_calls = st["calls"][calls:]
     assert not [c for c in new_calls if c.startswith(("POST", "DELETE"))], new_calls
     assert list(st["connections"]) == [hook] and st["blueprints"][bp]["connections"] == [int(hook)]
+    assert st["blueprints"][bp]["name"] == "java-Blueprint"
+
+
+def test_a_failed_webhook_delete_fails_the_step_with_its_status(devlake):
+    # An interrupted setup left the webhook, and DevLake does not delete it: say so, rather
+    # than POSTing a duplicate and failing on the generic "webhook connection id 'null'".
+    devlake.seed(project=True, connection=True, attached=True)
+    rc, _, err = devlake.run(FAKE_DEVLAKE_DELETE_FAILS="1")
+    assert rc != 0
+    assert "could not delete webhook connection 2 (HTTP 500)" in err, err
+    calls = devlake.state()["calls"]
+    assert "POST /plugins/webhook/connections" not in calls, calls
+    # the retry converges once DevLake deletes it
+    rc, (out,), err = devlake.run()
+    assert rc == 0, err
+    key, hook, bp = out.split("|")
+    st = devlake.state()
+    assert list(st["connections"]) == [hook] and st["blueprints"]["1"]["connections"] == [int(hook)]

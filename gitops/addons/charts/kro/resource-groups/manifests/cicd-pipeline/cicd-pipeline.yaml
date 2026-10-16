@@ -2244,7 +2244,9 @@ spec:
                 if [ -n "$webhookID" ] && [ "$webhookID" = "$EXISTING_HOOK_ID" ] && [ -n "$EXISTING_TOKEN" ]; then
                   webhookApiKey="$EXISTING_TOKEN"
                 elif [ -n "$webhookID" ]; then
-                  curl -s -X DELETE $BASE_URL/plugins/webhook/connections/$webhookID >/dev/null
+                  deleteStatus=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $BASE_URL/plugins/webhook/connections/$webhookID)
+                  echo "Replacing webhook connection $webhookID: DELETE HTTP $deleteStatus" >&2
+                  case "$deleteStatus" in 2??) ;; *) echo "DevLake setup failed: could not delete webhook connection $webhookID (HTTP $deleteStatus)" >&2; exit 1;; esac
                 fi
                 webhookCreateRequest=$(
                   cat <<EOF
