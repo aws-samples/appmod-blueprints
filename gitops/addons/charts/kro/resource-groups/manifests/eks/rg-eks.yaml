@@ -1041,6 +1041,11 @@ spec:
               controller: false
           annotations:
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+            # [#1033] the hub pivot re-applies this node on the hub, where the capability already
+            # exists: without adopt-or-create the hub's ACK tries CreateCapability, goes Terminal
+            # "Resource already exists" and the pivot's adoption gate never passes. Adopted by
+            # clusterName + name. A no-op for a capability ACK already manages.
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             argocd.argoproj.io/sync-options: Prune=false
         spec:
@@ -2350,6 +2355,11 @@ spec:
               controller: false
           annotations:
               services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+              # [#1033] the hub pivot re-applies this node on the hub, where the capability already
+              # exists: without adopt-or-create the hub's ACK tries CreateCapability, goes Terminal
+              # "Resource already exists" and the pivot's adoption gate never passes. Adopted by
+              # clusterName + name. A no-op for a capability ACK already manages.
+              services.k8s.aws/adoption-policy: adopt-or-create
               services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
@@ -2410,6 +2420,11 @@ spec:
               controller: false
           annotations:
               services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+              # [#1033] the hub pivot re-applies this node on the hub, where the capability already
+              # exists: without adopt-or-create the hub's ACK tries CreateCapability, goes Terminal
+              # "Resource already exists" and the pivot's adoption gate never passes. Adopted by
+              # clusterName + name. A no-op for a capability ACK already manages.
+              services.k8s.aws/adoption-policy: adopt-or-create
               services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
