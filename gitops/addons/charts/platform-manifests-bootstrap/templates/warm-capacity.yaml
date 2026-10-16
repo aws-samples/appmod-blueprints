@@ -1,7 +1,8 @@
 {{- /*
 Lever #2 (warm capacity): optional overprovisioning to pre-warm Karpenter node
-capacity so the first wave of platform addons does not each wait ~1-2 min for a
-cold node. A low/negative-priority PriorityClass + a pause Deployment reserve
+capacity so the first wave of platform addons does not each wait on a cold node
+(~20s on EKS Auto Mode, but serialized across the wave). A low/negative-priority
+PriorityClass + a pause Deployment reserve
 capacity; real workloads preempt the pause pods instantly (near-zero steady cost),
 and Karpenter provisions a replacement node to stay warm. Default OFF — consumers
 enable and size it via their overlay. The pause Deployment is ordered AFTER the
@@ -63,6 +64,7 @@ spec:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
           runAsUser: 65535
+          runAsGroup: 65535
           capabilities:
             drop: ["ALL"]
           seccompProfile:
