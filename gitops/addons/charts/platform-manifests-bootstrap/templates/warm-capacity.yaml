@@ -8,7 +8,7 @@ enable and size it via their overlay. The pause Deployment is ordered AFTER the
 NodePools (custom-nodepools.yaml) via its own intra-app sync-wave, so the warm
 node can actually schedule on a freshly-created pool.
 */ -}}
-{{- if .Values.warmCapacity.enabled }}
+{{- if (.Values.warmCapacity | default dict).enabled }}
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
