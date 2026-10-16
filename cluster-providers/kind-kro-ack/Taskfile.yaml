@@ -2200,8 +2200,8 @@ tasks:
           # exit code and we keep polling, instead of letting empty output count as UNHEALTHY=0
           # → a false "all Healthy" pass on a transient read error (review #1053 r4, same as the
           # kind-crossplane gate).
-          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { sleep 15; continue; }
-          LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { sleep 15; continue; }
+          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
           UNHEALTHY=$(echo "$NAMES" | wc -w | tr -d ' ')
           TOTAL=$(echo "$LIST" | awk 'NF>0' | wc -l | tr -d ' ')
           if [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ]; then
@@ -2209,8 +2209,11 @@ tasks:
             break
           fi
           [ $((i % 4)) -eq 0 ] && printf '{{.C_INFO}}  [%ds] %s/%s providers Healthy...{{.C_RESET}}\n' "$((i*15))" "$((TOTAL-UNHEALTHY))" "$TOTAL" || true
-          # After 5min, force-sync crossplane-base to unblock stuck ArgoCD retry loops
-          if [ "$i" -eq 20 ]; then
+          # After 5min, force-sync crossplane-base to unblock stuck ArgoCD retry loops.
+          # -ge 20 + FORCED sentinel (not -eq 20): a failed read on poll 20 continues past this,
+          # so an exact match would never fire again (review #1053 r5 §1). Fires once, at/after 20.
+          if [ "$i" -ge 20 ] && [ -z "${FORCED:-}" ]; then
+            FORCED=1
             printf '{{.C_WARN}}  Providers not all Healthy after 5min — force-syncing crossplane-base...{{.C_RESET}}\n'
             KUBECONFIG=$KC kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
           fi
