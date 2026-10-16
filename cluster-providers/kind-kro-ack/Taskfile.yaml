@@ -3010,13 +3010,73 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=external-dns --timeout=60s 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --timeout=60s 2>/dev/null || true
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n kagent litellm --timeout=120s 2>/dev/null || true
-      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_OK}}✓ Identity-dependent pods restarted.{{.C_RESET}}\n'
-      # Wait 60s for EKS Pod Identity agent to inject credentials into new pods
-      # before ArgoCD syncs crossplane-base and tries to create IAM roles
-      - printf '{{.C_INFO}}  Waiting 90s for Pod Identity credentials to be injected...{{.C_RESET}}\n'
-      - sleep 90
-      - printf '{{.C_OK}}✓ Pod Identity credentials ready.{{.C_RESET}}\n'
+      # Lever #4 (replaces a flat `sleep 90`): bounded, event-driven wait for Pod
+      # Identity credentials. The sleep existed (the Pod Identity race, tracked
+      # internally as issue #8) to let the EKS Pod Identity agent inject credentials
+      # into the freshly-restarted provider pods BEFORE ArgoCD syncs crossplane-base
+      # and creates IAM roles (else ReconcileError "no EC2 IMDS role found"). The
+      # webhook injects the creds env (AWS_CONTAINER_CREDENTIALS_FULL_URI) only when a
+      # PodIdentityAssociation exists for the pod's SA AT ADMISSION; a pod admitted
+      # before its PIA comes up Ready with NO creds -- that IS the race. So Ready alone
+      # is insufficient: we wait until every provider-aws-* pod is Ready AND carries the
+      # injected creds env, re-admitting (deleting once) any pod that missed its PIA,
+      # bounded to a 90s ceiling (never longer than the old sleep). kubeconfig is
+      # removed AFTER this probe (not before).
+      - printf '{{.C_INFO}}  Waiting for Pod Identity credentials (provider-aws pods Ready + creds env, cap 90s)...{{.C_RESET}}\n'
+      - |
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        ERRF=$(mktemp)
+        # EXIT condition set: provider-aws-* pods that are NOT (Ready AND admitted with the
+        # Pod Identity creds env). We only declare success when this set is empty.
+        JQ_FLAGGED='[ .items[]
+          | select(.metadata.deletionTimestamp == null)
+          | select((.spec.serviceAccountName // "") | startswith("provider-aws-"))
+          | select(([.status.conditions[]? | select(.type=="Ready" and .status=="True")] | length == 0)
+                or ([.spec.containers[].env[]? | select(.name=="AWS_CONTAINER_CREDENTIALS_FULL_URI")] | length == 0))
+          | .metadata.name ] | .[]'
+        # RE-ADMIT set: provider-aws-* pods MISSING the creds env. The env is injected at
+        # ADMISSION and never changes, so ONLY these benefit from a delete/re-admit -- a pod
+        # that already has the env but is merely slow to become Ready just needs time, and
+        # deleting it would reset its startup for nothing (review N1). So the re-admit acts
+        # on NOENV, while the exit check still uses FLAGGED.
+        JQ_NOENV='[ .items[]
+          | select(.metadata.deletionTimestamp == null)
+          | select((.spec.serviceAccountName // "") | startswith("provider-aws-"))
+          | select([.spec.containers[].env[]? | select(.name=="AWS_CONTAINER_CREDENTIALS_FULL_URI")] | length == 0)
+          | .metadata.name ] | .[]'
+        JQ_TOTAL='[ .items[] | select(.metadata.deletionTimestamp == null) | select((.spec.serviceAccountName // "") | startswith("provider-aws-")) ] | length'
+        START=$(date +%s); DEADLINE=$(( START + 90 )); REDELETED=0; STATE=cap; FLAGGED=
+        while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+          if ! PODS=$(KUBECONFIG=$KC kubectl get pods -n crossplane-system --request-timeout=10s -o json 2>"$ERRF"); then
+            STATE=apierr; break   # real API/kubeconfig/auth error -- NOT a timeout (review finding 2)
+          fi
+          TOTAL=$(printf '%s' "$PODS" | jq -r "$JQ_TOTAL") || { STATE=apierr; break; }
+          FLAGGED=$(printf '%s' "$PODS" | jq -r "$JQ_FLAGGED") || { STATE=apierr; break; }
+          NOENV=$(printf '%s' "$PODS" | jq -r "$JQ_NOENV") || { STATE=apierr; break; }
+          if [ "$TOTAL" -gt 0 ] && [ -z "$FLAGGED" ]; then STATE=ok; break; fi
+          # A pod MISSING the creds env was admitted before its PIA existed. Re-check PIAs,
+          # then re-admit ONLY those pods ONCE so they re-admit WITH the creds env (N1).
+          if [ -n "$NOENV" ] && [ "$REDELETED" -eq 0 ]; then
+            PIA_WAIT=$(( DEADLINE - $(date +%s) )); [ "$PIA_WAIT" -gt 30 ] && PIA_WAIT=30 || true; [ "$PIA_WAIT" -gt 0 ] || PIA_WAIT=1
+            KUBECONFIG=$KC kubectl -n crossplane-system wait --for=condition=Ready \
+              podidentityassociations.eks.aws.upbound.io --all --timeout="${PIA_WAIT}s" >/dev/null 2>&1 || true
+            printf '  ↻ re-admitting %s provider pod(s) missing creds env: %s\n' \
+              "$(printf '%s' "$NOENV" | wc -w | tr -d ' ')" "$(printf '%s' "$NOENV" | tr '\n' ' ')"
+            printf '%s\n' "$NOENV" | while IFS= read -r p; do
+              [ -n "$p" ] && KUBECONFIG=$KC kubectl delete pod -n crossplane-system "$p" --force --grace-period=0 >/dev/null 2>&1 || true
+            done
+            REDELETED=1
+          fi
+          sleep 5
+        done
+        case "$STATE" in
+          ok)     printf '  ✓ %s provider-aws pods Ready with Pod Identity creds after %ss.\n' "$TOTAL" "$(( $(date +%s) - START ))" ;;
+          apierr) R=$(( DEADLINE - $(date +%s) )); [ "$R" -gt 0 ] || R=0
+                  printf '  ⚠ cannot query provider pods (%s); sleeping the remaining %ss of the 90s budget.\n' "$(tail -n 1 "$ERRF" 2>/dev/null)" "$R"; [ "$R" -gt 0 ] && sleep "$R" || true ;;
+          cap)    printf '  ⚠ provider-aws pods not Ready+credentialed within 90s cap -- proceeding (same ceiling as the old sleep 90). Still flagged: %s\n' "$(printf '%s' "${FLAGGED:-none (no provider-aws pods found)}" | tr '\n' ' ')" ;;
+        esac
+        rm -f "$KC" "$ERRF"
 
 
   hub:update:
