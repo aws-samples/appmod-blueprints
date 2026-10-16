@@ -18,6 +18,13 @@ HUB_CLUSTER_NAME is optional but should be passed: the hub is provisioned throug
 same resource graphs and carries the same ownership tag, so without it a tag-based
 sweep would pull the hub's VPC into a spoke sweep. It cannot be derived as
 <prefix>-hub, because cluster names are arbitrary.
+
+By ownership tag, only cluster VPCs are selected (platform.gitops.io/cluster is set
+next to the prefix tag by the resource graphs, the Crossplane composition and
+Terraform), and never a CloudFormation-owned VPC. The self-paced template stamps the
+prefix tag on the IDE VPC too, and the hub runs in it: sweeping it as a spoke deletes
+the IDE's NAT gateway and route tables and cuts the network of the machine running
+this teardown. Step 6i and CloudFormation own that VPC.
 """
 import boto3, sys, time
 
@@ -33,9 +40,9 @@ def _tag(vpc, key):
 
 def _discover():
     found = {}
+    legacy = [f'{prefix}-spoke-dev-vpc', f'{prefix}-spoke-prod-vpc']
     for desc, filters in (
-        ('legacy name', [{'Name': 'tag:eks:kubernetes-resource-name',
-                          'Values': [f'{prefix}-spoke-dev-vpc', f'{prefix}-spoke-prod-vpc']}]),
+        ('legacy name', [{'Name': 'tag:eks:kubernetes-resource-name', 'Values': legacy}]),
         ('ownership tag', [{'Name': 'tag:platform.gitops.io/prefix', 'Values': [prefix]}]),
     ):
         try:
@@ -46,11 +53,23 @@ def _discover():
 
     out = []
     for vpc_id, v in found.items():
+        # Never the stack's own VPC (the IDE/hub VPC of the self-paced template): spoke
+        # VPCs are made by ACK, Crossplane or Terraform, never by CloudFormation. Same
+        # rule as the workshop sweep's orphan-VPC reaper.
+        if (any(t['Key'].startswith('aws:cloudformation:') for t in v.get('Tags', []))
+                or _tag(v, 'ResourceType') == 'ideHubVPC'):
+            print(f'  Skipping CloudFormation-owned VPC {vpc_id} (IDE/hub VPC)')
+            continue
         # Never sweep the hub here — this script handles spokes only; the hub has its
         # own teardown path earlier in destroy.
         if hub and (_tag(v, 'platform.gitops.io/cluster') == hub
                     or _tag(v, 'Name') == f'{hub}-vpc'):
             print(f'  Skipping hub VPC {vpc_id} ({hub})')
+            continue
+        # By ownership tag, only a cluster's VPC; the legacy names predate the tags.
+        if not _tag(v, 'platform.gitops.io/cluster') and \
+                _tag(v, 'eks:kubernetes-resource-name') not in legacy:
+            print(f'  Skipping VPC {vpc_id} (no platform.gitops.io/cluster tag)')
             continue
         out.append(vpc_id)
     return sorted(out)
