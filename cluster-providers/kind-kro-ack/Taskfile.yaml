@@ -2158,6 +2158,10 @@ tasks:
       - cmd: |
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
           HUB="{{.HUB_CLUSTER_NAME}}"
+          # The deletes below stay best-effort, but print ✓ only when the call succeeded.
+          # A failed one prints ⚠ and the AWS error code (the full message carries ARNs),
+          # or "unknown error" when there is no code (e.g. the endpoint was unreachable).
+          awserr() { echo "$1" | sed -n 's/.*An error occurred (\([^)]*\)).*/\1/p' | grep . || echo "unknown error"; }
           # 6a. CloudFront VPC Origins and Distributions associated with this hub.
           #     The hub platform CloudFront distribution uses a VPC Origin pointing to
           #     the internal ALB ingress. After the ALB is deleted, CloudFront VPC origin
@@ -2209,9 +2213,12 @@ tasks:
                 --filters Key=name,Values="${PREFIX}" \
                 --query 'SecretList[].ARN' --output text 2>/dev/null | tr '\t' '\n'); do
             [ -z "$SECRET_ARN" ] && continue
-            aws secretsmanager delete-secret --secret-id "$SECRET_ARN" \
-              --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
-            echo "  ✓ deleted secret $SECRET_ARN"
+            if ERR=$(aws secretsmanager delete-secret --secret-id "$SECRET_ARN" \
+              --force-delete-without-recovery --region "$REGION" 2>&1); then
+              echo "  ✓ deleted secret $SECRET_ARN"
+            else
+              echo "  ⚠ secret $SECRET_ARN not deleted ($(awserr "$ERR"))"
+            fi
           done
           # 6e. AMP workspaces tagged with the resource prefix (Crossplane-managed,
           #     orphaned when crossplane-base AppSet is deleted before workspace CR).
@@ -2219,8 +2226,11 @@ tasks:
                 --query "workspaces[?starts_with(alias, '${PREFIX}')].workspaceId" \
                 --output text 2>/dev/null | tr '\t' '\n'); do
             [ -z "$WS_ID" ] && continue
-            aws amp delete-workspace --workspace-id "$WS_ID" --region "$REGION" 2>/dev/null || true
-            echo "  ✓ deleted AMP workspace $WS_ID"
+            if ERR=$(aws amp delete-workspace --workspace-id "$WS_ID" --region "$REGION" 2>&1); then
+              echo "  ✓ deleted AMP workspace $WS_ID"
+            else
+              echo "  ⚠ AMP workspace $WS_ID not deleted ($(awserr "$ERR"))"
+            fi
           done
           # 6ei. AMP scrapers (created by observability bootstrap, not deleted with workspace).
           #      Scrapers are regional, so only delete ours: the scraper's source EKS cluster
@@ -2238,8 +2248,11 @@ tasks:
             [ -z "$SCRAPER_ID" ] && continue
             CLUSTER="${CLUSTER_ARN##*/}"
             case "$OWNED_CLUSTERS" in *" $CLUSTER "*) ;; *) continue ;; esac
-            aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>/dev/null || true
-            echo "  ✓ deleted AMP scraper $SCRAPER_ID ($CLUSTER)"
+            if ERR=$(aws amp delete-scraper --scraper-id "$SCRAPER_ID" --region "$REGION" 2>&1); then
+              echo "  ✓ deleted AMP scraper $SCRAPER_ID ($CLUSTER)"
+            else
+              echo "  ⚠ AMP scraper $SCRAPER_ID ($CLUSTER) not deleted ($(awserr "$ERR"))"
+            fi
           done
           # 6eii. DevLake RDS instance (created by KubeVela in kind-kro-ack path).
           #       Named devlake-mysql-db-* and scoped to the peeks VPC. Not ACK-tagged.
@@ -2247,10 +2260,13 @@ tasks:
                 --query "DBInstances[?starts_with(DBInstanceIdentifier, 'devlake-')].DBInstanceIdentifier" \
                 --output text 2>/dev/null | tr '\t' '\n'); do
             [ -z "$DB" ] && continue
-            aws rds delete-db-instance --db-instance-identifier "$DB" \
+            if ERR=$(aws rds delete-db-instance --db-instance-identifier "$DB" \
               --skip-final-snapshot --delete-automated-backups \
-              --region "$REGION" 2>/dev/null || true
-            echo "  ✓ initiated RDS deletion: $DB"
+              --region "$REGION" 2>&1); then
+              echo "  ✓ initiated RDS deletion: $DB"
+            else
+              echo "  ⚠ RDS instance $DB not deleted ($(awserr "$ERR"))"
+            fi
           done
           # 6f. EKS OIDC providers for peeks clusters. IRSA uses cluster-specific OIDC
           #     providers that accumulate across re-deploys (one per EKS cluster per run).
@@ -2277,8 +2293,11 @@ tasks:
               if [ "$AO" = "$OIDC_ID" ]; then KEEP=true; break; fi
             done
             $KEEP && { echo "  skip active cluster OIDC $OIDC_ID"; continue; }
-            aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>/dev/null || true
-            echo "  ✓ deleted OIDC provider $OIDC_ID"
+            if ERR=$(aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>&1); then
+              echo "  ✓ deleted OIDC provider $OIDC_ID"
+            else
+              echo "  ⚠ OIDC provider $OIDC_ID not deleted ($(awserr "$ERR"))"
+            fi
           done
           # 6g. CloudWatch Log Groups for deleted EKS clusters.
           for LG_PREFIX in "/aws/eks/${PREFIX}-hub" "/aws/eks/${PREFIX}-spoke-dev" "/aws/eks/${PREFIX}-spoke-prod"; do
@@ -2286,8 +2305,11 @@ tasks:
                   --log-group-name-prefix "$LG_PREFIX" \
                   --query 'logGroups[].logGroupName' --output text 2>/dev/null | tr '\t' '\n'); do
               [ -z "$LG" ] && continue
-              aws logs delete-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
-              echo "  ✓ deleted CW log group $LG"
+              if ERR=$(aws logs delete-log-group --log-group-name "$LG" --region "$REGION" 2>&1); then
+                echo "  ✓ deleted CW log group $LG"
+              else
+                echo "  ⚠ CW log group $LG not deleted ($(awserr "$ERR"))"
+              fi
             done
           done
           # 6h. Orphaned spoke VPCs (ACK ec2 VPC resources that survived cluster delete).
