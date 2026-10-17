@@ -80,12 +80,12 @@ tasks:
     desc: "Full workshop install (platform + GitLab + Ray + IDC federation)"
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
       # PROVIDER_SPOKE maps clusterProvider to the spoke enable task suffix:
       #   kind-kro-ack    → spokes:enable-kro
       #   kind-crossplane → spokes:enable-crossplane
       PROVIDER_SPOKE:
-        sh: 'if [ "$(yq ''.clusterProvider // "kind-crossplane"'' {{.CONFIG_FILE}})" = "kind-kro-ack" ]; then echo "kro"; else echo "crossplane"; fi'
+        sh: 'if [ "$(yq ''.clusterProvider // "kind-kro-ack"'' {{.CONFIG_FILE}})" = "kind-kro-ack" ]; then echo "kro"; else echo "crossplane"; fi'
       INSTALL_START:
         sh: date +%s
     cmds:
@@ -213,7 +213,7 @@ tasks:
     desc: "Refresh AWS credentials in the bootstrap kind cluster (call when ACK shows ExpiredTokenException)"
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:credentials:refresh'
 
@@ -221,7 +221,7 @@ tasks:
     desc: "Full teardown: drain workloads from spokes → delete spokes → destroy hub platform"
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
       HUB_KUBECONFIG: "{{.REPO}}/private/hub-kubeconfig"
     cmds:
       - printf '{{.C_STEP}}▸ Workshop destroy starting (workloads → spokes → hub){{.C_RESET}}\n'
