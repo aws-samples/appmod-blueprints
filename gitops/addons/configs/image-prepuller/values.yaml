@@ -15,5 +15,6 @@ tolerations:
     operator: 'Exists'
     effect: 'NoSchedule'
 
-nodeSelector:
-  karpenter.sh/nodepool: general-purpose
+# nodeSelector intentionally unset: the chart defaults it to
+# global.generalPurposeNodepool, which the registry routes from the
+# enable_general_purpose_nodepool flag (general-purpose | platform-general).

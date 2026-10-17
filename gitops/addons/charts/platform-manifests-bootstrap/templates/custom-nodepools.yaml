@@ -25,8 +25,47 @@ Each entry: { name: <string>, spec: <karpenter.sh/v1 NodePool spec> }.
 {{- if eq (toString .Values.enableGeneralPurposeNodePool) "false" }}
 {{- $names := list }}
 {{- range $pools }}{{- $names = append $names .name }}{{- end }}
-{{- range ((.Values.fallbackNodepools | default dict).pools | default list) }}
-{{- if not (has .name $names) }}{{- $pools = append $pools . }}{{- end }}
+{{- /*
+  instanceSizeFloor — the instance-size floor applied to each fallback pool so the
+  neutral `platform-general` pool matches the consumer overlay's own floor (e.g. the
+  workshop general-purpose-peeks pool pins instance-size In [xlarge,2xlarge,4xlarge,
+  8xlarge]) FROM THE FIRST SYNC, before the overlay is wired (set-overlay-repo runs
+  after the platform install).
+
+  Precedence: `instanceSizeFloorOverride` (a comma-separated STRING threaded from the
+  cluster-secret annotation `fallback_nodepool_instance_size_floor` via the registry
+  valuesObject — the SAME path the enableGeneralPurposeNodePool gate takes) wins when
+  non-empty; otherwise the chart default list `instanceSizeFloor` applies. The override
+  is a SEPARATE key so the registry sending it empty (annotation absent) does NOT clobber
+  the default list via deep-merge. Set the override to "none" to disable the floor and
+  let Karpenter pick any size. A fallback pool that already pins
+  `eks.amazonaws.com/instance-size` is left untouched.
+*/ -}}
+{{- $fallbackCfg := (.Values.fallbackNodepools | default dict) }}
+{{- $override := ($fallbackCfg.instanceSizeFloorOverride | default "") | toString | trim }}
+{{- $floor := list }}
+{{- if eq $override "none" }}
+{{- /* explicit opt-out: no floor */ -}}
+{{- else if $override }}
+{{- range (splitList "," $override) }}{{- $t := trim . }}{{- if $t }}{{- $floor = append $floor $t }}{{- end }}{{- end }}
+{{- else }}
+{{- $floor = ($fallbackCfg.instanceSizeFloor | default list) }}
+{{- end }}
+{{- range ($fallbackCfg.pools | default list) }}
+{{- if not (has .name $names) }}
+{{- $pool := . }}
+{{- if $floor }}
+{{- $reqs := (($pool.spec.template.spec).requirements | default list) }}
+{{- $hasSize := false }}
+{{- range $reqs }}{{- if eq .key "eks.amazonaws.com/instance-size" }}{{- $hasSize = true }}{{- end }}{{- end }}
+{{- if not $hasSize }}
+{{- $pool = deepCopy $pool }}
+{{- $sizeReq := dict "key" "eks.amazonaws.com/instance-size" "operator" "In" "values" $floor }}
+{{- $_ := set $pool.spec.template.spec "requirements" (append $reqs $sizeReq) }}
+{{- end }}
+{{- end }}
+{{- $pools = append $pools $pool }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- range $pools }}

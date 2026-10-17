@@ -15,10 +15,12 @@ spec:
       labels:
         app.kubernetes.io/name: image-prepuller
     spec:
-      {{- with .Values.nodeSelector }}
       nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- if .Values.nodeSelector }}
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+        {{- else }}
+        karpenter.sh/nodepool: {{ .Values.global.generalPurposeNodepool | default "general-purpose" }}
+        {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
