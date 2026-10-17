@@ -1647,6 +1647,8 @@ tasks:
       INFRA_STACK: "argocd crossplane crossplane-base kro kro-manifests kro-manifests-hub ack-iam ack-eks ack-ec2 ack-ecr ack-s3 ack-dynamodb ack-efs eks-capabilities-rbac-hub"
       KC: "KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl"
       # Upper bound (s) for step 7b. The AMP scrapers alone took ~13 min to delete live.
+      # 7b polls every 15 s, so the cap is this rounded up to a multiple of 15
+      # (1200 = 80 polls; 1210 would wait 1215 s).
       XP_DELETE_WAIT: '{{.XP_DELETE_WAIT | default "1200"}}'
     cmds:
       # Best-effort hub kubeconfig — if the hub EKS is already gone, every kubectl
@@ -1795,13 +1797,16 @@ tasks:
       #     have started. Step 8 would then remove the providers, and those resources stay
       #     in AWS. Wait, bounded, while an Application being deleted still manages
       #     Crossplane (*.upbound.io) resources and a provider is running to delete them.
+      #     Best-effort: if the Applications can't be queried (kubectl or jq fails), 7b
+      #     says so and does not wait; step 8 runs as it would without 7b.
       - cmd: |
           E=0
           while [ "$E" -lt {{.XP_DELETE_WAIT}} ]; do
-            PENDING=$({{.KC}} get applications -n argocd -o json 2>/dev/null | jq -r '[.items[]
+            OUT=$({{.KC}} get applications -n argocd -o json 2>/dev/null) || { echo "  7b: could not query Applications; not waiting"; break; }
+            PENDING=$(printf '%s' "$OUT" | jq -r '[.items[]
               | select(.metadata.deletionTimestamp != null)
               | select(any(.status.resources[]?; (.group // "") | endswith(".upbound.io")))
-              | .metadata.name] | join(" ")' 2>/dev/null || true)
+              | .metadata.name] | join(" ")' 2>/dev/null) || { echo "  7b: jq failed; not waiting"; break; }
             if [ -z "$PENDING" ]; then break; fi
             UP=$({{.KC}} get pods -n crossplane-system -l pkg.crossplane.io/provider \
               -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{" "}{end}' 2>/dev/null || true)

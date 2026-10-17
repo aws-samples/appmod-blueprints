@@ -73,6 +73,9 @@ if verb == "get" and what == "applicationsets":
         print(f"{n} {s.get('wave', '')}")
 elif verb == "get" and what == "applicationset":
     rc = 0 if args[2] in st["appsets"] else 1
+elif verb == "get" and what == "applications" and "json" in args and st.get("apps_query_fails"):
+    sys.stderr.write("error: You must be logged in to the server (Unauthorized)\n")
+    rc = 1
 elif verb == "get" and what == "applications" and "json" in args:
     items = []
     for n, a in st["apps"].items():
@@ -122,7 +125,7 @@ def _slice():
     return tf.get("set", []), dict(task.get("vars", {})), cmds[first:last + 1]
 
 
-def _run(tmp_path, apps, providers_running=True):
+def _run(tmp_path, apps, providers_running=True, apps_query_fails=False, jq_fails=False):
     opts, tvars, cmds = _slice()
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -130,12 +133,16 @@ def _run(tmp_path, apps, providers_running=True):
     for b in ("kubectl", "sleep"):
         (bindir / b).write_text(fake)
         (bindir / b).chmod(0o755)
+    if jq_fails:
+        (bindir / "jq").write_text("#!/bin/sh\nexit 5\n")
+        (bindir / "jq").chmod(0o755)
     appsets = {"observability-aws": {"wave": "4"}, "kargo": {"wave": "3"},
                "eks-capabilities-rbac-hub": {"wave": "-3"},
                "kro-manifests-hub": {}, "crossplane-base": {}, "crossplane": {}}
     state, log = tmp_path / "state.json", tmp_path / "log.jsonl"
     state.write_text(json.dumps({"clock": 0, "appsets": appsets, "apps": apps,
-                                 "providers_running": providers_running}))
+                                 "providers_running": providers_running,
+                                 "apps_query_fails": apps_query_fails}))
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
                FAKE_STATE=str(state), FAKE_LOG=str(log))
@@ -216,3 +223,18 @@ def test_no_wait_when_no_provider_runs(tmp_path):
     assert res.returncode == 0, res.stdout + res.stderr
     assert not [e for e in events if e[0] == "sleep" and e[1] == 15], res.stdout
     assert "crossplane" in _deletes(events)
+
+
+@pytest.mark.parametrize("broken, says", [
+    ("kubectl", "7b: could not query Applications; not waiting"),  # e.g. a stale hub kubeconfig
+    ("jq", "7b: jq failed; not waiting"),
+])
+def test_no_wait_and_says_why_when_the_query_fails(tmp_path, broken, says):
+    # 7b can't tell what is pending: it says so instead of breaking silently, does not
+    # wait, and step 8 still runs.
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": _obs(None)},
+                       apps_query_fails=broken == "kubectl", jq_fails=broken == "jq")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert says in res.stdout, res.stdout
+    assert not [e for e in events if e[0] == "sleep" and e[1] == 15], res.stdout
+    assert "crossplane" in _deletes(events), "step 8 never ran"
