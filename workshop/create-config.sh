@@ -73,7 +73,7 @@
 #                               (pre-check: skip if Keycloak unreachable = fast fail)
 #       b. setup-env          — Write platform URLs + credentials to ~/.bashrc.d/platform.sh
 #
-#  7. ray:wait-image + ray:prestage-models — Wait for vLLM image build, stage ML models
+#  7. ray:prestage-models — Stage ML models to S3 (vLLM image builds in background from ray:setup; gated at its point of use, not during install)
 #
 #  8. wait-for-spokes         — Confirm spoke EKS clusters + ArgoCD apps are ready
 #

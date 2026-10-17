@@ -135,9 +135,18 @@ tasks:
       # cannot race the Playwright navigation above.
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
       - 'printf "{{.C_INFO}}  [%ds] ray:setup done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Wait for Ray image to be ready
-      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:wait-image'
-      # Download ML models to S3
+      # [perf] Do NOT block the install on the vLLM image build here.
+      # ray:setup already starts the multi-GB `docker build && docker push` in the
+      # BACKGROUND (nohup &, see cluster-providers/common/Taskfile.ray.yaml, log:
+      # /tmp/ray-build.log). The image is only consumed in workshop Module 40 (Ray
+      # Serve), so the old inline `ray:wait-image` here (~14.5 min on event 54c30588)
+      # served no install step — it only serialized the build ahead of
+      # wait-for-spokes / prestage-models for no dependency. Removing it lets the
+      # build overlap the spoke sync + model prestage. Failures stay visible in
+      # /tmp/ray-build.log, and Module 40 runs `task {{.PROVIDER}}:ray:wait-image`
+      # as the point-of-use gate (it also keeps waiting / re-runnable on a slow build).
+      - 'printf "{{.C_INFO}}  vLLM image building in background (log: /tmp/ray-build.log); not gated on install — Module 40 waits on it at point of use.{{.C_RESET}}\n"'
+      # Download ML models to S3 (independent of the vLLM image: pulls TinyLlama → S3)
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
       # Final tolerant gate: spokes are enabled asynchronously during {{.PROVIDER}}:install
       # (git push only), so their EKS clusters + ArgoCD apps finish provisioning while the
@@ -187,11 +196,19 @@ tasks:
       #       and a kill skips hub:pivot's EXIT trap: kind stays stopped mid-gate and the stack
       #       ends CREATE_FAILED. So the adoption gate gets what is left of INSTALL_BUDGET_SEC,
       #       minus 300 s for the pivot's own steps (or its abort), and at most
-      #       PIVOT_ADOPT_TIMEOUT_SEC; with less than 120 s left the pivot is skipped.
+      #       HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC (default 900 s; legacy PIVOT_ADOPT_TIMEOUT_SEC
+      #       still honoured as a fallback); with less than 120 s left the pivot is skipped.
       - cmd: |
           if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "{{.HUB_PIVOT_ON_INSTALL | default "true"}}" = "true" ]; then
             GATE_SEC=$(( {{.INSTALL_BUDGET_SEC | default "6600"}} - ($(date +%s) - {{.INSTALL_START}}) - 300 ))
-            if [ "$GATE_SEC" -gt {{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}} ]; then GATE_SEC={{.PIVOT_ADOPT_TIMEOUT_SEC | default "1800"}}; fi
+            # [perf] Cap the adoption gate at 900 s (was 1800 s). On event 54c30588 the pivot
+            # burned the full 1800 s before timing out; #1076 fixes the root cause (the EKS
+            # capability CRs now adopt-or-create), and this cap bounds any future stall to ≤15 min.
+            # The install-cap knob is HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC; the legacy
+            # PIVOT_ADOPT_TIMEOUT_SEC is still honoured as a fallback so pre-existing overrides
+            # keep moving the cap (review #1098, point 2).
+            INSTALL_CAP={{.HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC | default .PIVOT_ADOPT_TIMEOUT_SEC | default "900"}}
+            if [ "$GATE_SEC" -gt "$INSTALL_CAP" ]; then GATE_SEC="$INSTALL_CAP"; fi
             if [ "$GATE_SEC" -lt 120 ]; then
               printf '{{.C_INFO}}  ⚠ hub pivot skipped (non-fatal): the install budget ({{.INSTALL_BUDGET_SEC | default "6600"}}s) is nearly used up. The workshop is fully functional with the hub still managed by kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
               exit 0
