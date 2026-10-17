@@ -17,11 +17,15 @@ Run:  python -m pytest workshop/scripts/tests/test_sweep_nested_prefix.py -q
 import contextlib
 import io
 import os
+import runpy
 import sys
 import types
 from unittest import mock
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+ENTRYPOINT = os.path.join(os.path.dirname(__file__), "..", "sweep-workshop-resources.py")
 
 from sweep.context import SweepContext  # noqa: E402
 from sweep.reapers import amp as amp_reaper  # noqa: E402
@@ -284,3 +288,25 @@ def test_full_sweep_of_the_longer_prefix_stack_unchanged():
     assert _targets(calls, "delete_secret") == sorted(TDV2["secrets"])
     assert _targets(calls, "delete_workspace") == sorted(TDV2["amp"] + TDV2["grafana"])
     assert set(_targets(calls, "delete_log_group")) == set(TDV2["log_groups"])
+
+
+def test_empty_prefix_exits_before_any_aws_client():
+    # name_is_ours(name, "") matches every "-x"/"/x" name, so an explicit empty prefix
+    # must stop at the entrypoint: non-zero exit, a clear message, no client, no call.
+    created, calls = [], []
+    make = _factory(ACCOUNT, calls)
+
+    def _client(service, **kw):
+        created.append(service)
+        return make(service, **kw)
+
+    err = io.StringIO()
+    with mock.patch("sweep.context.boto3.client", side_effect=_client), \
+            mock.patch.object(sys, "argv", [ENTRYPOINT, "us-west-2", ""]), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
+            pytest.raises(SystemExit) as exited:
+        runpy.run_path(ENTRYPOINT, run_name="__main__")
+    assert created == []
+    assert calls == []
+    assert exited.value.code not in (0, None)
+    assert "resource_prefix must not be empty" in err.getvalue()

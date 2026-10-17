@@ -33,7 +33,8 @@ def name_is_ours(name, *owners):
     `<owner>-` or `<owner>/`: the shapes this deployment's names take (<prefix>-hub/config,
     <prefix>/platform/amp, <prefix>-observability-amp). A bare startswith(<prefix>) is not
     ownership: it also matches every stack whose prefix merely starts with ours (a sweep
-    for "tdv" would take "tdv2-hub/config", #1111)."""
+    for "tdv" would take "tdv2-hub/config", #1111). The match is case-sensitive, as the
+    stack's names are lowercase."""
     return any(name == o or name.startswith((o + "-", o + "/")) for o in owners)
 
 

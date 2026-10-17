@@ -40,4 +40,10 @@ from sweep.orchestrator import main  # noqa: E402
 if __name__ == "__main__":
     region = sys.argv[1] if len(sys.argv) > 1 else "us-west-2"
     prefix = sys.argv[2] if len(sys.argv) > 2 else "peeks"
+    # An explicit empty prefix is never a stack's: every "-x"/"/x" name would pass
+    # name_is_ours. Refuse it before any AWS client is built.
+    if not prefix:
+        print("sweep-workshop-resources.py: resource_prefix must not be empty "
+              "(omit it to use the default 'peeks')", file=sys.stderr)
+        sys.exit(2)
     sys.exit(main(region, prefix))
