@@ -711,7 +711,7 @@ tasks:
       - |
         [ "${DEBUG:-false}" = "true" ] && set -x
         LAMBDA_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-          --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null) || LAMBDA_ARN=""
+          --query "Stacks[?contains(StackName,'{{.RESOURCE_PREFIX}}-workshop')].Outputs[?OutputKey=='KeycloakIDCCredentialsLambdaArn'].OutputValue | [0][0]" --output text 2>/dev/null) || LAMBDA_ARN=""
         # Fallback: find Lambda by name pattern if not in CFN outputs
         case "$LAMBDA_ARN" in
           ""|None)
@@ -734,7 +734,7 @@ tasks:
           ;;
           *)
             ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
-              --query "Stacks[?contains(StackName,'peeks-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
+              --query "Stacks[?contains(StackName,'{{.RESOURCE_PREFIX}}-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
               --output text 2>/dev/null | grep -o 'arn:aws:iam::[^[:space:]]*' | head -1) || ROLE_ARN=""
             case "$ROLE_ARN" in
               ""|None)
@@ -1559,7 +1559,10 @@ tasks:
           fi
           # JSON output: with --output text the CLI applies --query to EACH ListRoles
           # page, so `| [0]` prints one line per page ("None\n<role>" on large accounts).
-          INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r '.[0] // empty' || echo "")
+          # Prefer this stack's own role (<prefix>-workshop…): with two workshop stacks in
+          # the account, the first match by name can be the OTHER stack's SharedRole.
+          # jq: own-matches first, then the full list, so [0] is own-else-first.
+          INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r --arg own "{{.RESOURCE_PREFIX}}-workshop" '(map(select(startswith($own))) + .)[0] // empty' || echo "")
           ADMIN_INSTANCE_ARN_LINE=""
           if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
             ADMIN_INSTANCE_ARN_LINE="    adminInstanceRoleArn: arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$INSTANCE_ROLE"
@@ -1754,7 +1757,10 @@ tasks:
         CONSOLE_ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})
         # JSON output: with --output text the CLI applies --query to EACH ListRoles
         # page, so `| [0]` prints one line per page ("None\n<role>" on large accounts).
-        INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r '.[0] // empty' || echo "")
+        # Prefer this stack's own role (<prefix>-workshop…): with two workshop stacks in
+        # the account, the first match by name can be the OTHER stack's SharedRole.
+        # jq: own-matches first, then the full list, so [0] is own-else-first.
+        INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r --arg own "{{.RESOURCE_PREFIX}}-workshop" '(map(select(startswith($own))) + .)[0] // empty' || echo "")
         yq -i 'del(.clusters."{{.CLUSTER}}".adminRoles)' "$KRO_VALUES" 2>/dev/null || true
         if [ -n "$CONSOLE_ROLE" ] && [ "$CONSOLE_ROLE" != "null" ]; then
           CONSOLE_ROLE="$CONSOLE_ROLE" yq -i '.clusters."{{.CLUSTER}}".adminRoleName = env(CONSOLE_ROLE)' "$KRO_VALUES"
