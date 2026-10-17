@@ -82,9 +82,10 @@ spec:
       # (Argo EventBus, CI WorkflowTemplates) schedule onto the stable custom pool
       # instead of a consolidation-prone built-in general-purpose node. The
       # built-in "system" pool always stays on (it anchors the `default` NodeClass
-      # the custom pools reference). NOTE: a generic consumer that sets "false"
-      # but keeps the generic image-prepuller (pinned to the built-in
-      # general-purpose pool) gets a 0-pod DaemonSet — repoint it to its own pool.
+      # the custom pools reference). NOTE: on a "false" cluster the image-prepuller
+      # is routed automatically to the neutral `platform-general` fallback pool via
+      # global.generalPurposeNodepool (see registry/core.yaml), so it no longer needs
+      # a manual repoint.
       enableGeneralPurposeNodePool: string | default="true"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
