@@ -6,8 +6,9 @@ under go-task's own interpreter with the Taskfile's `set:` options (bash with
 `set -euo pipefail` if go-task is not on PATH). `aws` is a fake on PATH that answers the
 list/describe calls from a fixture with --query applied by jmespath, as the AWS CLI does,
 and fails the deletes the fixture denies the way the CLI does (exit 254, "An error
-occurred (AccessDeniedException) when calling the ... operation: ..." on stderr). No AWS,
-no network.
+occurred (AccessDeniedException) when calling the ... operation: ..." on stderr), or
+fails them without an AWS error code, as when the endpoint is unreachable. No AWS, no
+network.
 
 Run:  python -m pytest workshop/scripts/tests/test_destroy_step6_report.py -q
 Set DESTROY_TASKFILE=<path> to run the same checks against another Taskfile.
@@ -34,7 +35,8 @@ OIDC = f"oidc.eks.{REGION}.amazonaws.com/id/"
 
 FIXTURE = {
     "secrets": [f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:{PREFIX}-ok-AbCdEf",
-                f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:{PREFIX}-denied-GhIjKl"],
+                f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:{PREFIX}-denied-GhIjKl",
+                f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:{PREFIX}-unreachable-MnOpQr"],
     "workspaces": [{"alias": f"{PREFIX}-observability-amp", "workspaceId": "ws-ok"},
                    {"alias": f"{PREFIX}-other-amp", "workspaceId": "ws-denied"}],
     "dbs": ["devlake-ok", "devlake-denied"],
@@ -50,10 +52,13 @@ FIXTURE = {
     "deny": [f"{PREFIX}-denied", "ws-denied", "devlake-denied", "DENIEDDENIED", "s-denied",
              f"/aws/eks/{HUB}/cluster", f"/aws/eks/{HUB}/capability/kro",
              f"/aws/eks/{PREFIX}-spoke-dev/cluster"],
+    # A delete that fails without an AWS error code (no "An error occurred (...)").
+    "unreachable": [f"{PREFIX}-unreachable"],
 }
 DENIED = [FIXTURE["secrets"][1], "ws-denied", "devlake-denied", "DENIEDDENIED", "s-denied",
           *FIXTURE["log_groups"][:3]]
 ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", "s-okok", FIXTURE["log_groups"][3]]
+UNREACHABLE = FIXTURE["secrets"][2]
 
 FAKE_AWS = r'''#!{python} -I
 import json, os, sys
@@ -77,6 +82,10 @@ OPS = {"delete-secret": ("secret-id", "DeleteSecret"),
 if op in OPS:
     key, api = OPS[op]
     target = opts.get(key, "")
+    if op == "delete-secret" and any(":" + d + "-" in target for d in fx.get("unreachable", [])):
+        sys.stderr.write('\nCould not connect to the endpoint URL: '
+                         '"https://secretsmanager.%s.amazonaws.com/"\n' % opts.get("region", ""))
+        sys.exit(255)
     if any(target == d or target.endswith("/" + d) or (op == "delete-secret" and ":" + d + "-" in target)
            for d in fx["deny"]):
         sys.stderr.write("\nAn error occurred (AccessDeniedException) when calling the %s operation: "
@@ -199,3 +208,11 @@ def test_the_step_runs_to_the_end_after_failures(run):
     assert res.returncode == 0, res.stdout + res.stderr
     last_delete = max(i for i, o in enumerate(ops) if o == "delete-log-group")
     assert "describe-vpcs" in ops[last_delete:], "step 6i never ran: " + ", ".join(ops[last_delete:])
+
+
+def test_failure_without_an_aws_error_code_says_unknown_error(run):
+    res, _ = run
+    done = _lines(res, "✓", UNREACHABLE)
+    warn = [ln.strip() for ln in _lines(res, "⚠", UNREACHABLE)]
+    assert done == [], "reported as deleted although the delete failed: " + str(done)
+    assert warn == [f"⚠ secret {UNREACHABLE} not deleted (unknown error)"], res.stdout

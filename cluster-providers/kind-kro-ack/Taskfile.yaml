@@ -2076,8 +2076,9 @@ tasks:
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
           HUB="{{.HUB_CLUSTER_NAME}}"
           # The deletes below stay best-effort, but print ✓ only when the call succeeded.
-          # A failed one prints ⚠ and the AWS error code (the full message carries ARNs).
-          awserr() { echo "$1" | sed -n 's/.*An error occurred (\([^)]*\)).*/\1/p'; }
+          # A failed one prints ⚠ and the AWS error code (the full message carries ARNs),
+          # or "unknown error" when there is no code (e.g. the endpoint was unreachable).
+          awserr() { echo "$1" | sed -n 's/.*An error occurred (\([^)]*\)).*/\1/p' | grep . || echo "unknown error"; }
           # 6a. CloudFront VPC Origins and Distributions associated with this hub.
           #     The hub platform CloudFront distribution uses a VPC Origin pointing to
           #     the internal ALB ingress. After the ALB is deleted, CloudFront VPC origin
