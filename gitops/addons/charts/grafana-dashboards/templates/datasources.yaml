@@ -33,6 +33,7 @@ spec:
         secretKeyRef:
           name: "grafana-amp-creds"
           key: AWS_REGION
+{{- if and .Values.devlake (eq (toString .Values.devlake.enabled) "true") }}
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
@@ -70,6 +71,7 @@ spec:
       connMaxLifetime: 14400
       timeInterval: "1m"
       tlsSkipVerify: true
+{{- end }}
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
