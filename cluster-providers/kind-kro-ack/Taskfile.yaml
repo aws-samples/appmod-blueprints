@@ -632,9 +632,13 @@ tasks:
 
   idc:setup:
     desc: Create IDC groups if they don't exist (idempotent)
+    # IDC_CONFIGURE_SKIP=true leaves the account's shared IAM Identity Center alone (#1073),
+    # as workshop idc:configure does: the vars below and the cmd make no Identity Center call
+    # then (go-task resolves task vars before running the cmd, so the vars check it too).
     vars:
       STORE_ID:
         sh: |
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
           ID=$(yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}})
           if [ -z "$ID" ]; then
             aws sso-admin list-instances --region {{.IDC_REGION}} --query 'Instances[0].IdentityStoreId' --output text 2>/dev/null || echo ""
@@ -643,6 +647,7 @@ tasks:
           fi
       ADMIN_GROUP:
         sh: |
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then exit 0; fi
           EXISTING=$(yq '.identityCenter.adminGroupId // ""' {{.CONFIG_FILE}})
           if [ -n "$EXISTING" ]; then echo "$EXISTING"; exit 0; fi
           STORE_ID=$(yq '.identityCenter.identityStoreId // ""' {{.CONFIG_FILE}})
@@ -650,6 +655,10 @@ tasks:
           aws identitystore list-groups --identity-store-id "$STORE_ID" --region {{.IDC_REGION}} --filters '[{"AttributePath":"DisplayName","AttributeValue":"admin"}]' --query 'Groups[0].GroupId' --output text 2>/dev/null | grep -v None || echo ""
     cmds:
       - |
+        if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then
+          printf '{{.C_INFO}}  IDC_CONFIGURE_SKIP=true: idc:setup skipped, IAM Identity Center not touched.{{.C_RESET}}\n'
+          exit 0
+        fi
         STORE_ID="{{.STORE_ID}}"
         if [ -z "$STORE_ID" ]; then
           echo "ERROR: No IDC Identity Store found. Set identityCenter.identityStoreId in config.local.yaml"

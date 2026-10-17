@@ -161,3 +161,56 @@ def test_skip_knob_makes_no_aws_call_under_go_task(tmp_path):
     res, calls = _gotask(tmp_path, "idc:configure", "IDC_CONFIGURE_SKIP=true", taskfile=printer,
                          FAKE_KC_SECRET=secret)
     assert (res.returncode, res.stdout, calls) == (0, "[]", [])
+
+
+# Answers every call idc:setup can make, so the run without the knob gets through its
+# vars and into the cmds. The test only reads which services were called.
+FAKE_AWS_SETUP = """#!/usr/bin/env bash
+echo "$*" >> "$FAKE_AWS_LOG"
+case "$1 $2" in
+  "sts get-caller-identity") echo "arn:aws:sts::111122223333:assumed-role/Admin/x" ;;
+  "sso-admin list-instances") echo "d-1111111111" ;;
+  "identitystore list-groups") echo "g-1" ;;
+  "identitystore list-users") echo "u-1" ;;
+  "identitystore "*) echo "x-1" ;;
+  *) echo "" ;;
+esac
+"""
+IDC_SERVICES = ("sso-admin", "identitystore", "sso")
+
+
+@pytest.mark.skipif(not (TASK and shutil.which("yq")), reason="needs go-task and yq on PATH")
+@pytest.mark.parametrize("form", ["env", "cli"])
+def test_kind_kro_ack_idc_setup_honours_the_knob(tmp_path, form):
+    """kind-kro-ack's manual idc:setup writes groups, users and memberships into the same
+    shared Identity Center. With the knob it must do nothing and call no IdC API, in its
+    task vars as well as its cmds (go-task resolves task vars before status:)."""
+    # A copy of the repo layout go-task needs: the root Taskfile (which includes the
+    # providers), cluster-providers/ and the addon registry, plus our config.local.yaml.
+    root = tmp_path / "repo"
+    root.mkdir()
+    shutil.copy(os.path.join(REPO, "Taskfile.yaml"), root / "Taskfile.yaml")
+    shutil.copytree(os.path.join(REPO, "cluster-providers"), root / "cluster-providers")
+    shutil.copytree(os.path.join(REPO, "gitops", "addons", "registry"), root / "gitops" / "addons" / "registry")
+    (root / "config.local.yaml").write_text(CONFIG.replace("adminGroupId: g-1", 'adminGroupId: ""'))
+    env, log = _fake_env(tmp_path)
+    (tmp_path / "bin" / "aws").write_text(FAKE_AWS_SETUP)
+
+    def run(*extra, **env_vars):
+        log.write_text("")
+        e = dict(env, **env_vars)
+        # As the workshop runs it: from the repo root, through the kind-kro-ack include.
+        res = subprocess.run([TASK, "-d", str(root), "kind-kro-ack:idc:setup", *extra],
+                             env=e, capture_output=True, text=True, timeout=120)
+        return res, [c.split()[0] for c in log.read_text().splitlines()]
+
+    if form == "env":
+        res, svcs = run(IDC_CONFIGURE_SKIP="true")
+    else:
+        res, svcs = run("IDC_CONFIGURE_SKIP=true")
+    assert res.returncode == 0, res.stderr
+    assert not [s for s in svcs if s in IDC_SERVICES], svcs
+    assert "idc:setup skipped" in res.stdout, res.stdout  # the operator can see the knob took effect
+
+    res, svcs = run()  # no knob: it still talks to Identity Center
+    assert "identitystore" in svcs, (svcs, res.stderr[-400:])
