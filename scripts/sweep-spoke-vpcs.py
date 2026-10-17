@@ -55,7 +55,8 @@ def _discover():
     for vpc_id, v in found.items():
         # Never the stack's own VPC (the IDE/hub VPC of the self-paced template): spoke
         # VPCs are made by ACK, Crossplane or Terraform, never by CloudFormation. Same
-        # rule as the workshop sweep's orphan-VPC reaper.
+        # rule as the workshop sweep's orphan-VPC reaper. It comes before the legacy-name
+        # exemption below on purpose: CloudFormation ownership wins, even over a legacy name.
         if (any(t['Key'].startswith('aws:cloudformation:') for t in v.get('Tags', []))
                 or _tag(v, 'ResourceType') == 'ideHubVPC'):
             print(f'  Skipping CloudFormation-owned VPC {vpc_id} (IDE/hub VPC)')
@@ -78,7 +79,7 @@ def _discover():
 spoke_vpcs = _discover()
 
 if not spoke_vpcs:
-    print('  No orphaned spoke VPCs found.')
+    print('  No orphaned spoke VPCs to clean.')
     sys.exit(0)
 
 for vpc_id in spoke_vpcs:

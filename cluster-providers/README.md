@@ -171,11 +171,12 @@ Authorization and teardown therefore key on something other than the name:
   for the cluster-mgmt trust policy, by the platform-specific role suffix. They are **not**
   scoped by a `<resourcePrefix>-spoke-*` name pattern. That pattern previously denied any
   non-conforming spoke at `CreateCluster`, after its VPC and NAT gateway already existed.
-- **Teardown** is the remaining gap. Both providers now stamp
-  `platform.gitops.io/prefix` and `platform.gitops.io/cluster` on the cluster and VPC, but
-  the sweep invoked by `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) still selects
-  two literal VPC names, so a spoke named anything else is left behind. Selecting on those
-  tags instead is tracked separately.
+- **Teardown** keys on ownership tags. Both providers stamp `platform.gitops.io/prefix` and
+  `platform.gitops.io/cluster` on the cluster and VPC, and the sweep invoked by
+  `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) finds VPCs by the prefix tag (plus
+  the two legacy names for pre-tag installs) and keeps only those that also carry the cluster
+  tag (or a legacy name), so a spoke named anything else is cleaned up too. It never selects the hub's VPC or a CloudFormation-owned one (the self-paced
+  template's IDE/hub VPC).
 
 Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
 renders the cluster, so an invalid name creates nothing at all:
