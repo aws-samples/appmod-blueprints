@@ -77,8 +77,14 @@ argocd-refresh-token() {
         --password "${kc_password}" \
         --output token 2>/tmp/argocd-token-debug.log)
 
+    # IAM Identity Center is one per account. With IDC_CONFIGURE_SKIP=true (setup-env writes it to
+    # platform.sh) it may be federated to another stack's Keycloak, and the fallback below would
+    # re-point it to this stack's Keycloak and break that stack's SSO. Leave it alone.
+    if [[ "${IDC_CONFIGURE_SKIP:-false}" == "true" ]] && [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
+        echo "IDC_CONFIGURE_SKIP=true: IDC-Keycloak federation not reconfigured, IAM Identity Center not touched." >&2
+        echo "To get a token, set USER1_PASSWORD to user1's password in the Keycloak that Identity Center federates to, and rerun argocd-refresh-token." >&2
     # If token retrieval failed, try configuring IDC-Keycloak federation first
-    if [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
+    elif [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
         echo "Token retrieval failed. Checking IDC-Keycloak federation..." >&2
 
         local idc_instance_arn idc_instance_id domain_name keycloak_admin_password

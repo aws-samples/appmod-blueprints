@@ -628,6 +628,9 @@ tasks:
           set_var GIT_TOKEN "${UP}"
         fi
         set_var KEYCLOAK_ADMIN_PASSWORD "${KC}"
+        # Keep IDC_CONFIGURE_SKIP=true for the IDE shell too, so argocd-refresh-token's fallback
+        # (hack/.bashrc.d/ssm-setup-ide-logs.sh) leaves the shared IAM Identity Center alone.
+        if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then set_var IDC_CONFIGURE_SKIP "true"; fi
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         source "$PLATFORM_FILE" 2>/dev/null || true
 
