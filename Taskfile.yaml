@@ -42,7 +42,7 @@ tasks:
     desc: Pre-flight checks for the configured provider
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:validate"
 
@@ -55,7 +55,7 @@ tasks:
     desc: Bootstrap the platform using the configured cluster provider
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
       INSTALL_START:
         sh: date +%s
     cmds:
@@ -84,7 +84,7 @@ tasks:
     desc: Check bootstrap and cluster status
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:status"
 
@@ -92,7 +92,7 @@ tasks:
     desc: Update backstage-dynamic-catalog ConfigMap with environment-specific values
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:hub:backstage-catalog"
 
@@ -100,7 +100,7 @@ tasks:
     desc: Delete the Kind cluster (hub persists)
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:destroy-kind"
 
@@ -108,7 +108,7 @@ tasks:
     desc: Full teardown
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:destroy"
 
@@ -116,7 +116,7 @@ tasks:
     desc: Update hub infrastructure via the cluster provider
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:hub:update"
 
@@ -124,7 +124,7 @@ tasks:
     desc: Seed observability credentials (AMP/AMG) into Secrets Manager (run after workspaces are created)
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:secrets-manager:seed-observability"
 
@@ -132,7 +132,7 @@ tasks:
     desc: Remove all addons from the hub cluster (no git changes needed)
     vars:
       PROVIDER:
-        sh: yq '.clusterProvider // "kind-crossplane"' {{.CONFIG_FILE}}
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:hub:destroy-addons"
 

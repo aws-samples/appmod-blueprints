@@ -352,7 +352,7 @@ All platform settings are centralized in `config.yaml`. Edit before running `tas
 
 ```yaml
 # Cluster provider — which approach to use for hub cluster provisioning
-clusterProvider: "kind-crossplane"   # Options: kind-crossplane, byoc
+clusterProvider: "kind-kro-ack"   # Options: kind-kro-ack, kind-crossplane, terraform, byoc
 
 # Git repository hosting the gitops platform code
 repo:

@@ -3,8 +3,8 @@
 # yaml-language-server: $schema=config.schema.json
 
 # Cluster provider — which approach to use for hub cluster provisioning
-# Options: kind-crossplane, byoc
-clusterProvider: "kind-crossplane"
+# Options: kind-kro-ack, kind-crossplane, terraform, byoc
+clusterProvider: "kind-kro-ack"
 
 # Git repository hosting the gitops platform code
 repo:

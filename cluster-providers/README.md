@@ -8,8 +8,8 @@ cluster is created.
 
 | Provider | Description | When to use |
 |----------|-------------|-------------|
-| `kind-crossplane/` | Kind bootstrap + Crossplane provisions the hub EKS cluster (default) | Greenfield, full GitOps, no Terraform |
-| `kind-kro-ack/` | Kind bootstrap + KRO/ACK provisions the hub EKS cluster | Greenfield, full GitOps, KRO/ACK-based provisioning |
+| `kind-crossplane/` | Kind bootstrap + Crossplane provisions the hub EKS cluster | Greenfield, full GitOps, no Terraform |
+| `kind-kro-ack/` | Kind bootstrap + KRO/ACK provisions the hub EKS cluster (default) | Greenfield, full GitOps, KRO/ACK-based provisioning |
 | `terraform/` | Direct Terraform provisioning of the hub EKS cluster (no Kind, no Crossplane) | Teams standardized on Terraform |
 | `byoc/` | Bring Your Own Cluster | Existing cluster, any cloud provider |
 
