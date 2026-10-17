@@ -173,9 +173,9 @@ Authorization and teardown therefore key on something other than the name:
   non-conforming spoke at `CreateCluster`, after its VPC and NAT gateway already existed.
 - **Teardown** keys on ownership tags. Both providers stamp `platform.gitops.io/prefix` and
   `platform.gitops.io/cluster` on the cluster and VPC, and the sweep invoked by
-  `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) selects spoke VPCs by those tags,
-  plus the two legacy names for pre-tag installs, so a spoke named anything else is cleaned
-  up too. It never selects the hub's VPC or a CloudFormation-owned one (the self-paced
+  `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) finds VPCs by the prefix tag (plus
+  the two legacy names for pre-tag installs) and keeps only those that also carry the cluster
+  tag (or a legacy name), so a spoke named anything else is cleaned up too. It never selects the hub's VPC or a CloudFormation-owned one (the self-paced
   template's IDE/hub VPC).
 
 Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
