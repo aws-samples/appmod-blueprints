@@ -6,10 +6,10 @@ Architecture and deployment context for the appmod-blueprints platform on the `f
 
 ## Instructions
 
-### Bootstrap (kind-crossplane provider)
+### Bootstrap (default provider: kind-kro-ack)
 
-- Bootstrap uses `task install` which delegates to `cluster-providers/kind-crossplane/Taskfile.yaml`
-- Kind cluster runs Crossplane to provision the hub EKS cluster (VPC, subnets, IAM, EKS)
+- Bootstrap uses `task install` which delegates to the configured `clusterProvider` (default `kind-kro-ack`; the workshop `create-config.sh` also defaults to `kind-kro-ack`). The `kind-crossplane` provider remains available via `clusterProvider: "kind-crossplane"`.
+- Kind cluster runs KRO/ACK (or Crossplane, depending on the selected provider) to provision the hub EKS cluster (VPC, subnets, IAM, EKS)
 - After hub is ACTIVE, a Job creates EKS Capabilities (ArgoCD + KRO + ACK)
 - ESO is installed on hub, seed secret applied, root-appset bootstraps self-management
 - Kind cluster can be deleted after hub is self-managing (`task destroy-kind`)
