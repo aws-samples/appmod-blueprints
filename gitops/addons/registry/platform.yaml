@@ -70,6 +70,18 @@ crossplane-base:
       grafana:
         version: "v2.6.1"
         createIdentity: true
+      # bedrockagentcore: the provider PACKAGE is installed by OAP (crossplane-agentcore,
+      # gated by enable_agent_core), NOT by crossplane-base's providers.yaml -- so this
+      # entry does NOT create a duplicate Provider CR. It exists solely to drive
+      # crossplane-base/iam.yaml's generic range so the SA provider-aws-bedrockagentcore
+      # gets the SAME IAM Role + AdministratorAccess attachment + PodIdentityAssociation
+      # as its sibling providers. Without it the provider pod falls back to IMDS (no role),
+      # and the Bedrock Memory CR fails with ReconcileError (aiops-agent Degraded).
+      bedrockagentcore:
+        version: "v2.6.1"
+        serviceAccount: provider-aws-bedrockagentcore
+        roleName: CrossplaneBedrockAgentCoreProviderRole
+        createIdentity: true
       kubernetes:
         version: "v1.2.1"
   ignoreDifferences:
