@@ -1707,6 +1707,28 @@ tasks:
             fi
           done
         ignore_error: true
+      # 4.7. Stop managing platform-manifests-bootstrap WITHOUT pruning it. It owns the
+      #      Karpenter NodePools (consumer pools such as the workshop's system-peeks and
+      #      general-purpose-peeks, plus gpu/trainium) that the platform controllers are
+      #      pinned to: cert-manager, external-secrets, crossplane, LBC, argo-*, ... If
+      #      step 7 prunes it like any other addon, Auto Mode drains those nodes and the
+      #      controllers stay Pending for the rest of the teardown, so the addons removed
+      #      after it wait out their finalizer timeouts and leave their AWS resources
+      #      behind. Its AppSet goes with --cascade=orphan, then its Applications without
+      #      their resources-finalizer; the NodePools go with the hub cluster, which
+      #      destroy deletes through the AWS API right after this task.
+      - cmd: |
+          if {{.KC}} get applicationset platform-manifests-bootstrap -n argocd >/dev/null 2>&1; then
+            echo "Stopping platform-manifests-bootstrap (NodePools kept until the cluster delete)..."
+            {{.KC}} patch applicationset platform-manifests-bootstrap -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' 2>&1 || true
+            sleep 3
+            {{.KC}} delete applicationset platform-manifests-bootstrap -n argocd --cascade=orphan --timeout=30s 2>&1 || true
+          fi
+          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '^platform-manifests-bootstrap-' || true); do
+            {{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
+            {{.KC}} delete application "$app" -n argocd --wait=false 2>&1 || true
+          done
+        ignore_error: true
       # 5. Delete APPLICATION WORKLOADS first — all ArgoCD Applications whose project is
       #    NOT 'default' (addons) or 'platform' (infra). On kro-c1 these are rust-project,
       #    java-project, cpu-ray-project, spoke-workloads (rust/java/golang/dotnet/next-js
@@ -1759,9 +1781,11 @@ tasks:
       #    The wave is read from the addon's Applications: the registry's annotationsAppSet
       #    is rendered onto the AppSet's template, so the AppSets themselves carry no wave
       #    and the order would fall back to reverse-alphabetical. multi-acct is skipped
-      #    here and removed last, without pruning (step 9b).
+      #    here and removed last, without pruning (step 9b). platform-manifests-bootstrap
+      #    is skipped as a backstop: step 4.7 already removed it without pruning, and
+      #    step 7 must never prune it (its NodePools would go with it).
       - cmd: |
-          SKIP="{{.INFRA_STACK}} multi-acct bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
+          SKIP="{{.INFRA_STACK}} multi-acct platform-manifests-bootstrap bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
           APP_WAVES=$({{.KC}} get applications -n argocd \
             -o jsonpath='{range .items[*]}{.metadata.ownerReferences[0].name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' 2>/dev/null || true)
           ADDONS=$({{.KC}} get applicationsets -n argocd \

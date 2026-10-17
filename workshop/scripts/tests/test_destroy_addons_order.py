@@ -173,10 +173,12 @@ printf '["sleep", %s]\\n' "$1" >> "$FAKE_K8S_LOG"
 
 # The hub after steps 1-6, as on a live post-pivot hub: the addon ApplicationSets carry
 # no sync-wave (only bootstrap-level ones do); their Applications carry the registry wave.
+# platform-manifests-bootstrap (wave -1) is not here: step 4.7 has already removed it
+# without a prune (#1085), and step 7 skips it.
 ADDON_WAVES = {
     "platform-manifests-post": "8", "devlake": "7", "keycloak": "6", "platform-manifests": "6",
     "backstage": "4", "observability-aws": "4", "cert-manager": "2", "metrics-server": "0",
-    "external-secrets": "-1", "platform-manifests-bootstrap": "-1", "kro-clusters-rgds-hub": "-2",
+    "external-secrets": "-1", "kro-clusters-rgds-hub": "-2",
     "eks-capabilities-rbac-hub": "-3", "ack-pod-identities": "-4", "multi-acct": "-5",
 }
 INFRA_WAVES = {"kro-manifests-hub": "-2", "kro-manifests": "-2", "kro": "-3",
