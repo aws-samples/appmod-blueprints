@@ -2382,8 +2382,17 @@ spec:
                 # rows, and every seed adds new ones. record-devlake-demo-data marks a complete seed with
                 # the connection's id and createdAt (ids start at 1 again on a new DevLake database). A
                 # failed seed writes no marker, and a replaced connection does not match it.
-                HOOK_CREATED_AT=$(curl -s "$TRIGGER_URL/plugins/webhook/connections/$CONNECTION_ID" | jq -r '.createdAt // empty')
-                if [ -z "$HOOK_CREATED_AT" ]; then echo "DevLake setup failed: no webhook connection $CONNECTION_ID" >&2; exit 1; fi
+                # Read the connection without --fail, so a missing connection (404) is told apart from
+                # DevLake failing (--retry still covers 5xx while DevLake restarts), and not piped into jq:
+                # without pipefail, set -e would miss a failed curl.
+                conn=$(command curl -s --show-error --max-time 60 --retry 20 --retry-delay 15 --retry-connrefused \
+                  -w '%{http_code}' "$TRIGGER_URL/plugins/webhook/connections/$CONNECTION_ID") \
+                  || { echo "DevLake setup failed: DevLake unreachable for webhook connection $CONNECTION_ID" >&2; exit 1; }
+                conn_code=$(printf '%s' "$conn" | tail -c 3)
+                if [ "$conn_code" = "404" ]; then echo "DevLake setup failed: no webhook connection $CONNECTION_ID" >&2; exit 1; fi
+                if [ "$conn_code" != "200" ]; then echo "DevLake setup failed: HTTP $conn_code reading webhook connection $CONNECTION_ID" >&2; exit 1; fi
+                HOOK_CREATED_AT=$(printf '%s' "$conn" | head -c -3 | jq -r '.createdAt // empty')
+                if [ -z "$HOOK_CREATED_AT" ]; then echo "DevLake setup failed: webhook connection $CONNECTION_ID has no createdAt" >&2; exit 1; fi
                 echo "$CONNECTION_ID|$HOOK_CREATED_AT" > /tmp/devlake-connection
 
                 trigger_blueprint() {

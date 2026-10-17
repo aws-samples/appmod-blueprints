@@ -95,7 +95,12 @@ elif m(r"/plugins/webhook/connections") and method == "POST":
         out = {"id": cid, "name": name, "createdAt": created, "apiKey": {"apiKey": f"key-{cid}"}}
 elif m(r"/plugins/webhook/connections/(\d+)") and method == "GET":
     c = st["connections"].get(m(r"/plugins/webhook/connections/(\d+)").group(1))
-    if c:  # no key: DevLake returns it only on create
+    get_fails = os.environ.get("FAKE_DEVLAKE_CONNECTION_GET_FAILS")
+    if get_fails == "500":
+        out, code = err("internal error"), 500  # past curl's retries
+    elif get_fails == "404":
+        out, code = err("record not found (404)"), 404
+    elif c:  # no key: DevLake returns it only on create
         out = {"id": c["id"], "name": c["name"], "createdAt": c["createdAt"], "updatedAt": c["createdAt"]}
     else:
         out, code = err("record not found (404)"), 404
@@ -516,3 +521,20 @@ def test_a_seed_that_fails_midway_writes_no_marker_and_the_next_run_seeds(workfl
     assert st["rows"][hook]["deployments"] == 10 + _seeded(run) and _seeded(run) > 10
     assert _marker(workflow) == {"SEEDED_HOOK_ID": hook,
                                  "SEEDED_HOOK_CREATED_AT": st["connections"][hook]["createdAt"]}
+
+
+@pytest.mark.parametrize("code,message", [
+    ("500", "DevLake setup failed: HTTP 500 reading webhook connection"),
+    ("404", "DevLake setup failed: no webhook connection"),
+])
+def test_a_failed_connection_get_says_why_and_seeds_nothing(workflow, code, message):
+    # DevLake answers the connection GET with HTTP 500 (past curl's retries) or 404 (the
+    # connection is gone): the step says which, seeds nothing and writes no marker.
+    run = workflow.run(FAKE_DEVLAKE_CONNECTION_GET_FAILS=code)
+    assert run.failed == "devlake-generate-data"
+    err = run.out["devlake-generate-data"].stderr
+    assert message in err, err
+    st = workflow.devlake()
+    assert not _pushes(st["calls"]), _pushes(st["calls"])
+    assert st["triggers"] == []
+    assert _marker(workflow) is None
