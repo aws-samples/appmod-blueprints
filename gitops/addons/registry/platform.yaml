@@ -48,27 +48,27 @@ crossplane-base:
         version: "v0.2.0"
     providers:
       family:
-        version: "v2.6.1"
+        version: "v2.7.0"
       iam:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: false
       ec2:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       eks:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: false
       rds:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       dynamodb:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       amp:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       grafana:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       # bedrockagentcore: the provider PACKAGE is installed by OAP (crossplane-agentcore,
       # gated by enable_agent_core), NOT by crossplane-base's providers.yaml -- so this
@@ -78,7 +78,7 @@ crossplane-base:
       # as its sibling providers. Without it the provider pod falls back to IMDS (no role),
       # and the Bedrock Memory CR fails with ReconcileError (aiops-agent Degraded).
       bedrockagentcore:
-        version: "v2.6.1"
+        version: "v2.7.0"
         serviceAccount: provider-aws-bedrockagentcore
         roleName: CrossplaneBedrockAgentCoreProviderRole
         createIdentity: true

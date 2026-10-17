@@ -511,12 +511,12 @@ tasks:
           --set functions.patchAndTransform.version=v0.10.0
           --set functions.environmentConfigs.version=v0.3.0
           --set functions.celFilter.version=v0.2.0
-          --set providers.family.version=v2.6.1
-          --set providers.iam.version=v2.6.1
+          --set providers.family.version=v2.7.0
+          --set providers.iam.version=v2.7.0
           --set providers.iam.createIdentity=false
-          --set providers.eks.version=v2.6.1
+          --set providers.eks.version=v2.7.0
           --set providers.eks.createIdentity=false
-          --set providers.ec2.version=v2.6.1
+          --set providers.ec2.version=v2.7.0
           --set providers.ec2.createIdentity=false
           --set providers.kubernetes.version={{.K8S_PROVIDER_VERSION}}
           --set providers.kubernetes.serviceAccount=provider-kubernetes
@@ -616,8 +616,8 @@ tasks:
           --set aws.region={{.AWS_REGION}}
           --set aws.clusterName={{.HUB_CLUSTER_NAME}}
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
-          --set providers.iam.version=v2.6.1
-          --set providers.eks.version=v2.6.1
+          --set providers.iam.version=v2.7.0
+          --set providers.eks.version=v2.7.0
           | kubectl apply -f -
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
           --set aws.region={{.AWS_REGION}}
@@ -1921,10 +1921,10 @@ tasks:
             --set aws.region={{.AWS_REGION}} \
             --set aws.clusterName={{.HUB_CLUSTER_NAME}} \
             --set aws.accountId={{.AWS_ACCOUNT_ID}} \
-            --set providers.family.version=v2.6.1 \
-            --set providers.iam.version=v2.6.1 \
-            --set providers.eks.version=v2.6.1 \
-            --set providers.ec2.version=v2.6.1 \
+            --set providers.family.version=v2.7.0 \
+            --set providers.iam.version=v2.7.0 \
+            --set providers.eks.version=v2.7.0 \
+            --set providers.ec2.version=v2.7.0 \
             | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
