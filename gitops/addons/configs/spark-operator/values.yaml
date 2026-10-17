@@ -18,8 +18,14 @@ spark-operator:
         cpu: 500m
         memory: 512Mi
       requests:
-        cpu: 100m
-        memory: 128Mi
+        # cpu 100m -> 250m, memory 128Mi -> 256Mi (#1057 spark fix): on a fresh
+        # EKS Auto Mode / k8s 1.35 node the controller-runtime manager's first
+        # cache sync is CPU-bound and gets CFS-throttled at 100m, so the health
+        # server on :8081 binds slower than the liveness budget -> SIGKILL
+        # (exit 137, reason=Error, NOT OOMKilled) -> permanent CrashLoop. 250m
+        # removes the throttling root cause and clears the loop at first provision.
+        cpu: 250m
+        memory: 256Mi
     livenessProbe:
       timeoutSeconds: 5
     readinessProbe:
@@ -30,10 +36,14 @@ spark-operator:
     enable: true
     resources:
       requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
+        # cpu 50m -> 250m, memory 128Mi -> 256Mi (#1057 spark fix): same
+        # CFS-throttling cold-start root cause as the controller -- the webhook
+        # manager's :8081 health server binds slower than the liveness budget at
+        # 50m, driving the exit-137 loop.
+        cpu: 250m
         memory: 256Mi
+      limits:
+        memory: 512Mi
     namespaceSelector: {}
     objectSelector: {}
     timeoutSeconds: 30
