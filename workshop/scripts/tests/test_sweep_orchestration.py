@@ -155,7 +155,7 @@ class SweepOrchestrationTest(unittest.TestCase):
             "No EKS capabilities to delete",          # §1
             "No CloudFront distributions/VPC origins",  # §2
             "No ALBs to delete",                       # §3
-            "No RDS instances to delete",              # §4
+            "No DevLake RDS resources to delete",      # §4
             "No AMP scrapers to delete",               # §5
             "Hub EKS cluster already gone",            # §6
             "No orphaned spoke clusters to delete",    # §6b
