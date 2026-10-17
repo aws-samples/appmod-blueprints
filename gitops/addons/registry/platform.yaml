@@ -48,27 +48,40 @@ crossplane-base:
         version: "v0.2.0"
     providers:
       family:
-        version: "v2.6.1"
+        version: "v2.7.0"
       iam:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: false
       ec2:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       eks:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: false
       rds:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       dynamodb:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       amp:
-        version: "v2.6.1"
+        version: "v2.7.0"
         createIdentity: true
       grafana:
-        version: "v2.6.1"
+        version: "v2.7.0"
+        createIdentity: true
+      # bedrockagentcore (#1122): the provider PACKAGE is installed by OAP
+      # (crossplane-agentcore, gated by enable_agent_core), NOT by crossplane-base's
+      # providers.yaml -- so this entry does NOT create a duplicate Provider CR. It
+      # exists solely to drive crossplane-base/iam.yaml's generic range so the SA
+      # provider-aws-bedrockagentcore gets the SAME IAM Role + AdministratorAccess
+      # attachment + PodIdentityAssociation as its sibling providers. Without it the
+      # provider pod falls back to IMDS (no role) and the Bedrock Memory CR fails
+      # with ReconcileError. version only satisfies iam.yaml's version guard.
+      bedrockagentcore:
+        version: "v2.7.0"
+        serviceAccount: provider-aws-bedrockagentcore
+        roleName: CrossplaneBedrockAgentCoreProviderRole
         createIdentity: true
       kubernetes:
         version: "v1.2.1"
