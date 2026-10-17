@@ -16,7 +16,7 @@ spec:
   provider: kro-ack
   region: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
   managementRegion: {{ .Values.region | default $.Values.global.region | default "us-west-2" }}
-  k8sVersion: {{ .Values.kubernetesVersion | default "1.32" | quote }}
+  k8sVersion: {{ .Values.kubernetesVersion | default "1.37" | quote }}
   accountId: {{ .Values.accountId | default $.Values.global.accountId | quote }}
   managementAccountId: {{ .Values.managementAccountId | default $.Values.global.accountId | quote }}
   argoCdHubRoleArn: {{ .Values.argoCdHubRoleArn | default $.Values.global.argoCDRoleArn | default "" }}
@@ -24,6 +24,7 @@ spec:
   fleetSecretManagerSecretNameSuffix: {{ .Values.fleetSecretManagerSecretNameSuffix | default "argocd-secret" }}
   domainName: {{ .Values.domainName | default $.Values.global.domainName | default "example.com" }}
   resourcePrefix: {{ .Values.resourcePrefix | default $.Values.global.resourcePrefix | default "peeks" }}
+  enableGeneralPurposeNodePool: {{ (ternary (.Values.enableGeneralPurposeNodePool | toString) "true" (hasKey .Values "enableGeneralPurposeNodePool")) | quote }}
   cidr:
     vpcCidr: {{ .Values.vpcCidr | default "10.0.0.0/16" | quote }}
     publicSubnet1Cidr: {{ .Values.publicSubnet1Cidr | default "10.0.1.0/24" | quote }}

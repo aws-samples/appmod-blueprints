@@ -65,7 +65,7 @@ RUN yarn config set python /usr/bin/python3
 
 # kubectl for kube:apply action (TARGETARCH is injected by buildx per target platform)
 ARG TARGETARCH
-RUN curl -L -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.29.9/bin/linux/${TARGETARCH}/kubectl" && chmod +x /usr/local/bin/kubectl
+RUN curl -L -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.37.1/bin/linux/${TARGETARCH}/kubectl" && chmod +x /usr/local/bin/kubectl
 
 # mkdocs for TechDocs
 ENV VIRTUAL_ENV=/opt/venv

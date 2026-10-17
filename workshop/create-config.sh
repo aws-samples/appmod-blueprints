@@ -84,7 +84,7 @@
 #   CLUSTER_PROVIDER  (default: from CFN parameter or "kind-kro-ack")
 #   REPO_URL          (default: https://github.com/aws-samples/appmod-blueprints)
 #   REPO_REVISION     (default: $WORKSHOP_GIT_BRANCH)
-#   K8S_VERSION       (default: 1.35)
+#   K8S_VERSION       (default: 1.37)
 #   FORCE             (default: false) — set to true to overwrite existing config
 #   ADMIN_ROLE_NAME   (default: derived from WS_PARTICIPANT_ROLE_ARN or caller identity)
 #   HUB_VPC_ID        (default: from CDK bootstrap env) — OPTIONAL: install the hub into
@@ -150,7 +150,7 @@ if [ -z "$CLUSTER_PROVIDER" ]; then
     --output text 2>/dev/null | grep -v "^None$" || true)
 fi
 CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-kind-kro-ack}"
-K8S_VERSION="${K8S_VERSION:-1.35}"
+K8S_VERSION="${K8S_VERSION:-1.37}"
 VPC_CIDR="${VPC_CIDR:-10.1.0.0/16}"
 FORCE="${FORCE:-false}"
 
@@ -312,6 +312,12 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
   printf '  adminRoleName: "%s"\n' "$ADMIN_ROLE_NAME"   >> "$OUTPUT_FILE"
   printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
+  # Workshop opt-in: drop the built-in Auto Mode general-purpose NodePool so the
+  # hub's general-purpose capacity is ONLY its custom general-purpose-peeks pool
+  # (keeps unpinned EventBus/CI off the small, consolidation-prone built-in node).
+  # The built-in "system" pool stays on (anchors the default NodeClass). Generic
+  # consumers omit this key -> rg-eks.yaml default "true" keeps the built-in.
+  printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
   printf '  network:\n'                                >> "$OUTPUT_FILE"
   printf '    vpcId: "%s"\n' "$HUB_VPC_ID"             >> "$OUTPUT_FILE"
   printf '    subnetIds:\n'                            >> "$OUTPUT_FILE"
@@ -327,6 +333,8 @@ else
   printf '  kubernetesVersion: "%s"\n' "$K8S_VERSION"  >> "$OUTPUT_FILE"
   printf '  vpcCidr: "%s"\n'      "$VPC_CIDR"          >> "$OUTPUT_FILE"
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
+  # Workshop opt-in (see note above): hub general-purpose = only general-purpose-peeks (built-in system stays).
+  printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
 fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"

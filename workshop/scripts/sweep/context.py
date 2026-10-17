@@ -133,6 +133,35 @@ class SweepContext:
         see the *post-deletion* state, not the stale set captured at spoke discovery."""
         self._tagged_cache = None
 
+    # ── account-wide resources: positive identification only ─────────────────────
+    def owned_clusters(self):
+        """The EKS clusters this deployment owns: the hub and every discovered spoke."""
+        return {self.hub, *self.spokes}
+
+    def scraper_is_ours(self, scraper):
+        """AMP scrapers are regional, not per-deployment: one is ours only when its source
+        EKS cluster is our hub or one of our spokes (list_scrapers summaries carry
+        source.eksConfiguration.clusterArn). Other deployments' scrapers are never touched."""
+        arn = (scraper.get("source") or {}).get("eksConfiguration", {}).get("clusterArn", "")
+        return ":cluster/" in arn and arn.rsplit("/", 1)[-1] in self.owned_clusters()
+
+    def eip_is_ours(self, tags):
+        """An Elastic IP is ours when it carries the ownership tag or our cluster tag, was
+        created by our hub's ACK capability, or is named after one of our clusters (the kro
+        VPC RGD names a spoke's NAT EIP "<cluster>-eip1"). Never "the prefix appears in some
+        tag": that also matches other stacks' addresses."""
+        if tags.get(OWNER_PREFIX_TAG) == self.prefix:
+            return True
+        clusters = self.owned_clusters()
+        if tags.get("platform.gitops.io/cluster") in clusters:
+            return True
+        if f":capability/{self.hub}/" in tags.get("eks:eks-capability-arn", ""):
+            return True
+        if any(f"kubernetes.io/cluster/{c}" in tags for c in clusters):
+            return True
+        names = (tags.get("Name", ""), tags.get("eks:kubernetes-resource-name", ""))
+        return any(n.startswith(c + "-") for n in names for c in clusters)
+
     # ── VPC ownership (positive identification only) ─────────────────────────────
     def _vpc_tags(self, vpc_id):
         if vpc_id not in self._vpc_tag_cache:
@@ -144,19 +173,52 @@ class SweepContext:
         return self._vpc_tag_cache[vpc_id]
 
     def is_our_ide_vpc(self, tags):
-        """The IDE VPC belongs to THIS workshop's CloudFormation stack. Requires the
-        stack name to reference this deployment — never just 'any CFN stack'."""
+        """The IDE VPC belongs to THIS workshop's CloudFormation stack: a CFN-owned VPC whose
+        platform.gitops.io/prefix tag is our prefix (the template stamps it, whatever the
+        stack is called), or, on stacks that predate that tag, whose stack is named
+        <prefix>-workshop or <prefix>-workshop-<suffix> (self-paced, Workshop Studio
+        <prefix>-workshop-team-stack; the same rule the IAM reaper uses for stack roles).
+        A prefix tag naming another prefix is never ours. No bare "peeks"/"workshop"
+        substring: that matches every other workshop stack in the account."""
         stack = tags.get("aws:cloudformation:stack-name", "")
         if not stack:
             return False
-        return self.prefix in stack or "peeks" in stack.lower() or "workshop" in stack.lower()
+        owner = tags.get(OWNER_PREFIX_TAG)
+        if owner is not None:
+            return owner == self.prefix
+        base = f"{self.prefix}-workshop"
+        return stack == base or stack.startswith(base + "-")
+
+    def find_ide_vpc(self, label=""):
+        """The IDE VPC of THIS workshop: the hub's VPC if §6 saw the hub, else the ONE VPC
+        is_our_ide_vpc() accepts. Refuses to guess when ambiguous (SAFETY: never pick a VPC
+        just because it carries an aws:cloudformation:* tag). None when not identified."""
+        if self.hub_vpc_id:
+            return self.hub_vpc_id
+        matches = [
+            v["VpcId"]
+            for v in self.ec2.describe_vpcs().get("Vpcs", [])
+            if self.is_our_ide_vpc({t["Key"]: t["Value"] for t in v.get("Tags", [])})
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            self.log(f"  {label}No IDE VPC identified for this deployment — skipping IDE VPC steps")
+        else:
+            self.log(f"  {label}{len(matches)} candidate IDE VPCs ({', '.join(matches)}) — "
+                     "ambiguous, refusing to guess; skipping IDE VPC steps")
+        return None
 
     def vpc_is_ours(self, vpc_id):
         if not vpc_id:
             return False
         tags = self._vpc_tags(vpc_id)
-        if tags.get(OWNER_PREFIX_TAG) == self.prefix:
-            return True
+        owner = tags.get(OWNER_PREFIX_TAG)
+        if owner is not None:
+            # Authoritative when present: a VPC tagged for another prefix is never ours,
+            # even if its Name starts with ours (the published template's IDE VPC keeps the
+            # literal Name "peeks-workshop/IDE-VPC" whatever the prefix).
+            return owner == self.prefix
         if tags.get("platform.gitops.io/cluster") in {self.hub, *self.spokes}:
             return True
         if tags.get("Name", "").startswith(self.prefix + "-"):

@@ -37,7 +37,7 @@ clusters:
     tenant: workshop
     environment: dev
     region: us-west-2
-    k8sVersion: "1.35"
+    k8sVersion: "1.37"
     accountId: "123456789012"
     managementAccountId: "123456789012"
     resourcePrefix: peeks
@@ -58,7 +58,7 @@ Commit and push — ArgoCD will sync and KRO creates the cluster.
 | `tenant` | string | `tenant1` | Tenant name for labeling |
 | `environment` | string | `staging` | Environment (dev, staging, prod) |
 | `region` | string | `us-west-2` | AWS region |
-| `k8sVersion` | string | `1.34` | EKS Kubernetes version |
+| `k8sVersion` | string | `1.37` | EKS Kubernetes version |
 | `accountId` | string | (required) | AWS account ID for the cluster |
 | `managementAccountId` | string | (required) | Management account ID |
 | `adminRoleName` | string | `Admin` | IAM role name for cluster admin access |

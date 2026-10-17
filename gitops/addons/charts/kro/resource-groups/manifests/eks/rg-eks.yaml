@@ -73,6 +73,19 @@ spec:
       # own insecure setting via the clusters-kro appset/chart. See
       # kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
+      # Whether EKS Auto Mode's built-in "general-purpose" NodePool is enabled on
+      # this cluster. Any value other than "false" (default "true") preserves the
+      # generic / standalone behaviour (built-in general-purpose on). A consumer
+      # that ships its own general-purpose-class pool (e.g. the PEEKS workshop's
+      # general-purpose-peeks pool) sets this to "false" via its instance/overlay
+      # so the built-in general-purpose is dropped and unpinned platform workloads
+      # (Argo EventBus, CI WorkflowTemplates) schedule onto the stable custom pool
+      # instead of a consolidation-prone built-in general-purpose node. The
+      # built-in "system" pool always stays on (it anchors the `default` NodeClass
+      # the custom pools reference). NOTE: a generic consumer that sets "false"
+      # but keeps the generic image-prepuller (pinned to the built-in
+      # general-purpose pool) gets a 0-pod DaemonSet — repoint it to its own pool.
+      enableGeneralPurposeNodePool: string | default="true"
       resourcePrefix: string | default="peeks"
       git_username: string | default="user1"
       # Optional extra AWS tags merged into the EKS Cluster tags (SpringClean
@@ -398,9 +411,18 @@ spec:
           computeConfig:
             enabled: true
             nodeRoleARN: ${nodeRole.status.ackResourceMetadata.arn}
-            nodePools:
-              - system
-              - general-purpose
+            # Built-in EKS Auto Mode NodePools, gated by the schema toggle.
+            # "true" (default) -> [system, general-purpose] (generic behaviour).
+            # "false" -> [system] only (drops general-purpose). "system" is kept
+            # deliberately: EKS rejects a non-empty nodeRoleARN with an empty
+            # nodePools list, and keeping at least one built-in is what makes EKS
+            # provision the "default" NodeClass + EC2 access entry that the custom
+            # *-peeks pools reference. "system" is tainted CriticalAddonsOnly, so
+            # unpinned EventBus/CI pods still fall through to general-purpose-peeks.
+            # Single-quoted + dyn() on both branches mirrors the proven CEL idiom
+            # used by appmod-service.yaml (ternary type unification; the bare ' : '
+            # would otherwise be parsed as a YAML mapping separator).
+            nodePools: '${schema.spec.enableGeneralPurposeNodePool == "false" ? dyn(["system"]) : dyn(["system", "general-purpose"])}'
           kubernetesNetworkConfig:
             ipFamily: ipv4
             elasticLoadBalancing:
@@ -662,6 +684,7 @@ spec:
             alb_controller_mode: "oss"
             ingress_security_groups: "${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}"
             resource_prefix: "${schema.spec.resourcePrefix}"
+            enable_general_purpose_nodepool: "${schema.spec.enableGeneralPurposeNodePool}"
             git_username: "${schema.spec.git_username}"
             # karpenter_namespace: "${schema.spec.addons.karpenter_namespace}"
             # karpenter_node_iam_role_name: "${nodeRole.metadata.name}"
@@ -769,7 +792,7 @@ spec:
         type: Opaque
         stringData:
           config: |
-            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"aws_private_subnet_ids\":\"${schema.spec.network.subnets.workers.subnet1ID},${schema.spec.network.subnets.workers.subnet2ID}\",\"aws_cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"insecure\":\"${schema.spec.insecure}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"${schema.spec.fleetMember}\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
+            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"aws_private_subnet_ids\":\"${schema.spec.network.subnets.workers.subnet1ID},${schema.spec.network.subnets.workers.subnet2ID}\",\"aws_cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"insecure\":\"${schema.spec.insecure}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"enable_general_purpose_nodepool\":\"${schema.spec.enableGeneralPurposeNodePool}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"${schema.spec.fleetMember}\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
 
     - id: clusterConfigSecretFleet
       includeWhen:
@@ -1041,6 +1064,11 @@ spec:
               controller: false
           annotations:
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+            # [#1033] the hub pivot re-applies this node on the hub, where the capability already
+            # exists: without adopt-or-create the hub's ACK tries CreateCapability, goes Terminal
+            # "Resource already exists" and the pivot's adoption gate never passes. Adopted by
+            # clusterName + name. A no-op for a capability ACK already manages.
+            services.k8s.aws/adoption-policy: adopt-or-create
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             argocd.argoproj.io/sync-options: Prune=false
         spec:
@@ -2350,6 +2378,11 @@ spec:
               controller: false
           annotations:
               services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+              # [#1033] the hub pivot re-applies this node on the hub, where the capability already
+              # exists: without adopt-or-create the hub's ACK tries CreateCapability, goes Terminal
+              # "Resource already exists" and the pivot's adoption gate never passes. Adopted by
+              # clusterName + name. A no-op for a capability ACK already manages.
+              services.k8s.aws/adoption-policy: adopt-or-create
               services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false
@@ -2410,6 +2443,11 @@ spec:
               controller: false
           annotations:
               services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+              # [#1033] the hub pivot re-applies this node on the hub, where the capability already
+              # exists: without adopt-or-create the hub's ACK tries CreateCapability, goes Terminal
+              # "Resource already exists" and the pivot's adoption gate never passes. Adopted by
+              # clusterName + name. A no-op for a capability ACK already manages.
+              services.k8s.aws/adoption-policy: adopt-or-create
               services.k8s.aws/region: ${schema.spec.region}
               argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
               argocd.argoproj.io/sync-options: Prune=false

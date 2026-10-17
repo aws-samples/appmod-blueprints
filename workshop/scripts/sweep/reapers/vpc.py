@@ -201,16 +201,13 @@ def reap_orphan_vpcs(ctx):
 def reap_ide_sgs(ctx):
     """§15. Leftover hub SGs in the IDE (CFN-owned) VPC block CFN's delete-vpc via
     circular refs. Delete those SGs but LEAVE the VPC to CloudFormation."""
-    log, ec2, prefix = ctx.log, ctx.ec2, ctx.prefix
+    log = ctx.log
     _delete_vpc_sgs = ctx.delete_vpc_sgs
     try:
-        vpc_id = ctx.hub_vpc_id
-        if not vpc_id:
-            for v in ec2.describe_vpcs(
-                Filters=[{"Name": "tag:Name", "Values": [f"{prefix}-workshop/IDE-VPC", f"{prefix}-workshop*"]}]
-            ).get("Vpcs", []):
-                vpc_id = v["VpcId"]
-                break
+        # The hub's VPC, else this stack's IDE VPC by stack name / prefix tag. Not the Name
+        # tag: the published template sets the literal "peeks-workshop/IDE-VPC" on every
+        # stack's IDE VPC, so a Name match could pick another stack's VPC.
+        vpc_id = ctx.find_ide_vpc()
         if vpc_id:
             n = _delete_vpc_sgs(vpc_id)
             log(

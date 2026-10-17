@@ -692,8 +692,10 @@ ack-efs:
       jsonPointers:
         - /metadata/annotations/controller-gen.kubebuilder.io~1version
 
-# Bootstrap NodePools created EARLY (sync-wave -1) so any pools exist before addons
-# that target them schedule. The generic solution creates only the GPU/Trainium pools
+# Bootstrap NodePools, created on this app's first sync (sync-wave -1 is on the
+# generated Application; nothing orders it ahead of the addon ApplicationSets).
+# Addon pods that target these pools simply stay Pending until the pools exist.
+# The generic solution creates only the GPU/Trainium pools
 # (a real capability with no built-in equivalent) and relies on the EKS Auto Mode
 # built-in system/general-purpose pools for everything else. Consumers that need tuned
 # pools supply them via their overlay as customNodepools.pools (e.g. the workshop's
@@ -713,9 +715,16 @@ platform-manifests-bootstrap:
         operator: In
         values: ['true']
   valuesObject:
-    # Custom Karpenter NodePools are supplied by the consumer's overlay
-    # (customNodepools.pools). The generic solution creates none and relies on the
-    # EKS Auto Mode built-in system/general-purpose pools.
+    # Gate for the fallback (-peeks) NodePools: mirror the cluster's own
+    # enableGeneralPurposeNodePool from its secret annotation. "true" (default when
+    # absent) keeps the built-in general-purpose pool and adds no fallback pools
+    # (generic solution unchanged); "false" appends general-purpose-peeks/system-peeks
+    # to the consumer list so a fresh cluster that dropped the built-in pool still has
+    # an untainted pool for the add-on layer, created on the app's first sync.
+    enableGeneralPurposeNodePool: '{{ default "true" (index .metadata.annotations "enable_general_purpose_nodepool") }}'
+    # The consumer's custom Karpenter NodePools come from the overlay
+    # (customNodepools.pools) and always render. The generic solution leaves that list
+    # empty and relies on the EKS Auto Mode built-in system/general-purpose pools.
     gpu:
       enabled: true
 

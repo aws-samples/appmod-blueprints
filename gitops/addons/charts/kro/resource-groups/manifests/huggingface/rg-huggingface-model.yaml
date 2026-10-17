@@ -13,6 +13,10 @@ spec:
       accountId: string            # AWS account ID
       region: string               # AWS region
       clusterName: string          # EKS cluster name
+      # Prefix for the account-wide IAM names (the S3 policy and the role). Default "" keeps
+      # the legacy <name>-s3-policy / <name>-role. Two stacks in one account must not share
+      # them: adopt-or-create would let the second stack adopt and rewrite the first one's.
+      iamNamePrefix: string | default=""
   
   resources:
     # Kubernetes Role for Argo Workflows
@@ -60,9 +64,9 @@ spec:
             # and fails with 409 EntityAlreadyExists when the policy already exists
             # (e.g. left over from a prior install). Provide the ARN so ACK adopts it.
             services.k8s.aws/adoption-fields: |
-              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.metadata.name}-s3-policy"}
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.iamNamePrefix}${schema.metadata.name}-s3-policy"}
         spec:
-          name: ${schema.metadata.name}-s3-policy
+          name: ${schema.spec.iamNamePrefix}${schema.metadata.name}-s3-policy
           policyDocument: |
             {
               "Version": "2012-10-17",
@@ -95,7 +99,7 @@ spec:
           annotations:
             services.k8s.aws/adoption-policy: adopt-or-create
         spec:
-          name: ${schema.metadata.name}-role
+          name: ${schema.spec.iamNamePrefix}${schema.metadata.name}-role
           policyRefs:
             - from:
                 name: ${s3Policy.metadata.name}
@@ -158,6 +162,18 @@ spec:
         spec:
           serviceAccountName: ${serviceAccount.metadata.name}
           entrypoint: download-and-upload
+          # Reap the wait-bucket retry-attempt pods once the workflow succeeds.
+          # The wait-bucket step retries (retryPolicy: Always, limit 40) through the
+          # provisioning race until the out-of-band S3 bucket exists; each failed
+          # attempt leaves a Pod that Argo does NOT garbage-collect by default,
+          # leaving ~30 Failed pods behind in ray-system on a healthy deployment.
+          # OnWorkflowSuccess keeps every pod of a genuinely failed workflow (so it
+          # stays debuggable), and on success GCs ALL of that workflow's pods — not
+          # only the retry failures but the download/upload pods and their logs too
+          # (no labelSelector). That's fine here: a succeeded run needs no debugging
+          # and the stack doesn't archive pod logs.
+          podGC:
+            strategy: OnWorkflowSuccess
           
           templates:
             - name: download-and-upload
