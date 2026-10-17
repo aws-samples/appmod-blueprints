@@ -6,14 +6,14 @@
   Kubernetes resources an AppmodService renders (ServiceAccounts, Services,
   Ingresses, Argo Rollouts, ExternalSecrets, etc.).
 
-  On the hub cluster the capability role has ClusterAdminPolicy so this is
-  redundant. On spoke clusters the capability uses a least-privilege role and
+  The capability role has no ClusterAdminPolicy, on spoke clusters or on the hub
+  (registry entry eks-capabilities-rbac-hub): it uses a least-privilege role and
   authenticates as the assumed-role session:
     arn:aws:sts::<ACCT>:assumed-role/<cluster>-kro-capability-role/KRO
 
   This chart binds BOTH the static service principal (capabilities.eks.amazonaws.com)
   AND the per-cluster assumed-role identity so that kro/ACK can manage resources
-  in any namespace on the spoke.
+  in any namespace on the cluster.
 */ -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
