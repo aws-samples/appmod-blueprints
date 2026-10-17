@@ -1,7 +1,14 @@
 """CloudWatch Logs reapers: control-plane log groups (§9) and capability log
 delivery objects (§12)."""
 
+from ..context import name_is_ours
 from ..resilience import run_delete
+
+
+def log_group_is_ours(name, *owners):
+    """/aws/<service>/<rest> is ours when <rest> is ours by name_is_ours. logGroupNamePrefix
+    is a bare string prefix: /aws/eks/tdv also lists /aws/eks/tdv2-hub/cluster (#1111)."""
+    return name_is_ours(name.split("/", 3)[-1], *owners)
 
 
 def reap_log_groups(ctx):
@@ -10,7 +17,10 @@ def reap_log_groups(ctx):
     try:
         clusters_for_logs = [hub] + spokes
         # Broad /aws/eks/<prefix> + /aws/containerinsights/<prefix> prefixes catch
-        # EVERY owned cluster's log groups, including arbitrarily-named #914 spokes.
+        # EVERY owned cluster's log groups, plus one per cluster for arbitrarily-named
+        # #914 spokes. They also list other stacks whose prefix starts with ours, so each
+        # group must pass log_group_is_ours (<prefix>, <prefix>-*, <prefix>/*; same per cluster).
+        _owners = [prefix] + clusters_for_logs
         lg_prefixes = sorted(set(
             [f"/aws/eks/{prefix}", f"/aws/containerinsights/{prefix}"]
             + [f"/aws/eks/{c}" for c in clusters_for_logs]
@@ -24,7 +34,7 @@ def reap_log_groups(ctx):
             for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=pfx):
                 for lg in page["logGroups"]:
                     name = lg["logGroupName"]
-                    if name in _seen:
+                    if name in _seen or not log_group_is_ours(name, *_owners):
                         continue
                     _seen.add(name)
                     # run_delete: transient-retry + honest classification. The real
@@ -81,7 +91,7 @@ def reap_deliveries(ctx):
         srcs = [
             s["name"]
             for s in logs.describe_delivery_sources().get("deliverySources", [])
-            if s["name"].startswith(prefix)
+            if name_is_ours(s["name"], prefix)
         ]
         # deliveries first (a source can't be deleted while a delivery references it)
         for d in logs.describe_deliveries().get("deliveries", []):
@@ -90,7 +100,7 @@ def reap_deliveries(ctx):
         for name in srcs:
             _reap(lambda n=name: logs.delete_delivery_source(name=n), f"delivery-source {name}")
         for dd in logs.describe_delivery_destinations().get("deliveryDestinations", []):
-            if dd["name"].startswith(prefix):
+            if name_is_ours(dd["name"], prefix):
                 _reap(lambda n=dd["name"]: logs.delete_delivery_destination(name=n),
                       f"delivery-destination {dd['name']}")
         # Marker gated on "nothing considered", NOT on "0 reaped", so an all-denied run

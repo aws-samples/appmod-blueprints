@@ -7,6 +7,9 @@ the residue list. The orchestrator turns a non-empty residue into a non-zero exi
 (unless SWEEP_ALLOW_RESIDUE) so a strict caller can flag an incomplete teardown.
 """
 
+from ..context import name_is_ours
+from .logs import log_group_is_ours
+
 
 def run(ctx):
     """Returns the list of residual owned-resource tokens (empty == DESTROY COMPLETE)."""
@@ -42,6 +45,8 @@ def run(ctx):
         try:
             for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=f"/aws/eks/{prefix}"):
                 for lg in page["logGroups"]:
+                    if not log_group_is_ours(lg["logGroupName"], prefix):
+                        continue  # another stack whose prefix starts with ours (#1111)
                     try:
                         logs.delete_log_group(logGroupName=lg["logGroupName"])
                         log(f"  [verify] Deleted lingering log group {lg['logGroupName']}")
@@ -109,7 +114,8 @@ def run(ctx):
         try:  # owned control-plane log groups
             for page in logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=f"/aws/eks/{prefix}"):
                 for lg in page["logGroups"]:
-                    _add(f"log-group:{lg['logGroupName']}")
+                    if log_group_is_ours(lg["logGroupName"], prefix):
+                        _add(f"log-group:{lg['logGroupName']}")
         except Exception:
             pass
         try:  # active + scheduled-for-deletion prefixed secrets
@@ -117,7 +123,8 @@ def run(ctx):
                 IncludePlannedDeletion=True, Filters=[{"Key": "name", "Values": [prefix]}]
             ):
                 for s in _p.get("SecretList", []):
-                    _add(f"secret:{s['Name']}")
+                    if name_is_ours(s["Name"], prefix):
+                        _add(f"secret:{s['Name']}")
         except Exception:
             pass
 
