@@ -120,6 +120,21 @@ def _deletable(resources, id_key):
     return deletable, protected
 
 
+def _deleting_idents(resources, id_key, status_key):
+    """Identifiers of owned, non-protected resources ALREADY in `deleting` state.
+
+    ACK or `task destroy` may have issued the delete before §4 runs. Re-issuing it
+    then returns InvalidDB{Instance,Cluster}StateFault, which classify() maps to
+    'permanent' — so if §4 only trusts an accepted delete to gate its waits, an
+    in-flight instance never gets waited on, the cluster delete fires while members
+    are still deleting (InvalidDBClusterStateFault), and the subnet group leaks.
+    Treat an already-`deleting` match as accepted: skip the delete, keep the wait
+    (same rule §16c already applies at resweep.py). (review #1051)"""
+    return {r[id_key] for r in resources
+            if not r.get("DeletionProtection")
+            and (r.get(status_key) or "").lower() == "deleting"}
+
+
 def _no_devlake_eni(ctx):
     """True once no in-use RDS/DevLake ENI *belonging to this deployment* remains —
     i.e. the Aurora delete has drained its network interface so the subnet/VPC can be
@@ -135,16 +150,20 @@ def _no_devlake_eni(ctx):
         ).get("NetworkInterfaces", [])
         for eni in enis:
             desc = (eni.get("Description", "") or "").lower()
-            groups = " ".join(g.get("GroupName", "") for g in eni.get("Groups", [])).lower()
+            group_names = [((g.get("GroupName") or "").lower()) for g in eni.get("Groups", [])]
+            groups = " ".join(group_names)
             is_rds_eni = ("devlake" in groups or "devlake" in desc
                           or "rdsnetworkinterface" in desc.replace(" ", ""))
             if not is_rds_eni:
                 continue
-            # Scope to THIS deployment: a prefix-anchored DevLake SG name, or an ENI
-            # in a VPC we own. A co-tenant's `<other-prefix>-devlake-*` ENI (or any
-            # unrelated RDS ENI) is ignored, so its presence can't make our teardown
-            # wait the full ENI-drain ceiling.
-            ours = (f"{p}-devlake" in groups) or bool(vpc_is_ours and vpc_is_ours(eni.get("VpcId")))
+            # Scope to THIS deployment: a DevLake SG name ANCHORED on `<prefix>-devlake`
+            # (per group name, not a substring of the joined list — else a co-tenant's
+            # `team-<prefix>-devlake-mysql-sg-*` reads as ours), or an ENI in a VPC we
+            # own. A co-tenant's `<other-prefix>-devlake-*` ENI (or any unrelated RDS
+            # ENI) is ignored, so its presence can't make our teardown wait the full
+            # ENI-drain ceiling (review #1051, N/ENI anchoring).
+            ours = (any(g.startswith(f"{p}-devlake") for g in group_names)
+                    or bool(vpc_is_ours and vpc_is_ours(eni.get("VpcId"))))
             if ours:
                 return False
         return True
@@ -183,7 +202,15 @@ def reap(ctx):
     #    refused delete (access_denied/permanent) leaves nothing to wait for, so it
     #    must not burn the full poll ceiling (review #1051).
     deleted_instances = []
+    deleting_instances = _deleting_idents(instances, "DBInstanceIdentifier", "DBInstanceStatus")
     for ident in del_instances:
+        if ident in deleting_instances:
+            # Already being deleted (ACK / task destroy got there first). Re-issuing
+            # returns InvalidDBInstanceState='permanent'; instead treat it as accepted
+            # so the drain below still waits for it to disappear (review #1051).
+            log(f"  RDS instance {ident}: already deleting — not re-issued, waiting for drain")
+            deleted_instances.append(ident)
+            continue
         kind, code, _ = run_delete(lambda i=ident: rds.delete_db_instance(
             DBInstanceIdentifier=i, SkipFinalSnapshot=True, DeleteAutomatedBackups=True))
         log(f"  Deleting RDS instance {ident}: {kind}{_c(code)}")
@@ -201,7 +228,12 @@ def reap(ctx):
 
     # 3) Aurora clusters, now that their members are gone.
     deleted_clusters = []
+    deleting_clusters = _deleting_idents(clusters, "DBClusterIdentifier", "Status")
     for ident in del_clusters:
+        if ident in deleting_clusters:
+            log(f"  RDS cluster {ident}: already deleting — not re-issued, waiting for drain")
+            deleted_clusters.append(ident)
+            continue
         kind, code, _ = run_delete(lambda i=ident: rds.delete_db_cluster(
             DBClusterIdentifier=i, SkipFinalSnapshot=True))
         log(f"  Deleting RDS cluster {ident}: {kind}{_c(code)}")

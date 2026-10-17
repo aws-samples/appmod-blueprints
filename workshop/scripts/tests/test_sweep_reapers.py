@@ -453,3 +453,90 @@ def test_rds_eni_drain_ignores_other_deployments_eni():
     rds_reaper.reap(ctx)
     assert ec2.describe_calls >= 1           # ENI poll DID run (a DB was deleted)
     assert "ENI drained" in _joined(ctx)     # ...and the co-tenant ENI was ignored
+
+
+class _FakeRdsDeleting(_FakeRds):
+    """DBs already in `deleting` state when §4 runs (ACK / `task destroy` got there
+    first). Re-issuing a delete raises the RDS in-flight-state error; the resource
+    disappears from describe after `drop_after` describe calls, modelling the delete
+    actually completing so the cluster-gone poll and the subnet-group delete can make
+    progress."""
+
+    def __init__(self, drop_after=1, **kw):
+        super().__init__(**kw)
+        for v in self.instances.values():
+            v["DBInstanceStatus"] = "deleting"
+        for v in self.clusters.values():
+            v["Status"] = "deleting"
+        self._drop_after = drop_after
+        self._inst_calls = 0
+        self._clus_calls = 0
+
+    def describe_db_instances(self):
+        self._inst_calls += 1
+        if self._inst_calls > self._drop_after:
+            self.instances = {}
+        return {"DBInstances": list(self.instances.values())}
+
+    def describe_db_clusters(self):
+        self._clus_calls += 1
+        if self._clus_calls > self._drop_after:
+            self.clusters = {}
+        return {"DBClusters": list(self.clusters.values())}
+
+    def delete_db_instance(self, DBInstanceIdentifier, **k):
+        raise FakeClientError("InvalidDBInstanceState",
+                              f"Instance {DBInstanceIdentifier} is already being deleted.")
+
+    def delete_db_cluster(self, DBClusterIdentifier, **k):
+        raise FakeClientError("InvalidDBClusterStateFault",
+                              f"Cluster {DBClusterIdentifier} is in deleting state.")
+
+
+def test_rds_already_deleting_db_is_waited_on_not_reissued():
+    # review #1051 (blocking regression): when ACK / task destroy already started the
+    # delete, the DB is in `deleting` state. The old accepted-delete gating treated the
+    # re-issue (InvalidDB*StateFault -> 'permanent') as "nothing accepted", so it SKIPPED
+    # the drain + cluster-gone polls, fired delete_db_cluster while members were still
+    # deleting, and leaked the subnet group. §4 must instead treat an already-`deleting`
+    # match as accepted: never re-issue the delete, keep the waits, and only delete the
+    # subnet group once the cluster is actually gone (same rule §16c applies).
+    _force_stdlib_resilience()
+    rds = _FakeRdsDeleting(
+        drop_after=1,
+        instances=["peeks-devlake-mysql-instance"],
+        clusters=["peeks-devlake-mysql-cluster"],
+        subnet_groups=["peeks-devlake-mysql-subnet-group"],
+    )
+    ctx = _ctx(rds=rds, ec2=_FakeEc2NoEni(), prefix="peeks")
+    rds_reaper.reap(ctx)
+    out = _joined(ctx)
+    # The in-flight deletes are NOT re-issued (no InvalidDB*StateFault 'permanent' line).
+    assert "already deleting — not re-issued" in out
+    assert "permanent (InvalidDBInstanceState)" not in out
+    assert "permanent (InvalidDBClusterStateFault)" not in out
+    # Both waits ran (the instance/cluster were treated as accepted) and the DBs drained.
+    assert "ENI drained" in out
+    # Once the cluster is gone, the subnet group deletes cleanly — no residue, no leak.
+    assert rds.deleted["subnet_groups"] == ["peeks-devlake-mysql-subnet-group"]
+    assert "left as residue" not in out
+
+
+def test_rds_eni_drain_ignores_cotenant_prefix_superstring_sg():
+    # review #1051 (ENI anchoring): the ENI ownership check must anchor on
+    # `<prefix>-devlake` per group NAME, not as a substring of the joined group list.
+    # A co-tenant whose own prefix CONTAINS ours (`team-peeks-devlake-mysql-sg-*` when
+    # our prefix is `peeks`) must NOT read as ours, or every teardown waits the full
+    # 580 s ceiling on a neighbour's ENI.
+    _force_stdlib_resilience()
+    ec2 = _FakeEc2Eni([_eni("team-peeks-devlake-mysql-sg-1", "vpc-cotenant")])
+    rds = _FakeRds(
+        instances=["peeks-devlake-mysql-instance-1"],
+        clusters=["peeks-devlake-mysql-cluster"],
+        subnet_groups=["peeks-devlake-mysql-subnet-group"],
+    )
+    ctx = _ctx(rds=rds, ec2=ec2, prefix="peeks")
+    rds_reaper.reap(ctx)
+    # Our own DBs deleted, co-tenant's superstring-prefix ENI ignored -> drain completes.
+    assert ec2.describe_calls >= 1
+    assert "ENI drained" in _joined(ctx)
