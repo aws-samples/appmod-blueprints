@@ -9,18 +9,28 @@ enable and size it via their overlay. The pause Deployment is ordered AFTER the
 NodePools (custom-nodepools.yaml) via its own intra-app sync-wave, so the warm
 node can actually schedule on a freshly-created pool.
 */ -}}
-{{- /* nil-safe: a merge that drops the chart `warmCapacity` default must not nil-pointer
-       the whole platform-manifests-bootstrap render (which would create ZERO NodePools
-       and take the hub down). `(.Values.warmCapacity | default dict).enabled` is false
-       when the key is absent — same null-safe pattern #1056 adopted. */ -}}
-{{- if (.Values.warmCapacity | default dict).enabled }}
+{{- /* nil-safe: a merge that drops (or partially drops) the chart `warmCapacity` default
+       must not nil-pointer or render empty-but-required fields in the whole
+       platform-manifests-bootstrap render (which would create ZERO NodePools and take the
+       hub down). Bind $wc = caller values merged OVER these in-template defaults, so every
+       sub-key (name/value/image/replicas/resources) is always populated even if an overlay
+       sets `enabled: true` while the chart default block is gone. The caller wins per-key;
+       the defaults only fill what the caller omits — same null-safe intent as #1056. */ -}}
+{{- $wc := merge (deepCopy (.Values.warmCapacity | default dict)) (dict
+     "enabled" false
+     "replicas" 1
+     "priorityClassName" "warm-capacity-overprovisioning"
+     "priorityValue" -10
+     "image" "registry.k8s.io/pause:3.9"
+     "resources" (dict "requests" (dict "cpu" "1" "memory" "2Gi"))) }}
+{{- if $wc.enabled }}
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: {{ .Values.warmCapacity.priorityClassName }}
+  name: {{ $wc.priorityClassName }}
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
-value: {{ .Values.warmCapacity.priorityValue }}
+value: {{ $wc.priorityValue }}
 globalDefault: false
 preemptionPolicy: Never
 description: "Warm-capacity overprovisioning pause pods; preempted the instant real workloads need the space."
@@ -42,7 +52,7 @@ metadata:
     app.kubernetes.io/name: warm-capacity-overprovisioning
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
-  replicas: {{ .Values.warmCapacity.replicas }}
+  replicas: {{ $wc.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: warm-capacity-overprovisioning
@@ -51,19 +61,19 @@ spec:
       labels:
         app.kubernetes.io/name: warm-capacity-overprovisioning
     spec:
-      priorityClassName: {{ .Values.warmCapacity.priorityClassName }}
+      priorityClassName: {{ $wc.priorityClassName }}
       terminationGracePeriodSeconds: 0
-      {{- with .Values.warmCapacity.nodeSelector }}
+      {{- with $wc.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.warmCapacity.tolerations }}
+      {{- with $wc.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
       - name: pause
-        image: {{ .Values.warmCapacity.image }}
+        image: {{ $wc.image }}
         securityContext:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
@@ -75,6 +85,6 @@ spec:
             type: RuntimeDefault
         resources:
           requests:
-            cpu: {{ .Values.warmCapacity.resources.requests.cpu | quote }}
-            memory: {{ .Values.warmCapacity.resources.requests.memory | quote }}
+            cpu: {{ $wc.resources.requests.cpu | quote }}
+            memory: {{ $wc.resources.requests.memory | quote }}
 {{- end }}
