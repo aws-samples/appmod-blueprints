@@ -78,7 +78,8 @@ The rule that falls out of the table: **if a thing is derivable from Git, Argo C
 owns its recreation and backup must NOT try to restore it.** Restoring Git-derivable
 objects from a snapshot is not just wasteful — it reintroduces drift (a snapshot is
 older than `HEAD`) and causes Argo CD to fight the restored object. So the
-`BackupSelection` is scoped to **EBS volumes only** (`arn:aws:ec2:*:*:volume/*`), never
+`BackupSelection` is scoped to **EBS volumes only**
+(`arn:aws:ec2:<region>:<account-id>:volume/*`), never
 to Kubernetes API objects. A full recovery is therefore:
 
 ```
@@ -124,7 +125,7 @@ the one that silently breaks a restore:
 **The fix is not to back up K8s Secrets** (that would break the Backup/GitOps boundary
 and make a stale snapshot compete with ESO). The fix is to **forbid the category**:
 every runtime-generated secret must be pushed to Secrets Manager — via an ESO
-`PushSecret` (`creationPolicy: Owner`, as `devlake` already does) or a synchronous
+`PushSecret` (as `devlake` already does for its MySQL connection) or a synchronous
 `put-secret-value` in the generating Job — which moves it into the first, safe sub-case.
 
 **Worked example — the Langfuse OIDC client secret (verified in the repo).** The
@@ -187,7 +188,7 @@ alongside the primitive, rather than living in operator runbooks:
 
 | Tier   | Schedule              | RPO | Retention | Cold storage | Cross-region copy |
 |--------|-----------------------|-----|-----------|--------------|-------------------|
-| gold   | `cron(0 */1 * * ? *)` | 1h  | 30d       | after 90d    | yes               |
+| gold   | `cron(0 * * * ? *)`   | 1h  | 180d      | after 90d    | yes               |
 | silver | `cron(0 2 * * ? *)`   | 24h | 14d       | —            | yes               |
 | bronze | `cron(0 3 * * ? *)`   | 24h | 7d        | —            | no                |
 
@@ -349,6 +350,23 @@ parameters:
 The `reclaimPolicy: Retain` on gold/silver is deliberate: it keeps the EBS volume (and
 therefore the recovery-point source) alive even if the PVC is deleted, which is a
 precondition for a clean restore.
+
+> **Auto Mode custom tags need a Cluster IAM Role grant — otherwise no tag lands and
+> `BackupSelection` matches nothing.** These tier classes use the EKS **Auto Mode**
+> provisioner (`ebs.csi.eks.amazonaws.com`), not the self-managed `aws-ebs-csi-driver`.
+> Under Auto Mode, `StorageClass` tagging is the supported way to stamp custom tags, but
+> AWS only applies them if the **EKS Cluster IAM Role is granted the matching tag
+> permissions** — custom `StorageClass` tags silently do **not** land otherwise ([Create
+> a storage class — *Custom Tags on Dynamically Provisioned Volumes*](https://docs.aws.amazon.com/eks/latest/userguide/create-storage-class.html);
+> [Custom AWS tags for EKS Auto resources](https://docs.aws.amazon.com/eks/latest/userguide/auto-cluster-iam-role.html#tag-prop)).
+> That makes the Cluster IAM Role tag grant a **second IAM deliverable** alongside the
+> `<prefix>-cluster-mgmt-backup` role (see
+> [Platform capability & the IAM role this design adds](#platform-capability--the-iam-role-this-design-adds)):
+> without it the whole tag-matching contract is a no-op — the volumes carry no
+> `platform.gitops.io/*` tags, so every tier's `BackupSelection` matches zero volumes.
+> (Also note the parameter spelling: Auto Mode expects a `tags` parameter; the
+> `tagSpecification_<N>` form shown above is the self-managed driver's syntax and must be
+> reconciled with the Auto Mode `tags` parameter when the classes are actually authored.)
 
 > **`Retain` ≠ backup, and it leaks volumes.** `reclaimPolicy: Retain` keeps the source
 > volume alive but it is **not** a backup (a backup is the recovery point in the vault),
@@ -617,7 +635,7 @@ rules:
     scheduleExpression: "cron(0 * * * ? *)"           # RPO 1h
     lifecycle:
       moveToColdStorageAfterDays: 90
-      deleteAfterDays: 30
+      deleteAfterDays: 180                             # must be >= cold + 90 (AWS Backup rule)
     recoveryPointTags:
       platform.gitops.io/backup-tier: gold
       platform.gitops.io/spoke: <spokeName>
@@ -674,9 +692,13 @@ is readable there after failover:
 ```bash
 # Keycloak config Job — the credential half for a runtime-generated secret:
 # create the secret WITH a DR replica on first run, then put new values idempotently.
+# NOTE: --add-replica-regions is honored ONLY by create-secret. On a hub where the
+# secret already exists, create-secret fails and the || path runs put-secret-value,
+# which does NOT add a replica — so the replica must be ensured separately with
+# replicate-secret-to-regions (idempotent; no-op if the replica already exists).
 SECRET_ID="<spokeName>/keycloak-clients"
 
-# create-secret with an add-replica-region so the DR region has the secret too
+# first run: create-secret with an add-replica-region so the DR region has the secret too
 aws secretsmanager create-secret \
   --name "$SECRET_ID" \
   --region "<primary-region>" \
@@ -685,16 +707,25 @@ aws secretsmanager create-secret \
   --tags Key=platform.gitops.io/spoke,Value=<spokeName> \
          Key=platform.gitops.io/backup-tier,Value=gold \
   2>/dev/null \
-|| aws secretsmanager put-secret-value \
-     --secret-id "$SECRET_ID" \
-     --region "<primary-region>" \
-     --secret-string "$CLIENT_SECRETS_JSON"   # replica syncs automatically
+|| {
+     # secret already exists: push the new value AND ensure the DR replica exists,
+     # because put-secret-value alone never adds a replica.
+     aws secretsmanager put-secret-value \
+       --secret-id "$SECRET_ID" \
+       --region "<primary-region>" \
+       --secret-string "$CLIENT_SECRETS_JSON"
+     aws secretsmanager replicate-secret-to-regions \
+       --secret-id "$SECRET_ID" \
+       --region "<primary-region>" \
+       --add-replica-regions Region="<dr-region>" \
+       2>/dev/null || true   # idempotent: no-op if the replica is already configured
+   }
 ```
 
 ```yaml
 # ESO ExternalSecret consumed by langfuse (and other OIDC clients) in the DR spoke —
 # resolves the replicated keycloak-clients secret from the DR-region SM, unchanged
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: langfuse-oidc
@@ -792,8 +823,9 @@ clean, additive change, not a workaround:
   - `AssumeWorkloadRoles` — permission to assume `<prefix>-cluster-mgmt-*` roles, and
   - `ManageIRSARoles` — permission to manage `<hub>-*` IRSA roles.
 - The provisioned per-service management roles are
-  `<prefix>-cluster-mgmt-{dynamodb,ec2,ecr,eks,iam}`. This design adds the missing
-  **`<prefix>-cluster-mgmt-backup`** sibling.
+  `<prefix>-cluster-mgmt-{ec2,eks,iam,ecr,s3,dynamodb,secretsmanager,rds}` — eight roles,
+  created by `scripts/create-cross-account-roles.sh` (its `for service in …` loop). This
+  design adds the missing **`<prefix>-cluster-mgmt-backup`** sibling (a ninth role).
 
 So the deliverable is: **add a `<prefix>-cluster-mgmt-backup` workload role** in the
 PEEKS platform IAM provisioning (the terraform / hub-config layer that already mints the
@@ -810,6 +842,15 @@ jobs end-to-end.
 reuses to run the restore job — **already exists in the account**, so no additional
 service role is needed; the design adds only the controller's own `cluster-mgmt-backup`
 credential.
+
+> **A second IAM deliverable: the Cluster IAM Role tag grant.** The `cluster-mgmt-backup`
+> role above is what lets the *controller call AWS Backup*. Separately, for the tier
+> `StorageClass`es to actually stamp `platform.gitops.io/*` tags onto the EBS volumes
+> under EKS Auto Mode, the **EKS Cluster IAM Role** must be granted the matching custom-tag
+> permissions (see [StorageClass tiers + volume tagging](#storageclass-tiers--volume-tagging)).
+> Without that grant the tags silently never land and every `BackupSelection` matches zero
+> volumes, so this grant is a prerequisite of the whole tag-matching contract — not an
+> optional extra.
 
 ## Consolidation plan & PR provenance
 
