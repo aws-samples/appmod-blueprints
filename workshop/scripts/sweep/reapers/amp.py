@@ -2,6 +2,8 @@
 after deletion, blocking subnet deletion; also delete prefixed workspaces.
 Scrapers are regional, so only ours (source cluster = our hub or a spoke) are deleted."""
 
+from ..context import name_is_ours
+
 
 def reap(ctx):
     log, amp, prefix = ctx.log, ctx.amp, ctx.prefix
@@ -14,7 +16,7 @@ def reap(ctx):
             except Exception:
                 pass
         for ws in amp.list_workspaces()["workspaces"]:
-            if ws.get("alias", "").startswith(prefix):
+            if name_is_ours(ws.get("alias", ""), prefix):
                 try:
                     amp.delete_workspace(workspaceId=ws["workspaceId"])
                 except Exception:

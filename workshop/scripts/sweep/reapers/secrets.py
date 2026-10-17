@@ -3,7 +3,12 @@
 IncludePlannedDeletion=True is critical: a secret already SCHEDULED for deletion
 is invisible to a normal list_secrets, yet its name stays reserved and blocks the
 next deploy's CreateSecret. Force-delete active AND scheduled ones.
+
+The list_secrets "name" filter is a bare prefix match ("tdv" also returns "tdv2-hub/config"),
+so each returned name must also pass name_is_ours (#1111).
 """
+
+from ..context import name_is_ours
 
 
 def reap(ctx):
@@ -16,6 +21,8 @@ def reap(ctx):
             Filters=[{"Key": "name", "Values": _secret_names}],
         ):
             for s in _page.get("SecretList", []):
+                if not name_is_ours(s.get("Name", ""), *_secret_names):
+                    continue
                 try:
                     sm.delete_secret(SecretId=s["ARN"], ForceDeleteWithoutRecovery=True)
                     _reaped += 1
