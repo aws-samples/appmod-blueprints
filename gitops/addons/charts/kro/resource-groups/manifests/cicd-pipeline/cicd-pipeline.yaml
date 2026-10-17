@@ -2162,6 +2162,14 @@ spec:
                   template: devlake-generate-data
                   depends: "create-devlake-webhook-secret-and-cm"
 
+                - name: record-devlake-demo-data
+                  template: record-devlake-demo-data
+                  arguments:
+                    parameters:
+                    - name: connection
+                      value: "{{tasks.devlake-generate-data.outputs.parameters.connection}}"
+                  depends: "devlake-generate-data"
+
           
           - name: devlake-init
             inputs:
@@ -2324,6 +2332,12 @@ spec:
               backoff:
                 duration: "1m"
                 factor: 2
+            # <connection id>|<its createdAt>, for record-devlake-demo-data.
+            outputs:
+              parameters:
+              - name: connection
+                valueFrom:
+                  path: /tmp/devlake-connection
             container:
               image: debian:12
               command: [/bin/bash, -c]
@@ -2332,10 +2346,25 @@ spec:
                     name: devlake-webhook-secret
                 - configMapRef:
                     name: devlake-webhook-id
+              # The connection an earlier run seeded in full (both optional; record-devlake-demo-data
+              # writes them).
+              env:
+              - name: SEEDED_HOOK_ID
+                valueFrom:
+                  configMapKeyRef:
+                    name: devlake-demo-data
+                    key: SEEDED_HOOK_ID
+                    optional: true
+              - name: SEEDED_HOOK_CREATED_AT
+                valueFrom:
+                  configMapKeyRef:
+                    name: devlake-demo-data
+                    key: SEEDED_HOOK_CREATED_AT
+                    optional: true
               args:
               - |
                 apt update
-                apt install -y curl openssl coreutils
+                apt install -y curl openssl coreutils jq
                 # Retry DevLake while it restarts, and stop at the first call that still fails
                 # (HTTP error included) so lost seed data fails the step instead of passing.
                 set -e
@@ -2349,6 +2378,23 @@ spec:
                 # deployments on the deployment ID alone, so plain DEPLOY-<n> IDs mix teams.
                 # Seeded PR keys start at 1000000, clear of the GitLab MR ids real MRs use.
                 APP="{{workflow.parameters.appname}}"
+                # Seed the demo history once per webhook connection: DevLake has no read API for webhook
+                # rows, and every seed adds new ones. record-devlake-demo-data marks a complete seed with
+                # the connection's id and createdAt (ids start at 1 again on a new DevLake database). A
+                # failed seed writes no marker, and a replaced connection does not match it.
+                HOOK_CREATED_AT=$(curl -s "$TRIGGER_URL/plugins/webhook/connections/$CONNECTION_ID" | jq -r '.createdAt // empty')
+                if [ -z "$HOOK_CREATED_AT" ]; then echo "DevLake setup failed: no webhook connection $CONNECTION_ID" >&2; exit 1; fi
+                echo "$CONNECTION_ID|$HOOK_CREATED_AT" > /tmp/devlake-connection
+
+                trigger_blueprint() {
+                    echo "Triggering DORA Metrics Collection"
+                    resp=$(curl -s -X POST -H "Content-Type: application/json" "$TRIGGER_URL/blueprints/$BLUEPRINT_ID/trigger" -d '{"skipCollectors":false,"fullSync":false}')
+                }
+                if [ "$SEEDED_HOOK_ID" = "$CONNECTION_ID" ] && [ "$SEEDED_HOOK_CREATED_AT" = "$HOOK_CREATED_AT" ]; then
+                    echo "Demo data already seeded for webhook connection $CONNECTION_ID (created $HOOK_CREATED_AT); not seeding it again."
+                    trigger_blueprint
+                    exit 0
+                fi
                 
                 
                 rand() {
@@ -2525,8 +2571,30 @@ spec:
                 echo "Data generation complete. Created $((pr_id - 1)) pull requests, $((deploy_id - 1)) deployments, and $((incident_id - 1)) incidents."
                 sleep 10
                 
-                echo "Triggering DORA Metrics Collection"
-                resp=$(curl -s -X POST -H "Content-Type: application/json" "$TRIGGER_URL/blueprints/$BLUEPRINT_ID/trigger" -d '{"skipCollectors":false,"fullSync":false}')
+                trigger_blueprint
+
+          # Marks the demo history of the connection as seeded. It runs only once devlake-generate-data
+          # succeeded, so a failed or partial seed writes no marker.
+          - name: record-devlake-demo-data
+            inputs:
+              parameters:
+              - name: connection
+            retryStrategy:
+              limit: 3
+              retryPolicy: "Always"
+              backoff:
+                duration: "1m"
+                factor: 2
+            container:
+              image: alpine/k8s:1.32.8
+              command: ["/bin/bash", "-c"]
+              args:
+              - |
+                SEEDED_HOOK_ID=$(echo "{{inputs.parameters.connection}}" | cut -d'|' -f1)
+                SEEDED_HOOK_CREATED_AT=$(echo "{{inputs.parameters.connection}}" | cut -d'|' -f2)
+                kubectl delete configmap devlake-demo-data --ignore-not-found -n "{{workflow.parameters.namespace}}"
+                kubectl create configmap devlake-demo-data -n "{{workflow.parameters.namespace}}" \
+                  --from-literal=SEEDED_HOOK_ID="$SEEDED_HOOK_ID" --from-literal=SEEDED_HOOK_CREATED_AT="$SEEDED_HOOK_CREATED_AT"
 
     - id: dorasetupworkflow
       readyWhen:
