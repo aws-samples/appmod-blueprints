@@ -196,14 +196,19 @@ tasks:
       #       and a kill skips hub:pivot's EXIT trap: kind stays stopped mid-gate and the stack
       #       ends CREATE_FAILED. So the adoption gate gets what is left of INSTALL_BUDGET_SEC,
       #       minus 300 s for the pivot's own steps (or its abort), and at most
-      #       HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC (default 900 s); with less than 120 s left the pivot is skipped.
+      #       HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC (default 900 s; legacy PIVOT_ADOPT_TIMEOUT_SEC
+      #       still honoured as a fallback); with less than 120 s left the pivot is skipped.
       - cmd: |
           if [ "{{.PROVIDER}}" = "kind-kro-ack" ] && [ "{{.HUB_PIVOT_ON_INSTALL | default "true"}}" = "true" ]; then
             GATE_SEC=$(( {{.INSTALL_BUDGET_SEC | default "6600"}} - ($(date +%s) - {{.INSTALL_START}}) - 300 ))
             # [perf] Cap the adoption gate at 900 s (was 1800 s). On event 54c30588 the pivot
             # burned the full 1800 s before timing out; #1076 fixes the root cause (the EKS
             # capability CRs now adopt-or-create), and this cap bounds any future stall to ≤15 min.
-            if [ "$GATE_SEC" -gt {{.HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC | default "900"}} ]; then GATE_SEC={{.HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC | default "900"}}; fi
+            # The install-cap knob is HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC; the legacy
+            # PIVOT_ADOPT_TIMEOUT_SEC is still honoured as a fallback so pre-existing overrides
+            # keep moving the cap (review #1098, point 2).
+            INSTALL_CAP={{.HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC | default .PIVOT_ADOPT_TIMEOUT_SEC | default "900"}}
+            if [ "$GATE_SEC" -gt "$INSTALL_CAP" ]; then GATE_SEC="$INSTALL_CAP"; fi
             if [ "$GATE_SEC" -lt 120 ]; then
               printf '{{.C_INFO}}  ⚠ hub pivot skipped (non-fatal): the install budget ({{.INSTALL_BUDGET_SEC | default "6600"}}s) is nearly used up. The workshop is fully functional with the hub still managed by kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
               exit 0

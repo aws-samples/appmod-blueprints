@@ -24,7 +24,14 @@ if not shutil.which("bash"):
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 TASKFILE = os.path.join(REPO, "workshop", "Taskfile.yaml")
 FAKE_TASK = '#!/usr/bin/env bash\necho "$*" >> "$FAKE_TASK_LOG"\n'
-TEMPLATE_VAR = re.compile(r'\{\{\s*\.([A-Z0-9_]+)\s*(?:\|\s*default\s+"([^"]*)"\s*)?\}\}')
+# Matches {{ .NAME }}, {{ .NAME | default "lit" }}, and the chained-default form
+# {{ .NAME | default .FALLBACK | default "lit" }} (go-task resolves left-to-right, first
+# set/non-empty wins). Groups: 1=primary var, 2=optional fallback var, 3=optional literal.
+TEMPLATE_VAR = re.compile(
+    r'\{\{\s*\.([A-Z0-9_]+)\s*'
+    r'(?:\|\s*default\s+\.([A-Z0-9_]+)\s*)?'
+    r'(?:\|\s*default\s+"([^"]*)"\s*)?\}\}'
+)
 
 
 def _pivot_step():
@@ -45,8 +52,14 @@ def _run(tmp_path, elapsed, **task_vars):
     values.update(task_vars)
 
     def fill(m):
-        name, default = m.group(1), m.group(2)
-        return values[name] if name in values else (default if default is not None else "")
+        name, fallback, default = m.group(1), m.group(2), m.group(3)
+        # go-task `default` chains left-to-right: the primary var wins if set/non-empty,
+        # else the fallback var, else the literal. An unset var is absent from `values`.
+        if values.get(name):
+            return values[name]
+        if fallback is not None and values.get(fallback):
+            return values[fallback]
+        return default if default is not None else ""
 
     script = TEMPLATE_VAR.sub(fill, _pivot_step())
     assert "{{" not in script, re.findall(r"\{\{[^}]*\}\}", script)
@@ -82,9 +95,14 @@ def test_gate_is_capped_at_the_install_cap(tmp_path):
     # the cap is overridable via the install-cap knob HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC.
     calls, _ = _run(tmp_path, elapsed=600, HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC="1800")
     assert _gate(calls[-1]) == 1800
-    # regression guard (review #1098): the OLD knob name no longer moves the install cap.
+    # review #1098, point 2: the LEGACY knob PIVOT_ADOPT_TIMEOUT_SEC is still honoured as a
+    # fallback, so a pre-existing install-cap override keeps working after the rename.
     calls, _ = _run(tmp_path, elapsed=600, PIVOT_ADOPT_TIMEOUT_SEC="1800")
-    assert _gate(calls[-1]) == 900
+    assert _gate(calls[-1]) == 1800
+    # the new knob takes precedence over the legacy one when both are set.
+    calls, _ = _run(tmp_path, elapsed=600,
+                    HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC="1200", PIVOT_ADOPT_TIMEOUT_SEC="1800")
+    assert _gate(calls[-1]) == 1200
 
 
 def test_pivot_is_skipped_when_the_budget_is_used_up(tmp_path):
