@@ -70,18 +70,15 @@ crossplane-base:
       grafana:
         version: "v2.7.0"
         createIdentity: true
-      # bedrockagentcore: the provider PACKAGE is installed by OAP (crossplane-agentcore,
-      # gated by enable_agent_core), NOT by crossplane-base's providers.yaml -- so this
-      # entry does NOT create a duplicate Provider CR. It exists solely to drive
-      # crossplane-base/iam.yaml's generic range so the SA provider-aws-bedrockagentcore
-      # gets the SAME IAM Role + AdministratorAccess attachment + PodIdentityAssociation
-      # as its sibling providers. Without it the provider pod falls back to IMDS (no role),
-      # and the Bedrock Memory CR fails with ReconcileError (aiops-agent Degraded).
-      bedrockagentcore:
-        version: "v2.7.0"
-        serviceAccount: provider-aws-bedrockagentcore
-        roleName: CrossplaneBedrockAgentCoreProviderRole
-        createIdentity: true
+      # bedrockagentcore is intentionally NOT declared here. The OAP crossplane-agentcore
+      # chart (enabled by agent_core) is the sole owner of that provider's identity: it
+      # self-provisions the ServiceAccount provider-aws-bedrockagentcore, its IAM Role, and
+      # its PodIdentityAssociation. Adding a bedrockagentcore entry to this generic provider
+      # map makes crossplane-base ALSO render that ServiceAccount, so both the
+      # crossplane-base and crossplane-agentcore ArgoCD apps claim it -> ArgoCD
+      # SharedResourceWarning (crossplane-agentcore Degraded/OutOfSync) and a duplicate,
+      # perpetually-failing PodIdentityAssociation on the same SA. Keep every bedrockagentcore
+      # resource in the OAP chart; do not reintroduce it here.
       kubernetes:
         version: "v1.2.1"
   ignoreDifferences:
