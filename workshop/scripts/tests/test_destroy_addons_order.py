@@ -268,7 +268,8 @@ def test_multi_acct_goes_after_every_other_addon(events):
 
 
 def test_addons_go_in_descending_application_wave(events):
-    infra = set(INFRA_WAVES) | {"fleet-secrets", "multi-acct"} | set(NO_CHILDREN)
+    infra = set(INFRA_WAVES) | set(_steps_7_to_10()[0]["INFRA_STACK"].split()) \
+        | {"fleet-secrets", "multi-acct"} | set(NO_CHILDREN)
     order = [e[1] for e in events if e[0] == "delete-appset" and e[1] not in infra]
     assert order == sorted(order, key=_wave, reverse=True), \
         "step 7 order vs Application waves: " + ", ".join(f"{a}({_wave(a)})" for a in order)
