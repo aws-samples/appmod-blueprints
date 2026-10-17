@@ -1558,6 +1558,7 @@ tasks:
           # page, so `| [0]` prints one line per page ("None\n<role>" on large accounts).
           # Prefer this stack's own role (<prefix>-workshop…): with two workshop stacks in
           # the account, the first match by name can be the OTHER stack's SharedRole.
+          # jq: own-matches first, then the full list, so [0] is own-else-first.
           INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r --arg own "{{.RESOURCE_PREFIX}}-workshop" '(map(select(startswith($own))) + .)[0] // empty' || echo "")
           ADMIN_INSTANCE_ARN_LINE=""
           if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
@@ -1755,6 +1756,7 @@ tasks:
         # page, so `| [0]` prints one line per page ("None\n<role>" on large accounts).
         # Prefer this stack's own role (<prefix>-workshop…): with two workshop stacks in
         # the account, the first match by name can be the OTHER stack's SharedRole.
+        # jq: own-matches first, then the full list, so [0] is own-else-first.
         INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r --arg own "{{.RESOURCE_PREFIX}}-workshop" '(map(select(startswith($own))) + .)[0] // empty' || echo "")
         yq -i 'del(.clusters."{{.CLUSTER}}".adminRoles)' "$KRO_VALUES" 2>/dev/null || true
         if [ -n "$CONSOLE_ROLE" ] && [ "$CONSOLE_ROLE" != "null" ]; then
