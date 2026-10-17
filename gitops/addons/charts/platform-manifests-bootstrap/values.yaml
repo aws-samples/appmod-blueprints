@@ -59,6 +59,27 @@ customNodepools:
 # general-purpose, default) so it never collides with a built-in pool/NodeClass.
 # ---------------------------------------------------------------------------------
 fallbackNodepools:
+  # instanceSizeFloor -- the DEFAULT instance-size floor stamped onto each fallback pool
+  # so the neutral `platform-general` pool matches the consumer overlay's own floor FROM
+  # THE FIRST SYNC, before the overlay is wired. The workshop overlay's
+  # general-purpose-peeks pool pins eks.amazonaws.com/instance-size In
+  # [xlarge,2xlarge,4xlarge,8xlarge]; because the platform install runs before
+  # set-overlay-repo, a "false" hub would otherwise schedule its first add-on pods on an
+  # unfloored platform-general (any instance size). This default matches that overlay
+  # floor. A fallback pool that already pins instance-size is left untouched.
+  instanceSizeFloor:
+    - xlarge
+    - 2xlarge
+    - 4xlarge
+    - 8xlarge
+  # instanceSizeFloorOverride -- per-cluster override for the floor above, threaded from
+  # the cluster-secret annotation `fallback_nodepool_instance_size_floor` via the registry
+  # valuesObject -- the SAME path the enableGeneralPurposeNodePool gate takes. It is a
+  # SEPARATE key (a comma-separated STRING) so the registry sending it empty (annotation
+  # absent) does NOT clobber the default list via deep-merge: empty -> use instanceSizeFloor
+  # above; a comma-separated list (e.g. "2xlarge,4xlarge") -> that set; "none" -> disable
+  # the floor entirely and let Karpenter pick any size.
+  instanceSizeFloorOverride: ""
   pools:
     # NAME COUPLING: this pool name is also referenced by the image-prepuller route
     # in gitops/addons/registry/core.yaml (generalPurposeNodepool -> platform-general
