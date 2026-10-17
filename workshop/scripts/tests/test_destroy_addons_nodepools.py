@@ -234,12 +234,15 @@ def _state():
     return {"appsets": appsets, "apps": apps}
 
 
+def _text(c):
+    return c.get("cmd", "") if isinstance(c, dict) else c
+
+
 def _cmds():
     with open(TASKFILE) as f:
         task = yaml.safe_load(f)["tasks"]["hub:destroy-addons"]
-    text = lambda c: c.get("cmd", "") if isinstance(c, dict) else c
     cmds = [c for c in task["cmds"] if not (isinstance(c, dict) and "task" in c)]
-    return task["vars"], [c for c in cmds if "update-kubeconfig" not in text(c)]
+    return task["vars"], [c for c in cmds if "update-kubeconfig" not in _text(c)]
 
 
 def _render(s, tvars, root):
@@ -247,8 +250,11 @@ def _render(s, tvars, root):
     return re.sub(r"\{\{\.C_[A-Z]+\}\}", "", s.replace("{{.ROOT_DIR}}", str(root)))
 
 
-def _run(tmp_path):
+def _run(tmp_path, start=None):
+    """Run the task's cmds, or only those from the first one containing `start` on."""
     tvars, cmds = _cmds()
+    if start:
+        cmds = cmds[next(i for i, c in enumerate(cmds) if start in _text(c)):]
     bindir = tmp_path / "bin"
     bindir.mkdir()
     (bindir / "kubectl").write_text(FAKE_KUBECTL.replace("{python}", sys.executable))
@@ -322,3 +328,13 @@ def test_every_other_hub_addon_is_still_pruned(run):
     missing = [a for a in HUB_ADDONS
                if a not in (POOLS, "multi-acct") and f"{a}-{HUB}" not in pruned]
     assert missing == [], "no longer removed with a prune: " + ", ".join(missing)
+
+
+def test_nodepools_not_pruned_even_if_step_4_7_did_not_land(tmp_path):
+    # Backstop for step 4.7: if platform-manifests-bootstrap is still there when step 7
+    # runs (say 4.7's delete did not land), step 7 skips it instead of pruning it, and
+    # step 10 removes it without a prune (preserveResourcesOnDeletion, finalizers stripped).
+    events, _ = _run(tmp_path, start='SKIP="')
+    assert any(e[0] == "prune" for e in events), "step 7 did not run: " + repr(events[:5])
+    pruned = [e[1] for e in events if e[0] == "prune" and e[1].startswith(POOLS + "-")]
+    assert pruned == [], "steps 7-10 pruned the NodePools' Applications: " + ", ".join(pruned)

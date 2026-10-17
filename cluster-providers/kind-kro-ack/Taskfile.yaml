@@ -1774,9 +1774,11 @@ tasks:
       #    The wave is read from the addon's Applications: the registry's annotationsAppSet
       #    is rendered onto the AppSet's template, so the AppSets themselves carry no wave
       #    and the order would fall back to reverse-alphabetical. multi-acct is skipped
-      #    here and removed last, without pruning (step 9b).
+      #    here and removed last, without pruning (step 9b). platform-manifests-bootstrap
+      #    is skipped as a backstop: step 4.7 already removed it without pruning, and
+      #    step 7 must never prune it (its NodePools would go with it).
       - cmd: |
-          SKIP="{{.INFRA_STACK}} multi-acct bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
+          SKIP="{{.INFRA_STACK}} multi-acct platform-manifests-bootstrap bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
           APP_WAVES=$({{.KC}} get applications -n argocd \
             -o jsonpath='{range .items[*]}{.metadata.ownerReferences[0].name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' 2>/dev/null || true)
           ADDONS=$({{.KC}} get applicationsets -n argocd \
