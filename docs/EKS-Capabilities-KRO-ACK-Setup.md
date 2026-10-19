@@ -17,7 +17,7 @@ cluster — AWS handles installing, patching, and scaling them. Three types exis
 
 > **This platform already wires all three declaratively.** The `platform-cluster`
 > Crossplane Composition contains `Capability` managed resources (provider-aws-eks
-> v2.6.1) for `KRO`, `ACK`, and `ARGOCD`, each gated by
+> v2.7.0) for `KRO`, `ACK`, and `ARGOCD`, each gated by
 > `spec.capabilities.<type>.enabled` via a `function-cel-filter` step, plus the IAM
 > roles they assume (`capabilities.eks.amazonaws.com` trust). Enabling a capability is
 > therefore a **config toggle**, not new infrastructure.
