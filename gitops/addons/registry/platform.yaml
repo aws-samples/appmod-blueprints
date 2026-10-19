@@ -715,13 +715,28 @@ platform-manifests-bootstrap:
         operator: In
         values: ['true']
   valuesObject:
-    # Gate for the fallback (-peeks) NodePools: mirror the cluster's own
+    # Gate for the neutral fallback NodePool: mirror the cluster's own
     # enableGeneralPurposeNodePool from its secret annotation. "true" (default when
-    # absent) keeps the built-in general-purpose pool and adds no fallback pools
-    # (generic solution unchanged); "false" appends general-purpose-peeks/system-peeks
-    # to the consumer list so a fresh cluster that dropped the built-in pool still has
-    # an untainted pool for the add-on layer, created on the app's first sync.
+    # absent) keeps the built-in general-purpose pool and adds no fallback pool
+    # (generic solution unchanged); "false" renders the chart's neutral
+    # `platform-general` fallback pool (fallbackNodepools.pools) at low weight so a
+    # fresh cluster that dropped the built-in pool still has an untainted pool for the
+    # add-on layer, created on the app's first sync. Any consumer-defined pool
+    # (customNodepools.pools from the overlay, e.g. the workshop's -peeks pools)
+    # outranks it.
     enableGeneralPurposeNodePool: '{{ default "true" (index .metadata.annotations "enable_general_purpose_nodepool") }}'
+    # Instance-size floor for the neutral `platform-general` fallback pool, fed from the
+    # cluster secret on the SAME path as the gate above so a "false" hub gets the floor
+    # from the first sync (the platform install runs before set-overlay-repo wires the
+    # overlay). This is the OVERRIDE scalar (a comma-separated size list), a SEPARATE key
+    # from the chart's default list so an absent annotation (empty string here) does NOT
+    # clobber that default via deep-merge: empty -> the chart default
+    # (fallbackNodepools.instanceSizeFloor, matching the overlay general-purpose-peeks
+    # floor xlarge..8xlarge) applies; a list like "2xlarge,4xlarge" overrides it; "none"
+    # disables the floor. index + default keeps this missingkey-safe for a secret without
+    # the annotation.
+    fallbackNodepools:
+      instanceSizeFloorOverride: '{{ default "" (index .metadata.annotations "fallback_nodepool_instance_size_floor") }}'
     # The consumer's custom Karpenter NodePools come from the overlay
     # (customNodepools.pools) and always render. The generic solution leaves that list
     # empty and relies on the EKS Auto Mode built-in system/general-purpose pools.

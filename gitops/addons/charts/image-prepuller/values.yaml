@@ -1,5 +1,12 @@
 global:
   clusterName: ""
+  # Node pool the prepuller lands on. Routed from the cluster's
+  # enable_general_purpose_nodepool flag by the registry valuesObject:
+  #   flag "true"  -> "general-purpose" (the EKS Auto Mode built-in pool)
+  #   flag "false" -> "platform-general" (the neutral fallback pool from
+  #                   platform-manifests-bootstrap, since the built-in is gone)
+  # A consumer may still override nodeSelector wholesale in its overlay.
+  generalPurposeNodepool: "general-purpose"
 
 images:
   - public.ecr.aws/seb-demo/ray:2.49.0-py311-gpu
