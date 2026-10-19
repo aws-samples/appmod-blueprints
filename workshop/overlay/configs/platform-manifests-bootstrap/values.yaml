@@ -32,16 +32,21 @@ customNodepools:
           consolidationPolicy: WhenEmptyOrUnderutilized
           consolidateAfter: 5m
           budgets:
-            # Daytime workshop hours (06:00-20:00): block ALL voluntary disruption.
-            # A budget with no schedule is ALWAYS active, so the previous unscheduled
-            # `nodes: "0"` permanently masked the nightly window below (issue #892).
+            # Consolidation OFF ~23h/day, allowed only in a single ~1h daily
+            # maintenance window. Karpenter takes the MOST RESTRICTIVE (minimum) of
+            # all budgets, and a SCHEDULED budget is enforced ONLY inside its window
+            # (an UNscheduled `nodes: "0"` would be always-active and mask any window
+            # — issue #892). So "off by default" is expressed as a scheduled `nodes:
+            # "0"` that covers 23h and deliberately leaves a 1h gap. During that gap
+            # no budget is active, so Karpenter's own default (`nodes: 10%`) applies
+            # and consolidation can proceed.
+            #
+            # Window below: BLOCK 03:00->02:00 (next day) UTC = 23h; the 02:00-03:00
+            # UTC gap is the only time consolidation runs. CHANGE this schedule to
+            # whatever low-traffic hour suits your audience (schedules are UTC only).
             - nodes: "0"
-              schedule: "0 6 * * *"
-              duration: 14h
-            # Nightly consolidation window (20:00-22:00): allow up to 30%.
-            - nodes: "30%"
-              schedule: "0 20 * * *"
-              duration: 2h
+              schedule: "0 3 * * *"
+              duration: 23h
         template:
           metadata:
             labels:
@@ -78,16 +83,15 @@ customNodepools:
           consolidationPolicy: WhenEmptyOrUnderutilized
           consolidateAfter: 5m
           budgets:
-            # Daytime workshop hours (06:00-20:00): block ALL voluntary disruption.
-            # A budget with no schedule is ALWAYS active, so the previous unscheduled
-            # `nodes: "0"` permanently masked the nightly window below (issue #892).
+            # Consolidation OFF ~23h/day, allowed only in a single ~1h daily
+            # maintenance window. See general-purpose-peeks above for the rationale:
+            # a SCHEDULED `nodes: "0"` covering 23h (most-restrictive-wins + a
+            # scheduled budget only enforced inside its window) leaves a 1h gap
+            # (02:00-03:00 UTC) where Karpenter's default `nodes: 10%` applies.
+            # CHANGE this schedule to your own low-traffic hour (UTC only).
             - nodes: "0"
-              schedule: "0 6 * * *"
-              duration: 14h
-            # Nightly consolidation window (20:00-22:00): allow up to 30%.
-            - nodes: "30%"
-              schedule: "0 20 * * *"
-              duration: 2h
+              schedule: "0 3 * * *"
+              duration: 23h
         template:
           metadata:
             labels:
