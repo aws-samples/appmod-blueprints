@@ -1,0 +1,34 @@
+{{- /*
+Self-signed cert-manager Issuer for the Kargo webhook serving certificates,
+rendered LOCALLY by this umbrella chart so it carries an explicit ArgoCD
+sync-wave that lands one wave BEFORE the upstream chart body (the kargo addon is
+registered at sync-wave 4; this Issuer is wave 3).
+
+Why: on a health-gated GitOps applier (ArgoCD), the upstream Kargo chart emits
+its self-signed Issuer AND the two webhook Certificates with NO ordering hint
+(verified: `grep -rn 'sync-wave|helm.sh/hook|hook-weight'` over kargo 1.11.4
+templates returns nothing). ArgoCD's sync can begin gating on the Certificates
+becoming healthy before it has applied the Issuer, and a Certificate can never go
+healthy while its Issuer does not exist -> first-sync deadlock (observed on a full
+event: Issuer OutOfSync, Certificates Synced-but-never-Ready, webhook pods stuck
+ContainerCreating >11h).
+
+This object has the SAME apiVersion+kind+name+namespace as the upstream Issuer
+(`kargo-selfsigned-cert-issuer`, which every webhook Certificate's issuerRef
+points at). cert-manager Issuers are declarative and idempotent, so the local
+wave-3 copy simply guarantees the Issuer exists and is Established before the
+wave-4 Certificates reconcile. The upstream Certificates are kept intact
+(disabling them via *.tls.selfSignedCert:false also drops the Certificate, which
+is not what we want).
+*/ -}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kargo-selfsigned-cert-issuer
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # One wave earlier than the kargo app body (wave 4) so the Issuer is applied
+    # and Established before any webhook Certificate is reconciled.
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selfSigned: {}
