@@ -1609,12 +1609,24 @@ spec:
                      # promotion step), and templates/ keeps its <image> placeholders.
                      # KubeVela only re-renders the Rollout when app.oam.dev/publishVersion
                      # changes, so bump it to the image tag too (no-op for manifests without it).
+                     #
+                     # Defense-in-depth: the kro/kubevela templates also carry <environment>
+                     # and <cluster_name> placeholders that the CD module's manual `sed` is meant
+                     # to substitute before commit. If a dev/ manifest ever lands with those
+                     # literals still present (a skipped/stale manual step), the resulting
+                     # AppmodService/Service name "rust-microservice-<environment>" is an invalid
+                     # RFC1123 name and Argo CD rejects the whole app (OutOfSync/Missing). This CI
+                     # step only ever updates dev/, so pin <environment> -> dev and
+                     # <cluster_name> -> the dev spoke here as well, so a leftover literal can
+                     # never reach the cluster. No-op when the manual step already substituted them.
                      if [ -d dev ]; then
                        find dev \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i \
                          -e "s|image: <image>|image: $IMAGE_URI|g" \
                          -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" \
                          -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" \
-                         -e "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g"
+                         -e "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g" \
+                         -e "s|<environment>|dev|g" \
+                         -e "s|<cluster_name>|${schema.spec.aws.deployClusterName}|g"
                      fi
 
                      # Show what changed
