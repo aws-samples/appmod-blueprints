@@ -74,7 +74,7 @@ Full workshop installation. Runs from the `workshop/` directory.
 | 4 | `spokes:enable-kro` × 2 | ~20min | Declare spoke-dev + spoke-prod via KRO |
 | 5 | `ray:setup` | ~2min | Ray S3 bucket, ECR, IAM roles, build image |
 | 6 | `post-install` | ~5min | IDC ↔ Keycloak SAML+SCIM federation |
-| 7 | `ray:wait-image` | background | Wait for vLLM image build |
+| 7 | `ray:prestage-models` | ~1min | Stage ML models to S3 (vLLM image builds in background; gated at point of use in Module 40, not during install) |
 | 8 | `wait-for-spokes` | ~1min | Confirm spoke clusters ready |
 
 **Total: ~60-70 minutes** on a fresh account.
