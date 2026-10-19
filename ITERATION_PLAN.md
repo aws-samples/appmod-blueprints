@@ -168,7 +168,7 @@ The root Taskfile delegates to providers but each provider implements tasks diff
 **Labels:** enhancement, tech-debt
 **Ref:** https://github.com/crossplane-contrib/provider-upjet-aws/pull/2015
 
-**Done** (provider-aws-eks v2.6.1 adds the `Capability` MR). The EKS Capabilities
+**Done** (provider-aws-eks v2.7.0 adds the `Capability` MR). The EKS Capabilities
 (KRO/ACK/ArgoCD) are now created declaratively:
 - Crossplane path: native `Capability` MRs in the `platform-cluster` Composition,
   gated by `spec.capabilities.<type>.enabled` (hub + spokes).
