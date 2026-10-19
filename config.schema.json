@@ -13,10 +13,12 @@
     "clusterProvider": {
       "type": "string",
       "enum": [
+        "kind-kro-ack",
         "kind-crossplane",
+        "terraform",
         "byoc"
       ],
-      "default": "kind-crossplane",
+      "default": "kind-kro-ack",
       "description": "Which cluster provider to use for hub provisioning"
     },
     "repo": {

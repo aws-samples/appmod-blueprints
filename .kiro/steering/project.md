@@ -12,8 +12,8 @@ Companion repo: [platform-engineering-on-eks](../platform-engineering-on-eks/) h
 |------|---------|
 | `Taskfile.yaml` | Entry point — `task install/status/destroy` delegate to the configured cluster provider |
 | `config.yaml` / `config.local.yaml` | Single config consumed by all providers (`clusterProvider`, repo, hub, aws, domain) |
-| `cluster-providers/kind-crossplane/` | Provider — Kind + Crossplane bootstrap of the hub EKS cluster (default) |
-| `cluster-providers/kind-kro-ack/` | Provider — Kind + KRO/ACK bootstrap of the hub EKS cluster |
+| `cluster-providers/kind-crossplane/` | Provider — Kind + Crossplane bootstrap of the hub EKS cluster |
+| `cluster-providers/kind-kro-ack/` | Provider — Kind + KRO/ACK bootstrap of the hub EKS cluster (default) |
 | `cluster-providers/terraform/` | Provider — direct Terraform provisioning of the hub EKS cluster |
 | `cluster-providers/byoc/` | Provider — Bring Your Own Cluster (existing cluster) |
 | `cluster-providers/common/` | Shared bootstrap logic reused by the providers |
