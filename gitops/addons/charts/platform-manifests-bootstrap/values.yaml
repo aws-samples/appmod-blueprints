@@ -146,3 +146,30 @@ fallbackNodepools:
             terminationGracePeriod: 48h
 gpu:
   enabled: true
+
+# warmCapacity (lever #2): optional "overprovisioning" to keep spare node capacity
+# warm so the first wave of platform addons does not each wait on a cold Karpenter
+# node (~20s on EKS Auto Mode, but serialized across the wave). A low/negative-
+# priority pause Deployment reserves capacity; the instant a real workload needs the
+# space it preempts the pause pods (near-zero steady cost beyond the warm node), and
+# Karpenter provisions a replacement to stay warm. Default OFF (generic solution ships
+# no warm pool); consumers enable + size it via their overlay. The pause Deployment
+# renders at intra-app sync-wave 1 — AFTER the NodePools (wave 0) — so on a fresh hub
+# the warm node can schedule on a freshly-created pool.
+warmCapacity:
+  enabled: false
+  replicas: 1
+  priorityClassName: warm-capacity-overprovisioning
+  priorityValue: -10
+  image: registry.k8s.io/pause:3.9
+  # nodeSelector/tolerations target where the warm nodes should be kept (e.g. the
+  # pool the first-wave addons run on — system-peeks in the workshop overlay).
+  # Empty = scheduler/Karpenter default placement.
+  nodeSelector: {}
+  tolerations: []
+  # Default 1 CPU / 2Gi is a modest reservation; consumers size it to ~one node of
+  # their target pool (the workshop overlay bumps it to 2 CPU / 4Gi for system-peeks).
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
