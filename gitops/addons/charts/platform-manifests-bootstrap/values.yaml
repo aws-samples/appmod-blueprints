@@ -59,26 +59,23 @@ customNodepools:
 # general-purpose, default) so it never collides with a built-in pool/NodeClass.
 # ---------------------------------------------------------------------------------
 fallbackNodepools:
-  # instanceSizeFloor -- the DEFAULT instance-size floor stamped onto each fallback pool
-  # so the neutral `platform-general` pool matches the consumer overlay's own floor FROM
-  # THE FIRST SYNC, before the overlay is wired. The workshop overlay's
-  # general-purpose-peeks pool pins eks.amazonaws.com/instance-size In
-  # [xlarge,2xlarge,4xlarge,8xlarge]; because the platform install runs before
-  # set-overlay-repo, a "false" hub would otherwise schedule its first add-on pods on an
-  # unfloored platform-general (any instance size). This default matches that overlay
-  # floor. A fallback pool that already pins instance-size is left untouched.
-  instanceSizeFloor:
-    - xlarge
-    - 2xlarge
-    - 4xlarge
-    - 8xlarge
+  # instanceSizeFloor -- the DEFAULT instance-size floor stamped onto each fallback pool.
+  # OFF by default ([]): the generic chart ships NO instance-size floor, so a non-workshop
+  # consumer on a "false" cluster gets an unfloored platform-general (any instance size) --
+  # the safe neutral behaviour. A floor is a per-consumer tuning, not a generic default, so
+  # it is supplied per-cluster via instanceSizeFloorOverride below (threaded from the
+  # cluster-secret annotation on the SAME path as the enableGeneralPurposeNodePool gate).
+  # A fallback pool that already pins eks.amazonaws.com/instance-size is left untouched.
+  instanceSizeFloor: []
   # instanceSizeFloorOverride -- per-cluster override for the floor above, threaded from
   # the cluster-secret annotation `fallback_nodepool_instance_size_floor` via the registry
   # valuesObject -- the SAME path the enableGeneralPurposeNodePool gate takes. It is a
   # SEPARATE key (a comma-separated STRING) so the registry sending it empty (annotation
   # absent) does NOT clobber the default list via deep-merge: empty -> use instanceSizeFloor
-  # above; a comma-separated list (e.g. "2xlarge,4xlarge") -> that set; "none" -> disable
-  # the floor entirely and let Karpenter pick any size.
+  # above (empty by default -> no floor); a comma-separated list (e.g. "2xlarge,4xlarge") ->
+  # that set; "none" -> explicitly disable the floor. Tokens are lower-cased and validated
+  # (unknown tokens dropped; if none survive, fall back to instanceSizeFloor) so a malformed
+  # value never renders an unlaunchable pool.
   instanceSizeFloorOverride: ""
   pools:
     # NAME COUPLING: this pool name is also referenced by the image-prepuller route

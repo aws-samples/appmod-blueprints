@@ -7,9 +7,9 @@ customNodepools.pools — the CONSUMER's list. ALWAYS rendered, on every cluster
   via nodeSelector. The generic solution leaves it empty and relies on the EKS Auto
   Mode built-in system/general-purpose pools.
 
-fallbackNodepools.pools — built-in DEFAULT pools, appended to the consumer list ONLY
-  when the cluster was created WITHOUT the EKS Auto Mode built-in general-purpose pool
-  (enableGeneralPurposeNodePool="false"). Any name the consumer already defines wins,
+fallbackNodepools.pools — the generic neutral REPLACEMENT pool, appended to the consumer
+  list ONLY when the cluster was created WITHOUT the EKS Auto Mode built-in general-purpose
+  pool (enableGeneralPurposeNodePool="false"). Any name the consumer already defines wins,
   so nothing is duplicated. This covers the fresh-hub bootstrap window before the
   overlay is wired: without an untainted pool every add-on (cert-manager, keycloak,
   load-balancer-controller, …) is unschedulable. The pools are created on the app's
@@ -26,28 +26,42 @@ Each entry: { name: <string>, spec: <karpenter.sh/v1 NodePool spec> }.
 {{- $names := list }}
 {{- range $pools }}{{- $names = append $names .name }}{{- end }}
 {{- /*
-  instanceSizeFloor — the instance-size floor applied to each fallback pool so the
-  neutral `platform-general` pool matches the consumer overlay's own floor (e.g. the
-  workshop general-purpose-peeks pool pins instance-size In [xlarge,2xlarge,4xlarge,
-  8xlarge]) FROM THE FIRST SYNC, before the overlay is wired (set-overlay-repo runs
-  after the platform install).
-
-  Precedence: `instanceSizeFloorOverride` (a comma-separated STRING threaded from the
+  instanceSizeFloor — the instance-size floor applied to each fallback pool. It is OFF
+  by default in the generic chart (instanceSizeFloor: []), so a non-workshop consumer's
+  platform-general is unfloored (any instance size). A consumer that wants a floor
+  supplies it per-cluster via `instanceSizeFloorOverride` (threaded from the
   cluster-secret annotation `fallback_nodepool_instance_size_floor` via the registry
-  valuesObject — the SAME path the enableGeneralPurposeNodePool gate takes) wins when
-  non-empty; otherwise the chart default list `instanceSizeFloor` applies. The override
-  is a SEPARATE key so the registry sending it empty (annotation absent) does NOT clobber
-  the default list via deep-merge. Set the override to "none" to disable the floor and
-  let Karpenter pick any size. A fallback pool that already pins
-  `eks.amazonaws.com/instance-size` is left untouched.
+  valuesObject — the SAME path the enableGeneralPurposeNodePool gate takes), so the floor
+  arrives FROM THE FIRST SYNC, before any overlay is wired.
+
+  Precedence: `instanceSizeFloorOverride` (a comma-separated STRING) wins when non-empty;
+  otherwise the chart default list `instanceSizeFloor` applies (empty by default -> no
+  floor). The override is a SEPARATE key so the registry sending it empty (annotation
+  absent) does NOT clobber the default list via deep-merge. Set the override to "none" to
+  explicitly disable the floor. Override tokens are lower-cased and validated to a
+  size shape; unknown tokens are dropped, and if none survive the chart default is used
+  (never a `fail`), so a malformed value cannot render an unlaunchable pool. A fallback
+  pool that already pins `eks.amazonaws.com/instance-size` is left untouched.
 */ -}}
 {{- $fallbackCfg := (.Values.fallbackNodepools | default dict) }}
-{{- $override := ($fallbackCfg.instanceSizeFloorOverride | default "") | toString | trim }}
+{{- $override := ($fallbackCfg.instanceSizeFloorOverride | default "") | toString | trim | lower }}
 {{- $floor := list }}
 {{- if eq $override "none" }}
 {{- /* explicit opt-out: no floor */ -}}
 {{- else if $override }}
-{{- range (splitList "," $override) }}{{- $t := trim . }}{{- if $t }}{{- $floor = append $floor $t }}{{- end }}{{- end }}
+{{- /*
+  Lower-case + validate the override tokens. The floor is emitted with operator: In, so
+  the list is also a CEILING -- a token no instance type matches (a typo, wrong delimiter,
+  or upper-case) renders a clean-but-unlaunchable pool and re-opens the bootstrap deadlock
+  this pool exists to prevent. So: lower-case (done above), then keep only size-shaped
+  tokens (medium | [N]xlarge | metal...). If NONE survive, fall back to instanceSizeFloor
+  rather than `fail` -- a fail here would take down every NodePool in the app, which is
+  worse than an unfloored pool.
+*/ -}}
+{{- range (splitList "," $override) }}{{- $t := trim . }}{{- if and $t (regexMatch "^([0-9]*x)?large$|^medium$|^metal" $t) }}{{- $floor = append $floor $t }}{{- end }}{{- end }}
+{{- if not $floor }}
+{{- $floor = ($fallbackCfg.instanceSizeFloor | default list) }}
+{{- end }}
 {{- else }}
 {{- $floor = ($fallbackCfg.instanceSizeFloor | default list) }}
 {{- end }}

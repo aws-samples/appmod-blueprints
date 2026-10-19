@@ -726,15 +726,14 @@ platform-manifests-bootstrap:
     # outranks it.
     enableGeneralPurposeNodePool: '{{ default "true" (index .metadata.annotations "enable_general_purpose_nodepool") }}'
     # Instance-size floor for the neutral `platform-general` fallback pool, fed from the
-    # cluster secret on the SAME path as the gate above so a "false" hub gets the floor
-    # from the first sync (the platform install runs before set-overlay-repo wires the
-    # overlay). This is the OVERRIDE scalar (a comma-separated size list), a SEPARATE key
-    # from the chart's default list so an absent annotation (empty string here) does NOT
-    # clobber that default via deep-merge: empty -> the chart default
-    # (fallbackNodepools.instanceSizeFloor, matching the overlay general-purpose-peeks
-    # floor xlarge..8xlarge) applies; a list like "2xlarge,4xlarge" overrides it; "none"
-    # disables the floor. index + default keeps this missingkey-safe for a secret without
-    # the annotation.
+    # cluster secret on the SAME path as the gate above so a cluster that wants a floor
+    # gets it from the first sync (the platform install runs before any overlay is wired).
+    # This is the OVERRIDE scalar (a comma-separated size list), a SEPARATE key from the
+    # chart's default list so an absent annotation (empty string here) does NOT clobber
+    # that default via deep-merge: empty -> the chart default (fallbackNodepools.
+    # instanceSizeFloor, which is [] by default -> no floor); a list like "2xlarge,4xlarge"
+    # sets the floor; "none" explicitly disables it. index + default keeps this
+    # missingkey-safe for a secret without the annotation.
     fallbackNodepools:
       instanceSizeFloorOverride: '{{ default "" (index .metadata.annotations "fallback_nodepool_instance_size_floor") }}'
     # The consumer's custom Karpenter NodePools come from the overlay

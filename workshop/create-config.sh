@@ -318,6 +318,12 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
   # The built-in "system" pool stays on (anchors the default NodeClass). Generic
   # consumers omit this key -> rg-eks.yaml default "true" keeps the built-in.
   printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
+  # Instance-size floor for the neutral platform-general fallback pool. The generic chart
+  # ships NO floor (off by default); the workshop supplies its tuning here so a "false"
+  # hub floors the fallback to the same sizes as the overlay general-purpose-peeks pool
+  # from the first sync (before set-overlay-repo). hub:seed mirrors this into the cluster
+  # secret annotation fallback_nodepool_instance_size_floor, the SAME path as the gate.
+  printf '  fallbackNodepoolInstanceSizeFloor: "xlarge,2xlarge,4xlarge,8xlarge"\n' >> "$OUTPUT_FILE"
   printf '  network:\n'                                >> "$OUTPUT_FILE"
   printf '    vpcId: "%s"\n' "$HUB_VPC_ID"             >> "$OUTPUT_FILE"
   printf '    subnetIds:\n'                            >> "$OUTPUT_FILE"
@@ -335,6 +341,10 @@ else
   printf '  autoMode: true\n'                          >> "$OUTPUT_FILE"
   # Workshop opt-in (see note above): hub general-purpose = only general-purpose-peeks (built-in system stays).
   printf '  enableGeneralPurposeNodePool: "false"\n'   >> "$OUTPUT_FILE"
+  # Instance-size floor for the neutral platform-general fallback pool (see note above):
+  # the generic chart ships no floor, the workshop supplies its tuning here so hub:seed
+  # mirrors it into the cluster secret on the SAME path as the gate.
+  printf '  fallbackNodepoolInstanceSizeFloor: "xlarge,2xlarge,4xlarge,8xlarge"\n' >> "$OUTPUT_FILE"
 fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
