@@ -162,7 +162,7 @@ for CLUSTER in peeks-spoke-dev peeks-spoke-prod; do
   kubectl get crd externalsecrets.external-secrets.io --no-headers 2>/dev/null || echo "    MISSING"
 
   echo "  AWS Load Balancer Controller pods:"
-  kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --no-headers 2>/dev/null || echo "    MISSING"
+  LBC_PODS=$(kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --no-headers 2>/dev/null); [ -n "$LBC_PODS" ] && echo "$LBC_PODS" || echo "    MISSING"
 
   echo "  kro RGDs (need AppmodService in Active state):"
   kubectl get resourcegraphdefinitions --no-headers -o wide 2>/dev/null || echo "    NONE"
