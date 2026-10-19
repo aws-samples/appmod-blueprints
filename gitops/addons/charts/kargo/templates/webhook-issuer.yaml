@@ -1,0 +1,41 @@
+{{- /*
+Self-signed cert-manager Issuer for the Kargo webhook serving certificates,
+rendered LOCALLY by this umbrella chart so it carries an explicit ArgoCD
+sync-wave. The upstream Kargo chart emits the same Issuer with no ordering hint,
+so ArgoCD gives it the default wave 0 (same as the webhook Certificates). A
+negative wave here applies this Issuer BEFORE those default-wave-0 Certificates
+(ArgoCD applies lowest wave first; "apply first" is a negative wave, the repo's
+convention everywhere else, e.g. the kargo-admin-credentials ExternalSecret).
+
+Why: on a health-gated GitOps applier (ArgoCD), the upstream Kargo chart emits
+its self-signed Issuer AND the webhook Certificates with NO ordering hint
+(verified: `grep -rn 'sync-wave|helm.sh/hook|hook-weight'` over kargo 1.11.4
+templates returns nothing). ArgoCD's sync can begin gating on the Certificates
+becoming healthy before it has applied the Issuer, and a Certificate can never go
+healthy while its Issuer does not exist -> first-sync deadlock (observed on a full
+event: Issuer OutOfSync, Certificates Synced-but-never-Ready, webhook pods stuck
+ContainerCreating >11h).
+
+This object has the SAME apiVersion+kind+name+namespace as the upstream Issuer
+(`kargo-selfsigned-cert-issuer`, which every webhook Certificate's issuerRef
+points at). ArgoCD keys resources on group/kind/name/namespace and, when a key
+appears more than once in one source, the LAST occurrence in the manifest stream
+wins. Helm renders dependency (subchart) resources before the parent chart's own
+templates, so this parent-chart copy is emitted after the upstream subchart copy
+and is therefore the one ArgoCD tracks and applies -- carrying this negative
+wave. The upstream Certificates are kept intact (disabling them via
+*.tls.selfSignedCert:false also drops the Certificate, which is not what we want;
+and the upstream Issuer template exposes no annotations hook, so it cannot be
+wave-annotated through chart values).
+*/ -}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kargo-selfsigned-cert-issuer
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Negative wave so the Issuer is applied and Established BEFORE the
+    # default-wave-0 webhook Certificates (ArgoCD applies lowest wave first).
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  selfSigned: {}
