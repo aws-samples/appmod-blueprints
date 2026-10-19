@@ -161,8 +161,8 @@ for CLUSTER in peeks-spoke-dev peeks-spoke-prod; do
   echo "  External Secrets CRD:"
   kubectl get crd externalsecrets.external-secrets.io --no-headers 2>/dev/null || echo "    MISSING"
 
-  echo "  Ingress NGINX pods:"
-  kubectl get pods -n ingress-nginx --no-headers 2>/dev/null || echo "    MISSING"
+  echo "  AWS Load Balancer Controller pods:"
+  LBC_PODS=$(kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --no-headers 2>/dev/null); [ -n "$LBC_PODS" ] && echo "$LBC_PODS" || echo "    MISSING"
 
   echo "  kro RGDs (need AppmodService in Active state):"
   kubectl get resourcegraphdefinitions --no-headers -o wide 2>/dev/null || echo "    NONE"
@@ -171,7 +171,7 @@ done
 
 **Expected per spoke cluster**:
 - NodePool without `CriticalAddonsOnly` taint (for workload pods)
-- Argo Rollouts, External Secrets, Ingress NGINX — all deployed via ArgoCD
+- Argo Rollouts, External Secrets, AWS Load Balancer Controller — all deployed via ArgoCD
 - `AppmodService` RGD in Active/Ready state
 
 If any are missing, **do NOT install them manually**. Instead:
