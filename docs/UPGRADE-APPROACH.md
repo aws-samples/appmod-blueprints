@@ -57,7 +57,7 @@ appmod-blueprints/
 | Secrets assume workshop topology | `secrets.tf` creates per-cluster secrets with GitLab tokens, user passwords | Assumes specific identity provider and Git provider |
 | Repo URLs hardcoded in locals | `locals.tf` constructs repo URLs assuming GitLab: `"https://${local.gitlab_domain_name}/${var.git_username}/platform-on-eks-workshop.git"` | Cannot point to GitHub or other Git providers |
 | `deploy.sh` scripts embed logic | Each stack has `deploy.sh` with env var setup, backend config, workshop-specific logic | Not consumable as standard Terraform modules |
-| Backstage image hardcoded | `backstage_image` defaults to `public.ecr.aws/seb-demo/backstage:latest` | Customers need their own Backstage build |
+| Backstage image hardcoded | `backstage_image` defaults to `ghcr.io/cnoe-io/backstage-app` (CNOE upstream image) | Customers need their own Backstage build |
 
 ### 1.3 Current Terraform Split
 
@@ -456,7 +456,7 @@ Changes:
 | `platform/infra/terraform/identity-center/` | `patterns/workshop/terraform/identity-center/` | Workshop-specific |
 | `platform/infra/terraform/scripts/` | `patterns/workshop/scripts/` | Deployment scripts are workshop-specific |
 | CloudFormation bootstrap references | `patterns/workshop/cloudformation/` | Workshop Studio setup |
-| `backstage_image` default (`public.ecr.aws/seb-demo/backstage:latest`) | `patterns/workshop/terraform/common/variables.tf` | Workshop-specific image default |
+| `backstage_image` default (`ghcr.io/cnoe-io/backstage-app`) | `patterns/workshop/terraform/common/variables.tf` | Workshop-specific image default |
 
 #### 3.4.2 Workshop in `patterns/workshop/`
 

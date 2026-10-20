@@ -1,7 +1,7 @@
 # Backstage configuration
 # Override these in overlays/environments/<env>/backstage/values.yaml
 
-backstage_image: "public.ecr.aws/seb-demo/backstage:cnoe-1.1"
+backstage_image: "ghcr.io/cnoe-io/backstage-app@sha256:fac3e047e9505809d1547544f2323fa52fa18c0cd20915c856416f94c34166dd"
 git_username: ""        # Git username for repo access
 working_repo: ""        # Working repository URL
 gitlab_domain_name: ""  # GitLab domain (set via overlay/metadata; defaults to ingress_domain_name if same host)
