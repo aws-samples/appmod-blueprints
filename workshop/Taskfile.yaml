@@ -537,6 +537,14 @@ tasks:
         sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
       USER_PASSWORD:
         sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // ""'
+      # GitLab coordinates for the review-C2 repo-existence guard (see scaffold step).
+      # The scaffolded repo is <GIT_USERNAME>/<app>-cicd; GIT_USERNAME is "user1" in the
+      # workshop (set by platform-env). GIT_TOKEN prefers the real glpat- PAT seeded by
+      # gitlab:init-ec2; empty on first run is fine — the guard then safely no-ops and
+      # falls back to the CICDPipeline fast-path.
+      GIT_USERNAME: '{{.GIT_USERNAME | default "user1"}}'
+      GIT_TOKEN:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' 2>/dev/null | grep '^glpat-' || true
       # Bounded waits (seconds). Kept well inside the install time budget; every
       # wait is best-effort and logs-and-continues on timeout.
       PIPELINE_TIMEOUT: '{{.PREWARM_PIPELINE_TIMEOUT | default "600"}}'
@@ -544,8 +552,8 @@ tasks:
       # Budget awareness (review C1): these mirror the install DAG's own timing vars
       # so the prewarm waits can be capped to the remaining INSTALL_BUDGET_SEC and
       # never starve the #1033 hub pivot. The install task PASSES its live INSTALL_START
-      # into this task; a standalone `task workshop:prewarm-rust-cicd` run defaults
-      # INSTALL_START to "now", which makes the cap a no-op (full timeouts apply).
+      # into this task; a standalone `task workshop:prewarm-rust-cicd` run leaves
+      # INSTALL_START empty (review S3), which skips the cap entirely (full timeouts apply).
       INSTALL_START: '{{.INSTALL_START | default ""}}'
       INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
     cmds:
@@ -561,19 +569,31 @@ tasks:
         fi
         printf '{{.C_STEP}}▸ Pre-warming %s CI/CD pipeline + first image (best-effort)…{{.C_RESET}}\n' "$APP"
 
-        # ── Budget awareness (review C1): cap the prewarm waits against what is left
-        #    of INSTALL_BUDGET_SEC so this step cannot starve the #1033 hub pivot that
-        #    runs right after it. The pivot skips when <120s remain after reserving
-        #    its own 300s; leave it that 300+120s floor here too. When INSTALL_START is
-        #    unset (standalone run) the cap is skipped and the full timeouts apply.
+        # ── Budget awareness (reviews C1/C3): ALL prewarm work — the workflow-controller
+        #    rollout wait, the Backstage scaffolder's own poll, and the pipeline/image
+        #    waits — must finish before a hard DEADLINE that leaves the #1033 hub pivot
+        #    its own 300s plus the 120s skip floor. Earlier only PIPE_T/BUILD_T were
+        #    capped, so the ~300s rollout wait and the scaffolder's ~300s poll could
+        #    overrun the reserve by ~600s and push the pivot under its <120s skip.
+        #    When INSTALL_START is empty (standalone run) there is no deadline and the
+        #    full timeouts apply.
         PIPE_T={{.PIPELINE_TIMEOUT}}; BUILD_T={{.BUILD_TIMEOUT}}
+        ROLLOUT_T=300          # workflow-controller rollout wait (capped below)
+        SCAFFOLD_RESERVE=360   # Backstage scaffolder's own 30x10s poll + REST round-trips
+        DEADLINE=""
         if [ -n "{{.INSTALL_START}}" ]; then
-          REMAIN=$(( {{.INSTALL_BUDGET_SEC}} - ($(date +%s) - {{.INSTALL_START}}) - 300 - 120 ))
+          DEADLINE=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC}} - 300 - 120 ))
+          REMAIN=$(( DEADLINE - $(date +%s) ))
           [ "$REMAIN" -lt 0 ] && REMAIN=0
-          if [ "$REMAIN" -lt "$(( PIPE_T + BUILD_T ))" ]; then
-            PIPE_T=$(( REMAIN / 2 )); BUILD_T=$(( REMAIN - PIPE_T ))
-            printf '{{.C_INFO}}  ⚠ prewarm waits capped to remaining install budget (%ss total: pipeline=%ss build=%ss) so the hub pivot keeps its headroom.{{.C_RESET}}\n' "$REMAIN" "$PIPE_T" "$BUILD_T"
+          # Cap the rollout wait, reserve the scaffolder poll, split what remains between
+          # the pipeline-ACTIVE and ECR-image waits — so the whole task fits in REMAIN.
+          [ "$ROLLOUT_T" -gt "$REMAIN" ] && ROLLOUT_T=$REMAIN
+          AFTER_PREWAITS=$(( REMAIN - ROLLOUT_T - SCAFFOLD_RESERVE ))
+          [ "$AFTER_PREWAITS" -lt 0 ] && AFTER_PREWAITS=0
+          if [ "$AFTER_PREWAITS" -lt "$(( PIPE_T + BUILD_T ))" ]; then
+            PIPE_T=$(( AFTER_PREWAITS / 2 )); BUILD_T=$(( AFTER_PREWAITS - PIPE_T ))
           fi
+          printf '{{.C_INFO}}  ⚠ prewarm waits capped to remaining install budget (REMAIN=%ss: rollout=%ss pipeline=%ss build=%ss) so the hub pivot keeps its 300+120s headroom.{{.C_RESET}}\n' "$REMAIN" "$ROLLOUT_T" "$PIPE_T" "$BUILD_T"
         fi
 
         KC=$(mktemp)
@@ -597,7 +617,7 @@ tasks:
         #    documented prerequisite before any CI workflow can run). Phantom-healthy
         #    ArgoCD app is NOT sufficient — wait for the Deployment + CRD.
         printf '{{.C_STEP}}  ▸ waiting for Argo Workflows controller…{{.C_RESET}}\n'
-        $KUBE rollout status deploy/workflow-controller -n argo --timeout=300s >/dev/null 2>&1 \
+        $KUBE rollout status deploy/workflow-controller -n argo --timeout=${ROLLOUT_T}s >/dev/null 2>&1 \
           || printf '{{.C_ERR}}  ⚠ workflow-controller not Ready in time — continuing anyway (non-fatal).{{.C_RESET}}\n'
         if ! $KUBE get crd workflows.argoproj.io >/dev/null 2>&1; then
           printf '{{.C_ERR}}  ⚠ Workflow CRD not served yet — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
@@ -606,13 +626,35 @@ tasks:
 
         # ── 1) Scaffold the pipeline via the Backstage scaffolder REST API, unless it
         #    already exists. backstage-auth.sh needs BACKSTAGE_URL + USER1_PASSWORD.
-        #    Idempotency (review C2): skip scaffolding when the CICDPipeline object
-        #    already exists in ANY state — a re-run after a partial attempt (repo
-        #    published, pipeline not yet ACTIVE) must NOT re-invoke publish:gitlab,
-        #    which has no existing-repo handling and would fail. In that case fall
-        #    through to just waiting for ACTIVE below.
+        #    Idempotency (review C2): the guard is the SCAFFOLDED GITLAB REPO, not the
+        #    CICDPipeline object. publish:gitlab is the FIRST scaffolder step, ahead of
+        #    create-argocd-app/register (which create the CICDPipeline). So a re-run
+        #    after a partial scaffold (repo published, pipeline not yet registered)
+        #    sees no CICDPipeline and would re-invoke publish:gitlab — which has no
+        #    existing-repo handling and 500s on the existing <user>/<app>-cicd repo.
+        #    Guarding on the repo closes that window; we then fall through to waiting
+        #    for ACTIVE. The CICDPipeline check is kept as a fast-path.
         PIPELINE_EXISTS=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" --ignore-not-found -o name 2>/dev/null)
-        if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ]; then
+        REPO_EXISTS=""
+        if [ -n "{{.GIT_DOMAIN}}" ] && [ -n "{{.GIT_TOKEN}}" ]; then
+          RC=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 \
+            -H "PRIVATE-TOKEN: {{.GIT_TOKEN}}" \
+            "https://{{.GIT_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F${APP}-cicd" 2>/dev/null || echo "000")
+          [ "$RC" = "200" ] && REPO_EXISTS=yes
+        fi
+        # Budget gate (review C3): do not even start a fresh scaffold once the install
+        # deadline is reached — scaffolding with no time left for the waits only risks
+        # overrunning the #1033 pivot.
+        BUDGET_OK=yes
+        if [ -n "$DEADLINE" ] && [ "$(date +%s)" -ge "$DEADLINE" ]; then BUDGET_OK=""; fi
+        if [ -n "$REPO_EXISTS" ] && [ -z "$PIPELINE_EXISTS" ]; then
+          printf '{{.C_INFO}}  ↩ GitLab repo %s/%s-cicd already exists but CICDPipeline not registered — NOT re-scaffolding (publish:gitlab would fail); waiting for ACTIVE.{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
+        fi
+        if [ -z "$BUDGET_OK" ] && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
+          printf '{{.C_ERR}}  ⚠ install budget spent before scaffold could start — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 0
+        fi
+        if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           BSAUTH="{{.PLATFORM_DIR}}/scripts/validation/backstage-auth.sh"
           if [ ! -f "$BSAUTH" ]; then
             printf '{{.C_ERR}}  ⚠ %s not found — skipping prewarm (non-fatal).{{.C_RESET}}\n' "$BSAUTH"
