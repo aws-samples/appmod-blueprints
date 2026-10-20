@@ -282,6 +282,11 @@ printf 'resourcePrefix: "%s"\n' "$RESOURCE_PREFIX"     >> "$OUTPUT_FILE"
 printf 'ingressName: ""\n'                             >> "$OUTPUT_FILE"
 printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 
+# Workshop-only toggle (read solely by workshop/Taskfile.yaml prewarm-rust-cicd).
+# Kept out of the generic config.yaml/config.schema.json so the platform solution
+# stays consumer-agnostic (shapirov103 review #1136). Task defaults to true when absent.
+printf 'prewarmRustCicd: true\n'                      >> "$OUTPUT_FILE"
+
 # GitLab/IDE CloudFront domain (separate from the platform CF).
 # Available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
 # or from the private/git-domain file written by bootstrap.sh.

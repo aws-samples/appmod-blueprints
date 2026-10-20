@@ -226,11 +226,6 @@
       "default": "",
       "description": "Comma-separated security group IDs for the ALB"
     },
-    "prewarmRustCicd": {
-      "type": "boolean",
-      "default": true,
-      "description": "Pre-create the Rust CI/CD pipeline and publish the first Rust image DURING install (at the end of the workshop install DAG, via the Backstage cicd-pipeline-gitops scaffolder + a first build), so the atelier participant does not wait ~38-47min for it at module 20.2/20.3 time. Idempotent and strictly non-fatal — never fails `task install`. Set false (or PREWARM_RUST_CICD=false) to disable."
-    },
     "adminRoleName": {
       "type": "string",
       "description": "IAM role name added as a cluster-admin access entry and used by Backstage templates for cluster access."
