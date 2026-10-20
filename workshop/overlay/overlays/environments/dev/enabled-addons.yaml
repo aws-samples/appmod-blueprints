@@ -19,3 +19,12 @@ enabledAddons:
   agent_gateway: true
   oam_components: true
   otel_collector: true
+  # Module 30.5 (metrics-driven progressive delivery) runs an Artillery performance
+  # gate on THIS spoke; the gate pod pulls artilleryio/artillery:latest on-demand.
+  # Warm the dev node cache by enabling the image-prepuller DaemonSet here. Workshop-
+  # only: kept out of the generic gitops/overlays/environments/dev/enabled-addons.yaml
+  # so the base solution stays consumer-agnostic (issue #1137, follow-up to #1126).
+  # The pre-pull image list is set in the env-scoped workshop overlay
+  # workshop/overlay/overlays/environments/dev/image-prepuller/values.yaml (dev only), NOT in
+  # workshop/overlay/configs/image-prepuller/values.yaml, which the hub reads too.
+  image_prepuller: true

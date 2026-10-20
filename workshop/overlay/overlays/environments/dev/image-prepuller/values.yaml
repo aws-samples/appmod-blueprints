@@ -1,0 +1,16 @@
+# WORKSHOP overlay — spoke-dev image-prepuller values (issue #1137, follow-up to #1126).
+#
+# This is the ENV-SCOPED layer-7 override: the appset-chart reads it at
+#   $overlay/<basepath>overlays/environments/{{.metadata.labels.environment}}/image-prepuller/values.yaml
+# (platform-charts/appset-chart/templates/_application_set.tpl), where the cluster secret's
+# `environment` label is `dev` for the dev spoke. It therefore applies ONLY to spoke-dev, NOT to
+# the hub — unlike workshop/overlay/configs/image-prepuller/values.yaml (layer 6), which is read by
+# every cluster (hub included) and so must NOT carry a workshop image list.
+#
+# Module 30.5's Artillery performance gate runs on this spoke and its pod pulls
+# artilleryio/artillery:latest on-demand; warming it here cuts the gate's start time. Helm REPLACES
+# lists, so this is the COMPLETE pre-pull list for spoke-dev: just artillery. The generic Ray/Jupyter
+# images are hub/ML content and are not part of the dev gate. The nodeSelector
+# (general-purpose-peeks) is inherited from layer 6 (workshop/overlay/configs/image-prepuller).
+images:
+  - artilleryio/artillery:latest
