@@ -1612,6 +1612,7 @@ spec:
                      if [ -d dev ]; then
                        find dev \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i \
                          -e "s|image: <image>|image: $IMAGE_URI|g" \
+                         -e "s|image: \"<image>\"|image: $IMAGE_URI|g" \
                          -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:.*|image: $IMAGE_URI|g" \
                          -e "s|image: .*\.dkr\.ecr\..*\.amazonaws\.com/.*:$|image: $IMAGE_URI|g" \
                          -e "s|app.oam.dev/publishVersion: .*|app.oam.dev/publishVersion: \"{{workflow.parameters.image-tag}}\"|g"
