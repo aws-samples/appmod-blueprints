@@ -184,6 +184,23 @@ tasks:
         else
           printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
         fi
+      # Pre-warm the Rust CI/CD pipeline + publish the first image DURING provisioning
+      # so the participant no longer waits ~38-47min for it at atelier time (module
+      # 20.2/20.3). Runs HERE — after wait-for-spokes (spoke-dev ACTIVE + apps synced),
+      # setup-env, and the hub-context restore, so GitLab is seeded, Backstage is up,
+      # the spoke is ready, and ECR + Argo Workflows/Events are installed — but BEFORE
+      # the hub pivot below (which detaches the hub from kind and would disrupt the
+      # ArgoCD/Backstage access the scaffolder needs). Flagged (prewarmRustCicd, default
+      # true; PREWARM_RUST_CICD=false to disable), idempotent, and strictly non-fatal
+      # (ignore_error + the task's own `set +e`), so it never fails `task install`.
+      - task: prewarm-rust-cicd
+        vars:
+          # Pass the install's live timing so prewarm can cap its waits against the
+          # remaining budget (review C1) and never starve the #1033 pivot below.
+          INSTALL_START: '{{.INSTALL_START}}'
+          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+        ignore_error: true
+      - 'printf "{{.C_INFO}}  [%ds] prewarm-rust-cicd done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # [#1033] FINAL step — hub self-adoption pivot (detach from the ephemeral kind bootstrap
       # cluster). Runs LAST, after overlay wiring + spokes + idc + ray are all up, so:
       #   (a) the fleet-config overlay is wired and the hub is fully settled before we detach;
@@ -482,6 +499,226 @@ tasks:
         fi
         rm -f "$KC"
       - printf '{{.C_OK}}✓ Spoke wait-gate complete.{{.C_RESET}}\n'
+
+  # ============================================================
+  # PRE-WARM — pre-create the Rust CI/CD pipeline + publish the first image
+  # DURING provisioning, so the atelier participant no longer waits ~38-47min
+  # for it at module 20.2/20.3 time.
+  #
+  # Mechanism (matches how the platform already automates this — no new path):
+  #   1. Scaffold `cicd-pipeline-gitops` (appname=rust) through the Backstage
+  #      scaffolder REST API via scripts/validation/backstage-auth.sh — the SAME
+  #      non-interactive call the workshop content (module 20.2) documents:
+  #        backstage_scaffolder "template:default/cicd-pipeline-gitops" \
+  #          '{"appname":"rust","aws_region":"…","dockerfile_path":".","deployment_path":"./deployment"}'
+  #      → creates the `rust-cicd` GitLab repo + ArgoCD app → kro CICDPipeline
+  #      → ECR repo (<prefix>/rust) + Argo Workflows templates + Argo Events.
+  #   2. Wait on ECR for the first image. The kro ResourceGraphDefinition submits
+  #      its own `${name}-initial-build-workflow` (image-tag=initial,
+  #      git-revision=main) the moment the CICDPipeline goes ACTIVE, so the first
+  #      image (<prefix>/rust) is published by the platform itself — no trigger
+  #      commit is needed (reviews B1/B2: an `--allow-empty` commit cannot fire the
+  #      sensor's Lua path-filter, and the old trigger cloned the wrong repo).
+  #
+  # Flag: `prewarmRustCicd` in config (default TRUE so the automation has effect);
+  #       override at runtime with PREWARM_RUST_CICD=false. Trivially disabled.
+  # Idempotent: skips when the CICDPipeline is ACTIVE *and* an ECR image already
+  #       exists, and never re-scaffolds when the CICDPipeline object already exists
+  #       in any state (review C2). Non-fatal: `set +e` + every `exit 0` path keeps
+  #       `task install` green no matter what — mirrors wait-for-spokes / the hub
+  #       pivot. Budget-aware: prewarm waits are capped to the remaining
+  #       INSTALL_BUDGET_SEC so they cannot starve the #1033 pivot (review C1).
+  #
+  # The matching workshop CONTENT update (telling the participant the pipeline is
+  # already pre-created) is intentionally OUT OF SCOPE here and lands LATER in a
+  # separate GitLab (platform-engineering-on-eks) MR.
+  # ============================================================
+  prewarm-rust-cicd:
+    desc: "Pre-create the Rust CI/CD pipeline + publish the first image during install (flagged, idempotent, non-fatal)"
+    vars:
+      APP_NAME: '{{.PREWARM_RUST_APP | default "rust"}}'
+      APP_NS: 'team-{{.PREWARM_RUST_APP | default "rust"}}'
+      ENABLED:
+        # config key `prewarmRustCicd` (default true); PREWARM_RUST_CICD env overrides.
+        sh: |
+          ENV_OVERRIDE="${PREWARM_RUST_CICD:-}"
+          if [ -n "$ENV_OVERRIDE" ]; then echo "$ENV_OVERRIDE"; else yq '.prewarmRustCicd // true' {{.CONFIG_FILE}}; fi
+      GIT_DOMAIN:
+        sh: |
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
+          else
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
+      USER_PASSWORD:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // ""'
+      # Bounded waits (seconds). Kept well inside the install time budget; every
+      # wait is best-effort and logs-and-continues on timeout.
+      PIPELINE_TIMEOUT: '{{.PREWARM_PIPELINE_TIMEOUT | default "600"}}'
+      BUILD_TIMEOUT: '{{.PREWARM_BUILD_TIMEOUT | default "900"}}'
+      # Budget awareness (review C1): these mirror the install DAG's own timing vars
+      # so the prewarm waits can be capped to the remaining INSTALL_BUDGET_SEC and
+      # never starve the #1033 hub pivot. The install task PASSES its live INSTALL_START
+      # into this task; a standalone `task workshop:prewarm-rust-cicd` run defaults
+      # INSTALL_START to "now", which makes the cap a no-op (full timeouts apply).
+      INSTALL_START: '{{.INSTALL_START | default ""}}'
+      INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+    cmds:
+      - |
+        # Strictly non-fatal: disable errexit so no internal check can fail the install.
+        set +e
+        APP="{{.APP_NAME}}"; NS="{{.APP_NS}}"; PREFIX="{{.RESOURCE_PREFIX}}"
+        ECR_REPO="${PREFIX}/${APP}"
+
+        if [ "{{.ENABLED}}" != "true" ]; then
+          printf '{{.C_INFO}}▸ prewarm-rust-cicd: disabled (prewarmRustCicd=false / PREWARM_RUST_CICD=false) — skipping.{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Pre-warming %s CI/CD pipeline + first image (best-effort)…{{.C_RESET}}\n' "$APP"
+
+        # ── Budget awareness (review C1): cap the prewarm waits against what is left
+        #    of INSTALL_BUDGET_SEC so this step cannot starve the #1033 hub pivot that
+        #    runs right after it. The pivot skips when <120s remain after reserving
+        #    its own 300s; leave it that 300+120s floor here too. When INSTALL_START is
+        #    unset (standalone run) the cap is skipped and the full timeouts apply.
+        PIPE_T={{.PIPELINE_TIMEOUT}}; BUILD_T={{.BUILD_TIMEOUT}}
+        if [ -n "{{.INSTALL_START}}" ]; then
+          REMAIN=$(( {{.INSTALL_BUDGET_SEC}} - ($(date +%s) - {{.INSTALL_START}}) - 300 - 120 ))
+          [ "$REMAIN" -lt 0 ] && REMAIN=0
+          if [ "$REMAIN" -lt "$(( PIPE_T + BUILD_T ))" ]; then
+            PIPE_T=$(( REMAIN / 2 )); BUILD_T=$(( REMAIN - PIPE_T ))
+            printf '{{.C_INFO}}  ⚠ prewarm waits capped to remaining install budget (%ss total: pipeline=%ss build=%ss) so the hub pivot keeps its headroom.{{.C_RESET}}\n' "$REMAIN" "$PIPE_T" "$BUILD_T"
+          fi
+        fi
+
+        KC=$(mktemp)
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ cannot get hub kubeconfig — skipping prewarm (non-fatal).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 0
+        fi
+        KUBE="kubectl --kubeconfig $KC"
+
+        # ── Idempotency: skip entirely when the pipeline is already ACTIVE AND an
+        #    image already exists in ECR. Re-runnable with no duplicate work.
+        PSTATE=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+        IMG_COUNT=$(aws ecr list-images --repository-name "$ECR_REPO" --region {{.AWS_REGION}} \
+          --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
+        if [ "$PSTATE" = "ACTIVE" ] && [ "${IMG_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+          printf '{{.C_OK}}  ✓ already pre-warmed: CICDPipeline %s ACTIVE and ECR %s has %s image(s) — nothing to do.{{.C_RESET}}\n' "${APP}-cicd-pipeline" "$ECR_REPO" "$IMG_COUNT"
+          rm -f "$KC"; exit 0
+        fi
+
+        # ── Gate on the Argo Workflows controller being Ready (the content's own
+        #    documented prerequisite before any CI workflow can run). Phantom-healthy
+        #    ArgoCD app is NOT sufficient — wait for the Deployment + CRD.
+        printf '{{.C_STEP}}  ▸ waiting for Argo Workflows controller…{{.C_RESET}}\n'
+        $KUBE rollout status deploy/workflow-controller -n argo --timeout=300s >/dev/null 2>&1 \
+          || printf '{{.C_ERR}}  ⚠ workflow-controller not Ready in time — continuing anyway (non-fatal).{{.C_RESET}}\n'
+        if ! $KUBE get crd workflows.argoproj.io >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ Workflow CRD not served yet — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 0
+        fi
+
+        # ── 1) Scaffold the pipeline via the Backstage scaffolder REST API, unless it
+        #    already exists. backstage-auth.sh needs BACKSTAGE_URL + USER1_PASSWORD.
+        #    Idempotency (review C2): skip scaffolding when the CICDPipeline object
+        #    already exists in ANY state — a re-run after a partial attempt (repo
+        #    published, pipeline not yet ACTIVE) must NOT re-invoke publish:gitlab,
+        #    which has no existing-repo handling and would fail. In that case fall
+        #    through to just waiting for ACTIVE below.
+        PIPELINE_EXISTS=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" --ignore-not-found -o name 2>/dev/null)
+        if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ]; then
+          BSAUTH="{{.PLATFORM_DIR}}/scripts/validation/backstage-auth.sh"
+          if [ ! -f "$BSAUTH" ]; then
+            printf '{{.C_ERR}}  ⚠ %s not found — skipping prewarm (non-fatal).{{.C_RESET}}\n' "$BSAUTH"
+            rm -f "$KC"; exit 0
+          fi
+          BASE="{{.CLOUDFRONT_DOMAIN}}"; [ -z "$BASE" ] && BASE="{{.DOMAIN}}"
+          export BACKSTAGE_URL="https://${BASE}/backstage"
+          export USER1_PASSWORD="{{.USER_PASSWORD}}"
+          if [ -z "$USER1_PASSWORD" ]; then
+            printf '{{.C_ERR}}  ⚠ could not resolve user1 password — skipping scaffold (non-fatal).{{.C_RESET}}\n'
+            rm -f "$KC"; exit 0
+          fi
+          # shellcheck disable=SC1090
+          . "$BSAUTH" 2>/dev/null || true
+          # backstage-auth.sh runs `set -euo pipefail`; sourcing it re-enables errexit
+          # in this shell, which would void the task's non-fatal contract. Restore it
+          # (review S2) so every later command here is best-effort at the task level,
+          # not only via ignore_error on the DAG call.
+          set +e
+          printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s)…{{.C_RESET}}\n' "$APP"
+          VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
+          if backstage_scaffolder "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>&1; then
+            printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
+          else
+            printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n'
+          fi
+        fi
+
+        # Wait for the kro CICDPipeline to reach ACTIVE (ArgoCD syncs it from the
+        # scaffolded repo, then kro provisions ECR + workflow templates + events).
+        # Reached on both the fresh-scaffold path and the re-run path where the
+        # pipeline object already existed (C2) but was not yet ACTIVE.
+        if [ "$PSTATE" != "ACTIVE" ]; then
+          printf '{{.C_STEP}}  ▸ waiting for CICDPipeline %s ACTIVE (max %ss)…{{.C_RESET}}\n' "${APP}-cicd-pipeline" "$PIPE_T"
+          E=0
+          while [ "$E" -lt "$PIPE_T" ]; do
+            PSTATE=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+            [ "$PSTATE" = "ACTIVE" ] && break
+            sleep 15; E=$((E + 15))
+          done
+          if [ "$PSTATE" = "ACTIVE" ]; then
+            printf '{{.C_OK}}  ✓ CICDPipeline %s ACTIVE.{{.C_RESET}}\n' "${APP}-cicd-pipeline"
+          else
+            printf '{{.C_ERR}}  ⚠ CICDPipeline %s not ACTIVE after %ss (state=%s) — skipping image wait (non-fatal).{{.C_RESET}}\n' "${APP}-cicd-pipeline" "$PIPE_T" "${PSTATE:-none}"
+            rm -f "$KC"; exit 0
+          fi
+        fi
+
+        # ── 2) The RGD's own `${name}-initial-build-workflow` (image-tag=initial,
+        #    git-revision=main) publishes the first image automatically the moment the
+        #    CICDPipeline goes ACTIVE — the kro ResourceGraphDefinition submits it on
+        #    pipeline creation. No trigger commit is needed (reviews B1/B2): an
+        #    `--allow-empty` commit cannot fire the sensor's Lua path-filter, and the
+        #    old trigger also cloned the wrong repo (`rust` vs the scaffolded
+        #    `rust-cicd`). So just wait for the initial build to land an image in ECR.
+        IMG_COUNT=$(aws ecr list-images --repository-name "$ECR_REPO" --region {{.AWS_REGION}} \
+          --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
+        if [ "${IMG_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+          printf '{{.C_OK}}  ✓ ECR %s already has %s image(s) — first image already published.{{.C_RESET}}\n' "$ECR_REPO" "$IMG_COUNT"
+          rm -f "$KC"; exit 0
+        fi
+
+        # ── 3) Best-effort wait for the RGD initial build workflow
+        #    (<name>-initial-build-workflow) — and any webhook-triggered cicd-cicd-*
+        #    workflow — to publish the first image to ECR <prefix>/<app>. dora-* are
+        #    non-blocking metrics side-effects and are ignored.
+        printf '{{.C_STEP}}  ▸ waiting for CI build workflow + ECR image (max %ss)…{{.C_RESET}}\n' "$BUILD_T"
+        E=0; DONE=false
+        while [ "$E" -lt "$BUILD_T" ]; do
+          IMG_COUNT=$(aws ecr list-images --repository-name "$ECR_REPO" --region {{.AWS_REGION}} \
+            --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
+          if [ "${IMG_COUNT:-0}" -gt 0 ] 2>/dev/null; then DONE=true; break; fi
+          # Match the RGD initial-build workflow (<name>-initial-build-workflow) AND any
+          # webhook-triggered cicd-cicd-* workflow — not the literal "cicd-cicd", which
+          # never matches the initial build name (review S1), so a genuine failure is
+          # detected fast instead of waiting out the full timeout.
+          WF=$($KUBE get workflows -n "$NS" --sort-by=.metadata.creationTimestamp --no-headers \
+            -o custom-columns=NAME:.metadata.name,PHASE:.status.phase 2>/dev/null \
+            | grep -E "initial-build-workflow|cicd-cicd" | tail -1)
+          echo "$WF" | grep -q "Failed" && { printf '{{.C_ERR}}  ⚠ CI build workflow Failed (%s) — continuing (non-fatal).{{.C_RESET}}\n' "$WF"; break; }
+          sleep 20; E=$((E + 20))
+        done
+        if [ "$DONE" = "true" ]; then
+          printf '{{.C_OK}}  ✓ first image published to ECR %s (%s image(s)). Pre-warm complete.{{.C_RESET}}\n' "$ECR_REPO" "$IMG_COUNT"
+        else
+          printf '{{.C_INFO}}  ⚠ first image not confirmed in ECR %s after %ss — pipeline is pre-created; the build may still be finishing or will run on the first participant push (non-fatal).{{.C_RESET}}\n' "$ECR_REPO" "$BUILD_T"
+        fi
+        rm -f "$KC"
+      - printf '{{.C_OK}}✓ prewarm-rust-cicd done.{{.C_RESET}}\n'
 
   # ============================================================
   # PRE-REQUISITES

@@ -72,6 +72,15 @@ resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resour
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
 
+# Pre-warm the Rust CI/CD pipeline during install.
+# When true (default), the workshop install DAG pre-creates the Rust CI/CD pipeline
+# (Backstage `cicd-pipeline-gitops` scaffolder, appname=rust) and publishes the first
+# Rust image to ECR at the END of provisioning — so the atelier participant no longer
+# waits ~38-47min for it at module 20.2/20.3 time. Idempotent (skips when the pipeline
+# is ACTIVE and an image already exists) and strictly non-fatal (never fails
+# `task install`). Override at runtime with PREWARM_RUST_CICD=false.
+prewarmRustCicd: true
+
 # Platform-wide AWS tags applied to every AWS resource the platform creates:
 #   - hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in
 #     platform-engineering-on-eks (Layer 1);
