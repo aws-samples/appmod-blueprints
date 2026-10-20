@@ -33,19 +33,17 @@
     }
   },
   "tools": [
+    "@aws-knowledge-mcp-server",
     "@awslabs.aws-iac-mcp-server",
     "@eks-mcp-server",
-    "@aws-knowledge-mcp-server",
-    "read",
-    "write",
-    "shell",
     "aws",
-    "thinking",
-    "introspect"
+    "introspect",
+    "read",
+    "shell",
+    "write"
   ],
   "allowedTools": [
     "read",
-    "thinking",
     "introspect",
     "@aws-knowledge-mcp-server"
   ],
@@ -69,5 +67,32 @@
       "indexType": "fast",
       "include": ["**/*.md"]
     }
-  ]
+  ],
+  "permissions": {
+    "rules": [
+      {
+        "capability": "fs_read",
+        "effect": "allow"
+      },
+      {
+        "capability": "mcp",
+        "match": [
+          "aws-knowledge-mcp-server/*"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "skill",
+        "effect": "allow"
+      }
+    ],
+    "policies": [
+      "read-only-shell"
+    ]
+  },
+  "kiroUpgrade": {
+    "revision": 2,
+    "fingerprint": "sha256:3c447994ed56a0fca99fcf8c23d065b08d8139217d805292b77c4b3f5022fd8f",
+    "source": "sha256:f355bd26347831e89627fc26d983861640d38000f40847ada1542bf4d5b3d982"
+  }
 }
