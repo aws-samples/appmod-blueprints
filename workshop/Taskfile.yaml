@@ -597,7 +597,14 @@ tasks:
         set_var BACKSTAGE_URL "https://${CF}/backstage"
         set_var KEYCLOAK_ADMIN_URL "https://${CF}/keycloak/admin"
         set_var WORKFLOWS_URL "https://${CF}/argo-workflows"
-        set_var KARGO_URL "https://${CF}"
+        # Kargo UI is served under /kargo on the platform ALB (kargo chart ingress
+        # path: /kargo), NOT at the root — the bare domain returns 404. Point the var
+        # at the real path so `open $KARGO_URL` lands on the UI.
+        set_var KARGO_URL "https://${CF}/kargo"
+        # Langfuse is the "/" catch-all on the shared platform ALB (langfuse ingress
+        # path: /, high group.order so it is evaluated last). Next.js has no runtime
+        # basePath, so it is served at the domain root, not a sub-path.
+        set_var LANGFUSE_URL "https://${CF}"
         set_var JUPYTERHUB_URL "https://${CF}/jupyterhub"
         set_var INGRESS_DOMAIN "${CF}"
         set_var AWS_REGION "{{.AWS_REGION}}"
