@@ -153,9 +153,30 @@ CLUSTER_PROVIDER="${CLUSTER_PROVIDER:-kind-kro-ack}"
 K8S_VERSION="${K8S_VERSION:-1.35}"
 VPC_CIDR="${VPC_CIDR:-10.1.0.0/16}"
 FORCE="${FORCE:-false}"
+# Instance-size floor for the neutral platform-general fallback pool. The generic
+# chart ships NO floor (off by default); the workshop supplies its tuning so a
+# "false" hub floors the fallback to the overlay general-purpose-peeks sizes from
+# the first sync (before set-overlay-repo). Single source of truth, used both when
+# generating a fresh config and when topping up an existing one on the skip path.
+FALLBACK_FLOOR="${FALLBACK_FLOOR:-xlarge,2xlarge,4xlarge,8xlarge}"
 
 # --- Idempotency -----------------------------------------------------------
 if [ "$FORCE" != "true" ] && [ -f "$OUTPUT_FILE" ] && yq '.' "$OUTPUT_FILE" >/dev/null 2>&1; then
+  # Top up the fallback instance-size floor on the skip path. A resumed or re-run
+  # install (or a config generated before this key existed) can have a valid
+  # config.local.yaml with no hub.fallbackNodepoolInstanceSizeFloor. If we just
+  # skipped, HUB_GP_FLOOR would resolve to "" downstream and a "false" hub would
+  # get an UNFLOORED platform-general fallback — the exact first-sync window this
+  # floor was added for. So if the hub section exists and the key is absent/empty,
+  # write it in place (idempotent; same steering rule — tuning lives in the
+  # workshop config, not in cluster-providers/*).
+  if yq -e '.hub' "$OUTPUT_FILE" >/dev/null 2>&1; then
+    CUR_FLOOR=$(yq '.hub.fallbackNodepoolInstanceSizeFloor // ""' "$OUTPUT_FILE" 2>/dev/null || echo "")
+    if [ -z "$CUR_FLOOR" ]; then
+      FALLBACK_FLOOR="$FALLBACK_FLOOR" yq -i '.hub.fallbackNodepoolInstanceSizeFloor = strenv(FALLBACK_FLOOR)' "$OUTPUT_FILE"
+      echo "✓ topped up hub.fallbackNodepoolInstanceSizeFloor=\"$FALLBACK_FLOOR\" in existing $OUTPUT_FILE"
+    fi
+  fi
   echo "✓ $OUTPUT_FILE already exists and is valid YAML — skipping (use FORCE=true to overwrite)"
   exit 0
 fi
@@ -323,7 +344,7 @@ if [ -n "${HUB_VPC_ID:-}" ] && [ -n "${HUB_SUBNET_IDS:-}" ]; then
   # hub floors the fallback to the same sizes as the overlay general-purpose-peeks pool
   # from the first sync (before set-overlay-repo). hub:seed mirrors this into the cluster
   # secret annotation fallback_nodepool_instance_size_floor, the SAME path as the gate.
-  printf '  fallbackNodepoolInstanceSizeFloor: "xlarge,2xlarge,4xlarge,8xlarge"\n' >> "$OUTPUT_FILE"
+  printf '  fallbackNodepoolInstanceSizeFloor: "%s"\n' "$FALLBACK_FLOOR" >> "$OUTPUT_FILE"
   printf '  network:\n'                                >> "$OUTPUT_FILE"
   printf '    vpcId: "%s"\n' "$HUB_VPC_ID"             >> "$OUTPUT_FILE"
   printf '    subnetIds:\n'                            >> "$OUTPUT_FILE"
@@ -344,7 +365,7 @@ else
   # Instance-size floor for the neutral platform-general fallback pool (see note above):
   # the generic chart ships no floor, the workshop supplies its tuning here so hub:seed
   # mirrors it into the cluster secret on the SAME path as the gate.
-  printf '  fallbackNodepoolInstanceSizeFloor: "xlarge,2xlarge,4xlarge,8xlarge"\n' >> "$OUTPUT_FILE"
+  printf '  fallbackNodepoolInstanceSizeFloor: "%s"\n' "$FALLBACK_FLOOR" >> "$OUTPUT_FILE"
 fi
 printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
 printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
