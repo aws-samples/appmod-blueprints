@@ -317,7 +317,7 @@ merges `awsTags`:
   every other platform-created AWS resource. This is what lets the teardown/cost
   sweepers enumerate and protect backup vaults.
 - `BackupPlan.recoveryPointTags` — so every recovery point produced is self-describing
-  (which spoke, which tier, which deployment), which the restore side relies on to
+  (which spoke, which tier), which the restore side relies on to
   find the right recovery point (see [Restore design](#restore-design--the-restoreselection-rgd)).
   **Mind the per-recovery-point tag cap:** AWS Backup assigns both the
   source-resource tags and the backup-assigned tags to each recovery point, **up to a
@@ -1117,13 +1117,26 @@ that created them — if the backup service role is reaped first, the recovery p
 no longer be deleted).
 
 For **each Region (primary + DR)**, for vaults owned by this stack (`name_is_ours` or
-the prefix ownership tag), in this exact order:
+the prefix ownership tag), in this exact order.
 
-1. **Delete selections, then plans** — `delete-backup-selection` for every selection,
-   then `delete-backup-plan` (which works **only after all its selections are
-   deleted**). Tolerate `NotFound`, since ACK may already have removed them on prune.
-   Deleting the plan first stops the schedule, so no *new* recovery point is created
-   while the vault is being drained.
+First, **once globally, before any Region is drained:**
+
+1. **Delete selections, then plans — all of them, up front.** `delete-backup-selection`
+   for every selection, then `delete-backup-plan` (which works **only after all its
+   selections are deleted**). Tolerate `NotFound`, since ACK may already have removed
+   them on prune. This is done **once, before any vault is drained**, not inside the
+   per-Region loop: the plan and its schedule live only in the **primary** Region, but
+   the gold/silver rules carry a cross-Region `copyAction`, so while the plan is still
+   live its copy action keeps landing fresh recovery points in the **DR** vault ([copy
+   to a destination vault is a rule on the scheduled plan](https://docs.aws.amazon.com/aws-backup/latest/devguide/cross-region-backup.html#scheduled-crb)).
+   If the plan were deleted only per-Region, a DR-first pass would drain the DR vault
+   while the primary plan kept copying new points straight back into it, and the
+   subsequent `delete-backup-vault` on DR would fail. Deleting all plans first stops
+   every schedule **and** every cross-Region copy action, so no *new* recovery point
+   can be created in either vault while they are being drained.
+
+Then, **for each Region (primary + DR)**, in this order:
+
 2. **Wait for in-flight jobs** — poll `list-backup-jobs` / `list-copy-jobs` for this
    vault until no job is `RUNNING`/`CREATED`. A backup or cross-Region copy already in
    flight will still land a recovery point after step 1, so the vault is not provably
@@ -1272,8 +1285,12 @@ against the repo:
   `kro-manifests-hub` and spoke `kro-manifests` apps, which exclude only listed subtrees.
   If the backup CRDs are absent (the doc's own fallback case) the RGD stays `Ready=False`
   and stalls the shared wave chain — the exact reason `ray-service` and `amp-incident`
-  got dedicated gated apps. Add a `kro-backup-policy-rgd-hub` gated on an
-  `enable_backup_policy` flag, and exclude `backup-policy/**` from both apps.
+  got dedicated gated apps. Add a `kro-backup-policy-rgd-hub` app (path
+  `.../manifests/backup-policy`) gated on an `enable_backup_policy` flag, and add
+  `backup-policy/**` to the `exclude` list of **both** the `kro-manifests-hub` and the
+  spoke `kro-manifests` apps. The restore subtree in (e) gets the same treatment on the
+  spoke side (its own excluded subtree + dedicated gated app), so the generic exclusion
+  in (a) can stay symmetric without stranding restore.
 - **b. RBAC.** The `eks-capabilities-rbac` ClusterRole has **no** `backup.services.k8s.aws`
   rule (and no `storage.k8s.io`), so the kro capability cannot create the CRs as-is. Add
   the rule (same lesson as #1110).
@@ -1283,17 +1300,27 @@ against the repo:
   tier classes are rendered by the `default-storage-class` chart (add `clusterName` to
   its `valuesObject`), **not** by the `BackupPolicy` RGD — and the doc's earlier
   self-contradiction ("the RGD renders them") is corrected to the chart throughout.
-- **e. `RestoreSelection` is a SPOKE-side object, not a hub one.** The same rule as (d)
-  applies to restore: `RestoreSelection` materializes a Kubernetes Job and a static PV
-  that must exist in the **target spoke**, and the gated `kro-backup-policy-rgd-hub`
-  app from (a) runs on the hub — a hub RGD cannot place a Job or a PV into a spoke.
-  So `RestoreSelection` ships spoke-side through the spoke `kro-manifests` app (behind
-  its own `enable_kro_manifests` gate), and its restore Job authenticates as a **spoke
-  Pod Identity role** (the "Restore Job role" in the IAM table), not as the hub
-  controller role. This mirrors the StorageClass split in (d): the declarative
-  `BackupPolicy` vault/plan/selection objects are hub-reconciled ACK resources, but
-  anything that must land inside a spoke (the tier StorageClasses, the restore Job and
-  its static PV) is placed by a spoke-side app.
+- **e. `RestoreSelection` is a SPOKE-side object with its own gated app.** The same rule
+  as (d) applies to restore: `RestoreSelection` materializes a Kubernetes Job and a
+  static PV that must exist in the **target spoke**, and the gated
+  `kro-backup-policy-rgd-hub` app from (a) runs on the hub — a hub RGD cannot place a
+  Job or a PV into a spoke. But it **cannot** simply ride the generic spoke
+  `kro-manifests` app either: that app is gated only on `enable_kro_manifests`, and (a)
+  excludes `backup-policy/**` from it — so the restore objects would be either ungated
+  (shipped to every `enable_kro_manifests` spoke regardless of whether backup is on) or
+  excluded along with the rest of `backup-policy/**`. Resolve both by giving restore its
+  **own subtree** — `.../manifests/backup-restore/` — and a **dedicated spoke-side app**,
+  `kro-backup-restore-spoke` (path `.../manifests/backup-restore`), gated on the same
+  `enable_backup_policy` flag as (a). Add `backup-restore/**` to the `exclude` list of the
+  spoke `kro-manifests` app (and the hub app) so it is not double-applied, mirroring how
+  `ray-service` and `amp-incident` are each excluded from the generic trees and shipped by
+  their own gated apps. The restore Job then authenticates as a **spoke Pod Identity role**
+  (the "Restore Job role" in the IAM table), not as the hub controller role. Net: the
+  declarative `BackupPolicy` vault/plan/selection objects are hub-reconciled ACK resources
+  under the `enable_backup_policy`-gated **hub** app, and the restore Job + static PV are
+  placed by the `enable_backup_policy`-gated **spoke** app — a single flag turns the whole
+  feature (hub declarative objects **and** spoke restore path) on and off consistently,
+  exactly mirroring the StorageClass split in (d).
 
 ## Consolidation plan & PR provenance
 
