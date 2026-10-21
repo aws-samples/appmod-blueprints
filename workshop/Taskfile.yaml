@@ -509,12 +509,12 @@ tasks:
   #          '{"appname":"rust","aws_region":"…","dockerfile_path":".","deployment_path":"./deployment"}'
   #      → creates the `rust-cicd` GitLab repo + ArgoCD app → kro CICDPipeline
   #      → ECR repo (<prefix>/rust) + Argo Workflows templates + Argo Events.
-  #   2. Wait on ECR for the first image. The kro ResourceGraphDefinition submits
-  #      its own `${name}-initial-build-workflow` (image-tag=initial,
-  #      git-revision=main) as soon as the CICDPipeline is CREATED (before it is even
-  #      ACTIVE), so the first image (<prefix>/rust) is published by the platform
-  #      itself — no trigger commit is needed (reviews B1/B2: an `--allow-empty` commit
-  #      cannot fire the sensor's Lua path-filter, and the old trigger cloned the wrong repo).
+  #   2. Wait for the CICDPipeline to reach ACTIVE, then exit. During an install
+  #      (DEADLINE set) the task exits here — the pipeline is ACTIVE and the kro
+  #      ResourceGraphDefinition submits `${name}-initial-build-workflow` (image-tag=initial,
+  #      git-revision=main) to publish the first ECR image in the background; the
+  #      installer does not wait for it. On a standalone run (no DEADLINE) the task
+  #      continues to poll ECR until that image exists.
   #
   # Flag: `prewarmRustCicd` in config (default TRUE so the automation has effect);
   #       override at runtime with PREWARM_RUST_CICD=false. Trivially disabled.
@@ -752,14 +752,15 @@ tasks:
           DEADLINE=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC}} - 300 - 120 - 300 ))
           REMAIN=$(( DEADLINE - $(date +%s) ))
           [ "$REMAIN" -lt 0 ] && REMAIN=0
-          # Cap the rollout wait, reserve the scaffolder poll, split what remains between
-          # the pipeline-ACTIVE and ECR-image waits — so the whole task fits in REMAIN.
+          # Cap the rollout wait, reserve the scaffolder poll, then give all remaining
+          # budget to PIPE_T — the ECR-image wait (BUILD_T) is never reached during an
+          # install (the task exits after pipeline ACTIVE; see exit-on-DEADLINE below).
           CAPPED=""
           [ "$ROLLOUT_T" -gt "$REMAIN" ] && { ROLLOUT_T=$REMAIN; CAPPED=yes; }
           AFTER_PREWAITS=$(( REMAIN - ROLLOUT_T - SCAFFOLD_RESERVE ))
           [ "$AFTER_PREWAITS" -lt 0 ] && AFTER_PREWAITS=0
-          if [ "$AFTER_PREWAITS" -lt "$(( PIPE_T + BUILD_T ))" ]; then
-            PIPE_T=$(( AFTER_PREWAITS / 2 )); BUILD_T=$(( AFTER_PREWAITS - PIPE_T )); CAPPED=yes
+          if [ "$AFTER_PREWAITS" -lt "$PIPE_T" ]; then
+            PIPE_T=$AFTER_PREWAITS; BUILD_T=0; CAPPED=yes
           fi
           # Only say so when a wait was actually clamped — not on every budgeted install
           # where the full timeouts already fit (pnz1990 review #1136 nit).
