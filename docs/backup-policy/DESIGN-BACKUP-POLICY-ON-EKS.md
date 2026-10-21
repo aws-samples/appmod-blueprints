@@ -171,13 +171,15 @@ BackupPolicy CR (claim)
    ▼
 ┌─ BackupPlan (ACK)             ── one variant per tier (includeWhen)
 │  rules: schedule + lifecycle
-│  recoveryPointTags: platform.gitops.io/backup-tier, platform.gitops.io/spoke, <awsTags>
+│  recoveryPointTags: platform.gitops.io/backup-tier, platform.gitops.io/spoke
+│                     (the keys the restore side queries — NOT the whole <awsTags> map;
+│                      a recovery point caps at 50 tags, see Tag propagation)
 │  copyActions for gold / silver (cross-region)
 └────
    │
    ▼
 ┌─ BackupSelection (ACK)        ── one variant per tier
-│  iamRoleARN: <from claim; AWSBackupDefaultServiceRole>
+│  iamRoleARN: <from claim; the platform *AWSBackup* service role, <backup-service-role-arn>>
 │  resources:
 │    - arn:aws:ec2:<region>:<account-id>:volume/*     (EBS volumes ONLY)
 │  conditions: platform.gitops.io/backup-tier + platform.gitops.io/spoke
@@ -196,7 +198,7 @@ alongside the primitive, rather than living in operator runbooks:
 | Tier            | Schedule              | Start window | RPO | Warm retention | DR-copy retention | Cold storage | Cross-region copy | RTO target |
 |-----------------|-----------------------|--------------|-----|----------------|-------------------|--------------|-------------------|------------|
 | gold            | `cron(0 * * * ? *)`   | 60 min       | 1h  | 14d            | 30d               | —            | yes               | ≤ 1h\*     |
-| gold-archive†   | `cron(0 0 1 * ? *)`   | 480 min      | 30d | —              | —                 | after 30d    | no (cold)         | up to 72h  |
+| gold-archive†   | `cron(0 0 1 * ? *)`   | 60 min       | 30d | 30d            | —                 | after 30d    | no (cold)         | up to 72h  |
 | silver          | `cron(0 2 * * ? *)`   | 60 min       | 24h | 14d            | 7d                | —            | yes               | ≤ 4h\*     |
 | bronze          | `cron(0 3 * * ? *)`   | 60 min       | 24h | 7d             | —                 | —            | no                | best effort|
 
@@ -273,8 +275,11 @@ directly.
 
 ### Platform tag propagation (`platformTags` → `awsTags` → ACK `spec.tags`)
 
-PEEKS threads a platform-wide tag map through the whole provisioning chain, carried by
-the `platform.gitops.io/prefix` + `platform.gitops.io/cluster` ownership tags:
+PEEKS threads a platform-wide tag map through the whole provisioning chain. The two
+**ownership** tags — `platform.gitops.io/prefix` and `platform.gitops.io/cluster` — are
+**not** carried inside `awsTags`; they are derived from dedicated schema fields
+(`schema.spec.resourcePrefix` and `schema.spec.name`) and merged as built-ins, with the
+user-supplied `awsTags` overlaid on top:
 
 ```
 config.local.yaml  platformTags: {…}
@@ -283,30 +288,46 @@ config.local.yaml  platformTags: {…}
 hub cluster-secret  annotation  platform_tags: '{…}'
    │  (clusters-kro ApplicationSet, global.platformTags)
    ▼
-RGD schema field    spec.awsTags: map[string]string
-   │  (kro CEL: Maps.merge — user keys win, platform keys cannot be silently dropped)
+RGD schema field    spec.resourcePrefix, spec.name  (ownership); spec.awsTags (overlay)
+   │  (kro CEL: built-in ownership tags from resourcePrefix/name, then .merge(awsTags))
    ▼
-ACK resource        spec.tags: {built-in… , <awsTags>}
+ACK resource        spec.tags: {built-in ownership (from resourcePrefix/name)… , <awsTags>}
 ```
 
-The EKS RGD consumes `awsTags` with exactly this merge, e.g.:
+The EKS RGD builds the ownership tags from the dedicated fields and merges `awsTags`
+over them — the ownership keys come from `resourcePrefix`/`name`, **not** from `awsTags`
+(`rg-eks.yaml:454`):
 
 ```yaml
-# how an ACK resource consumes awsTags in an existing RGD (rg-eks.yaml)
-tags: '${ {"kro-management": schema.spec.name, "tenant": schema.spec.tenant}
+# how an ACK resource builds ownership tags + merges awsTags in an existing RGD (rg-eks.yaml)
+tags: '${ {"kro-management": schema.spec.name, "tenant": schema.spec.tenant,
+           "platform.gitops.io/prefix": schema.spec.resourcePrefix,
+           "platform.gitops.io/cluster": schema.spec.name}
          .merge(schema.spec.?awsTags.orValue({})) }'
 ```
 
-`BackupPolicy` exposes the same `awsTags` schema field and merges it into:
+`BackupPolicy` therefore needs its own `resourcePrefix` and `clusterName` schema fields
+(as `rg-eks` has `resourcePrefix`/`name`) and derives the ownership tags from them, then
+merges `awsTags`:
 
 - `BackupVault.spec.tags` — so vaults carry the platform ownership tags
-  (`platform.gitops.io/prefix` + `platform.gitops.io/cluster`), cost-allocation tags,
-  and the SpringClean `auto-delete=no` retention tag, exactly like every other
-  platform-created AWS resource. This is what lets the teardown/cost sweepers enumerate
-  and protect backup vaults.
+  (`platform.gitops.io/prefix` + `platform.gitops.io/cluster`, **from the dedicated
+  `resourcePrefix`/`clusterName` fields above**), plus any cost-allocation and
+  SpringClean `auto-delete=no` retention tags supplied through `awsTags`, exactly like
+  every other platform-created AWS resource. This is what lets the teardown/cost
+  sweepers enumerate and protect backup vaults.
 - `BackupPlan.recoveryPointTags` — so every recovery point produced is self-describing
   (which spoke, which tier, which deployment), which the restore side relies on to
   find the right recovery point (see [Restore design](#restore-design--the-restoreselection-rgd)).
+  **Mind the per-recovery-point tag cap:** AWS Backup assigns both the
+  source-resource tags and the backup-assigned tags to each recovery point, **up to a
+  maximum of 50** (an AWS limitation; backup-assigned tags take priority, copied in
+  alphabetical order — [Copy tags onto
+  backups](https://docs.aws.amazon.com/aws-backup/latest/devguide/tags-on-backups.html)).
+  So `recoveryPointTags` + the merged `awsTags` + whatever source tags the volume
+  already carries must stay within 50, or the backup job can fail — keep
+  `recoveryPointTags` to the few keys the restore side actually queries
+  (`backup-tier`, `spoke`) rather than echoing the whole `awsTags` map.
 
 > **Important distinction.** `awsTags` on the vault/plan (platform ownership /
 > cost / retention tags on the *AWS Backup objects themselves*) is a **different
@@ -546,7 +567,7 @@ RestoreSelection CR (claim)
      tier:               <gold|silver|bronze>
      recoveryPointAt:    <timestamp|latest> # point-in-time selector
      targetCluster:      <existing|new>     # existingCluster vs born-fresh
-     iamRoleARN:         <AWSBackupDefaultServiceRole ARN>
+     iamRoleARN:         <backup-service-role-arn>   # the platform *AWSBackup* service role
    │
    ▼
 ┌─ a Kubernetes Job (or ACK controller once a RestoreJob CRD exists)
@@ -555,10 +576,18 @@ RestoreSelection CR (claim)
 │  then drives the restore in four steps:
 │    1. backup:GetRecoveryPointRestoreMetadata → the required EBS restore metadata
 │    2. backup:StartRestoreJob (returns a RestoreJobId only)
-│    3. poll backup:DescribeRestoreJob → CreatedResourceArn = the NEW volume id
+│    3. poll backup:DescribeRestoreJob → CreatedResourceArn (an ARN; parse the
+│       vol-... volume id out of it — it is NOT a bare volume id)
 │    4. ec2:CreateTags on the new volume:
-│         eks:eks-cluster-name=<target>   → REQUIRED or Auto Mode won't attach it
-│         platform.gitops.io/* (tier/spoke) → so it is re-selectable by the next backup
+│         eks:eks-cluster-name=<target>          → REQUIRED or Auto Mode won't attach it
+│         platform.gitops.io/spoke=<TARGET spoke> → the spoke being restored INTO, not the
+│                                                   source (a source tag would let a
+│                                                   same-Region blue/green restore be
+│                                                   re-selected by the SOURCE spoke's
+│                                                   BackupSelection)
+│         platform.gitops.io/backup-tier=<tier>  → so it re-enters its tier's selection
+│         platform.gitops.io/prefix=<prefix>     → REQUIRED so teardown step 5 can find
+│                                                   the detached volume by the prefix tag
 └────
    │
    ▼
@@ -593,8 +622,11 @@ with a new volume ID** from the recovery point. Two API details the orchestrator
 get right:
 
 - `StartRestoreJob` returns **only a `RestoreJobId`** — it does not return the new
-  volume. The new volume's ARN/ID comes from polling
-  `backup:DescribeRestoreJob` and reading **`CreatedResourceArn`**.
+  volume. The new volume comes from polling `backup:DescribeRestoreJob` and reading
+  **`CreatedResourceArn`**, which is a full **ARN**
+  (`arn:aws:ec2:<region>:<account>:volume/vol-…`); the `volumeHandle` the static PV
+  needs is the bare `vol-…` id, so the orchestrator must **parse it out of the ARN**
+  (e.g. the segment after `volume/`), not pass the ARN through.
 - The call **requires a restore-metadata document** fetched first with
   `backup:GetRecoveryPointRestoreMetadata`. There is **no `pvName` key**; the EBS
   restore-metadata keys are `availabilityZone`, `encrypted`, `iops`, `kmsKeyId`,
@@ -611,9 +643,12 @@ with `FailedAttachVolume`. `StartRestoreJob` copies source tags only when
 `CopySourceTagsToRestoredResource` is true, and even then the copied value names the
 **source** cluster — so blue/green, clone and DR restores still fail to attach. The
 orchestrator must therefore `ec2:CreateTags` the new volume with
-`eks:eks-cluster-name=<target-cluster>` (plus the `platform.gitops.io/*` tier/spoke
-tags, so the restored volume re-enters its tier's `BackupSelection`) **before** the pod
-is scheduled.
+`eks:eks-cluster-name=<target-cluster>` **plus** the `platform.gitops.io/backup-tier`,
+the `platform.gitops.io/spoke` of the **target** spoke (the one being restored into —
+using the *source* spoke's value would let a same-Region blue/green restore be picked up
+by the source spoke's `BackupSelection`), and `platform.gitops.io/prefix` (so the
+teardown reaper can later find the detached volume by the prefix tag), so the restored
+volume re-enters the correct tier's `BackupSelection` **before** the pod is scheduled.
 
 The restore side of the `<prefix>-cluster-mgmt-backup` controller role is therefore not
 enough on its own — the restore Job needs its own identity with
@@ -652,7 +687,11 @@ spec:
   capacity:
     storage: <restored size, from restore metadata>   # must be >= the PVC request
   accessModes: ["ReadWriteOnce"]
-  persistentVolumeReclaimPolicy: Retain                # never GC the restored data
+  persistentVolumeReclaimPolicy: Retain                # TIER-DERIVED, not fixed: Retain for
+                                                       # gold only (if the teardown reaper ships);
+                                                       # Delete for silver/bronze — otherwise the
+                                                       # silver/bronze orphan this design avoids
+                                                       # comes back for restored volumes
   storageClassName: <prefix>-<spokeName>-gold          # match the PVC's class, so Argo's
                                                        # dynamic PVC binds here not to a new disk
   claimRef:                                            # PRE-BIND to the exact PVC → no race
@@ -667,7 +706,8 @@ spec:
               values: ["<restored-volume-az>"]
   csi:
     driver: ebs.csi.eks.amazonaws.com
-    volumeHandle: <new-volume-id>                      # from DescribeRestoreJob.CreatedResourceArn
+    volumeHandle: <new-volume-id>                      # the bare vol-... id PARSED from
+                                                       # DescribeRestoreJob.CreatedResourceArn (an ARN)
 ```
 
 The two load-bearing fields are `claimRef` (pre-binding the PV to the specific PVC so
@@ -677,9 +717,12 @@ scheduler only places the stateful pod on a node in the restored volume's AZ). T
 orchestrator fills `storage`, `<restored-volume-az>`, and `volumeHandle` from the
 restore-job output and the restore metadata. **Before creating this PV**, the
 orchestrator must `ec2:CreateTags` the new volume with `eks:eks-cluster-name=<target>`
-(or Auto Mode never attaches it) **and** the `platform.gitops.io/*` tier/spoke tags (so
-the restored volume is itself re-selectable by the next backup cycle — otherwise the
-restored data silently falls out of its tier's `BackupSelection`).
+(or Auto Mode never attaches it) **and** the `platform.gitops.io/backup-tier`, the
+`platform.gitops.io/spoke` of the **target** spoke, and the `platform.gitops.io/prefix`
+tags (so the restored volume is re-selectable by the next backup cycle under the correct
+spoke, and findable by the teardown reaper — otherwise the restored data silently falls
+out of its tier's `BackupSelection`, or a source-spoke tag pulls it into the wrong
+selection).
 
 > **StatefulSets break the "Argo recreates the PVC empty, then we bind the PV"
 > assumption.** For a standalone PVC the static-PV `claimRef` above wins the race. But a
@@ -791,7 +834,13 @@ rules:
   - ruleName: gold-archive
     targetBackupVaultName: <prefix>-<spoke>-gold
     scheduleExpression: "cron(0 0 1 * ? *)"            # monthly — required for EBS archive
-    startWindowMinutes: 480
+    startWindowMinutes: 60                             # keep SHORT: this rule fires at 00:00
+                                                       # on the 1st, the same instant as the
+                                                       # hourly rule. AWS Backup optimizes
+                                                       # overlapping start windows to the
+                                                       # longer-retention rule, so a wide
+                                                       # (e.g. 8h) window here would suppress
+                                                       # up to 8 hourly gold points on the 1st.
     lifecycle:
       moveToColdStorageAfterDays: 30
       optInToArchiveForSupportedResources: true        # REQUIRED for EBS archive
@@ -801,6 +850,19 @@ rules:
       platform.gitops.io/spoke: <spokeName>
     # no copyActions: cold-tier recovery points cannot be copied cross-region
 ```
+
+> **Why `gold-archive`'s start window must be short.** `gold-hourly` and `gold-archive`
+> both fire at `00:00` on the 1st of the month. When the start windows of different
+> rules overlap, AWS Backup keeps the recovery point of the rule with the **longer
+> retention**, and the optimization takes the **full** start window into account
+> ([Create a backup
+> plan](https://docs.aws.amazon.com/aws-backup/latest/devguide/creating-a-backup-plan.html)).
+> With an 8h (`480`) window, `gold-archive` (120d) would win that whole window and
+> suppress up to 8 hourly gold points on the 1st — and because `gold-archive` carries
+> **no `copyActions`**, the one surviving monthly point is never copied to DR, so the
+> 1h RPO is broken for up to 8h once a month. Pinning `startWindowMinutes: 60` (the API
+> minimum) shrinks the overlap to a single hour; the one hourly point displaced in that
+> hour has no DR copy, which is the only residual gap and is acceptable monthly.
 
 The **credential** half is the matching Secrets Manager multi-region replica, so the
 secret the restored volume needs is readable in the same `<dr-region>`:
@@ -861,10 +923,17 @@ if aws secretsmanager describe-secret --secret-id "$SECRET_ID" --region "$PRIMAR
   aws secretsmanager put-secret-value \
     --secret-id "$SECRET_ID" --region "$PRIMARY" \
     --secret-string "$CLIENT_SECRETS_JSON"
-  # idempotent: add-replica is a no-op (not an error) if the replica already exists.
-  aws secretsmanager replicate-secret-to-regions \
+  # Add the replica ONLY if it is missing. The API reference does not promise that
+  # replicate-secret-to-regions is a no-op for an already-present region, so under
+  # `set -e` a blind re-run could fail every reconcile. Read ReplicationStatus first.
+  HAVE_REPLICA="$(aws secretsmanager describe-secret \
     --secret-id "$SECRET_ID" --region "$PRIMARY" \
-    --add-replica-regions Region="$DR"
+    --query "ReplicationStatus[?Region=='$DR'] | length(@)" --output text)"
+  if [ "$HAVE_REPLICA" = "0" ]; then
+    aws secretsmanager replicate-secret-to-regions \
+      --secret-id "$SECRET_ID" --region "$PRIMARY" \
+      --add-replica-regions Region="$DR"
+  fi
 else
   # first run: create WITH the DR replica so the secret exists in both regions.
   aws secretsmanager create-secret \
@@ -875,9 +944,14 @@ else
            Key=platform.gitops.io/backup-tier,Value=gold
 fi
 
-# verify the replica actually reached the DR region before trusting DR readiness.
-aws secretsmanager describe-secret --secret-id "$SECRET_ID" --region "$PRIMARY" \
-  --query "ReplicationStatus[?Region=='$DR'].Status" --output text
+# GATE (not just a print): fail unless the DR replica reports InSync, so a half-made
+# or Failed replica stops the Job rather than leaving a silent DR hole.
+STATUS="$(aws secretsmanager describe-secret --secret-id "$SECRET_ID" --region "$PRIMARY" \
+  --query "ReplicationStatus[?Region=='$DR'].Status | [0]" --output text)"
+if [ "$STATUS" != "InSync" ]; then
+  echo "DR replica for $SECRET_ID in $DR is '$STATUS', not InSync" >&2
+  exit 1
+fi
 ```
 
 > **Writing in the DR region during a real outage needs `StopReplicationToReplica`
@@ -915,8 +989,10 @@ spec:
 
 The sequencing consequence is specific to Keycloak: because the client secret is minted
 by Keycloak itself, a reprovisioned Keycloak in the DR region can generate a *different*
-value than the one in the replica. The config Job must run and **re-push** (overwriting
-the replica's primary) **before** OIDC consumers like langfuse start — otherwise an app
+value than the one in the replica. The config Job must run and **re-push** (after
+promoting the DR replica to a standalone secret with `StopReplicationToReplica` — a
+replica cannot be written while it is still a replica, see above) **before** OIDC
+consumers like langfuse start — otherwise an app
 reads a stale replicated value that no longer matches Keycloak. Replication removes the
 cold-start emptiness; it does not remove the Keycloak-before-consumers ordering.
 
@@ -973,6 +1049,13 @@ already draws, not for inverting to "restore-then-sync":
   boundary](#recovery-responsibility-boundary--backup-vs-argo-cd--gitops): Secrets are
   owned by ESO/Git, and a snapshot of a K8s Secret is a stale copy of something ESO
   already owns.
+- **A namespace restore is not actually namespace-scoped:** the restore page states that
+  for a namespace-level restore "**All cluster-scoped resources will also be restored**"
+  ([Restore an Amazon EKS
+  cluster](https://docs.aws.amazon.com/aws-backup/latest/devguide/restoring-eks.html)),
+  so even the granular path reintroduces cluster-scoped objects (CRDs, ClusterRoles,
+  webhooks) that Git owns — another reason the EBS-only, data-only path keeps the
+  boundary clean.
 - **Restores are non-destructive — "existing objects are not overwritten"** (verified on
   the restore page). So in an Argo-first recovery the restored PVCs/objects are
   **skipped**, which means a native restore cannot simply be layered after an Argo sync;
@@ -1011,7 +1094,7 @@ verify path** that exercises the whole backup→restore loop in-session:
 aws backup start-backup-job \
   --backup-vault-name "<prefix>-<spoke>-gold" \
   --resource-arn "arn:aws:ec2:<region>:<account-id>:volume/<vol-id>" \
-  --iam-role-arn "<AWSBackupDefaultServiceRole-arn>"
+  --iam-role-arn "<backup-service-role-arn>"
 
 # 2. Confirm it completed and a recovery point exists.
 aws backup list-backup-jobs --by-state COMPLETED \
@@ -1036,19 +1119,31 @@ no longer be deleted).
 For **each Region (primary + DR)**, for vaults owned by this stack (`name_is_ours` or
 the prefix ownership tag), in this exact order:
 
-1. **Delete recovery points** in the vault
-   (`list-recovery-points-by-backup-vault` → `delete-recovery-point`). Cold-tier
+1. **Delete selections, then plans** — `delete-backup-selection` for every selection,
+   then `delete-backup-plan` (which works **only after all its selections are
+   deleted**). Tolerate `NotFound`, since ACK may already have removed them on prune.
+   Deleting the plan first stops the schedule, so no *new* recovery point is created
+   while the vault is being drained.
+2. **Wait for in-flight jobs** — poll `list-backup-jobs` / `list-copy-jobs` for this
+   vault until no job is `RUNNING`/`CREATED`. A backup or cross-Region copy already in
+   flight will still land a recovery point after step 1, so the vault is not provably
+   drainable until these finish.
+3. **Delete recovery points, then poll until the vault is empty**
+   (`list-recovery-points-by-backup-vault` → `delete-recovery-point`, repeat). Deletion
+   is **asynchronous** — points sit in `DELETING` — and `delete-recovery-point` returns
+   `InvalidResourceStateException` while AWS Backup is already acting on a point, so the
+   reaper must retry and re-list rather than assume one pass empties the vault. Cold-tier
    recovery points carry a pro-rated 90-day minimum charge on early deletion.
-2. **Delete the vault** (`delete-backup-vault`) — this succeeds **only when the vault is
-   empty**, hence step 1 first.
-3. **Delete selections, then plans** — `delete-backup-plan` works **only after all its
-   selections are deleted**.
-4. **Secrets Manager replicas:** `remove-regions-from-replication` (a primary secret
-   that still has replicas **cannot be deleted**), *then* delete the secret. The current
-   sweep swallows that ordering error and the secret silently survives.
-5. **Delete detached tier volumes by tag** — retained `Released` gold volumes (and any
-   silver/bronze that slipped through) carry the `platform.gitops.io/prefix` tag, so the
-   reaper finds them by tag and deletes the detached ones.
+4. **Delete the vault** (`delete-backup-vault`) — this succeeds **only when the vault is
+   empty** ([DeleteBackupVault](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DeleteBackupVault.html):
+   "A vault can be deleted only if it is empty"), hence steps 1–3 first.
+5. **Secrets Manager replicas, then detached volumes.**
+   - `remove-regions-from-replication` (a primary secret that still has replicas
+     **cannot be deleted**), *then* delete the secret. The current sweep swallows that
+     ordering error and the secret silently survives.
+   - Delete detached tier volumes by tag — retained `Released` gold volumes (and any
+     silver/bronze that slipped through) carry the `platform.gitops.io/prefix` tag, so
+     the reaper finds them by tag and deletes the detached ones.
 
 Additional teardown facts the reaper must respect:
 
@@ -1061,8 +1156,9 @@ Additional teardown facts the reaper must respect:
   them — tagging and reaping must land together.
 - **No Vault Lock in v1.** ACK does not model Vault Lock (which is good). State it
   explicitly: in compliance mode, after the ≥72h grace period a vault cannot be deleted
-  and its recovery points cannot be deleted until their lifecycle completes (180d for a
-  long-retention tier), which would make teardown impossible — so v1 uses **no Vault
+  and its recovery points cannot be deleted until their lifecycle completes (14d for
+  the gold warm tier, 120d for the `gold-archive` tier), which would make teardown
+  impossible — so v1 uses **no Vault
   Lock**.
 - **Workshop default.** Delete everything on teardown, with an explicit **opt-out** for
   long-lived stacks that must keep their backup history.
@@ -1169,7 +1265,7 @@ Three facts correct the earlier "ships the one IAM piece" framing:
 
 ### Platform wiring required
 
-Beyond IAM, the RGD needs four pieces of platform wiring on `main`, each verified
+Beyond IAM, the RGD needs five pieces of platform wiring on `main`, each verified
 against the repo:
 
 - **a. A gated hub app.** `.../manifests/backup-policy/` would otherwise land in both the
@@ -1187,6 +1283,17 @@ against the repo:
   tier classes are rendered by the `default-storage-class` chart (add `clusterName` to
   its `valuesObject`), **not** by the `BackupPolicy` RGD — and the doc's earlier
   self-contradiction ("the RGD renders them") is corrected to the chart throughout.
+- **e. `RestoreSelection` is a SPOKE-side object, not a hub one.** The same rule as (d)
+  applies to restore: `RestoreSelection` materializes a Kubernetes Job and a static PV
+  that must exist in the **target spoke**, and the gated `kro-backup-policy-rgd-hub`
+  app from (a) runs on the hub — a hub RGD cannot place a Job or a PV into a spoke.
+  So `RestoreSelection` ships spoke-side through the spoke `kro-manifests` app (behind
+  its own `enable_kro_manifests` gate), and its restore Job authenticates as a **spoke
+  Pod Identity role** (the "Restore Job role" in the IAM table), not as the hub
+  controller role. This mirrors the StorageClass split in (d): the declarative
+  `BackupPolicy` vault/plan/selection objects are hub-reconciled ACK resources, but
+  anything that must land inside a spoke (the tier StorageClasses, the restore Job and
+  its static PV) is placed by a spoke-side app.
 
 ## Consolidation plan & PR provenance
 
