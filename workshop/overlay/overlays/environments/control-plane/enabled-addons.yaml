@@ -30,4 +30,7 @@ enabledAddons:
   # The PEEKS read-only platform-engineering agent itself. Its registry entry is
   # provided by this overlay's overrides.yaml (path workshop/aiops-agent/chart).
   # Depends on KubeVela + the OAP layer above (late sync-wave).
-  aiops_agent: true
+  # DISABLED BY DEFAULT (PEEKS standing preference: agentic addons ship off and are
+  # turned on by a workshop module that edits hub-config and re-runs). Flip to true —
+  # here or in the fleet-config overlay — to deploy the agent on the hub.
+  aiops_agent: false
