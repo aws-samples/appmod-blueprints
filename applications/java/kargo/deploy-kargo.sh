@@ -5,6 +5,11 @@
 
 set -e
 
+# Run relative to this script's own location so the manifest files
+# (project.yaml, warehouse.yaml, ...) resolve regardless of the caller's CWD.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
+
 echo "Deploying Kargo configuration for Java application..."
 
 # Check if required environment variables are set
