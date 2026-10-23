@@ -66,6 +66,27 @@
         }
       }
     },
+    "agenticRepo": {
+      "type": "object",
+      "description": "Optional. OAP (Open Agentic Platform) addon-repo coordinates — the Git repo that HOSTS the agent-platform addon registry value files. Read only by the kind-kro-ack and kind-crossplane providers (yq '.agenticRepo.url' / '.agenticRepo.revision'), which emit them onto the hub cluster-secret as the snake_case annotations addons_repo_url / addons_repo_revision; the OAP addon registry (gitops/addons/registry/_defaults.yaml) and the agent-platform fan-out appsets resolve the agentic repoURL/revision from those annotations. Omitting the whole block renders the annotations empty, so the registry's own fallback applies and a non-OAP config behaves exactly as before.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Git repository URL hosting the OAP addon registry. Defaults to https://github.com/awslabs/open-agentic-platform"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git branch or tag of the OAP repo to deploy from. Defaults to main"
+        },
+        "basepath": {
+          "type": "string",
+          "default": "gitops/addons/",
+          "description": "Path within the OAP repo to the addon registry (must end with /). Must be gitops/addons/ so the fan-out valueFiles resolve to <repo>/gitops/addons/registry/*.yaml"
+        }
+      }
+    },
     "hub": {
       "type": "object",
       "required": [

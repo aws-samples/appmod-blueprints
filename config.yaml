@@ -12,6 +12,19 @@ repo:
   revision: "main"
   basepath: "gitops/"
 
+# Optional: OAP (Open Agentic Platform) addon-repo coordinates — the Git repo that
+# hosts the agent-platform addon registry. Read only by the kind-kro-ack and
+# kind-crossplane providers (yq '.agenticRepo.url' / '.agenticRepo.revision'), which
+# stamp them onto the hub cluster-secret as the addons_repo_url / addons_repo_revision
+# annotations that the OAP addon registry (gitops/addons/registry/_defaults.yaml) and
+# the agent-platform fan-out appsets consume. Omit the whole block to leave the
+# annotations empty — the registry's own fallback then applies and a non-OAP config
+# behaves exactly as before. basepath must be "gitops/addons/".
+# agenticRepo:
+#   url: "https://github.com/awslabs/open-agentic-platform"
+#   revision: "main"
+#   basepath: "gitops/addons/"
+
 # Hub cluster configuration
 hub:
   clusterName: "<unique-cluster-name>"       # Must be DNS-compatible, unique per account+region
