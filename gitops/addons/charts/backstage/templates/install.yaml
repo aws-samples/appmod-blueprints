@@ -458,6 +458,9 @@ spec:
     spec:
       nodeSelector:
         karpenter.sh/nodepool: {{ (.Values.global | default dict).systemNodepool | default "system" }}
+        # TODO(backstage-multiarch): remove this amd64 pin once ghcr.io/cnoe-io/backstage-app ships a multi-arch (arm64+amd64) image -- tracked for #1157.
+        # The backstage-app image is currently amd64-only; on a mixed-arch fleet (Auto Mode) the pod can land on an arm64 (Graviton) node and crash with "exec format error" (CrashLoopBackOff).
+        kubernetes.io/arch: amd64
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

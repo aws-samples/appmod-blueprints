@@ -234,6 +234,14 @@ tasks:
       # claims. See workshop/ for the reference consumer.
       # Crossplane provider bring-up for the hub's OWN observability (AMP/RDS/Grafana).
       - task: install:post-sync
+      # #1157: a consumer MAY declare spokes + an agentic platform directly in
+      # config.local.yaml (a `spokes:` map and/or an `agenticRepo` block) instead of
+      # driving them through the workshop/OAP. Both steps self-gate:
+      #   - spokes:apply no-ops when `.spokes` is empty/absent (hub-only unaffected);
+      #   - agentic:bootstrap-direct no-ops when `.agenticRepo` is absent.
+      # So a plain hub-only config reaches neither body and behaves exactly as before.
+      - task: spokes:apply
+      - task: agentic:bootstrap-direct
       # ── Perf lever #1 (kro-ack): NEITHER the global full-sync wait NOR the
       #    Crossplane-providers wait is a precondition for the consumer declaring
       #    spokes. KRO-provisioned spokes are created by the hub's ACK EKS
@@ -408,7 +416,15 @@ tasks:
             printf '{{.C_OK}}✓ ACK credentials valid.{{.C_RESET}}\n'
           fi
         fi
-        [ "$NEEDS_REFRESH" = "true" ] && task credentials:refresh || true
+        # #1157 (4b): refresh via the FULLY-NAMESPACED task so it resolves regardless
+        # of the invocation's working directory. The bare `task credentials:refresh`
+        # used here before resolved against the ROOT Taskfile when install was driven
+        # from the repo root (root has no `credentials:refresh`), silently no-op'd, and
+        # the trailing `|| true` hid that failure. Drop `|| true` so a genuine refresh
+        # failure surfaces instead of being swallowed. Still conditional on NEEDS_REFRESH.
+        if [ "$NEEDS_REFRESH" = "true" ]; then
+          ( cd "{{.ROOT_DIR}}" && task kind-kro-ack:credentials:refresh )
+        fi
 
   credentials:refresh:
     desc: Force-refresh AWS credentials secret
@@ -999,7 +1015,15 @@ tasks:
         fi
         printf '{{.C_OK}}✓ {{.HUB_KIND}} ACTIVE{{.C_RESET}}\n'      - |
         printf '{{.C_STEP}}▸ Verifying EKS cluster {{.HUB_CLUSTER_NAME}} exists in AWS...{{.C_RESET}}\n'
-        END=$(( $(date +%s) + 300 ))
+        # #1157 (4d): the RGD reporting ACTIVE can precede the AWS-side control-plane +
+        # nodegroup finishing creation. The old 300s ceiling + hard `exit 1` aborted the
+        # whole (errexit) install on a cluster that was still legitimately CREATING. The
+        # install is idempotent/resumable (see step 1's comment), so a still-progressing
+        # create must NOT be a fatal failure. Raise the window and, if it is still not
+        # ACTIVE but AWS reports a healthy in-progress state (CREATING/UPDATING), warn and
+        # continue rather than abort — the downstream seed/wait steps re-verify readiness.
+        END=$(( $(date +%s) + 1800 ))
+        EKS_STATUS=""
         while [ "$(date +%s)" -lt "$END" ]; do
           EKS_STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")
           if [ "$EKS_STATUS" = "ACTIVE" ]; then
@@ -1009,7 +1033,11 @@ tasks:
           printf '{{.C_INFO}}  EKS status: %s{{.C_RESET}}\n' "${EKS_STATUS:-<not-found>}"
           sleep 15
         done
-        printf '{{.C_ERR}}✗ EKS cluster not ACTIVE in AWS after RGD reported ACTIVE{{.C_RESET}}\n'
+        if [ "$EKS_STATUS" = "CREATING" ] || [ "$EKS_STATUS" = "UPDATING" ]; then
+          printf '{{.C_INFO}}  ⚠ EKS cluster still %s after 1800s — still progressing, continuing (install is resumable; downstream steps re-verify).{{.C_RESET}}\n' "$EKS_STATUS"
+          exit 0
+        fi
+        printf '{{.C_ERR}}✗ EKS cluster not ACTIVE in AWS after RGD reported ACTIVE (last status: %s){{.C_RESET}}\n' "${EKS_STATUS:-<not-found>}"
         exit 1
 
   hub:authorize-ide-access:
@@ -3310,6 +3338,258 @@ tasks:
             done
           done
           printf '{{.C_OK}}✓ Spoke provider identity seeding complete.{{.C_RESET}}\n'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # #1157: direct-path spoke + agentic bootstrap
+  #
+  # These two tasks let a plain `task install` (no workshop/, no OAP driver)
+  # produce hub + config-declared spokes + the agentic platform in one shot,
+  # driven entirely by config.local.yaml (`spokes:` map + `agenticRepo` block).
+  # They are generalized from the reference consumer:
+  #   - spokes:apply  <- workshop/Taskfile.yaml spokes:enable-kro (per-cluster CLI arg
+  #                      -> iterate the config `.spokes` map; tenant: workshop
+  #                      -> per-spoke `.spokes.<name>.tenant // "default"`).
+  #   - agentic:bootstrap-direct <- OAP Taskfile.yml agentic:bootstrap (envsubst +
+  #                      kubectl apply of OAP's gitops/bootstrap/agent-platform-app.yaml,
+  #                      fetched from agenticRepo.url@revision so appmod stays self-sufficient).
+  # Both self-gate (empty `.spokes` / absent `agenticRepo` -> no-op) so hub-only
+  # configs are unaffected.
+  # ───────────────────────────────────────────────────────────────────────────
+
+  spokes:apply:
+    desc: >-
+      [#1157] Materialize every spoke declared in the config `spokes:` map into the
+      fleet-config overlay (the clusters-kro.yaml ApplicationSet globs
+      fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json). Generic, config-driven
+      port of workshop/ spokes:enable-kro: iterates `.spokes`, per-spoke tenant from
+      `.spokes.<name>.tenant // "default"`, writes the clusters/<name>.json trigger, the
+      kro-clusters/values.yaml entry (deterministic CIDR, provider kro-ack), the
+      multi-acct CARM mapping, and the fleet member (mode externalSecret), then idempotently
+      commits+pushes. No-ops (loud) when `.spokes` is empty/absent. Idempotent.
+    vars:
+      SPOKE_NAMES:
+        sh: yq -r '.spokes // {} | keys | .[]' {{.CONFIG_FILE}} 2>/dev/null
+      GIT_USERNAME:
+        sh: yq '.gitUsername // "user1"' {{.CONFIG_FILE}}
+      GIT_DOMAIN:
+        sh: |
+          # GitLab is served on the IDE CloudFront (private/git-domain). Do NOT fall
+          # back to the platform `domain` (a DIFFERENT CloudFront distribution): wiring
+          # fleet-config to the wrong host makes it unreachable and the clusters-kro
+          # ApplicationSet never generates spoke apps. Prefer private/git-domain, then
+          # config .gitDomain; leave empty otherwise so the reachability wait can guard.
+          if [ -f {{.ROOT_DIR}}/private/git-domain ]; then
+            cat {{.ROOT_DIR}}/private/git-domain
+          else
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
+          fi
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password'
+    cmds:
+      - |
+        if [ -z "{{.SPOKE_NAMES}}" ]; then
+          # #1157 (4a): loud skip even under `silent: true`, so a hub-only config makes
+          # the no-op explicit rather than vanishing silently.
+          printf '{{.C_INFO}}  ⚠ No spokes declared in config .spokes — skipping spoke materialization (hub-only).{{.C_RESET}}\n'
+          exit 0
+        fi
+        if [ -z "{{.GIT_DOMAIN}}" ]; then
+          printf '{{.C_ERR}}⚠ .spokes is set but no GitLab domain resolved (private/git-domain absent and .gitDomain empty) — cannot write fleet-config. Skipping spoke materialization.{{.C_RESET}}\n'
+          exit 1
+        fi
+        FLEET_URL="https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git"
+        # fleet-config is created asynchronously by the gitlab-init Job; wait for it to be
+        # reachable, then verify the clone produced a .git before writing (verbatim from
+        # the reference consumer — a bare `git add -A` on a non-repo aborted the install).
+        printf '{{.C_STEP}}▸ Waiting for fleet-config repo to be reachable...{{.C_RESET}}\n'
+        for i in $(seq 1 30); do
+          git ls-remote "$FLEET_URL" >/dev/null 2>&1 && break
+          if [ "$i" -eq 30 ]; then
+            printf '{{.C_ERR}}⚠ fleet-config not reachable after 5min — cannot materialize spokes.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  GitLab/gitlab-init may still be initializing. Re-run later: task kind-kro-ack:spokes:apply{{.C_RESET}}\n'
+            exit 1
+          fi
+          sleep 10
+        done
+        printf '{{.C_OK}}✓ fleet-config reachable.{{.C_RESET}}\n'
+        REPO_DIR=$(mktemp -d)
+        git clone "$FLEET_URL" "$REPO_DIR"
+        if [ ! -d "$REPO_DIR/.git" ]; then
+          printf '{{.C_ERR}}⚠ fleet-config clone failed — aborting spokes:apply.{{.C_RESET}}\n'
+          rm -rf "$REPO_DIR"
+          exit 1
+        fi
+        for CLUSTER in {{.SPOKE_NAMES}}; do
+          printf '{{.C_STEP}}▸ Materializing spoke %s...{{.C_RESET}}\n' "$CLUSTER"
+          # Per-spoke tenant (config-derived, neutral default). The clusters-kro glob is
+          # tenants/*/..., so any tenant is picked up; no hardcoded "workshop".
+          TENANT=$(CL="$CLUSTER" yq -r '.spokes.[env(CL)].tenant // "default"' {{.CONFIG_FILE}})
+          TDIR="$REPO_DIR/gitops/fleet/spoke-values/tenants/$TENANT"
+          # Remove any stale crossplane-clusters entry (switching crossplane -> kro-ack).
+          XP_STALE="$TDIR/crossplane-clusters/values.yaml"
+          if [ -f "$XP_STALE" ] && CL="$CLUSTER" yq -e '.clusters.[env(CL)]' "$XP_STALE" >/dev/null 2>&1; then
+            CL="$CLUSTER" yq -i 'del(.clusters.[env(CL)])' "$XP_STALE"
+            printf '{{.C_INFO}}  Removed stale crossplane entry for %s (switching to KRO).{{.C_RESET}}\n' "$CLUSTER"
+          fi
+          mkdir -p "$TDIR/kro-clusters/clusters"
+          printf '{"clusterName": "%s"}\n' "$CLUSTER" > "$TDIR/kro-clusters/clusters/$CLUSTER.json"
+          KRO_VALUES="$TDIR/kro-clusters/values.yaml"
+          if [ -f "$KRO_VALUES" ] && CL="$CLUSTER" yq -e '.clusters.[env(CL)].cidr.vpcCidr' "$KRO_VALUES" >/dev/null 2>&1; then
+            printf '{{.C_INFO}}  Spoke %s already has a CIDR — keeping existing values (idempotent).{{.C_RESET}}\n' "$CLUSTER"
+            # Backfill provider on pre-existing entries so re-runs self-heal.
+            CL="$CLUSTER" yq -i '.clusters.[env(CL)].provider = "kro-ack"' "$KRO_VALUES"
+          else
+            # Deterministic second octet from the cluster name (stable across re-runs).
+            OCTET=$(printf '%s' "$CLUSTER" | cksum | awk '{print ($1 % 253) + 2}')
+            [ -f "$KRO_VALUES" ] || printf 'clusters: {}\n' > "$KRO_VALUES"
+            # Environment derived from the cluster name (dev/prod/staging/test), default dev.
+            ENV=$(echo "$CLUSTER" | grep -oE 'prod|staging|test|dev' | head -1 || true); ENV="${ENV:-dev}"
+            OCTET=$OCTET CL="$CLUSTER" TENANT="$TENANT" AWS_REGION={{.AWS_REGION}} K8S_VERSION={{.HUB_K8S_VERSION}} \
+            AWS_ACCOUNT_ID={{.AWS_ACCOUNT_ID}} RESOURCE_PREFIX={{.RESOURCE_PREFIX}} ENV="$ENV" \
+            yq -i '.clusters.[env(CL)] = {
+              "clusterName": env(CL),
+              "tenant": env(TENANT),
+              "environment": env(ENV),
+              "provider": "kro-ack",
+              "region": env(AWS_REGION),
+              "k8sVersion": env(K8S_VERSION),
+              "accountId": (env(AWS_ACCOUNT_ID) | . tag = "!!str"),
+              "managementAccountId": (env(AWS_ACCOUNT_ID) | . tag = "!!str"),
+              "resourcePrefix": env(RESOURCE_PREFIX),
+              "cidr": {
+                "vpcCidr": ("10." + env(OCTET) + ".0.0/16"),
+                "publicSubnet1Cidr": ("10." + env(OCTET) + ".1.0/24"),
+                "publicSubnet2Cidr": ("10." + env(OCTET) + ".2.0/24"),
+                "privateSubnet1Cidr": ("10." + env(OCTET) + ".11.0/24"),
+                "privateSubnet2Cidr": ("10." + env(OCTET) + ".12.0/24")
+              }
+            }' "$KRO_VALUES"
+          fi
+          # admin roles: grant cluster-admin to the console/participant role
+          # (config .adminRoleName) and, when present, the instance SharedRole.
+          CONSOLE_ROLE=$(yq '.adminRoleName // ""' {{.CONFIG_FILE}})
+          INSTANCE_ROLE=$(aws iam list-roles --query "Roles[?contains(RoleName,'SharedRole')].RoleName" --output json 2>/dev/null | jq -r --arg own "{{.RESOURCE_PREFIX}}" '(map(select(startswith($own))) + .)[0] // empty' || echo "")
+          CL="$CLUSTER" yq -i 'del(.clusters.[env(CL)].adminRoles)' "$KRO_VALUES" 2>/dev/null || true
+          if [ -n "$CONSOLE_ROLE" ] && [ "$CONSOLE_ROLE" != "null" ]; then
+            CONSOLE_ROLE="$CONSOLE_ROLE" CL="$CLUSTER" yq -i '.clusters.[env(CL)].adminRoleName = env(CONSOLE_ROLE)' "$KRO_VALUES"
+          fi
+          if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
+            INSTANCE_ROLE="$INSTANCE_ROLE" CL="$CLUSTER" yq -i '.clusters.[env(CL)].adminInstanceRoleName = env(INSTANCE_ROLE)' "$KRO_VALUES"
+          fi
+          # multi-acct (ACK CARM): map this spoke's namespace -> AWS account (repo root,
+          # overlay_repo_basepath=""). Idempotent; accumulates across spokes.
+          mkdir -p "$REPO_DIR/configs/multi-acct"
+          MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
+          [ -f "$MA_FILE" ] || printf 'clusters: {}\n' > "$MA_FILE"
+          CL="$CLUSTER" ACCT="{{.AWS_ACCOUNT_ID}}" yq -i '.clusters.[env(CL)] = (env(ACCT) | . tag = "!!str")' "$MA_FILE"
+          # platform-manifests: disable HuggingFaceModel CRs on spokes (CRD absent there).
+          mkdir -p "$REPO_DIR/overlays/clusters/$CLUSTER/platform-manifests"
+          printf 'huggingfaceModels: []\n' > "$REPO_DIR/overlays/clusters/$CLUSTER/platform-manifests/values.yaml"
+          # Fleet member (externalSecret mode): the EksclusterWithVpc RGD writes
+          # <cluster>/config to Secrets Manager; the fleet-secrets ApplicationSet renders
+          # the ExternalSecret that builds the ArgoCD cluster-registration Secret from it.
+          mkdir -p "$REPO_DIR/gitops/fleet/members/$CLUSTER"
+          cat > "$REPO_DIR/gitops/fleet/members/$CLUSTER/values.yaml" <<MEMBER
+        clusterName: $CLUSTER
+        mode: externalSecret
+        externalSecret:
+          enabled: true
+        labels:
+          environment: ${ENV:-dev}
+          tenant: $TENANT
+        MEMBER
+        done
+        cd "$REPO_DIR"
+        git add -A
+        if git diff --cached --quiet; then
+          printf '{{.C_INFO}}  No fleet-config changes — all declared spokes already enabled (idempotent).{{.C_RESET}}\n'
+        else
+          git commit -m "feat: enable config-declared spokes via KRO (+ fleet members, multi-acct CARM mapping) [#1157]"
+          PUSHED=false
+          for i in 1 2 3; do
+            # The fleet/gitops repo must allow pushes to its default branch; branch
+            # protection is the consumer's concern. The platform never manipulates the git host.
+            if git push 2>&1; then PUSHED=true; break; fi
+            echo "  Push attempt $i failed, rebasing..."
+            git pull --rebase 2>&1 && sleep 2
+          done
+          if [ "$PUSHED" != "true" ]; then
+            printf '{{.C_ERR}}\u26a0 fleet-config push failed after 3 attempts.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
+        rm -rf "$REPO_DIR"
+        printf '{{.C_OK}}✓ Config-declared spokes materialized in fleet-config overlay.{{.C_RESET}}\n'
+
+  agentic:bootstrap-direct:
+    desc: >-
+      [#1157] Apply OAP's agent-platform bootstrap Application on the direct (non-OAP)
+      path when config declares an `agenticRepo` block. Fetches OAP's
+      gitops/bootstrap/agent-platform-app.yaml from agenticRepo.url@revision, envsubsts
+      the repo/overlay/hub coordinates, and kubectl-applies it to the hub ArgoCD. Mirrors
+      OAP's agentic:bootstrap but is driven from appmod so the direct path is
+      self-sufficient. No-ops (loud) when `.agenticRepo` is absent. Idempotent (apply).
+    vars:
+      AGENTIC_REPO_BASEPATH:
+        sh: yq '.agenticRepo.basepath // ""' {{.CONFIG_FILE}}
+      OVERLAY_REPO_URL:
+        sh: yq '.agenticRepo.overlay.url // ""' {{.CONFIG_FILE}}
+      OVERLAY_REPO_REVISION:
+        sh: yq '.agenticRepo.overlay.revision // ""' {{.CONFIG_FILE}}
+      OVERLAY_REPO_BASEPATH:
+        sh: yq '.agenticRepo.overlay.basepath // ""' {{.CONFIG_FILE}}
+      # The appset-chart generator (source B of agent-platform-app.yaml) is the PLATFORM
+      # repo itself — this repo. Pass repo.url/revision as the platform coordinates.
+      PLATFORM_REPO_URL: '{{.REPO_URL}}'
+      PLATFORM_REPO_REVISION: '{{.REPO_REVISION}}'
+    cmds:
+      - |
+        if [ -z "{{.AGENTIC_REPO_URL}}" ]; then
+          # #1157 (4a): loud skip even under `silent: true`.
+          printf '{{.C_INFO}}  ⚠ No agenticRepo in config — skipping agentic platform bootstrap.{{.C_RESET}}\n'
+          exit 0
+        fi
+        command -v envsubst >/dev/null 2>&1 || { printf '{{.C_ERR}}✗ envsubst not found (gettext) — cannot render agent-platform bootstrap.{{.C_RESET}}\n'; exit 1; }
+        REVISION="{{.AGENTIC_REPO_REVISION}}"; REVISION="${REVISION:-main}"
+        # Fetch the bootstrap Application from the OAP repo at the pinned revision. The
+        # file lives in OAP (awslabs/open-agentic-platform), not appmod. Support GitHub
+        # raw for an https://github.com/<org>/<repo>(.git) URL; otherwise require a
+        # pre-fetched copy. Kept read-only (no clone/push).
+        AREPO="{{.AGENTIC_REPO_URL}}"
+        BOOT_PATH="{{.AGENTIC_REPO_BASEPATH}}gitops/bootstrap/agent-platform-app.yaml"
+        RAW=""
+        case "$AREPO" in
+          https://github.com/*)
+            SLUG=$(printf '%s' "$AREPO" | sed -E 's#https://github.com/##; s#\.git$##')
+            RAW="https://raw.githubusercontent.com/$SLUG/$REVISION/$BOOT_PATH"
+            ;;
+        esac
+        if [ -z "$RAW" ]; then
+          printf '{{.C_ERR}}✗ agenticRepo.url %s is not a github.com URL — cannot resolve agent-platform-app.yaml for the direct bootstrap. Drive agentic bootstrap via OAP, or set a github.com agenticRepo.url.{{.C_RESET}}\n' "$AREPO"
+          exit 1
+        fi
+        printf '{{.C_STEP}}▸ Fetching agent-platform bootstrap from %s{{.C_RESET}}\n' "$RAW"
+        TMPL=$(mktemp)
+        if ! curl -fsSL "$RAW" -o "$TMPL"; then
+          printf '{{.C_ERR}}✗ Could not fetch %s (check agenticRepo.url/revision/basepath).{{.C_RESET}}\n' "$RAW"
+          rm -f "$TMPL"
+          exit 1
+        fi
+        # Annotate the hub cluster secret with its EKS OIDC issuer (hub-run agents need
+        # secretless workload identity; spokes get this from their composition). Mirrors
+        # OAP agentic:hub-oidc-annotation. Idempotent.
+        ISSUER=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || echo "")
+        if [ -n "$ISSUER" ] && [ "$ISSUER" != "None" ]; then
+          kubectl annotate secret {{.HUB_CLUSTER_NAME}} -n argocd --overwrite eks_oidc_provider="$ISSUER" >/dev/null 2>&1 || true
+        fi
+        OAP_REPO_URL="{{.AGENTIC_REPO_URL}}" OAP_REVISION="$REVISION" OAP_BASEPATH="{{.AGENTIC_REPO_BASEPATH}}" \
+        HUB_CLUSTER_NAME="{{.HUB_CLUSTER_NAME}}" \
+        PLATFORM_REPO_URL="{{.PLATFORM_REPO_URL}}" PLATFORM_REPO_REVISION="{{.PLATFORM_REPO_REVISION}}" \
+        OVERLAY_REPO_URL="{{.OVERLAY_REPO_URL}}" OVERLAY_REVISION="{{.OVERLAY_REPO_REVISION}}" OVERLAY_BASEPATH="{{.OVERLAY_REPO_BASEPATH}}" \
+        envsubst '${OAP_REPO_URL} ${OAP_REVISION} ${OAP_BASEPATH} ${HUB_CLUSTER_NAME} ${PLATFORM_REPO_URL} ${PLATFORM_REPO_REVISION} ${OVERLAY_REPO_URL} ${OVERLAY_REVISION} ${OVERLAY_BASEPATH}' < "$TMPL" \
+          | kubectl apply -f -
+        rm -f "$TMPL"
+        printf '{{.C_OK}}✓ Agentic platform bootstrap applied. ArgoCD will sync components to clusters labelled enable_agent_platform=true.{{.C_RESET}}\n'
 
   hub:pivot:
     desc: >-
