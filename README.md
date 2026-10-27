@@ -22,6 +22,23 @@ This platform is extended with an agentic layer powered by the [Open Agentic Pla
 
 The easiest way is to use CloudFormation to bootstrap the workshop architecture with an IDE to work from, pre-configured to interact with the platform.
 
+There is more than one way to run this platform. Use this quick router to find your starting point:
+
+```mermaid
+flowchart LR
+    S(["How do you want to run it?"]) --> W["Guided workshop"]
+    S --> Q["Quick direct install"]
+    S --> C["Custom direct install"]
+    W --> WD["Follow the hosted workshop (below)"]
+    Q --> GD["Non-workshop install guide"]
+    C --> GD
+    classDef g fill:#e8f0fe,stroke:#4285f4,color:#111;
+    class WD,GD g;
+```
+
+- **Guided workshop** (at an AWS event or self-paced): follow the CloudFormation/CloudShell steps right below.
+- **Install outside the workshop** (direct `kind-kro-ack`, into your own account): see the [non-workshop install guide](docs/non-workshop/README.md) — a decision diagram routes you to the right step-by-step procedure (CloudFront, existing fleet-config, custom multi-account, delete a spoke, cost, …).
+
 Once you are logged into your AWS Console with the appropriate permissions, you can set up the environment to run the labs in your account. These instructions have been tested in the following AWS region and are not guaranteed to work in others without modification:
 
 - `us-west-2`
