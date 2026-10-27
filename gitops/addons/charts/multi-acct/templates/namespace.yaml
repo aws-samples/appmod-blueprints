@@ -5,6 +5,18 @@
 {{- if and $self $acct (not (hasKey $all $self)) }}
 {{-   $_ := set $all $self $acct }}
 {{- end }}
+{{/* Same spokeNames expansion as templates/iam-role-selectors.yaml -- see the rationale there.
+     Name-only spokes (empty value) get their namespace created here too. */}}
+{{- $spokeNames := default (list) .Values.global.spokeNames }}
+{{- if kindIs "string" $spokeNames }}
+{{-   $spokeNames = regexSplit "[,\\s]+" (trim $spokeNames) -1 }}
+{{- end }}
+{{- range $sp := $spokeNames }}
+{{-   $sp = trim $sp }}
+{{-   if and $sp (not (hasKey $all $sp)) }}
+{{-     $_ := set $all $sp "" }}
+{{-   end }}
+{{- end }}
 {{- range $key, $value := $all }}
 ---
 apiVersion: v1

@@ -18,6 +18,34 @@ names are customer-supplied and arbitrary. An explicit entry in .Values.clusters
 {{- if and $self $acct (not (hasKey $all $self)) }}
 {{-   $_ := set $all $self $acct }}
 {{- end }}
+{{/*
+Same-account spokes declared by NAME ONLY (global.spokeNames), no account number.
+
+On the non-workshop/direct path .Values.clusters is never populated (only spokes:enable-*
+writes it, in the fleet-config overlay), so a same-account spoke namespace gets no selector
+and ACK silently never reconciles its CRs. global.spokeNames lets an operator list the spoke
+namespaces to cover WITHOUT committing any account number: each name is added with an EMPTY
+value, so the per-entry logic below inherits global.accountId (the current account). The
+account is supplied once via global.accountId (from the hub cluster-secret annotation), never
+per spoke, so no account ID ever enters a public repo.
+
+Accepts a list (spokeNames: [dev, prod]) or a comma/space-delimited string
+(spokeNames: "dev,prod") since an ApplicationSet annotation renders as a string. Default is
+empty -> the loop is a no-op and rendering is byte-identical to before (backward compatible).
+An explicit entry in .Values.clusters always wins: hasKey guards against overwriting it, so a
+spoke present in BOTH clusters and spokeNames keeps its clusters value and is not rendered
+twice.
+*/}}
+{{- $spokeNames := default (list) .Values.global.spokeNames }}
+{{- if kindIs "string" $spokeNames }}
+{{-   $spokeNames = regexSplit "[,\\s]+" (trim $spokeNames) -1 }}
+{{- end }}
+{{- range $sp := $spokeNames }}
+{{-   $sp = trim $sp }}
+{{-   if and $sp (not (hasKey $all $sp)) }}
+{{-     $_ := set $all $sp "" }}
+{{-   end }}
+{{- end }}
 {{- range $key, $value := $all }}
 {{- /*
   Per-entry account, with the SAME-ACCOUNT case inheriting global.accountId.
