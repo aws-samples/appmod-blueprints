@@ -3556,7 +3556,12 @@ tasks:
         # raw for an https://github.com/<org>/<repo>(.git) URL; otherwise require a
         # pre-fetched copy. Kept read-only (no clone/push).
         AREPO="{{.AGENTIC_REPO_URL}}"
-        BOOT_PATH="{{.AGENTIC_REPO_BASEPATH}}gitops/bootstrap/agent-platform-app.yaml"
+        # The bootstrap Application lives at the OAP repo ROOT (gitops/bootstrap/...),
+        # NOT under agenticRepo.basepath (gitops/addons/). basepath scopes the addon
+        # chart SOURCES inside the Application (passed below as OAP_BASEPATH), so it must
+        # not prefix the bootstrap-file fetch path — doing so yields the doubled
+        # gitops/addons/gitops/bootstrap/... which 404s. Confirmed on OAP main + v0.1.0-rc4.
+        BOOT_PATH="gitops/bootstrap/agent-platform-app.yaml"
         RAW=""
         case "$AREPO" in
           https://github.com/*)
@@ -3575,19 +3580,30 @@ tasks:
           rm -f "$TMPL"
           exit 1
         fi
+        # The bootstrap Application and the hub cluster secret live on the HUB cluster's
+        # ArgoCD (post-pivot), NOT the kind bootstrap cluster the base KUBECONFIG points at
+        # (that one has no argoproj CRDs -> 'no matches for kind Application'). Self-generate
+        # private/hub-kubeconfig (sibling hub tasks rm -f it after use, so it may be absent
+        # on a resume -> 'localhost:8080 connection refused') and target it for every kubectl.
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}✗ Could not generate hub kubeconfig for %s — cannot apply agentic bootstrap.{{.C_RESET}}\n' "{{.HUB_CLUSTER_NAME}}"
+          rm -f "$TMPL"
+          exit 1
+        fi
         # Annotate the hub cluster secret with its EKS OIDC issuer (hub-run agents need
         # secretless workload identity; spokes get this from their composition). Mirrors
         # OAP agentic:hub-oidc-annotation. Idempotent.
         ISSUER=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || echo "")
         if [ -n "$ISSUER" ] && [ "$ISSUER" != "None" ]; then
-          kubectl annotate secret {{.HUB_CLUSTER_NAME}} -n argocd --overwrite eks_oidc_provider="$ISSUER" >/dev/null 2>&1 || true
+          KUBECONFIG="$KC" kubectl annotate secret {{.HUB_CLUSTER_NAME}} -n argocd --overwrite eks_oidc_provider="$ISSUER" >/dev/null 2>&1 || true
         fi
         OAP_REPO_URL="{{.AGENTIC_REPO_URL}}" OAP_REVISION="$REVISION" OAP_BASEPATH="{{.AGENTIC_REPO_BASEPATH}}" \
         HUB_CLUSTER_NAME="{{.HUB_CLUSTER_NAME}}" \
         PLATFORM_REPO_URL="{{.PLATFORM_REPO_URL}}" PLATFORM_REPO_REVISION="{{.PLATFORM_REPO_REVISION}}" \
         OVERLAY_REPO_URL="{{.OVERLAY_REPO_URL}}" OVERLAY_REVISION="{{.OVERLAY_REPO_REVISION}}" OVERLAY_BASEPATH="{{.OVERLAY_REPO_BASEPATH}}" \
         envsubst '${OAP_REPO_URL} ${OAP_REVISION} ${OAP_BASEPATH} ${HUB_CLUSTER_NAME} ${PLATFORM_REPO_URL} ${PLATFORM_REPO_REVISION} ${OVERLAY_REPO_URL} ${OVERLAY_REVISION} ${OVERLAY_BASEPATH}' < "$TMPL" \
-          | kubectl apply -f -
+          | KUBECONFIG="$KC" kubectl apply -f -
         rm -f "$TMPL"
         printf '{{.C_OK}}✓ Agentic platform bootstrap applied. ArgoCD will sync components to clusters labelled enable_agent_platform=true.{{.C_RESET}}\n'
 
