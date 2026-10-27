@@ -76,8 +76,14 @@ repo, cross‑account spokes, and the day‑2 operations (delete a spoke, see th
 
 ## Honest status of the direct path
 
-- **Hub + agentic platform (OAP): work today.** A direct `kind-kro-ack` `task install`
-  brings up a working hub and, when the `agenticRepo` block is set, the agentic platform.
+- **Hub: works today.** A direct `kind-kro-ack` `task install` brings up a working hub.
+- **Agentic platform (OAP): wired, not yet self-standing on the direct path.** When the
+  `agenticRepo` block is set, its coordinates are mirrored into the hub cluster-secret annotations
+  (`addons_repo_url` / `addons_repo_revision`) that the agent-platform appsets consume — but no
+  appmod Taskfile yet applies OAP's `agent-platform-app.yaml`, so the direct `task install` does
+  **not** stand the agentic platform up on its own today. Tracked in
+  [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157) and
+  [open-agentic-platform#98](https://github.com/awslabs/open-agentic-platform/issues/98).
 - **Same‑account spokes:** covered by `global.spokeNames` (the fix that ships with
   [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157)) plus a fleet repo
   that declares them — see [quick-existing-fleet.md](quick-existing-fleet.md) and

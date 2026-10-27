@@ -84,7 +84,8 @@ named `fleet-config-repo` in the `argocd` namespace, carrying the label
 `argocd.argoproj.io/secret-type: repository`. You need it when:
 
 - the fleet repo is **private** (ArgoCD must authenticate to read/reconcile), or
-- you use the **generative** `spokes:apply` flow that writes the trigger files back to the repo.
+- you use the **generative** `spokes:enable-kro` / `spokes:enable-crossplane` flow that writes the
+  trigger files back to the repo.
 
 A **public** fleet repo read anonymously needs none of this.
 

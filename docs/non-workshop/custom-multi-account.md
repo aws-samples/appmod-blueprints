@@ -43,19 +43,42 @@ This is the fix that ships with
 
 The `multi-acct` registry entry reads `global.spokeNames` from the **`spoke_namespaces` annotation**
 on the hub cluster‑secret, exactly like `accountId` (`aws_account_id`) and `clusterName`
-(`aws_cluster_name`). Set that annotation to a comma/space‑delimited list of your spoke namespaces:
+(`aws_cluster_name`). Those annotations are **not** hand‑written on the live secret — the hub
+cluster‑secret is owned by External Secrets Operator (ESO), which renders its annotations from the
+`<hub>/config` secret in AWS Secrets Manager (the `.metadata` field). A live `kubectl annotate` on
+the secret is therefore **reverted on ESO's next refresh**. Set the annotation at its source instead,
+in the `.metadata` of the `<hub>/config` Secrets Manager secret (the same channel that carries
+`aws_account_id` / `aws_cluster_name`), so it survives every re‑seed:
 
 ```bash
-# Add/patch the spoke_namespaces annotation on the hub cluster-secret (names only, no account IDs):
-kubectl --kubeconfig $PWD/private/kubeconfig -n argocd \
-  annotate secret -l argocd.argoproj.io/secret-type=cluster \
-  spoke_namespaces="dev,prod" --overwrite
+# Persist spoke_namespaces in the hub's Secrets Manager config (names only, no account IDs).
+# Replace <hub>/config with your hub secret id (e.g. "<resource-prefix>-hub/config") and
+# <region> with your region.
+SECRET_ID="<hub>/config"
+REGION="<region>"
+
+CUR=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "$REGION" \
+  --query SecretString --output text)
+# .metadata is stored as a JSON string; parse, add the key, re-stringify.
+NEW=$(printf '%s' "$CUR" | jq \
+  '.metadata |= ((if type=="string" then fromjson else . end) + {spoke_namespaces:"dev,prod"} | tojson)')
+aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --region "$REGION" --secret-string "$NEW"
 ```
 
-Supply the annotation through your fleet/Secrets‑Manager contract so it survives re‑seeds (the same
-channel that carries `aws_account_id` / `aws_cluster_name`). Names are arbitrary and
-customer‑supplied; the account is supplied once via `global.accountId`, never per spoke — so **no
-account ID ever enters a public repo**.
+ESO re‑renders the hub cluster‑secret annotation from this value on its next refresh (or force one as
+the procedure below shows). Names are arbitrary and customer‑supplied; the account is supplied once via
+`global.accountId`, never per spoke — so **no account ID ever enters a public repo**.
+
+> **Target the hub, not the spokes.** `spoke_namespaces` belongs on the **hub** cluster‑secret only.
+> If you ever annotate live for a throwaway test (knowing ESO will revert it), scope the selector to
+> the hub — it is the only cluster‑secret labelled `fleet_member=control-plane`; the generic
+> `-l argocd.argoproj.io/secret-type=cluster` selector also matches every spoke secret:
+>
+> ```bash
+> kubectl --kubeconfig $PWD/private/kubeconfig -n argocd \
+>   annotate secret -l fleet_member=control-plane \
+>   spoke_namespaces="dev,prod" --overwrite   # ephemeral: reverted on the next ESO refresh
+> ```
 
 > **Verify the selectors render** (one per ACK service, per spoke namespace):
 > ```bash

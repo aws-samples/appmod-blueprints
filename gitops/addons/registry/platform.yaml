@@ -360,7 +360,7 @@ multi-acct:
       # (same account), so NO account number is committed per spoke. Empty by default -> the
       # chart loop is a no-op. Set the spoke_namespaces annotation on the hub cluster-secret
       # (via the fleet/SM contract), e.g. "dev,prod". See templates/iam-role-selectors.yaml.
-      spokeNames: '{{.metadata.annotations.spoke_namespaces}}'
+      spokeNames: '{{ default "" (index .metadata.annotations "spoke_namespaces") }}'
 
 # Self-healing restart of workload pods that raced ahead of their EKS Pod Identity
 # association (#8). Deployed wherever KubeVela apps run; the CronJob only deletes
