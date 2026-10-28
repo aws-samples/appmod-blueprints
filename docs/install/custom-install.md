@@ -225,11 +225,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://backstage.<your-domain>
 
 ## 5. Document your deployment
 
-> Applies to every mode in which you keep your own copy of the platform or fleet repo.
-
-When you fork the platform (or your fleet repo) for a custom deployment, keep the **README of your
-copy** honest about the choices you made, so the next operator — or future‑you — can reproduce it.
-This is documentation hygiene, not a platform step; nothing here changes the running system.
+If you keep your own fork of the platform or fleet repo, record in its README the choices you made
+so the next operator can reproduce the deployment. Nothing here changes the running system.
 
 ### What to update in your fork's README
 
@@ -266,6 +263,8 @@ git diff --cached -- README.md \
   && echo "⚠ review the matches above — redact before committing" || echo "clean"
 ```
 
+Pushing the README to a public or shared repo is a separate step: review the diff and the scan first.
+
 ### Suggested snippet to add to your fork's README
 
 ```markdown
@@ -280,12 +279,6 @@ This fork runs Platform Engineering on EKS via the **<CloudFront | own-domain | 
 - Pinned: platform `<release-tag>`, OAP `<oap-release-tag>`
 - Cost tags: `platformTags.{project, environment, owner}`
 ```
-
-### Reminder — pushing is a separate, explicit action
-
-Editing the README is a local change. Pushing it to a public/shared repo under your identity is a
-**separate, deliberate** step — review the diff and confirm the zero‑secret scan passed before you
-push.
 
 ---
 

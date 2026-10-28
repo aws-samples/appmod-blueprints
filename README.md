@@ -36,7 +36,7 @@ flowchart LR
     click WE "https://awsworkshop.io/eks/platform" "Workshop at an AWS event" _blank
     click WS "https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00-start-workshop/02-self-paced" "Self-paced setup" _blank
     click GQ "docs/install/README.md#choose-your-path" "Quick install guide"
-    click GC "docs/install/README.md#choose-your-fleet-config" "Custom install guide"
+    click GC "docs/install/custom-install.md" "Custom install guide"
     classDef g fill:#e8f0fe,stroke:#4285f4,color:#111;
     class WE,WS,GQ,GC g;
 ```
@@ -45,13 +45,13 @@ flowchart LR
 [Self-paced, in your account](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00-start-workshop/02-self-paced)
 (or the CloudFormation steps [below](#for-us-west-2)) ·
 [Quick install guide](docs/install/README.md#choose-your-path) ·
-[Custom install guide](docs/install/README.md#choose-your-fleet-config)
+[Custom install guide](docs/install/custom-install.md)
 *(GitHub does not render clicks inside Mermaid diagrams; use these links.)*
 
 - **Guided workshop at an AWS event:** the event's facilitator gives you an access code and the AWS account is provided. Find upcoming public events on [AWS Events](https://aws.amazon.com/events/).
 - **Guided workshop, self-paced:** follow the workshop's self-paced page, or the CloudFormation/CloudShell steps right below.
 - **Install outside the workshop** (direct `kind-kro-ack`, into your own account): see the [install guide](docs/install/README.md).
-- **Cost, deleting a spoke, direct-install prerequisites, keeping your fork's README up to date:** not path choices — see [Advanced operations](docs/install/README.md#advanced-operations-all-modes).
+- **Direct-install prerequisites, cost, deleting a spoke, restricting the ALB by source IP, documenting your deployment:** not path choices — see [Advanced operations](docs/install/README.md#advanced-operations).
 
 Once you are logged into your AWS Console with the appropriate permissions, you can set up the environment to run the labs in your account. These instructions have been tested in the following AWS region and are not guaranteed to work in others without modification:
 

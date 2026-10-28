@@ -42,13 +42,13 @@ AWS credentials for the target account must resolve in your shell
      --query "CertificateSummaryList[?DomainName=='*.<your-domain>']"
    ```
    *CloudFront mode needs no ACM cert — see [quick-cloudfront.md](quick-cloudfront.md).*
-3. **A public Route53 hosted zone for `<your-domain>`.** external-dns writes A/ALIAS records into it
+3. **(HTTPS/own-domain mode only) A public Route53 hosted zone for `<your-domain>`.** external-dns writes A/ALIAS records into it
    to point your hostnames at the ALB. The zone must be **public** and the account's nameservers
    must be authoritative for the domain (delegated from the registrar/parent zone). Confirm:
    ```bash
    aws route53 list-hosted-zones-by-name --dns-name <your-domain>
    ```
-
+   *CloudFront mode needs no domain — the `*.cloudfront.net` name is used instead.*
 
 ---
 

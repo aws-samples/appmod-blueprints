@@ -53,7 +53,7 @@ flowchart TD
 
 Prerequisites, cost, deleting a spoke, restricting the ALB by source IP and documenting your
 deployment are not path choices: they are listed under
-[Advanced operations](#advanced-operations-all-modes).
+[Advanced operations](#advanced-operations).
 
 ## Procedures
 
@@ -85,7 +85,7 @@ the PAT goes into AWS Secrets Manager and an ArgoCD `repository` Secret `argocd/
 Minimal scopes and manifests:
 [custom-install.md, section 2](custom-install.md#2-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push).
 
-## Advanced operations (all modes)
+## Advanced operations
 
 These pages are not install paths. Each one states which modes it applies to.
 
@@ -114,7 +114,7 @@ which then becomes self‑managing through ArgoCD. They differ only in two indep
 
 The **custom** path (3.x) is the superset: it adds your own domain/cert, your own fleet
 repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost, ALB allowlist) are under
-[Advanced operations](#advanced-operations-all-modes).
+[Advanced operations](#advanced-operations).
 
 ## Honest status of the direct path
 
