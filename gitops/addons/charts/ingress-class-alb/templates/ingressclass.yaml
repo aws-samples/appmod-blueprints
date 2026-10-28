@@ -10,41 +10,6 @@ spec:
   group:
     name: platform
   scheme: {{ .Values.scheme | default "internet-facing" }}
-{{- /*
-  Optional group-wide source-IP allowlist for the shared "platform" ALB, rendered into
-  IngressClassParams.spec.inboundCIDRs (group-level form of the inbound-cidrs annotation:
-  applied once to the shared managed SG, so identical for every ingress of the group, and
-  it overrides any per-ingress annotation). Supported by elbv2.k8s.aws/v1beta1 (OSS LBC)
-  and eks.amazonaws.com/v1 (EKS Auto Mode). Two CONCATENATED keys, so a deployment keeps a
-  stable base and appends ad-hoc entries without touching the base:
-    inboundCidrs       - base allowlist
-    extraInboundCidrs  - extra entries appended after the base
-  Each accepts a YAML list OR a comma-separated string. All empty/unset => field omitted
-  => ALB open (unchanged behaviour). IPv4/IPv6 may be mixed (the LBC splits them).
-  Do not set on an internal ALB fronted by a CloudFront VPC origin: the ALB then sees
-  private origin ENI IPs, not client IPs.
-*/}}
-{{- $raw := list }}
-{{- range $v := list .Values.inboundCidrs .Values.extraInboundCidrs }}
-{{- if kindIs "string" $v }}
-{{- $raw = concat $raw (splitList "," $v) }}
-{{- else if $v }}
-{{- $raw = concat $raw $v }}
-{{- end }}
-{{- end }}
-{{- $cidrs := list }}
-{{- range $raw }}
-{{- $t := . | toString | trim }}
-{{- if $t }}
-{{- $cidrs = append $cidrs $t }}
-{{- end }}
-{{- end }}
-{{- with $cidrs }}
-  inboundCIDRs:
-{{- range . }}
-    - {{ . | quote }}
-{{- end }}
-{{- end }}
 {{- if .Values.loadBalancerName }}
   loadBalancerName: {{ .Values.loadBalancerName | quote }}
 {{- end }}
