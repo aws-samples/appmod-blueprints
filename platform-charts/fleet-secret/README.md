@@ -118,7 +118,7 @@ overlay:
   basepath: gitops/
 ```
 
-This renders `overlay_repo_url` / `overlay_repo_revision` / `overlay_repo_basepath` onto that cluster's secret. It is **per-cluster** -- clusters without it keep reading overlays from the addon's own repo.
+This renders `overlay_repo_url` / `overlay_repo_revision` / `overlay_repo_basepath` onto that cluster's secret. It is **per-cluster** -- on the hub's `cluster-addons` ApplicationSet, a cluster without it falls back to the hub's own `fleetRepoURL`/`fleetRepoRevision` when that is a separate repo from `addonsRepoURL` (a dedicated fleet repo), and otherwise keeps reading overlays from the addon's own repo.
 
 **2. Add the override in the consumer repo**, at the path for the addon and cluster:
 
@@ -152,7 +152,7 @@ kubectl get secret <cluster> -n argocd -o jsonpath='{.metadata.annotations.overl
 
 - **`$overlay` is a real ArgoCD source.** If the URL is unreachable or needs credentials ArgoCD does not have, **every** overlay-aware app on that cluster breaks -- not just the one you are overriding. Register a repo credential first, and prefer wiring this late in a bootstrap sequence, after the repo exists.
 - **`revision` must contain the files.** Pointing at a branch without them means the overlay silently no-ops (`ignoreMissingValueFiles`), and the value quietly stays at its in-repo default. Remember to update `revision` when the work merges to the default branch.
-- **It also repoints the appset-level `overrides.yaml`.** Independently of the per-addon layers, `bootstrap/addons.yaml` reads `$overlay/<basepath>overlays/{environments/<env>,clusters/<cluster>}/overrides.yaml`, which fall back to this repo when the annotation is unset. Setting it moves those reads to the consumer repo too. Those files take the **registry entry** schema (addon-keyed, with `valuesObject` / `defaultVersion`), not chart values -- so they can override registry-level settings, but chart values placed there do nothing.
+- **It also repoints the appset-level `overrides.yaml`.** Independently of the per-addon layers, `bootstrap/addons.yaml` reads `$overlay/<basepath>overlays/{environments/<env>,clusters/<cluster>}/overrides.yaml`, which fall back to the hub's `fleetRepoURL` (when it is a separate repo from `addonsRepoURL`), else to this repo, when the annotation is unset. Setting it moves those reads to the consumer repo too. Those files take the **registry entry** schema (addon-keyed, with `valuesObject` / `defaultVersion`), not chart values -- so they can override registry-level settings, but chart values placed there do nothing.
 - **Only the platform appset consumes these annotations.** A consumer repo running its own appset (with its own registry files) does not set `overlayRepoURLGit`, so its addons keep resolving overlays through layer 4 as before. No double-read.
 
 ## How to Register a New Fleet Member
