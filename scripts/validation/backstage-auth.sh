@@ -6,19 +6,22 @@
 #   backstage_scaffolder "template:default/cicd-pipeline-gitops" '{"appname":"rust",...}'
 #
 # Requires: BACKSTAGE_URL, USER1_PASSWORD
+#
+# Safe to source from an interactive bash or zsh. This file is meant to be
+# sourced, so it must not change the caller's shell options: a top-level
+# `set -euo pipefail` here used to stay on in the caller's terminal, and the next
+# unset variable or failing command (or a failed token fetch during the source
+# itself) closed the terminal with exit code 1 ("parameter not set" in zsh).
+# Strict mode now lives inside the functions, whose bodies run in a subshell
+# `( ... )`, so it never reaches the caller.
 
-set -euo pipefail
-
-backstage_get_token() {
+backstage_get_token() (
+  set -euo pipefail
   local COOKIE_JAR
   COOKIE_JAR=$(mktemp)
-  # `trap ... RETURN` is bash-only. Under zsh (the workshop IDE's default shell) it
-  # errors with "trap: undefined signal: RETURN" and, with `set -e`, aborts the
-  # function so BS_TOKEN is never set. Register the cleanup only under bash; the temp
-  # files live under /tmp and are harmless if left uncleaned under zsh.
-  if [ -n "${BASH_VERSION:-}" ]; then
-    trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_frame.txt" RETURN
-  fi
+  # The body is a subshell, so an EXIT trap cleans up on return in both bash and
+  # zsh (`trap ... RETURN` is bash-only).
+  trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_frame.txt" EXIT
 
   # Step 1: Session cookie
   curl -sLk -c "${COOKIE_JAR}" "${BACKSTAGE_URL}" -o /dev/null
@@ -55,9 +58,10 @@ backstage_get_token() {
 
   # Step 6: Extract the Backstage identity token from the frame's authResponse payload.
   python3 -c "import urllib.parse,re,json; html=open('/tmp/_bs_frame.txt').read(); m=re.search(r\"decodeURIComponent\('([^']+)'\)\", html); d=json.loads(urllib.parse.unquote(m.group(1))); print(d.get('response',{}).get('backstageIdentity',{}).get('token',''))"
-}
+)
 
-backstage_scaffolder() {
+backstage_scaffolder() (
+  set -euo pipefail
   local TEMPLATE_REF="$1"
   local VALUES="$2"
   local TOKEN
@@ -83,13 +87,17 @@ backstage_scaffolder() {
     sleep 10
   done
   echo "${TASK_ID}"; return 1
-}
+)
 
 # When sourced, export BS_TOKEN for direct use
 if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]] || [[ "${ZSH_EVAL_CONTEXT:-}" == "toplevel" ]]; then
+  set -euo pipefail
   backstage_get_token
 else
   export BS_TOKEN
-  BS_TOKEN=$(backstage_get_token)
-  echo "BS_TOKEN set (${#BS_TOKEN} chars)" >&2
+  if BS_TOKEN=$(backstage_get_token) && [ -n "$BS_TOKEN" ]; then
+    echo "BS_TOKEN set (${#BS_TOKEN} chars)" >&2
+  else
+    echo "backstage-auth: no Backstage token (check BACKSTAGE_URL and USER1_PASSWORD); BS_TOKEN is empty" >&2
+  fi
 fi
