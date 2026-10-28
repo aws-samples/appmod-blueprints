@@ -33,9 +33,10 @@ flowchart TD
     C2 --> C3["3.3 · Delete a spoke"]
     C2 --> C4["3.4 · Show the solution cost"]
     C2 --> C5["3.5 · Update the README"]
+    C1 --> C6["3.6 · Restrict the ALB by source IP"]
 
     classDef leaf fill:#e8f0fe,stroke:#4285f4,color:#111;
-    class W1,W2,QC,QF,C1,C2,C3,C4,C5 leaf;
+    class W1,W2,QC,QF,C1,C2,C3,C4,C5,C6 leaf;
 ```
 
 > **Note on the links.** GitHub's Mermaid renderer strips clickable links from diagram
@@ -55,6 +56,7 @@ flowchart TD
 | 3.3 | Delete a spoke | Cleanly tear down one spoke (overlay → prune → sweep) | [custom-delete-spoke.md](custom-delete-spoke.md) |
 | 3.4 | Show the solution cost | Estimate / track the cost of hub + N spokes | [custom-cost.md](custom-cost.md) |
 | 3.5 | Update the README | Keep your fork's README in sync with your deployment choices | [custom-update-readme.md](custom-update-readme.md) |
+| 3.6 | Restrict the ALB by source IP | Set, change or remove the source‑IP allowlist of the shared `platform` ALB (all hub UIs), plus closing Langfuse self‑registration | [custom-alb-ip-allowlist.md](custom-alb-ip-allowlist.md) |
 
 ## How the paths relate
 
