@@ -3117,7 +3117,15 @@ spec:
         # redirect), consistent with ArgoCD/Grafana/Backstage which do not gate on insecure.
         - --auth-mode=sso
         - "--base-href=/argo-workflows/"
-        - "--secure=false"
+        # Serve TLS (self-signed, in-memory) even though TLS is also terminated
+        # upstream. argo-server derives the scheme of its SSO post-login redirect
+        # check from this flag only (server/auth/sso/sso.go HandleCallback:
+        # prefix = "http(s)://<host><base-href>"). With --secure=false the prefix is
+        # http:// while every browser URL is https:// (ALB HTTPS or CloudFront), so the
+        # requested deep link (e.g. /workflows/team-java) never matches and the user is
+        # dropped on the base href / last-used namespace after "Login via single
+        # sign-on". The ALB talks HTTPS to the pod (ingress backend-protocol).
+        - "--secure=true"
         - "--loglevel"
         - "info"
         - "--log-format"
@@ -3134,7 +3142,7 @@ spec:
           httpGet:
             path: /
             port: 2746
-            scheme: HTTP
+            scheme: HTTPS
           initialDelaySeconds: 30
           periodSeconds: 20
           timeoutSeconds: 5
