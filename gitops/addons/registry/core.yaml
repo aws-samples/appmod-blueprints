@@ -414,6 +414,12 @@ aws-load-balancer-controller:
       jqPathExpressions:
         - .webhooks[].clientConfig.caBundle
   additionalResources:
+    # Wave-ordered copy of the upstream self-signed Issuer (enableCertManager:
+    # true) so it is applied before the webhook Certificate on first sync.
+    # See addons/charts/lbc-webhook-issuer/templates/selfsigned-issuer.yaml.
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/lbc-webhook-issuer'
+      helm:
+        releaseName: lbc-webhook-issuer
     - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
       helm:
         releaseName: lbc-credential-check
