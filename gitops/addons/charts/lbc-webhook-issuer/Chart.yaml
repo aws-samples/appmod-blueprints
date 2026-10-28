@@ -1,0 +1,5 @@
+apiVersion: v2
+name: lbc-webhook-issuer
+description: Wave-ordered copy of the aws-load-balancer-controller self-signed cert-manager Issuer, so it is applied before the webhook Certificate on first sync
+type: application
+version: 0.1.0
