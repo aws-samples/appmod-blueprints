@@ -51,7 +51,7 @@ flowchart LR
 - **Guided workshop at an AWS event:** the event's facilitator gives you an access code and the AWS account is provided. Find upcoming public events on [AWS Events](https://aws.amazon.com/events/).
 - **Guided workshop, self-paced:** follow the workshop's self-paced page, or the CloudFormation/CloudShell steps right below.
 - **Install outside the workshop** (direct `kind-kro-ack`, into your own account): see the [non-workshop install guide](docs/non-workshop/README.md).
-- **Prerequisites, cost, deleting a spoke, keeping your fork's README up to date:** these apply to every mode — see [Advanced operations](docs/non-workshop/README.md#advanced-operations-all-modes).
+- **Cost, deleting a spoke, direct-install prerequisites, keeping your fork's README up to date:** not path choices — see [Advanced operations](docs/non-workshop/README.md#advanced-operations-all-modes).
 
 Once you are logged into your AWS Console with the appropriate permissions, you can set up the environment to run the labs in your account. These instructions have been tested in the following AWS region and are not guaranteed to work in others without modification:
 

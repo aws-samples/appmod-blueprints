@@ -54,8 +54,8 @@ flowchart TD
 > **Note on the links.** GitHub's Mermaid renderer ignores `click` links in diagrams, so use the
 > line above (other Mermaid renderers make the leaves clickable).
 
-Prerequisites, cost, deleting a spoke and README upkeep are not path choices: they apply to every
-mode and are listed under [Advanced operations](#advanced-operations-all-modes).
+Prerequisites, cost, deleting a spoke and README upkeep are not path choices: they are listed under
+[Advanced operations](#advanced-operations-all-modes).
 
 ## Procedures
 
@@ -77,37 +77,27 @@ Pick one of three options:
 | Option | When | What to do |
 |---|---|---|
 | **(a) Upstream example, unchanged** | Quickest start; spokes `dev`/`prod` in the hub's account; you accept that the declarations (names, regions, CIDRs — no account IDs) are public | Point `fleetRepo.url` at [`fleet-config-peeks-example`](https://github.com/allamand/fleet-config-peeks-example) — no fork, no token. Procedure: [2b](quick-existing-fleet.md) |
-| **(b) Fork of the example** | You want to add/change spokes, pin a revision, or edit enabled addons | [Fork the example repo](https://github.com/allamand/fleet-config-peeks-example/fork) and set `fleetRepo.url` to your fork. A **public** fork is read anonymously (no PAT). A **private** fork, or the generative `spokes:*` flows that push to the repo, need a PAT — see below |
+| **(b) Fork of the example** | You want to add/change spokes or edit enabled addons | [Fork the example repo](https://github.com/allamand/fleet-config-peeks-example/fork) and set `fleetRepo.url` to your fork. A **public** fork is read anonymously (no PAT). A **private** fork, or the generative `spokes:*` flows that push to the repo, need a PAT — see below |
 | **(c) Your own git provider** | Private GitHub/GitLab repo, or a layout you control | Follow [custom-prerequisites.md — fleet repo](custom-prerequisites.md#3-fleet-repo-prerequisite--fork-or-your-own-git-provider) and [git token](custom-prerequisites.md#4-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push) |
 
-`fleetRepo` keys (each falls back to `repo.*` when omitted):
+Config keys: `fleetRepo.{url,revision,basepath}`, each falling back to `repo.*` when omitted
+([example block](custom-prerequisites.md#3-fleet-repo-prerequisite--fork-or-your-own-git-provider)).
 
-```yaml
-fleetRepo:
-  url: https://github.com/<org>/<your-fleet-repo>.git
-  revision: main
-  basepath: ""      # "" when the fleet content sits at the repo root, like the example
-```
-
-**PAT (options b‑private and c).** There is **no token key in `config.local.yaml`**. Minimal scopes:
-GitHub fine‑grained → access to the one fleet repo, **Contents: Read‑only** (read) or **Read and
-write** (generative push); GitHub classic → `repo` (private) / `public_repo` (public). Store it in
-AWS Secrets Manager (property `git_token` of `<hub-cluster-name>/secrets`, or a dedicated secret)
-and expose it to ArgoCD as the Secret `argocd/fleet-config-repo` labelled
-`argocd.argoproj.io/secret-type: repository` — exact manifests in
+**PAT (private fork, option c, or `spokes:*` push).** There is no token key in `config.local.yaml`:
+the PAT goes into AWS Secrets Manager and an ArgoCD `repository` Secret `argocd/fleet-config-repo`.
+Minimal scopes and manifests:
 [custom-prerequisites.md, section 4](custom-prerequisites.md#4-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push).
 
 ## Advanced operations (all modes)
 
-These pages are not install paths. They apply to the workshop run in your own account as well as
-to the quick and custom direct installs; where a step is specific to one mode, the page says so.
+These pages are not install paths. Each one states which modes it applies to.
 
-| Topic | What it covers | Go to |
-|---|---|---|
-| Prerequisites | Host tools and versions, AWS account prerequisites (Identity Center, ACM, Route53), fleet repo and git token, annotated `config.local.yaml` | [custom-prerequisites.md](custom-prerequisites.md) |
-| Solution cost | What the solution creates, how to estimate, track, reduce and stop the cost | [custom-cost.md](custom-cost.md) |
-| Delete a spoke | Cleanly tear down one spoke (spec → prune → sweep) | [custom-delete-spoke.md](custom-delete-spoke.md) |
-| Update the README | Record your deployment choices in your fork's README, zero‑secret | [custom-update-readme.md](custom-update-readme.md) |
+| Topic | Modes | What it covers | Go to |
+|---|---|---|---|
+| Prerequisites | Direct installs (the workshop IDE is pre-provisioned) | Host tools and versions, AWS account prerequisites (Identity Center, ACM, Route53); sections 3–6 are the custom install itself | [custom-prerequisites.md](custom-prerequisites.md) |
+| Solution cost | All (nothing to pay at an AWS event) | What the solution creates, how to estimate, track, reduce and stop the cost | [custom-cost.md](custom-cost.md) |
+| Delete a spoke | All (the workshop also has ready-made tasks) | Cleanly tear down one spoke (spec → prune → sweep) | [custom-delete-spoke.md](custom-delete-spoke.md) |
+| Update the README | Any mode where you keep your own fork | Record your deployment choices in your fork's README, zero‑secret | [custom-update-readme.md](custom-update-readme.md) |
 
 ## How the paths relate
 

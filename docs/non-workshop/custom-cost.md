@@ -16,18 +16,18 @@ A deployment is **one hub plus N spokes**. Every item below is created by the so
 
 | Item | Scope | Created by |
 |---|---|---|
-| EKS cluster (control plane) | hub + **each** spoke | hub: `kind-kro-ack` provider; spokes: KRO `EksclusterWithVpc` (`rg-eks.yaml`) |
+| EKS cluster (control plane) | hub + **each** spoke | KRO `EksCluster` (`rg-eks.yaml`) / `EksclusterWithVpc` (`rg-eks-vpc.yaml`); the hub's is applied from the local `kind` cluster (`hub:claim`) |
 | EKS managed Capabilities (Argo CD, ACK, kro) | hub (Argo CD + ACK + kro); spokes: ACK + kro, Argo CD only when enabled | `Capability` resources in `rg-eks.yaml` |
 | Worker nodes (EKS Auto Mode) | hub + each spoke | Auto Mode node pools; scales with the workloads you run |
-| VPC with **1 NAT gateway + 1 Elastic IP** | per VPC (hub + each spoke) | `rg-vpc.yaml` (`natGateways` is currently always 1) |
-| Application Load Balancer (`platform` IngressGroup) | hub | `ingress-class-alb` + AWS Load Balancer Controller |
+| VPC with **1 NAT gateway + 1 Elastic IP** | each spoke; the hub too, unless `hub.network.vpcId` reuses an existing VPC | `rg-vpc.yaml` (`natGateways` is currently always 1) |
+| Application Load Balancer | hub (`platform` IngressGroup); a spoke only when one of its workloads exposes an Ingress | `ingress-class-alb` + AWS Load Balancer Controller |
 | CloudFront distribution | only in CloudFront mode (`insecure: true`) | `scripts/cloudfront-*.sh` ([quick-cloudfront.md](quick-cloudfront.md)) |
 | Amazon Managed Service for Prometheus workspace + managed scrapers | hub (scrapers for hub and spokes) | `observability-aws` addon (`amp-workspace.yaml`, `prometheus-scraper.yaml`, `spoke-scrapers.yaml`) |
 | Amazon Managed Grafana workspace | hub | `observability-aws` addon (`amg-workspace.yaml`) — billed per active user |
 | AWS Secrets Manager secrets | hub (`<hub>/secrets`, observability credentials, …) | provider + External Secrets |
 | Route53 hosted zone + queries | only in own‑domain mode (`insecure: false`) | your zone; the platform writes records via external‑dns |
 | ECR repositories, S3 buckets | per `resourcePrefix`, as workloads create them | KRO resource groups (CI/CD pipeline, S3, Ray/model cache, …) |
-| CloudWatch Logs (EKS control‑plane logs) | per cluster, when enabled | `task enable-capability-logs` / cluster logging settings |
+| CloudWatch Logs | per cluster | EKS control‑plane logs (api, audit, authenticator, controllerManager, scheduler) are enabled in `rg-eks.yaml`; Capability controller logs only after `task enable-capability-logs` |
 | Data transfer (internet egress, cross‑AZ, NAT processing) | all | usage‑driven |
 
 The `kind` bootstrap cluster runs locally in Docker: it costs nothing on AWS.
@@ -44,7 +44,7 @@ the region you deploy to:
 
 - EKS: `1 + N` clusters, plus the EKS Capabilities per cluster;
 - EC2 / Auto Mode: the node footprint you expect on the hub and on each spoke;
-- VPC: `1 + N` NAT gateways and Elastic IPs, plus expected NAT data processing;
+- VPC: up to `1 + N` NAT gateways and Elastic IPs (one per VPC the solution creates), plus NAT data processing;
 - 1 ALB; CloudFront if used; Route53 if you use your own domain;
 - AMP ingestion/storage/query + managed scraper; AMG active users; Secrets Manager secret count.
 
@@ -105,11 +105,11 @@ Explorer within ~24 h).
 | Goal | Action |
 |---|---|
 | Remove an unused spoke | [Delete a spoke](custom-delete-spoke.md) — removes its EKS cluster, VPC, NAT gateway and Elastic IP |
-| Shrink the hub | Disable addons you do not use in `<fleetRepo.basepath>overlays/environments/control-plane/enabled-addons.yaml` of your **writable** fleet repo (e.g. `jupyterhub`, `ray_operator`, `spark_operator`, `devlake`); fewer workloads → fewer Auto Mode nodes |
-| Drop managed observability | Set `observability_aws: false` in the same file (removes the AMP/AMG workspaces and scrapers; you lose the managed dashboards/alerts) |
-| Remove all hub addons, keep the hub | `task hub-destroy-addons` |
+| Shrink the hub | In your **writable** fleet repo, set unused addons to `false` under `enabledAddons:` in `<fleetRepo.basepath>overlays/environments/control-plane/enabled-addons.yaml` (create it if absent — missing value files are ignored), e.g. `jupyterhub`, `ray_operator`, `spark_operator`, `devlake`; fewer workloads → fewer Auto Mode nodes |
+| Drop managed observability | Set `enabledAddons.observability_aws: false` in the same file (removes the AMP/AMG workspaces and scrapers; you lose the managed dashboards/alerts) |
+| Remove all addons, keep the hub cluster | `task hub-destroy-addons` — the on‑hub controllers also delete the AWS resources they manage, **including the spoke clusters** |
 | **Stop everything** (direct install) | `task destroy` — deletes the KRO instances, waits for ACK to delete their AWS resources, then sweeps the remaining resources (CloudFront, IAM, Secrets, AMP, OIDC, VPC). Requires `boto3` in `python3` |
-| **Stop everything** (workshop in your own account) | Follow the workshop **Cleanup** section, then delete the CloudFormation stack |
+| **Stop everything** (workshop in your own account) | Follow the workshop [Cleanup](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/90_cleanup) section, then delete the CloudFormation stack |
 
 `task destroy-kind` only deletes the local `kind` cluster; it does **not** stop AWS costs.
 
