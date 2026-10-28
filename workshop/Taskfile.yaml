@@ -1456,6 +1456,12 @@ tasks:
           s.password_authentication_enabled_for_git = true
           s.default_branch_protection = 0
           s.default_branch_protection_defaults = {allowed_to_push: [{access_level: 30}], allow_force_push: true, allowed_to_merge: [{access_level: 30}], developer_can_initial_push: true}
+          # Disable Auto DevOps INSTANCE-wide, before any project is created below. The workshop
+          # has no GitLab runner (CI = Argo Workflows), so Auto DevOps only produces failing/stuck
+          # pipelines on every push. Projects created with no explicit auto_devops record inherit
+          # this setting, so it also covers repos created later (Backstage publish:gitlab such as
+          # <app>-cicd, participant-created repos). There is no gitlab.rb key for this setting.
+          s.auto_devops_enabled = false
           s.save(validate: false)
           # Flush Rails cache so all workers (Sidekiq, web) pick up the new settings immediately
           Rails.cache.clear
