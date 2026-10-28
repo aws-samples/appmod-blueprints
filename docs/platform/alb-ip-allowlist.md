@@ -54,7 +54,7 @@ The hub reads per‑addon value overrides from your fleet repo (the `$overlay` s
    `overlay_repo_url` / `overlay_repo_revision` / `overlay_repo_basepath` on the hub, see
    [fleet-secret README](../../platform-charts/fleet-secret/README.md)).
 
-> A separate change proposes falling back to the hub's own `fleetRepoURL` / `fleetRepoRevision`
+> [#1169](https://github.com/aws-samples/appmod-blueprints/pull/1169) proposes falling back to the hub's own `fleetRepoURL` / `fleetRepoRevision`
 > when it is a separate repo from the addons repo, so a direct install with a dedicated fleet repo
 > needs no `overlay_repo_url`. Until it is merged, wire `overlay_repo_url` explicitly.
 
