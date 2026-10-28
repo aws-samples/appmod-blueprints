@@ -40,7 +40,8 @@ ApplicationSet globs `fleet/members/*/values.yaml` to register each spoke with A
 
 Because the example repo already **commits** `dev.json` + `prod.json` and their specs, ArgoCD only
 has to **read** the repo — which it does anonymously over a public clone. A PAT is only needed when
-something **writes** to the fleet repo (the generative `spokes:apply` flow, or a private repo).
+something **writes** to the fleet repo (the generative `spokes:enable-kro` task of
+`workshop/Taskfile.yaml`, or a private repo).
 
 **`accountId` is deliberately absent** from every spec in the example repo: the `kro-clusters`
 chart defaults it to `global.accountId`, which the hub propagates from its own cluster‑secret (your

@@ -162,9 +162,12 @@ way [quick-existing-fleet.md](quick-existing-fleet.md) describes. In **your** fl
 ArgoCD reconciles on its next sync: `clusters-kro-<name>` appears, KRO creates the
 `EksclusterWithVpc`, ACK provisions the VPC + EKS, and `fleet-secrets` registers the spoke.
 
-> **Generative alternative (`spokes:apply`, needs a PAT).** Instead of hand‑editing the repo you can
-> declare a `spokes:` map in `config.local.yaml` and let the installer materialise and **push** the
-> files. Because it writes to the repo it needs a git token — see
+> **Generative alternative (`task spokes:enable-kro -- <name>`, needs a PAT).** Instead of
+> hand‑editing the repo you can run `spokes:enable-kro` (`workshop/Taskfile.yaml`, run from
+> `workshop/`): it clones the fleet repo, writes the files above and **pushes** them. It is wired for
+> the workshop layout (`tenants/workshop`, the IDE‑bootstrapped GitLab), so on a direct install the
+> hand‑edit above is the supported path; the provider Taskfile (`cluster-providers/kind-kro-ack`) has
+> no spoke‑writing task. Because it writes to the repo it needs a git token — see
 > [custom-install.md](custom-install.md#2-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push), section 2.
 
 ---
