@@ -69,9 +69,27 @@ passed to the addon ApplicationSets via `overlayRepoURLGit` / `valuesObject`.
 
 ## How the `$overlay` layer is activated (important)
 
+The `cluster-addons` ApplicationSet (`gitops/bootstrap/addons.yaml`) resolves
+the `$overlay` repo — and the `overlayRepoURLGit` it passes to the appset-chart —
+in this order (the same order `hub-fleet-secret` / `fleet-secrets` /
+`clusters-kro` already use to read fleet-config):
+
+1. `overlay_repo_url` / `overlay_repo_revision` when set on the hub cluster secret
+   (workshop `hub:set-overlay-repo`, or any seed that writes them);
+2. otherwise the hub's own `fleetRepoURL` / `fleetRepoRevision` (default `main`),
+   **when it is a separate repo** from `addonsRepoURL` (compared without a trailing
+   `.git`) — the direct-path case of a dedicated fleet repo;
+3. otherwise `addonsRepoURL` with no per-addon overlay tier (providers that set
+   `fleetRepoURL` to the addons repo itself — terraform, byoc, the workshop before
+   its flip — are unchanged).
+
+The basepath is always `overlay_repo_basepath` as-is (`""` = repo root, where
+`configs/` and `overlays/` live), never `fleetRepoBasepath`.
+
 The per-addon `$overlay/...` valueFiles (layers 4-6 above) are **only emitted by
-the appset-chart when `overlay_repo_url` is set** on the cluster secret
-(`{{- if $overlayRepoURLGit }}`). If `overlay_repo_url` is empty/unset:
+the appset-chart when that resolution yields an overlay repo**
+(`{{- if $overlayRepoURLGit }}`). If it does not (no `overlay_repo_url` and no
+separate `fleetRepoURL`):
 - per-addon Applications resolve **only** `$defaults` (GitHub) value files;
 - the `clusters` (crossplane) and `clusters-kro` ApplicationSets fall back to
   `fleetRepoURL` (GitHub), which does NOT contain user spoke definitions;
