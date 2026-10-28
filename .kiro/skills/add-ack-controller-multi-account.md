@@ -19,7 +19,8 @@ The platform uses ACK (AWS Controllers for Kubernetes) on the hub cluster to man
 
 | File | Change |
 |------|--------|
-| `gitops/addons/charts/multi-acct/templates/iam-role-selectors.yaml` | Add IAMRoleSelector for the new service |
+| `gitops/addons/charts/multi-acct/templates/iam-role-selectors.yaml` | Add IAMRoleSelector for the new service (hub) |
+| `gitops/abstractions/kro/kro-clusters/templates/iam-role-selectors.yaml` | Add the service to the `list` (spokes); `workshop/scripts/tests/test_carm_single_owner.py` fails if the two lists differ |
 | `scripts/create-cross-account-roles.sh` | Add service to the roles loop + policies |
 
 ## Step 1: Add IAMRoleSelector
@@ -83,7 +84,8 @@ This creates `peeks-cluster-mgmt-<service>` in the spoke account with:
 
 ## Step 4: Sync ArgoCD
 
-The `multi-acct` app on the hub deploys the IAMRoleSelectors. Sync it:
+The `multi-acct` app on the hub deploys the hub's IAMRoleSelectors; each `clusters-kro-<spoke>`
+app deploys that spoke's. Sync them:
 
 ```bash
 argocd app sync multi-acct-peeks-hub

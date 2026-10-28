@@ -88,12 +88,11 @@ Commit directly to **your copy** of the fleet repo — there is no installer pus
 
 ArgoCD picks up the change on its next sync.
 
-> **CARM / same‑account coverage.** For the spoke's hub‑side ACK resources to reconcile, its
-> namespace needs an IAMRoleSelector. On this direct path you declare the spoke names through
-> `global.spokeNames` (the fix that ships with
-> [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157)) — see
-> [custom-multi-account.md](custom-multi-account.md), "Same‑account spokes". Cross‑account spokes
-> need `configs/multi-acct/values.yaml` with an explicit account ID (same doc).
+> **CARM coverage comes with the spoke.** For the spoke's hub‑side ACK resources to reconcile, its
+> namespace needs IAMRoleSelectors. You do not declare them: the `kro-clusters` chart renders them
+> from the spoke's entry in `kro-clusters/values.yaml` (same account when `accountId` is absent).
+> Cross‑account spokes just add `accountId` to that entry — see
+> [custom-multi-account.md](custom-multi-account.md).
 
 ---
 

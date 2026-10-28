@@ -79,20 +79,21 @@ confirmed gone.
 
 ## Phase 3 — post-prune cleanup (fleet repo)
 
-Only **after** a confirmed prune, remove the trigger marker, the CARM mapping, the fleet member and
-the per‑cluster overlay in your fleet repo:
+Only **after** a confirmed prune, remove the trigger marker, the fleet member and the per‑cluster
+overlay in your fleet repo:
 
 ```bash
 rm -f gitops/fleet/spoke-values/tenants/default/kro-clusters/clusters/"$SPOKE".json
-# If this spoke had an explicit cross-account entry:
+# Legacy only: fleet repos created before kro-clusters owned the selectors may still list the
+# spoke in configs/multi-acct (ignored now); drop it as cleanup.
 yq -i 'del(.clusters."'"$SPOKE"'")' configs/multi-acct/values.yaml 2>/dev/null || true
 rm -rf gitops/fleet/members/"$SPOKE" overlays/clusters/"$SPOKE"
-git commit -am "chore: remove $SPOKE marker, fleet member + multi-acct mapping (post-prune)" && git push
+git commit -am "chore: remove $SPOKE marker + fleet member (post-prune)" && git push
 ```
 
-If instead you covered the spoke with `global.spokeNames` (same‑account, direct path), remove its
-name from the `spoke_namespaces` annotation on the hub cluster‑secret (and from your fleet/Secrets
-Manager contract) so the IAMRoleSelector stops being rendered.
+The spoke's namespace and IAMRoleSelectors are rendered by `clusters-kro-<name>` with
+`Prune=false,Delete=false`, so the prune above leaves them in place on purpose: ACK still needs them
+to finish deleting the spoke's CRs. They are removed in the sweep, once the namespace is gone.
 
 ### De-register from ArgoCD
 

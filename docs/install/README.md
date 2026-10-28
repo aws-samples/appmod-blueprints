@@ -124,11 +124,9 @@ repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost) are u
   **not** stand the agentic platform up on its own today. Tracked in
   [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157) and
   [open-agentic-platform#98](https://github.com/awslabs/open-agentic-platform/issues/98).
-- **Same‑account spokes:** covered by `global.spokeNames` (the fix that ships with
-  [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157)) plus a fleet repo
-  that declares them — see [quick-existing-fleet.md](quick-existing-fleet.md) and
-  [custom-multi-account.md](custom-multi-account.md).
-- **Cross‑account spokes:** declared through `configs/multi-acct/values.yaml` with an
-  explicit account ID per spoke — see [custom-multi-account.md](custom-multi-account.md).
+- **Spokes (same‑ or cross‑account):** declared once, by their entry in the fleet repo's
+  `kro-clusters/values.yaml`; the `kro-clusters` chart renders each spoke's ACK IAMRoleSelectors from
+  that entry (`accountId` only for a cross‑account spoke) — see
+  [quick-existing-fleet.md](quick-existing-fleet.md) and [custom-multi-account.md](custom-multi-account.md).
 
 Each procedure states precisely what is verified and flags anything still to validate.

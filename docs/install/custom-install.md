@@ -20,7 +20,7 @@ Spokes are declared in a **fleet repo** that ArgoCD reconciles. Pick one:
   [quick-existing-fleet.md](quick-existing-fleet.md).
 - **Point at your own git provider** (e.g. a private GitHub/GitLab repo). Then you need a git token
   (next section). Set the repo's layout to match the example's (`gitops/fleet/...`,
-  `configs/multi-acct/...`, `overlays/clusters/...`).
+  `overlays/clusters/...`).
 
 Reference it in config:
 
@@ -189,8 +189,8 @@ identityCenter:                       # REQUIRED — the ArgoCD Capability needs
 #   project: <your-project>
 #   owner: <your-team>
 
-# Same-account spokes on the direct path -> see custom-multi-account.md (global.spokeNames).
-# Cross-account spokes -> configs/multi-acct/values.yaml in your fleet repo (same doc).
+# Spokes are declared in your fleet repo (kro-clusters/values.yaml), not here; add accountId
+# to a spoke's entry for a cross-account spoke -> see custom-multi-account.md.
 ```
 
 > **Gotcha — named profile + IMDS (EC2 / Cloud Desktop host).** If IMDS is reachable, ACK
@@ -238,8 +238,8 @@ Record the decisions that differ from the defaults:
    Note the hostname pattern (generically — e.g. `*.<your-domain>`), never a real host or cert ARN.
 3. **Fleet repo.** Which repo holds your spokes (`fleetRepo.url`) and whether it is public
    (zero‑PAT) or private (credential via `argocd/fleet-config-repo`).
-4. **Spokes.** The list of spoke names and whether they are same‑account (`global.spokeNames`) or
-   cross‑account (`configs/multi-acct/values.yaml`).
+4. **Spokes.** The list of spoke names and whether they are same‑account (no `accountId`) or
+   cross‑account (`accountId` in the spoke's `kro-clusters/values.yaml` entry).
 5. **Versions.** The `repo.revision` / `agenticRepo.revision` tags you pinned.
 6. **Cost tags.** The `platformTags` keys you set, so cost reports are reproducible
    ([cost.md](cost.md)).
@@ -275,7 +275,7 @@ This fork runs Platform Engineering on EKS via the **<CloudFront | own-domain | 
 
 - Exposure: `insecure: <true|false>` (<CloudFront *.cloudfront.net | HTTPS on *.your-domain>)
 - Fleet repo: `<org>/<your-fleet-repo>` (<public zero-PAT | private>)
-- Spokes: `<dev, prod, ...>` (<same-account via global.spokeNames | cross-account via configs/multi-acct>)
+- Spokes: `<dev, prod, ...>` (<same-account | cross-account via accountId in kro-clusters/values.yaml>)
 - Pinned: platform `<release-tag>`, OAP `<oap-release-tag>`
 - Cost tags: `platformTags.{project, environment, owner}`
 ```
