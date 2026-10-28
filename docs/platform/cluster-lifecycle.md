@@ -33,7 +33,7 @@ Therefore the `clusters-kro` and `clusters` (crossplane) ApplicationSets in
 ## Enabling a spoke (declarative, automatic)
 
 ```bash
-# KRO-provisioned spoke (ACK + multi-acct CARM)
+# KRO-provisioned spoke (ACK; CARM selectors rendered by kro-clusters)
 task kind-crossplane:spokes:enable-kro -- <cluster-name>
 
 # Crossplane-provisioned spoke
@@ -65,8 +65,8 @@ What they do:
    exactly what will be deleted.
 3. `argocd app sync <app> --prune` — the explicit destructive step.
 4. (KRO only) After a successful prune, remove the `clusters/<name>.json`
-   marker, the `multi-acct` CARM mapping, the fleet member file and the
-   per-cluster overlay. Then delete the `clusters-kro-<name>` and
+   marker, the fleet member file and the per-cluster overlay (plus any legacy
+   `configs/multi-acct` entry). Then delete the `clusters-kro-<name>` and
    `fleet-secret-<name>` Applications and the Argo CD cluster Secret: both
    ApplicationSets are `create-update`, so they never delete those Applications.
 
