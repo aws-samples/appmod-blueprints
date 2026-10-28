@@ -2307,23 +2307,9 @@ tasks:
         if [ -n "$INSTANCE_ROLE" ] && [ "$INSTANCE_ROLE" != "None" ] && [ "$INSTANCE_ROLE" != "null" ]; then
           INSTANCE_ROLE="$INSTANCE_ROLE" yq -i '.clusters."{{.CLUSTER}}".adminInstanceRoleName = env(INSTANCE_ROLE)' "$KRO_VALUES"
         fi
-        # multi-acct (ACK CARM): map this spoke's namespace -> AWS account so the
-        # hub's ACK controllers render an IAMRoleSelector per service and assume
-        # the {{.RESOURCE_PREFIX}}-cluster-mgmt-<svc> roles when provisioning the
-        # spoke. The KRO EksclusterWithVpc lands in namespace == clusterName, which
-        # is the key the multi-acct chart selects on. Only KRO spokes need this —
-        # ACK does the provisioning; Crossplane spokes do not use CARM.
-        # Path = the appset-chart external per-addon overlay tier:
-        #   $overlay/<overlay_repo_basepath>configs/multi-acct/values.yaml
-        # The fleet-config repo (seeded by the GitLab init-job) keeps configs/ and
-        # overlays/ at the REPO ROOT (overlay_repo_basepath=""), so this lives at
-        # configs/multi-acct/values.yaml — NOT under gitops/. (Spoke cluster values
-        # use gitops/fleet/... because that appset falls back to fleetRepoBasepath.)
-        # yq merge keeps it idempotent and accumulates entries across spokes.
-        mkdir -p "$REPO_DIR/configs/multi-acct"
-        MA_FILE="$REPO_DIR/configs/multi-acct/values.yaml"
-        [ -f "$MA_FILE" ] || printf 'clusters: {}\n' > "$MA_FILE"
-        yq -i '.clusters."{{.CLUSTER}}" = "{{.AWS_ACCOUNT_ID}}"' "$MA_FILE"
+        # ACK CARM coverage (the spoke's Namespace + IAMRoleSelectors) is rendered by the
+        # kro-clusters chart from the cluster entry above (accountId / hub prefix), so
+        # there is nothing to write into configs/multi-acct: multi-acct only covers the hub.
         # platform-manifests: disable HuggingFaceModel CRs on KRO spokes. The
         # HuggingFaceModel CRD (kro.run) is not installed on spokes, so the chart's
         # CRs fail to apply ("no matches for kind HuggingFaceModel"); these models
@@ -2360,7 +2346,7 @@ tasks:
         if git diff --cached --quiet; then
           printf '{{.C_INFO}}  No fleet-config changes for {{.CLUSTER}} — already enabled (idempotent).{{.C_RESET}}\n'
         else
-          git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ fleet member, multi-acct CARM mapping)"
+          git commit -m "feat: enable spoke {{.CLUSTER}} via KRO (+ fleet member)"
           PUSHED=false
           for i in 1 2 3; do
             # NOTE: the fleet/gitops repo must allow pushes to its default branch.
@@ -2385,7 +2371,7 @@ tasks:
             && printf '{{.C_INFO}}  Refreshed local fleet-config checkout.{{.C_RESET}}\n' \
             || printf '{{.C_INFO}}  Local fleet-config not auto-updated — run: git -C %s pull{{.C_RESET}}\n' "$LOCAL_FLEET"
         fi
-        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO + multi-acct CARM mapping in fleet-config overlay.{{.C_RESET}}\n'
+        printf '{{.C_OK}}✓ Spoke {{.CLUSTER}} enabled via KRO in fleet-config overlay.{{.C_RESET}}\n'
 
   spokes:disable-crossplane:
     desc: "DELETE a Crossplane spoke on purpose: remove from overlay, then prune (usage: task spokes:disable-crossplane -- <cluster-name>)"
@@ -2564,6 +2550,8 @@ tasks:
         if [ "$PRUNED" = true ]; then
           CHANGED=0
           [ -f "$MARKER" ] && { rm -f "$MARKER"; CHANGED=1; }
+          # Legacy: fleet repos seeded before kro-clusters owned the spoke selectors still
+          # carry a configs/multi-acct entry. multi-acct ignores it now; drop it as cleanup.
           [ -f "$MA_FILE" ] && yq -e '.clusters."{{.CLUSTER}}"' "$MA_FILE" >/dev/null 2>&1 && { yq -i 'del(.clusters."{{.CLUSTER}}")' "$MA_FILE"; CHANGED=1; }
           for D in "$REPO_DIR/gitops/fleet/members/{{.CLUSTER}}" "$REPO_DIR/overlays/clusters/{{.CLUSTER}}"; do
             if [ -d "$D" ]; then rm -rf "$D"; CHANGED=1; fi
@@ -2656,9 +2644,10 @@ tasks:
           $KC_HUB delete namespace "$C" --wait=true --timeout=10m >/dev/null 2>&1 || NS_GONE=false
         fi
 
-        # 3. The per-spoke IAMRoleSelectors (CARM). multi-acct runs with prune:false, so
-        #    removing the spoke from its values does not delete them. Only once the
-        #    namespace is gone: ACK needs them to finish deleting the namespace's CRs.
+        # 3. The per-spoke IAMRoleSelectors (CARM). kro-clusters renders them with
+        #    Prune=false,Delete=false, so the prune in spokes:disable-kro does not delete
+        #    them. Only once the namespace is gone: ACK needs them to finish deleting the
+        #    namespace's CRs.
         if [ "$NS_GONE" = true ]; then
           SELS=$($KC_HUB get iamroleselectors.services.k8s.aws -o json 2>/dev/null \
             | jq -r --arg c "$C" '.items[] | select(.spec.namespaceSelector.names == [$c]) | .metadata.name') || SELS=""
