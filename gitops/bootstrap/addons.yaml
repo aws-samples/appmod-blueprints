@@ -24,18 +24,8 @@ spec:
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           targetRevision: '{{ .metadata.annotations.addonsRepoRevision }}'
           ref: defaults
-        # $overlay = fleet-config "layer 5". Resolution (same order as hub-fleet-secret /
-        # fleet-secrets / clusters-kro, which already read fleet-config this way):
-        #   1. overlay_repo_url/revision when wired (workshop set-overlay-repo, or any seed);
-        #   2. else the hub's own fleetRepoURL/Revision when it is a SEPARATE repo from
-        #      addonsRepoURL (a dedicated fleet repo = the GitOps-owned overlay);
-        #   3. else addonsRepoURL (unchanged): providers that set fleetRepoURL to the addons
-        #      repo itself (terraform, byoc, workshop before the flip) stay byte-identical.
-        # Basepath stays overlay_repo_basepath AS-IS ("" = repo ROOT when unset): overlay
-        # content (configs/, overlays/) lives at the fleet repo root, NOT under
-        # fleetRepoBasepath (that locates fleet/ content, e.g. "gitops/").
-        - repoURL: '{{ if (index .metadata.annotations "overlay_repo_url") }}{{ index .metadata.annotations "overlay_repo_url" }}{{ else if (and (index .metadata.annotations "fleetRepoURL") (ne (trimSuffix ".git" (index .metadata.annotations "fleetRepoURL")) (trimSuffix ".git" .metadata.annotations.addonsRepoURL))) }}{{ index .metadata.annotations "fleetRepoURL" }}{{ else }}{{ .metadata.annotations.addonsRepoURL }}{{ end }}'
-          targetRevision: '{{ if (index .metadata.annotations "overlay_repo_url") }}{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.addonsRepoRevision }}{{ else if (and (index .metadata.annotations "fleetRepoURL") (ne (trimSuffix ".git" (index .metadata.annotations "fleetRepoURL")) (trimSuffix ".git" .metadata.annotations.addonsRepoURL))) }}{{ or (index .metadata.annotations "fleetRepoRevision") "main" }}{{ else }}{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.addonsRepoRevision }}{{ end }}'
+        - repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.addonsRepoURL }}'
+          targetRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.addonsRepoRevision }}'
           ref: overlay
         - repoURL: '{{ .metadata.annotations.addonsRepoURL }}'
           path: 'platform-charts/appset-chart'
@@ -63,9 +53,8 @@ spec:
               - $overlay/{{ index .metadata.annotations "overlay_repo_basepath" }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml
               - $overlay/{{ index .metadata.annotations "overlay_repo_basepath" }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
             valuesObject:
-              # Same resolution as the $overlay source above (empty = per-addon overlay tier off).
-              overlayRepoURLGit: '{{ if (index .metadata.annotations "overlay_repo_url") }}{{ index .metadata.annotations "overlay_repo_url" }}{{ else if (and (index .metadata.annotations "fleetRepoURL") (ne (trimSuffix ".git" (index .metadata.annotations "fleetRepoURL")) (trimSuffix ".git" .metadata.annotations.addonsRepoURL))) }}{{ index .metadata.annotations "fleetRepoURL" }}{{ end }}'
-              overlayRepoURLGitRevision: '{{ if (index .metadata.annotations "overlay_repo_url") }}{{ or (index .metadata.annotations "overlay_repo_revision") "main" }}{{ else if (and (index .metadata.annotations "fleetRepoURL") (ne (trimSuffix ".git" (index .metadata.annotations "fleetRepoURL")) (trimSuffix ".git" .metadata.annotations.addonsRepoURL))) }}{{ or (index .metadata.annotations "fleetRepoRevision") "main" }}{{ else }}{{ or (index .metadata.annotations "overlay_repo_revision") "main" }}{{ end }}'
+              overlayRepoURLGit: '{{ index .metadata.annotations "overlay_repo_url" }}'
+              overlayRepoURLGitRevision: '{{ or (index .metadata.annotations "overlay_repo_revision") "main" }}'
               overlayRepoURLGitBasePath: '{{ index .metadata.annotations "overlay_repo_basepath" }}'
       destination:
         namespace: argocd
