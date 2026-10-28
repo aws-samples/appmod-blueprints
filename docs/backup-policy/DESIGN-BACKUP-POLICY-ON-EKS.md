@@ -1116,9 +1116,6 @@ BEFORE the IAM reaper** (because EBS recovery points must be deleted by the same
 that created them — if the backup service role is reaped first, the recovery points can
 no longer be deleted).
 
-For **each Region (primary + DR)**, for vaults owned by this stack (`name_is_ours` or
-the prefix ownership tag), in this exact order.
-
 First, **once globally, before any Region is drained:**
 
 1. **Delete selections, then plans — all of them, up front.** `delete-backup-selection`
@@ -1135,7 +1132,8 @@ First, **once globally, before any Region is drained:**
    every schedule **and** every cross-Region copy action, so no *new* recovery point
    can be created in either vault while they are being drained.
 
-Then, **for each Region (primary + DR)**, in this order:
+Then, **for each Region (primary + DR)**, for vaults owned by this stack (`name_is_ours`
+or the prefix ownership tag), in this order:
 
 2. **Wait for in-flight jobs** — poll `list-backup-jobs` / `list-copy-jobs` for this
    vault until no job is `RUNNING`/`CREATED`. A backup or cross-Region copy already in
@@ -1286,7 +1284,11 @@ against the repo:
   If the backup CRDs are absent (the doc's own fallback case) the RGD stays `Ready=False`
   and stalls the shared wave chain — the exact reason `ray-service` and `amp-incident`
   got dedicated gated apps. Add a `kro-backup-policy-rgd-hub` app (path
-  `.../manifests/backup-policy`) gated on an `enable_backup_policy` flag, and add
+  `.../manifests/backup-policy`) gated on **both** `enable_kro_manifests_hub` **and**
+  `enable_backup_policy` (the hub carries `enable_kro_manifests_hub`, never
+  `enable_kro_manifests`, so this two-key selector keeps the hub RGD on the hub and off
+  every spoke — the ray/amp shape at `platform.yaml:272-277`/`:298-303`, where the hub
+  omits `enable_kro_manifests` at `:320-323`), and add
   `backup-policy/**` to the `exclude` list of **both** the `kro-manifests-hub` and the
   spoke `kro-manifests` apps. The restore subtree in (e) gets the same treatment on the
   spoke side (its own excluded subtree + dedicated gated app), so the generic exclusion
@@ -1310,17 +1312,24 @@ against the repo:
   (shipped to every `enable_kro_manifests` spoke regardless of whether backup is on) or
   excluded along with the rest of `backup-policy/**`. Resolve both by giving restore its
   **own subtree** — `.../manifests/backup-restore/` — and a **dedicated spoke-side app**,
-  `kro-backup-restore-spoke` (path `.../manifests/backup-restore`), gated on the same
-  `enable_backup_policy` flag as (a). Add `backup-restore/**` to the `exclude` list of the
+  `kro-backup-restore-spoke` (path `.../manifests/backup-restore`), gated on **both**
+  `enable_kro_manifests` **and** `enable_backup_policy` — the spoke discriminator the hub
+  lacks, so the restore Job and static PV land only on `enable_kro_manifests` spokes and
+  never on the hub (the exact failure (e) exists to prevent: the hub must carry
+  `enable_backup_policy` for the declarative objects in (a), so gating restore on that
+  flag alone would also generate `kro-backup-restore-spoke` on the hub). Add
+  `backup-restore/**` to the `exclude` list of the
   spoke `kro-manifests` app (and the hub app) so it is not double-applied, mirroring how
   `ray-service` and `amp-incident` are each excluded from the generic trees and shipped by
   their own gated apps. The restore Job then authenticates as a **spoke Pod Identity role**
   (the "Restore Job role" in the IAM table), not as the hub controller role. Net: the
   declarative `BackupPolicy` vault/plan/selection objects are hub-reconciled ACK resources
-  under the `enable_backup_policy`-gated **hub** app, and the restore Job + static PV are
-  placed by the `enable_backup_policy`-gated **spoke** app — a single flag turns the whole
-  feature (hub declarative objects **and** spoke restore path) on and off consistently,
-  exactly mirroring the StorageClass split in (d).
+  under the **`enable_kro_manifests_hub` + `enable_backup_policy`**-gated **hub** app, and the
+  restore Job + static PV are placed by the **`enable_kro_manifests` + `enable_backup_policy`**-gated
+  **spoke** app — `enable_backup_policy` stays the single feature toggle (turn it on for the hub
+  and the target spokes to enable the whole feature), while the existing `enable_kro_manifests*`
+  role discriminator keeps each object on its correct cluster, exactly mirroring the StorageClass
+  split in (d).
 
 ## Consolidation plan & PR provenance
 
