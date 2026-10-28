@@ -1,5 +1,6 @@
 {{- /* insecure: HTTP-only ingress, no cert (consumer terminates TLS upstream, e.g. CloudFront). */ -}}
-{{- $insecure := .Values.global.insecure -}}
+{{- /* global.insecure arrives as the STRING "true"/"false" from the cluster-secret metadata; a non-empty string is truthy in Go templates, so compare it explicitly (same idiom as keycloak/kargo/argo-workflows). */ -}}
+{{- $insecure := eq (toString (.Values.global.insecure | default "false")) "true" -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
