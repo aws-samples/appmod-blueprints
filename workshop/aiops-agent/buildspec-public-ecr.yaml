@@ -18,11 +18,11 @@
 #                SKILLS_MCP_TAG, STRANDS_TAG) — per-component pinned tags; defaults below
 #                MUST match chart/values.yaml images.*.tag. Override just one to bump it.
 #   APPMOD_REF   (default feat/peeks-agent-instance, on the allamand fork = PR #926 head)  — appmod-blueprints branch/tag
-#   OAP_REF      (default integration/peeks-e2e) — the PEEKS integration branch proposed by
-#                OAP PR #56 (awslabs/open-agentic-platform#56); it carries the MCP first-boot
-#                retry (#50) + configurable max_tokens (#35) the pinned agent image is cut from.
-#                NOT yet on awslabs main, so OAP_REPO points at the fork until #56 merges; then
-#                repoint OAP_REPO to awslabs and pin to a tag/SHA.
+#   OAP_REF      (default v0.1.0-rc4 = awslabs/open-agentic-platform main 649c7a1c) — the
+#                upstream OAP tag the pinned strands-agent image is cut from. It carries the
+#                temperature-omitted-by-default fix (#64), the MCP first-boot retry, the
+#                configurable max_tokens and the /ready probe that the fork branch used to carry.
+#                Pin to an upstream tag/SHA, never a moving branch.
 version: 0.2
 env:
   variables:
@@ -37,18 +37,18 @@ env:
     GITLAB_MCP_TAG: "v2"
     INCIDENT_BRIDGE_TAG: "v1.6"
     SKILLS_MCP_TAG: "v4"
-    STRANDS_TAG: "v1.14"
-    # TODO(pre-publish): APPMOD_REF/OAP_REF are MOVING integration/fork refs. Once OAP PR #56
-    # (integration/peeks-e2e) merges to awslabs main, repoint OAP_REPO to awslabs/open-agentic-platform
-    # and pin APPMOD_REF/OAP_REF to a tag/SHA. Tracked in the B2/B4 build-pin issue (#964).
+    STRANDS_TAG: "v1.15"
+    # TODO(pre-publish): APPMOD_REF is a MOVING fork ref; pin it to a tag/SHA. Tracked in the
+    # B2/B4 build-pin issue (#964). OAP_REPO/OAP_REF already point at upstream awslabs on a tag.
     # APPMOD_REPO/REF point at the PR #926 branch (allamand fork) so the pinned
     # incident-bridge:v1.6 (poller NACK + ceiling + breaker + ceiling-skip DLQ-safe backoff) is reproducible from this
     # buildspec. feat/peeks-agent-instance lives on the fork (not yet on aws-samples);
     # repoint to aws-samples + a tag/SHA once #926 merges — tracked in #964.
     APPMOD_REPO: "https://github.com/allamand/appmod-blueprints.git"
     APPMOD_REF: "feat/peeks-agent-instance"
-    OAP_REPO: "https://github.com/allamand/open-agentic-platform.git"
-    OAP_REF: "integration/peeks-e2e"
+    # Upstream OAP, pinned to a tag (649c7a1c). git clone -b accepts a tag.
+    OAP_REPO: "https://github.com/awslabs/open-agentic-platform.git"
+    OAP_REF: "v0.1.0-rc4"
 phases:
   pre_build:
     commands:
@@ -71,7 +71,7 @@ phases:
       - docker build -f /src/workshop/aiops-agent/skills-overlay/Dockerfile
           --build-arg SKILLS_MCP_IMAGE="skills-mcp-base:$SKILLS_MCP_TAG"
           -t "$REG/skills-mcp:$SKILLS_MCP_TAG" /src
-      # 3) agent runtime from the OAP fork (PR #56 integration/peeks-e2e — MCP retry #50 + max_tokens #35)
+      # 3) agent runtime from upstream OAP (v0.1.0-rc4 — temperature omitted by default #64, MCP retry, max_tokens, /ready)
       - docker build -t "$REG/strands-agent:$STRANDS_TAG" /oap/applications/strands-agent-base
   post_build:
     commands:
