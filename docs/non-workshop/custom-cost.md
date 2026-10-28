@@ -1,35 +1,61 @@
-# 3.4 · Custom — show the cost of the solution
+# Solution cost — what you pay for, how to estimate it, how to stop it
 
-There is no dedicated cost task in the repo, but the platform already **tags every resource it
-creates**, which is the foundation for both estimating the cost up front and tracking it after
-deployment. This page gives a concrete, generic method (no invented figures).
+**Objective:** list the AWS resources this solution actually creates, so you can estimate their
+cost in the AWS Pricing Calculator, track it in Cost Explorer, and reduce or stop it. This page
+gives **no price figures** on purpose: prices are regional and change over time.
+
+> Applies to **every mode** (workshop in your own account, quick and custom direct installs).
+> At an AWS‑led event the account is provided and you pay nothing.
 
 ---
 
-## What makes up the cost
+## 1. Cost items (what the solution deploys)
 
-A deployment is a hub plus N spokes. The recurring cost components are:
+A deployment is **one hub plus N spokes**. Every item below is created by the solution's own code
+(source in brackets); nothing else is assumed.
 
-| Component | Scope | Notes |
+| Item | Scope | Created by |
 |---|---|---|
-| EKS control plane | hub + **each** spoke | one flat hourly charge per cluster |
-| Worker nodes (EKS Auto Mode / Karpenter) | hub + each spoke | the largest and most variable line; scales with workload |
-| VPC data path — NAT gateways, data processing | hub + each spoke | each cluster gets its own VPC |
-| Elastic IPs | per NAT / per env | |
-| Application Load Balancer | hub (and spokes with ingress) | the platform's internet/edge entry |
-| CloudFront | if you expose via CloudFront | request + data‑transfer pricing |
-| Amazon Managed Prometheus + Managed Grafana (AMP/AMG) | hub observability | ingestion + query + Grafana user pricing |
-| AWS Secrets Manager | hub | per‑secret monthly + API calls |
-| Route53 | if you use your own domain | hosted zone + queries |
-| ECR, S3 | per `resourcePrefix` | registry storage + request/data |
+| EKS cluster (control plane) | hub + **each** spoke | hub: `kind-kro-ack` provider; spokes: KRO `EksclusterWithVpc` (`rg-eks.yaml`) |
+| EKS managed Capabilities (Argo CD, ACK, kro) | hub (Argo CD + ACK + kro); spokes: ACK + kro, Argo CD only when enabled | `Capability` resources in `rg-eks.yaml` |
+| Worker nodes (EKS Auto Mode) | hub + each spoke | Auto Mode node pools; scales with the workloads you run |
+| VPC with **1 NAT gateway + 1 Elastic IP** | per VPC (hub + each spoke) | `rg-vpc.yaml` (`natGateways` is currently always 1) |
+| Application Load Balancer (`platform` IngressGroup) | hub | `ingress-class-alb` + AWS Load Balancer Controller |
+| CloudFront distribution | only in CloudFront mode (`insecure: true`) | `scripts/cloudfront-*.sh` ([quick-cloudfront.md](quick-cloudfront.md)) |
+| Amazon Managed Service for Prometheus workspace + managed scrapers | hub (scrapers for hub and spokes) | `observability-aws` addon (`amp-workspace.yaml`, `prometheus-scraper.yaml`, `spoke-scrapers.yaml`) |
+| Amazon Managed Grafana workspace | hub | `observability-aws` addon (`amg-workspace.yaml`) — billed per active user |
+| AWS Secrets Manager secrets | hub (`<hub>/secrets`, observability credentials, …) | provider + External Secrets |
+| Route53 hosted zone + queries | only in own‑domain mode (`insecure: false`) | your zone; the platform writes records via external‑dns |
+| ECR repositories, S3 buckets | per `resourcePrefix`, as workloads create them | KRO resource groups (CI/CD pipeline, S3, Ray/model cache, …) |
+| CloudWatch Logs (EKS control‑plane logs) | per cluster, when enabled | `task enable-capability-logs` / cluster logging settings |
+| Data transfer (internet egress, cross‑AZ, NAT processing) | all | usage‑driven |
 
-Each spoke roughly multiplies the control‑plane + nodes + VPC + NAT lines.
+The `kind` bootstrap cluster runs locally in Docker: it costs nothing on AWS.
+
+Each additional spoke adds roughly one EKS cluster + its Capabilities + its nodes + one VPC with
+NAT gateway and Elastic IP.
 
 ---
 
-## Method 1 — tag the platform, then read Cost Explorer (recommended)
+## 2. Estimate before deploying — AWS Pricing Calculator
 
-### Step 1 — set cost-allocation tags at install time
+Build an estimate in the [AWS Pricing Calculator](https://calculator.aws/) from the table above, in
+the region you deploy to:
+
+- EKS: `1 + N` clusters, plus the EKS Capabilities per cluster;
+- EC2 / Auto Mode: the node footprint you expect on the hub and on each spoke;
+- VPC: `1 + N` NAT gateways and Elastic IPs, plus expected NAT data processing;
+- 1 ALB; CloudFront if used; Route53 if you use your own domain;
+- AMP ingestion/storage/query + managed scraper; AMG active users; Secrets Manager secret count.
+
+The nodes are usually the largest and most variable line; the per‑cluster fixed items (control
+plane, Capabilities, NAT) grow linearly with the number of spokes.
+
+---
+
+## 3. Track the real cost — tags + Cost Explorer
+
+### Step 1 — set cost‑allocation tags at install time
 
 Set `platformTags` in `config.local.yaml`. These tags are applied to **every** AWS resource the
 platform creates — hub resources via CDK `Tags.of(stack).add()`, and spoke resources via the KRO
@@ -47,7 +73,7 @@ platformTags:
 > platform cost tag — so set it before install, or re‑tag afterward, if you want tag‑based cost
 > reports.
 
-### Step 2 — activate the tags as cost-allocation tags
+### Step 2 — activate the tags as cost‑allocation tags
 
 In the **payer** account, Billing → **Cost allocation tags**, activate each `platformTags` key.
 Activation is not retroactive, so do it as early as possible (newly tagged resources show up in Cost
@@ -55,51 +81,37 @@ Explorer within ~24 h).
 
 ### Step 3 — read the cost in Cost Explorer
 
-- **By tag:** group/filter Cost Explorer by your `platformTags` key (e.g. `project`) to isolate the
-  whole platform's spend across services.
+- **By tag:** group/filter by your `platformTags` key (e.g. `project`) to isolate the whole
+  platform's spend across services.
 - **By resource name prefix:** everything the platform names carries your `resourcePrefix`
   (ECR repos, S3 buckets, IAM roles), useful as a secondary cross‑check.
-- **By linked account:** for **cross‑account spokes**, filter Cost Explorer by the spoke's linked
-  account to get its spend in one view (this is the cleanest per‑spoke breakdown when spokes live in
-  their own accounts).
-- **By service:** group by AWS service to see the split between EKS, EC2 (nodes), VPC/NAT, CloudFront,
-  AMP/AMG, etc. — that is your component breakdown above, with real numbers.
+- **By linked account:** for **cross‑account spokes**, filter by the spoke's linked account (the
+  cleanest per‑spoke breakdown).
+- **By service:** group by AWS service to see the split between EKS, EC2, VPC/NAT, ELB, CloudFront,
+  AMP/AMG — the table in section 1, with real numbers.
+
+### Optional — in‑cluster visibility
+
+- The `peeks` agent shipped in the workshop IDE bundles the **`eks-cost-intelligence`** APEX skill;
+  you can ask it for a cost analysis of the live cluster (convenience only — Cost Explorer stays
+  authoritative).
+- For Kubernetes‑native attribution by namespace/workload, add **OpenCost** (or a commercial
+  equivalent). It is **not** part of the platform.
 
 ---
 
-## Method 2 — estimate up front with the AWS Pricing Calculator
+## 4. Reduce or stop the cost
 
-Before (or instead of) deploying, build an estimate in the
-[AWS Pricing Calculator](https://calculator.aws/) from the component list above:
+| Goal | Action |
+|---|---|
+| Remove an unused spoke | [Delete a spoke](custom-delete-spoke.md) — removes its EKS cluster, VPC, NAT gateway and Elastic IP |
+| Shrink the hub | Disable addons you do not use in `<fleetRepo.basepath>overlays/environments/control-plane/enabled-addons.yaml` of your **writable** fleet repo (e.g. `jupyterhub`, `ray_operator`, `spark_operator`, `devlake`); fewer workloads → fewer Auto Mode nodes |
+| Drop managed observability | Set `observability_aws: false` in the same file (removes the AMP/AMG workspaces and scrapers; you lose the managed dashboards/alerts) |
+| Remove all hub addons, keep the hub | `task hub-destroy-addons` |
+| **Stop everything** (direct install) | `task destroy` — deletes the KRO instances, waits for ACK to delete their AWS resources, then sweeps the remaining resources (CloudFront, IAM, Secrets, AMP, OIDC, VPC). Requires `boto3` in `python3` |
+| **Stop everything** (workshop in your own account) | Follow the workshop **Cleanup** section, then delete the CloudFormation stack |
 
-- 1 × EKS control plane for the hub + 1 × per spoke;
-- EC2 for the expected node footprint (hub + each spoke) in your region and instance families;
-- NAT gateway(s) per VPC + expected data processing;
-- 1 × ALB (+ per spoke with ingress);
-- CloudFront (if used), AMP ingestion/query, AMG users, Secrets Manager, Route53.
+`task destroy-kind` only deletes the local `kind` cluster; it does **not** stop AWS costs.
 
-Multiply the per‑cluster block by `1 + N spokes`. Pricing is regional, so estimate in the region(s)
-you actually deploy to.
-
----
-
-## Method 3 — in-cluster cost visibility (optional)
-
-- The `peeks` agent that ships in the workshop IDE bundles the **`eks-cost-intelligence`** APEX
-  skill — if you run that agent, you can ask it for a cost analysis of the live cluster. (This is an
-  agent convenience; the authoritative numbers still come from Cost Explorer.)
-- For continuous, Kubernetes‑native cost attribution you can add **OpenCost** (or a commercial
-  equivalent) to the hub/spokes to break spend down by namespace/workload. This is **not** part of
-  the platform and is an opt‑in addon.
-
----
-
-## Practical tips
-
-- EKS Auto Mode / node cost is almost always the dominant line — size and scale‑to‑zero policy
-  matter far more than the fixed control‑plane fees.
-- Each spoke is a full cluster (control plane + nodes + VPC + NAT): the marginal cost of an extra
-  spoke is roughly one more hub‑sized data path, so delete spokes you are not using
-  ([custom-delete-spoke.md](custom-delete-spoke.md)).
-- Keep `platformTags` consistent across hub and spokes so a single Cost Explorer tag filter captures
-  the whole solution.
+After a teardown, check Cost Explorer (by tag and by service) for a few days, and look for
+leftovers by `resourcePrefix` (ECR repositories, S3 buckets, log groups, VPCs).

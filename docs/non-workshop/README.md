@@ -3,7 +3,7 @@
 Platform Engineering on Amazon EKS can be deployed in several ways. This guide is a
 **decision diagram**: pick the branch that matches your situation and follow the one
 procedure it points to. Every leaf of the diagram maps to a dedicated, step‑by‑step
-procedure (prerequisites + exact `config.local.yaml` + guard‑rails).
+procedure (exact `config.local.yaml` + guard‑rails).
 
 > **Workshop vs. direct install.** If you are here for the **guided workshop** (an AWS
 > event, or self‑paced), follow the hosted workshop — there is nothing to re‑document.
@@ -27,36 +27,87 @@ flowchart TD
     QX -->|"CloudFront (no domain needed)"| QC["2a · Quick / CloudFront"]
     QX -->|"Reuse the example fleet-config"| QF["2b · Quick / existing fleet-config"]
 
-    D -->|"Full custom"| C["3 · Custom"]
-    C --> C1["3.1 · Prerequisites"]
-    C1 --> C2["3.2 · Multi-account + add a spoke"]
-    C2 --> C3["3.3 · Delete a spoke"]
-    C2 --> C4["3.4 · Show the solution cost"]
-    C2 --> C5["3.5 · Update the README"]
-    C1 --> C6["3.6 · Restrict the ALB by source IP"]
+    D -->|"Full custom"| C["3 · Custom install"]
+    C --> C2["3.2 · Multi-account + add a spoke"]
+    C --> C6["3.6 · Restrict the ALB by source IP"]
+
+    click W1 "https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/01_aws_event" _blank
+    click W2 "https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/02_self_paced" _blank
+    click QC "quick-cloudfront.md"
+    click QF "quick-existing-fleet.md"
+    click C "custom-prerequisites.md"
+    click C2 "custom-multi-account.md"
+    click C6 "custom-alb-ip-allowlist.md"
 
     classDef leaf fill:#e8f0fe,stroke:#4285f4,color:#111;
-    class W1,W2,QC,QF,C1,C2,C3,C4,C5,C6 leaf;
+    class W1,W2,QC,QF,C,C2,C6 leaf;
 ```
 
-> **Note on the links.** GitHub's Mermaid renderer strips clickable links from diagram
-> nodes for security, so the leaves above are **not** clickable. Use the table below —
-> each numbered leaf maps to its procedure file.
+**Go to:** [1a · AWS event](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/01_aws_event) ·
+[1b · Self-paced](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/02_self_paced) ·
+[2a · CloudFront](quick-cloudfront.md) ·
+[2b · Existing fleet-config](quick-existing-fleet.md) ·
+[3 · Custom install](custom-prerequisites.md) ·
+[3.2 · Multi-account](custom-multi-account.md) ·
+[3.6 · ALB allowlist](custom-alb-ip-allowlist.md)
+
+> **Note on the links.** GitHub's Mermaid renderer ignores `click` links in diagrams, so use the
+> line above (other Mermaid renderers make the leaves clickable).
+
+Prerequisites, cost, deleting a spoke and README upkeep are not path choices: they apply to every
+mode and are listed under [Advanced operations](#advanced-operations-all-modes).
 
 ## Procedures
 
 | # | Leaf | What it covers | Go to |
 |---|------|----------------|-------|
-| 1a | AWS event | The guided workshop, run at an AWS‑led event | [awsworkshop.io/eks/platform](https://awsworkshop.io/eks/platform) *(external workshop)* |
-| 1b | Self‑paced | The same workshop, run on your own account | [catalog.workshops.aws/platform-engineering-on-eks](https://catalog.workshops.aws/platform-engineering-on-eks/en-US) *(external workshop)* |
+| 1a | AWS event | The guided workshop, run at an AWS‑led event (access code, account provided) | [Workshop — AWS event](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/01_aws_event) *(external)* · upcoming events: [AWS Events](https://aws.amazon.com/events/) |
+| 1b | Self‑paced | The same workshop, run on your own account | [Workshop — self‑paced](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/02_self_paced) *(external)* |
 | 2a | Quick / CloudFront | Direct install exposed behind a free `*.cloudfront.net` host — **no domain, no ACM cert needed** | [quick-cloudfront.md](quick-cloudfront.md) |
 | 2b | Quick / existing fleet‑config | Direct install that reuses the public example fleet repo (`fleet-config-peeks-example`) — **zero‑fork, zero‑PAT** | [quick-existing-fleet.md](quick-existing-fleet.md) |
-| 3.1 | Prerequisites | Hosted zone, your own fleet repo (fork **or** custom git provider), git token | [custom-prerequisites.md](custom-prerequisites.md) |
+| 3 | Custom install | Your own domain/cert and fleet repo: annotated `config.local.yaml`, install, verify | [custom-prerequisites.md](custom-prerequisites.md) |
 | 3.2 | Multi‑account + add a spoke | Configure cross‑account CARM and create a spoke in another account | [custom-multi-account.md](custom-multi-account.md) |
-| 3.3 | Delete a spoke | Cleanly tear down one spoke (overlay → prune → sweep) | [custom-delete-spoke.md](custom-delete-spoke.md) |
-| 3.4 | Show the solution cost | Estimate / track the cost of hub + N spokes | [custom-cost.md](custom-cost.md) |
-| 3.5 | Update the README | Keep your fork's README in sync with your deployment choices | [custom-update-readme.md](custom-update-readme.md) |
 | 3.6 | Restrict the ALB by source IP | Set, change or remove the source‑IP allowlist of the shared `platform` ALB (all hub UIs), plus closing Langfuse self‑registration | [custom-alb-ip-allowlist.md](custom-alb-ip-allowlist.md) |
+
+## Choose your fleet-config
+
+The fleet repo (`fleetRepo` in `config.local.yaml`) holds the spoke declarations ArgoCD reconciles.
+Pick one of three options:
+
+| Option | When | What to do |
+|---|---|---|
+| **(a) Upstream example, unchanged** | Quickest start; spokes `dev`/`prod` in the hub's account; you accept that the declarations (names, regions, CIDRs — no account IDs) are public | Point `fleetRepo.url` at [`fleet-config-peeks-example`](https://github.com/allamand/fleet-config-peeks-example) — no fork, no token. Procedure: [2b](quick-existing-fleet.md) |
+| **(b) Fork of the example** | You want to add/change spokes, pin a revision, or edit enabled addons | [Fork the example repo](https://github.com/allamand/fleet-config-peeks-example/fork) and set `fleetRepo.url` to your fork. A **public** fork is read anonymously (no PAT). A **private** fork, or the generative `spokes:*` flows that push to the repo, need a PAT — see below |
+| **(c) Your own git provider** | Private GitHub/GitLab repo, or a layout you control | Follow [custom-prerequisites.md — fleet repo](custom-prerequisites.md#3-fleet-repo-prerequisite--fork-or-your-own-git-provider) and [git token](custom-prerequisites.md#4-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push) |
+
+`fleetRepo` keys (each falls back to `repo.*` when omitted):
+
+```yaml
+fleetRepo:
+  url: https://github.com/<org>/<your-fleet-repo>.git
+  revision: main
+  basepath: ""      # "" when the fleet content sits at the repo root, like the example
+```
+
+**PAT (options b‑private and c).** There is **no token key in `config.local.yaml`**. Minimal scopes:
+GitHub fine‑grained → access to the one fleet repo, **Contents: Read‑only** (read) or **Read and
+write** (generative push); GitHub classic → `repo` (private) / `public_repo` (public). Store it in
+AWS Secrets Manager (property `git_token` of `<hub-cluster-name>/secrets`, or a dedicated secret)
+and expose it to ArgoCD as the Secret `argocd/fleet-config-repo` labelled
+`argocd.argoproj.io/secret-type: repository` — exact manifests in
+[custom-prerequisites.md, section 4](custom-prerequisites.md#4-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push).
+
+## Advanced operations (all modes)
+
+These pages are not install paths. They apply to the workshop run in your own account as well as
+to the quick and custom direct installs; where a step is specific to one mode, the page says so.
+
+| Topic | What it covers | Go to |
+|---|---|---|
+| Prerequisites | Host tools and versions, AWS account prerequisites (Identity Center, ACM, Route53), fleet repo and git token, annotated `config.local.yaml` | [custom-prerequisites.md](custom-prerequisites.md) |
+| Solution cost | What the solution creates, how to estimate, track, reduce and stop the cost | [custom-cost.md](custom-cost.md) |
+| Delete a spoke | Cleanly tear down one spoke (spec → prune → sweep) | [custom-delete-spoke.md](custom-delete-spoke.md) |
+| Update the README | Record your deployment choices in your fork's README, zero‑secret | [custom-update-readme.md](custom-update-readme.md) |
 
 ## How the paths relate
 
@@ -68,13 +119,14 @@ which then becomes self‑managing through ArgoCD. They differ only in two indep
    - `insecure: true` → the ALB stays HTTP‑only and something upstream terminates TLS. The
      simplest case is **CloudFront** with a free `*.cloudfront.net` name → **path 2a**.
    - `insecure: false` → the ALB serves **HTTPS** with your own ACM certificate on your own
-     Route53 domain → the **custom** path (3.1 prerequisites cover the domain/cert).
+     Route53 domain → the **custom** path ([prerequisites](custom-prerequisites.md) cover the domain/cert).
 2. **Where the spoke declarations live** — a *fleet repo* (`fleetRepo.url`):
    - reuse the **public example** repo as‑is → **path 2b** (zero‑fork, zero‑PAT);
-   - fork it or point at your own git provider → **custom** path (3.1).
+   - fork it or point at your own git provider → see [Choose your fleet-config](#choose-your-fleet-config).
 
 The **custom** path (3.x) is the superset: it adds your own domain/cert, your own fleet
-repo, cross‑account spokes, and the day‑2 operations (delete a spoke, see the cost).
+repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost) are under
+[Advanced operations](#advanced-operations-all-modes).
 
 ## Honest status of the direct path
 

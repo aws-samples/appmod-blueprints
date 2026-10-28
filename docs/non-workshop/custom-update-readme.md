@@ -1,4 +1,6 @@
-# 3.5 · Custom — update the README
+# Advanced operations — update the README of your fork
+
+> Applies to every mode in which you keep your own copy of the platform or fleet repo.
 
 When you fork the platform (or your fleet repo) for a custom deployment, keep the **README of your
 copy** honest about the choices you made, so the next operator — or future‑you — can reproduce it.

@@ -6,7 +6,7 @@ Langfuse, …) share **one** Application Load Balancer: the IngressGroup `platfo
 allowlist on that shared ALB, from your fleet repo, through GitOps.
 
 > **Scope.** Applies to the direct (`kind-kro-ack`) install with **your own, writable fleet repo**
-> (custom path, [3.1](custom-prerequisites.md)). With `insecure: true` + CloudFront (path
+> (custom path, [3 · Custom install](custom-prerequisites.md)). With `insecure: true` + CloudFront (path
 > [2a](quick-cloudfront.md)) the ALB is **internal** — read [pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)
 > before setting anything.
 

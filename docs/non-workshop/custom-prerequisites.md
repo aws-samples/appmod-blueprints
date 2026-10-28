@@ -1,4 +1,7 @@
-# 3.1 · Custom — prerequisites
+# 3 · Custom install — prerequisites and configuration
+
+> Sections 1–2 (host and AWS account prerequisites) apply to every direct install; the quick paths
+> link here for them. Sections 3–6 are specific to the custom path.
 
 The custom path installs the platform directly (`kind-kro-ack`) with **your own** domain, fleet
 repo and (optionally) cross‑account spokes. This page is the prerequisites and the annotated
@@ -267,5 +270,5 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://backstage.<your-domain>
 
 - Add a spoke / go cross‑account → [custom-multi-account.md](custom-multi-account.md)
 - Delete a spoke → [custom-delete-spoke.md](custom-delete-spoke.md)
-- See the cost → [custom-cost.md](custom-cost.md)
+- See, reduce or stop the cost → [custom-cost.md](custom-cost.md)
 - Keep your fork's README in sync → [custom-update-readme.md](custom-update-readme.md)

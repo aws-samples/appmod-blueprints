@@ -29,15 +29,29 @@ flowchart LR
     S(["How do you want to run it?"]) --> W["Guided workshop"]
     S --> Q["Quick direct install"]
     S --> C["Custom direct install"]
-    W --> WD["Follow the hosted workshop (below)"]
-    Q --> GD["Non-workshop install guide"]
-    C --> GD
+    W --> WE["Join an AWS event"]
+    W --> WS["Self-paced, in your account"]
+    Q --> GQ["Quick install guide"]
+    C --> GC["Custom install guide"]
+    click WE "https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/01_aws_event" "Workshop at an AWS event" _blank
+    click WS "https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/02_self_paced" "Self-paced setup" _blank
+    click GQ "docs/non-workshop/README.md#choose-your-path" "Quick install guide"
+    click GC "docs/non-workshop/README.md#choose-your-fleet-config" "Custom install guide"
     classDef g fill:#e8f0fe,stroke:#4285f4,color:#111;
-    class WD,GD g;
+    class WE,WS,GQ,GC g;
 ```
 
-- **Guided workshop** (at an AWS event or self-paced): follow the CloudFormation/CloudShell steps right below.
-- **Install outside the workshop** (direct `kind-kro-ack`, into your own account): see the [non-workshop install guide](docs/non-workshop/README.md) — a decision diagram routes you to the right step-by-step procedure (CloudFront, existing fleet-config, custom multi-account, delete a spoke, cost, …).
+**Go to:** [Join an AWS event](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/01_aws_event) ·
+[Self-paced, in your account](https://catalog.workshops.aws/platform-engineering-on-eks/en-US/00_start_workshop/02_self_paced)
+(or the CloudFormation steps [below](#for-us-west-2)) ·
+[Quick install guide](docs/non-workshop/README.md#choose-your-path) ·
+[Custom install guide](docs/non-workshop/README.md#choose-your-fleet-config)
+*(GitHub does not render clicks inside Mermaid diagrams; use these links.)*
+
+- **Guided workshop at an AWS event:** the event's facilitator gives you an access code and the AWS account is provided. Find upcoming public events on [AWS Events](https://aws.amazon.com/events/).
+- **Guided workshop, self-paced:** follow the workshop's self-paced page, or the CloudFormation/CloudShell steps right below.
+- **Install outside the workshop** (direct `kind-kro-ack`, into your own account): see the [non-workshop install guide](docs/non-workshop/README.md).
+- **Prerequisites, cost, deleting a spoke, keeping your fork's README up to date:** these apply to every mode — see [Advanced operations](docs/non-workshop/README.md#advanced-operations-all-modes).
 
 Once you are logged into your AWS Console with the appropriate permissions, you can set up the environment to run the labs in your account. These instructions have been tested in the following AWS region and are not guaranteed to work in others without modification:
 

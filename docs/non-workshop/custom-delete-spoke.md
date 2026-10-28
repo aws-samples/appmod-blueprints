@@ -1,4 +1,7 @@
-# 3.3 · Custom — delete a spoke
+# Advanced operations — delete a spoke
+
+> Applies to every mode. The workshop ships ready‑made tasks (see the honesty note); this page
+> gives the equivalent sequence for a direct install.
 
 Cleanly tear down **one** spoke provisioned through KRO + ACK, without orphaning its live AWS
 resources. The sequence is **remove the spec → prune through the still‑present app → sweep what
