@@ -287,4 +287,3 @@ This fork runs Platform Engineering on EKS via the **<CloudFront | own-domain | 
 - Add a spoke / go cross‑account → [custom-multi-account.md](custom-multi-account.md)
 - Delete a spoke → [delete-spoke.md](delete-spoke.md)
 - See, reduce or stop the cost → [cost.md](cost.md)
-- Restrict the shared ALB by source IP → [alb-ip-allowlist.md](alb-ip-allowlist.md)

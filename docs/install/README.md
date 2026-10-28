@@ -51,8 +51,7 @@ flowchart TD
 > **Note on the links.** GitHub's Mermaid renderer ignores `click` links in diagrams, so use the
 > line above (other Mermaid renderers make the leaves clickable).
 
-Prerequisites, cost, deleting a spoke, restricting the ALB by source IP and documenting your
-deployment are not path choices: they are listed under
+Prerequisites, cost, deleting a spoke and documenting your deployment are not path choices: they are listed under
 [Advanced operations](#advanced-operations).
 
 ## Procedures
@@ -94,7 +93,6 @@ These pages are not install paths. Each one states which modes it applies to.
 | Prerequisites | Direct installs (the workshop IDE is pre-provisioned) | Host tools and versions, AWS account prerequisites (Identity Center, ACM, Route53) | [prerequisites.md](prerequisites.md) |
 | Solution cost | All (nothing to pay at an AWS event) | What the solution creates, how to estimate, track, reduce and stop the cost | [cost.md](cost.md) |
 | Delete a spoke | All (the workshop also has ready-made tasks) | Cleanly tear down one spoke (spec → prune → sweep) | [delete-spoke.md](delete-spoke.md) |
-| Restrict the ALB by source IP | Direct install with your own writable fleet repo (not CloudFront mode, where the ALB is internal) | Set, change or remove the source‑IP allowlist of the shared `platform` ALB (all hub UIs), plus closing Langfuse self‑registration | [alb-ip-allowlist.md](alb-ip-allowlist.md) |
 | Document your deployment | Any mode where you keep your own fork | Record your deployment choices in your fork's README, zero‑secret | [custom-install.md — section 5](custom-install.md#5-document-your-deployment) |
 
 ## How the paths relate
@@ -113,7 +111,7 @@ which then becomes self‑managing through ArgoCD. They differ only in two indep
    - fork it or point at your own git provider → see [Choose your fleet-config](#choose-your-fleet-config).
 
 The **custom** path (3.x) is the superset: it adds your own domain/cert, your own fleet
-repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost, ALB allowlist) are under
+repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost) are under
 [Advanced operations](#advanced-operations).
 
 ## Honest status of the direct path
