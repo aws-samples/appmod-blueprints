@@ -7,6 +7,10 @@ metadata:
   namespace: argo
   annotations:
     alb.ingress.kubernetes.io/target-type: ip
+    # argo-server runs with --secure=true (self-signed cert) so its SSO redirect
+    # check uses https:// like the browser; the ALB must speak HTTPS to the pod.
+    alb.ingress.kubernetes.io/backend-protocol: HTTPS
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
 {{- if $insecure }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
 {{- else }}
