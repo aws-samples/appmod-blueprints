@@ -58,6 +58,12 @@ kind: ConfigMap
 metadata:
   name: config-job
   namespace: keycloak
+  annotations:
+    # The config Job below is a PostSync hook, and hooks take no part in the diff, so a
+    # new aws.grafana_url alone never re-ran it. This tracked annotation changes with the
+    # URL: the app goes OutOfSync, the sync re-fires the Job, and the Job updates the
+    # Amazon Grafana SAML client in place.
+    appmod.aws/grafana-url-sha: {{ .Values.aws.grafana_url | toString | sha256sum | trunc 16 | quote }}
 data:
   client-scope-groups-payload.json: |
     {
@@ -745,6 +751,43 @@ spec:
                 fi
               }
 
+              # Amazon Grafana SAML client. Its clientId IS the AMG URL, so create_client
+              # (which looks clients up by clientId, read from the un-substituted payload)
+              # can never find it again: a URL change created a SECOND client and left the
+              # stale one in place. Look it up by name + protocol instead and update it in
+              # place (clientId, adminUrl, redirectUris), creating it only when absent.
+              upsert_grafana_client() {
+                local payload_file=$1
+                local ids first n
+                ids=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" '.[] | select(.name == "amazon-managed-grafana" and .protocol == "saml") | .id' 2>/dev/null) || true
+                if [ -z "${ids}" ]; then
+                  echo "creating Amazon Grafana client"
+                  keycloak_post "/admin/realms/${REALM_NAME}/clients" "${payload_file}" "Amazon Grafana client"
+                  ids=$(keycloak_get "/admin/realms/${REALM_NAME}/clients" '.[] | select(.name == "amazon-managed-grafana" and .protocol == "saml") | .id' 2>/dev/null) || true
+                  if [ -z "${ids}" ]; then
+                    echo "Warning: Amazon Grafana client not found after create, skipping update"
+                    return 0
+                  fi
+                fi
+                n=$(printf '%s\n' "${ids}" | grep -c .) || true
+                first=$(printf '%s\n' "${ids}" | head -n1)
+                if [ "${n}" -gt 1 ]; then
+                  echo "Warning: ${n} amazon-managed-grafana SAML clients found; updating ${first} only; delete the other ids by hand: $(printf '%s ' ${ids})"
+                fi
+                echo "updating Amazon Grafana client ${first} for https://${GRAFANAURL}"
+                curl -sS -H "Authorization: bearer ${KEYCLOAK_TOKEN}" "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${first}" \
+                  | jq --arg url "${GRAFANAURL}" '.clientId = "https://\($url)/saml/metadata" | .adminUrl = "https://\($url)/login/saml" | .redirectUris = ["https://\($url)/saml/acs"]' \
+                  > /tmp/grafana-client-update.json
+                HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -H "Content-Type: application/json" \
+                  -H "Authorization: bearer ${KEYCLOAK_TOKEN}" \
+                  -X PUT --data @/tmp/grafana-client-update.json \
+                  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${first}")
+                if [ "$HTTP_STATUS" -ne 204 ] && [ "$HTTP_STATUS" -ne 200 ]; then
+                  echo "Error updating Amazon Grafana client: HTTP status $HTTP_STATUS"
+                  cat /tmp/response.txt
+                fi
+              }
+
               # Add client scope function
               add_client_scope() {
                 local client_id_name=$1
@@ -871,7 +914,13 @@ spec:
               create_client "Langfuse" "/var/config/langfuse-client-payload.json"
               # create_client "Argo CD" "/var/config/argocd-client-payload.json"  # Disabled - using EKS Marina managed ArgoCD
               create_client "Account Console" "/var/config/account-console-client-payload.json"
-              create_client "Amazon Grafana" "/var/config/grafana-client-payload.json"
+              if [ -n "${GRAFANAURL}" ]; then
+                upsert_grafana_client "/var/config/grafana-client-payload.json"
+              else
+                # No AMG URL yet (aws_grafana_url not seeded). Creating the client now
+                # would bake a URL nothing serves; the Job re-runs when the URL is set.
+                echo "aws.grafana_url is empty: skipping the Amazon Grafana SAML client until it is seeded"
+              fi
 
               echo "adding client scopes to clients"
               add_client_scope "argo-workflows" "Argo Workflows"
