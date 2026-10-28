@@ -1,58 +1,63 @@
 {{- /*
-  ACK CARM coverage (IAMRoleSelector) for each spoke this chart provisions, keyed off the
-  SAME $name used as the EksclusterWithVpc namespace in templates/clusters.yaml.
+  ACK CARM coverage for every spoke this chart defines: the spoke's Namespace and its 8
+  IAMRoleSelectors (ec2 eks iam ecr s3 dynamodb secretsmanager rds), keyed off the SAME
+  $name used as the EksclusterWithVpc namespace in templates/clusters.yaml.
+
+  This is the ONLY place spoke selectors are declared. There is no opt-in and no second
+  list: a spoke cannot exist in this chart without its selectors. multi-acct renders the
+  HUB's own selectors only (gitops/addons/charts/multi-acct), so every object has exactly
+  one owner:
+      <svc>-<spoke>, Namespace <spoke>  -> Application clusters-kro-<spoke> (this chart)
+      <svc>-<hub>,   Namespace <hub>    -> Application multi-acct-<hub>
 
   Why: the EKS-managed ACK capability picks its per-service workload role
   (<prefix>-cluster-mgmt-<svc>) PER NAMESPACE from an IAMRoleSelector. A namespace no
   selector covers falls back to the capability's own, deliberately minimal role, so every
   ec2/eks/iam/... create in the spoke graph is implicit-denied (e.g. 403 ec2:CreateVpc).
-  multi-acct covers .Values.clusters (configs/multi-acct, workshop) and global.spokeNames
-  (spoke_namespaces annotation, direct path) -- both are lists maintained SEPARATELY from
-  the fleet's kro-clusters keys, and they drift. Rendering the selector here, from the
-  spoke's own name, makes "spoke exists but uncovered" impossible.
 
-  OPT-IN (manageIamRoleSelectors, default false) so the workshop -- whose spokes are
-  already covered by multi-acct via configs/multi-acct/values.yaml -- renders byte-identical.
-  Set it once at the top of the tenant kro-clusters/values.yaml (fleet repo) to cover every
-  spoke; a per-cluster `manageIamRoleSelectors:` overrides it (e.g. false for a spoke you
-  keep covered through configs/multi-acct). When enabled for a spoke, do NOT also list it
-  in spoke_namespaces / configs/multi-acct: ACK rejects a resource matched by more than one
-  selector ("multiple (N) matching IAMRoleSelectors found").
+  Migration from multi-acct (no deletion window): before this chart owned them, multi-acct
+  rendered the same objects with the same names and specs (configs/multi-acct/values.yaml
+  `clusters:`). When multi-acct stops rendering them, its Application keeps them live
+  (automated sync has prune:false, registry/_defaults.yaml), and the next sync of
+  clusters-kro-<spoke> applies the same object, which rewrites its Argo CD tracking id and
+  takes ownership. The spec does not change, so ACK only sees an update of a cached
+  selector, never a delete. See the kro-clusters README, "Migration".
 
-  Object names and spec are IDENTICAL to multi-acct's (<svc>-<name>, same ARN, same
-  selectors, same 8 services). IAMRoleSelector is cluster-scoped, so an accidental double
-  declaration collapses onto ONE object (an Argo CD SharedResourceWarning), not two
-  competing selectors that would break every reconcile in that namespace.
-
-  Delete=false: on `argocd app delete clusters-kro-<name> --cascade` the selector must
-  OUTLIVE the spoke's ACK CRs, otherwise ACK loses its role mid-teardown and DeleteVpc /
-  DeleteCluster 403 -> orphans. Remove it after the namespace is gone (the workshop
-  teardown already deletes selectors by namespaceSelector.names).
+  Prune=false: removing a spoke from values.yaml and running the deliberate
+  `argocd app sync clusters-kro-<name> --prune` (spokes:disable-kro) deletes the
+  EksclusterWithVpc, but the selectors and the Namespace must OUTLIVE the spoke's ACK CRs,
+  otherwise ACK loses its role mid-teardown and DeleteVpc / DeleteCluster 403 -> orphans.
+  spokes:sweep-kro deletes the Namespace, then these selectors (by namespaceSelector.names).
+  Delete=false: same guarantee for `argocd app delete clusters-kro-<name> --cascade`.
 
   Account: per-cluster accountId wins (cross-account spoke, role lives in that account),
   else global.accountId (hub account, threaded by clusters-kro) -- never hardcoded.
   Prefix: the hub's global.resourcePrefix (the cluster-mgmt roles are the hub's).
 */ -}}
-{{- $globalManage := false }}
-{{- if hasKey .Values "manageIamRoleSelectors" }}
-{{-   $globalManage = eq (toString .Values.manageIamRoleSelectors) "true" }}
-{{- end }}
 {{- range $name, $cluster := .Values.clusters }}
 {{- if or (not $.Values.global.targetCluster) (eq $name $.Values.global.targetCluster) }}
 {{- $c := $cluster | default dict }}
-{{- $manage := $globalManage }}
-{{- if hasKey $c "manageIamRoleSelectors" }}
-{{-   $manage = eq (toString $c.manageIamRoleSelectors) "true" }}
+{{- $hub := default "" $.Values.global.hubClusterName }}
+{{- if and $hub (eq $name $hub) }}
+{{-   fail (printf "kro-clusters: cluster %q has the same name as the hub. The hub's IAMRoleSelectors (<svc>-%s) and Namespace are owned by the multi-acct Application; declaring the hub here would make two Argo CD Applications own the same objects. Rename the spoke." $name $name) }}
 {{- end }}
-{{- if $manage }}
 {{- $acct := $c.accountId | default $.Values.global.accountId }}
 {{- if not $acct }}
-{{-   fail (printf "kro-clusters: cluster %q has manageIamRoleSelectors enabled but no AWS account. Set clusters.%s.accountId or global.accountId; otherwise the IAMRoleSelector ARN renders as arn:aws:iam:::role/... which ACK silently never reconciles." $name $name) }}
+{{-   fail (printf "kro-clusters: cluster %q has no AWS account. Set clusters.%s.accountId or global.accountId; otherwise the IAMRoleSelector ARN renders as arn:aws:iam:::role/... which ACK silently never reconciles." $name $name) }}
 {{- end }}
 {{- $prefix := $.Values.global.resourcePrefix }}
 {{- if not $prefix }}
-{{-   fail (printf "kro-clusters: cluster %q has manageIamRoleSelectors enabled but global.resourcePrefix is empty, so the <prefix>-cluster-mgmt-<svc> role ARN cannot be built." $name) }}
+{{-   fail (printf "kro-clusters: cluster %q: global.resourcePrefix is empty, so the <prefix>-cluster-mgmt-<svc> role ARN of its IAMRoleSelectors cannot be built." $name) }}
 {{- end }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $name }}
+  annotations:
+    services.k8s.aws/team-id: "{{ $name }}"
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 {{- range $svc := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds" }}
 ---
 apiVersion: services.k8s.aws/v1alpha1
@@ -62,7 +67,7 @@ metadata:
   annotations:
     # Before the EksclusterWithVpc (wave 1): the Vpc CR must never exist uncovered.
     argocd.argoproj.io/sync-wave: "-1"
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Delete=false
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Prune=false,Delete=false
 spec:
   arn: "arn:aws:iam::{{ $acct }}:role/{{ $prefix }}-cluster-mgmt-{{ $svc }}"
   namespaceSelector:
@@ -72,7 +77,6 @@ spec:
     - group: {{ $svc }}.services.k8s.aws
       kind: ""
       version: ""
-{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

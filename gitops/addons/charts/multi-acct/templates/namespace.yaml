@@ -1,23 +1,6 @@
-{{/* Same effective map as templates/iam-role-selectors.yaml -- see the rationale there. */}}
-{{- $all := deepCopy (default dict .Values.clusters) }}
-{{- $self := default "" .Values.global.clusterName }}
-{{- $acct := default "" .Values.global.accountId }}
-{{- if and $self $acct (not (hasKey $all $self)) }}
-{{-   $_ := set $all $self $acct }}
-{{- end }}
-{{/* Same spokeNames expansion as templates/iam-role-selectors.yaml -- see the rationale there.
-     Name-only spokes (empty value) get their namespace created here too. */}}
-{{- $spokeNames := default (list) .Values.global.spokeNames }}
-{{- if kindIs "string" $spokeNames }}
-{{-   $spokeNames = regexSplit "[,\\s]+" (trim $spokeNames) -1 }}
-{{- end }}
-{{- range $sp := $spokeNames }}
-{{-   $sp = trim $sp }}
-{{-   if and $sp (not (hasKey $all $sp)) }}
-{{-     $_ := set $all $sp "" }}
-{{-   end }}
-{{- end }}
-{{- range $key, $value := $all }}
+{{/* The hub's own Namespace only -- see templates/_helpers.tpl (multi-acct.hub). */}}
+{{- with include "multi-acct.hub" . }}
+{{- $key := index (splitList "=" .) 0 }}
 ---
 apiVersion: v1
 kind: Namespace
