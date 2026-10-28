@@ -1,0 +1,78 @@
+{{- /*
+  ACK CARM coverage (IAMRoleSelector) for each spoke this chart provisions, keyed off the
+  SAME $name used as the EksclusterWithVpc namespace in templates/clusters.yaml.
+
+  Why: the EKS-managed ACK capability picks its per-service workload role
+  (<prefix>-cluster-mgmt-<svc>) PER NAMESPACE from an IAMRoleSelector. A namespace no
+  selector covers falls back to the capability's own, deliberately minimal role, so every
+  ec2/eks/iam/... create in the spoke graph is implicit-denied (e.g. 403 ec2:CreateVpc).
+  multi-acct covers .Values.clusters (configs/multi-acct, workshop) and global.spokeNames
+  (spoke_namespaces annotation, direct path) -- both are lists maintained SEPARATELY from
+  the fleet's kro-clusters keys, and they drift. Rendering the selector here, from the
+  spoke's own name, makes "spoke exists but uncovered" impossible.
+
+  OPT-IN (manageIamRoleSelectors, default false) so the workshop -- whose spokes are
+  already covered by multi-acct via configs/multi-acct/values.yaml -- renders byte-identical.
+  Set it once at the top of the tenant kro-clusters/values.yaml (fleet repo) to cover every
+  spoke; a per-cluster `manageIamRoleSelectors:` overrides it (e.g. false for a spoke you
+  keep covered through configs/multi-acct). When enabled for a spoke, do NOT also list it
+  in spoke_namespaces / configs/multi-acct: ACK rejects a resource matched by more than one
+  selector ("multiple (N) matching IAMRoleSelectors found").
+
+  Object names and spec are IDENTICAL to multi-acct's (<svc>-<name>, same ARN, same
+  selectors, same 8 services). IAMRoleSelector is cluster-scoped, so an accidental double
+  declaration collapses onto ONE object (an Argo CD SharedResourceWarning), not two
+  competing selectors that would break every reconcile in that namespace.
+
+  Delete=false: on `argocd app delete clusters-kro-<name> --cascade` the selector must
+  OUTLIVE the spoke's ACK CRs, otherwise ACK loses its role mid-teardown and DeleteVpc /
+  DeleteCluster 403 -> orphans. Remove it after the namespace is gone (the workshop
+  teardown already deletes selectors by namespaceSelector.names).
+
+  Account: per-cluster accountId wins (cross-account spoke, role lives in that account),
+  else global.accountId (hub account, threaded by clusters-kro) -- never hardcoded.
+  Prefix: the hub's global.resourcePrefix (the cluster-mgmt roles are the hub's).
+*/ -}}
+{{- $globalManage := false }}
+{{- if hasKey .Values "manageIamRoleSelectors" }}
+{{-   $globalManage = eq (toString .Values.manageIamRoleSelectors) "true" }}
+{{- end }}
+{{- range $name, $cluster := .Values.clusters }}
+{{- if or (not $.Values.global.targetCluster) (eq $name $.Values.global.targetCluster) }}
+{{- $c := $cluster | default dict }}
+{{- $manage := $globalManage }}
+{{- if hasKey $c "manageIamRoleSelectors" }}
+{{-   $manage = eq (toString $c.manageIamRoleSelectors) "true" }}
+{{- end }}
+{{- if $manage }}
+{{- $acct := $c.accountId | default $.Values.global.accountId }}
+{{- if not $acct }}
+{{-   fail (printf "kro-clusters: cluster %q has manageIamRoleSelectors enabled but no AWS account. Set clusters.%s.accountId or global.accountId; otherwise the IAMRoleSelector ARN renders as arn:aws:iam:::role/... which ACK silently never reconciles." $name $name) }}
+{{- end }}
+{{- $prefix := $.Values.global.resourcePrefix }}
+{{- if not $prefix }}
+{{-   fail (printf "kro-clusters: cluster %q has manageIamRoleSelectors enabled but global.resourcePrefix is empty, so the <prefix>-cluster-mgmt-<svc> role ARN cannot be built." $name) }}
+{{- end }}
+{{- range $svc := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds" }}
+---
+apiVersion: services.k8s.aws/v1alpha1
+kind: IAMRoleSelector
+metadata:
+  name: {{ $svc }}-{{ $name }}
+  annotations:
+    # Before the EksclusterWithVpc (wave 1): the Vpc CR must never exist uncovered.
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Delete=false
+spec:
+  arn: "arn:aws:iam::{{ $acct }}:role/{{ $prefix }}-cluster-mgmt-{{ $svc }}"
+  namespaceSelector:
+    names:
+      - {{ $name }}
+  resourceTypeSelector:
+    - group: {{ $svc }}.services.k8s.aws
+      kind: ""
+      version: ""
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

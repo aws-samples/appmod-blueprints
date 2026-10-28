@@ -69,6 +69,41 @@ Commit and push — ArgoCD will sync and KRO creates the cluster.
 | `gitops` | object | defaults | GitOps repo URLs and revisions |
 | `addons` | object | defaults | Addon enablement flags |
 
+## ACK CARM coverage (`manageIamRoleSelectors`)
+
+The EKS-managed ACK capability chooses its per-service workload role
+(`<prefix>-cluster-mgmt-<svc>`) **per namespace** from an `IAMRoleSelector`. Each spoke's
+ACK CRs live in namespace `<cluster name>`; if no selector covers it, ACK falls back to the
+capability's own minimal role and every create is denied (e.g. `403 ec2:CreateVpc`).
+
+By default this chart renders **no** selector: the workshop covers its spokes through the
+`multi-acct` chart (`configs/multi-acct/values.yaml`, written by `task spokes:enable-kro`),
+and on the direct path `multi-acct` reads the `spoke_namespaces` hub annotation
+(`global.spokeNames`). Both are lists kept in sync by hand with the cluster keys here.
+
+Set `manageIamRoleSelectors: true` once, at the top of the tenant `kro-clusters/values.yaml`,
+to have this chart render the 8 selectors (`ec2 eks iam ecr s3 dynamodb secretsmanager rds`)
+for every spoke **from its own name** — coverage can then never drift from the spoke set.
+
+```yaml
+manageIamRoleSelectors: true      # every spoke below gets CARM coverage
+clusters:
+  peeks-a-dev: {}                 # same account -> inherits global.accountId
+  other-acct:
+    accountId: "<account-id>"     # cross-account -> role in that account
+  covered-elsewhere:
+    manageIamRoleSelectors: false # still covered via configs/multi-acct
+```
+
+- Names/spec are identical to `multi-acct`'s (`<svc>-<name>`); the hub prefix and account are
+  inherited (`global.resourcePrefix`, `global.accountId`), never hardcoded.
+- **Do not also list an enabled spoke in `spoke_namespaces` or `configs/multi-acct`.** ACK
+  refuses a resource matched by more than one selector. (Because names are identical and the
+  CRD is cluster-scoped, an accidental double declaration collapses onto one object — an
+  Argo CD `SharedResourceWarning` — rather than breaking reconciliation.)
+- Selectors carry `Delete=false`: they must outlive the spoke's ACK CRs during
+  `argocd app delete --cascade`. Delete them once the spoke namespace is gone.
+
 ## Crossplane vs KRO — When to Use What
 
 | | Crossplane | KRO |
