@@ -16,14 +16,14 @@ The example repo is [`allamand/fleet-config-peeks-example`](https://github.com/a
 - You are happy for the spoke **declarations** (names, regions, CIDRs — no account IDs) to be public.
 - You do **not** need cross‑account spokes yet (every spoke runs in the hub's account).
 
-If any of those is false, use the custom path: [custom-prerequisites.md](custom-prerequisites.md)
+If any of those is false, use the custom path: [custom-install.md](custom-install.md)
 and [custom-multi-account.md](custom-multi-account.md).
 
 ---
 
 ## Prerequisites
 
-- The install host + CLIs as in [custom-prerequisites.md](custom-prerequisites.md).
+- The install host + CLIs as in [prerequisites.md](prerequisites.md).
 - AWS credentials for the target account (`aws sts get-caller-identity` — never echo secrets).
 - An **IAM Identity Center** instance in the account.
 - An exposure choice — either CloudFront ([quick-cloudfront.md](quick-cloudfront.md)) or your own
@@ -51,7 +51,7 @@ real account) at reconcile time — so no account number ever lives in the publi
 ## Config — point `fleetRepo` at the example repo
 
 Add a `fleetRepo` block to your `config.local.yaml` (keep all the other keys from
-[custom-prerequisites.md](custom-prerequisites.md)):
+[custom-install.md](custom-install.md#3-the-annotated-configlocalyaml)):
 
 ```yaml
 clusterProvider: kind-kro-ack
@@ -113,4 +113,4 @@ Making the fleet repo **public** removes the credential for the read/clone path 
 pre‑filled spokes. If your fleet repo must be private, you need an ArgoCD `repository` credential —
 there is **no credential field in `config.local.yaml`**; it is wired through the ArgoCD Secret
 `argocd/fleet-config-repo` (directly, or projected from AWS Secrets Manager by External Secrets
-Operator). See [custom-prerequisites.md](custom-prerequisites.md), "Git token / private fleet repo".
+Operator). See [custom-install.md](custom-install.md#2-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push), "Git token / private fleet repo".

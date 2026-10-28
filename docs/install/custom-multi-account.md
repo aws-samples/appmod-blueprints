@@ -165,7 +165,7 @@ ArgoCD reconciles on its next sync: `clusters-kro-<name>` appears, KRO creates t
 > **Generative alternative (`spokes:apply`, needs a PAT).** Instead of hand‑editing the repo you can
 > declare a `spokes:` map in `config.local.yaml` and let the installer materialise and **push** the
 > files. Because it writes to the repo it needs a git token — see
-> [custom-prerequisites.md](custom-prerequisites.md), section 4.
+> [custom-install.md](custom-install.md#2-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push), section 2.
 
 ---
 
@@ -183,5 +183,5 @@ aws eks describe-cluster --name <name> --region <region> --query 'cluster.status
 
 ## Next
 
-- Tear a spoke down cleanly → [custom-delete-spoke.md](custom-delete-spoke.md)
-- See what it costs → [custom-cost.md](custom-cost.md)
+- Tear a spoke down cleanly → [delete-spoke.md](delete-spoke.md)
+- See what it costs → [cost.md](cost.md)

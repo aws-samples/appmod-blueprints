@@ -104,7 +104,7 @@ Explorer within ~24 h).
 
 | Goal | Action |
 |---|---|
-| Remove an unused spoke | [Delete a spoke](custom-delete-spoke.md) — removes its EKS cluster, VPC, NAT gateway and Elastic IP |
+| Remove an unused spoke | [Delete a spoke](delete-spoke.md) — removes its EKS cluster, VPC, NAT gateway and Elastic IP |
 | Shrink the hub | In your **writable** fleet repo, set unused addons to `false` under `enabledAddons:` in `<fleetRepo.basepath>overlays/environments/control-plane/enabled-addons.yaml` (create it if absent — missing value files are ignored), e.g. `jupyterhub`, `ray_operator`, `spark_operator`, `devlake`; fewer workloads → fewer Auto Mode nodes |
 | Drop managed observability | Set `enabledAddons.observability_aws: false` in the same file (removes the AMP/AMG workspaces and scrapers; you lose the managed dashboards/alerts) |
 | Remove all addons, keep the hub cluster | `task hub-destroy-addons` — the on‑hub controllers also delete the AWS resources they manage, **including the spoke clusters** |

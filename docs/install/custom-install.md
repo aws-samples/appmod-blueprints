@@ -1,59 +1,16 @@
-# 3 · Custom install — prerequisites and configuration
-
-> Sections 1–2 (host and AWS account prerequisites) apply to every direct install; the quick paths
-> link here for them. Sections 3–6 are specific to the custom path.
+# 3 · Custom install — fleet repo, configuration, install
 
 The custom path installs the platform directly (`kind-kro-ack`) with **your own** domain, fleet
-repo and (optionally) cross‑account spokes. This page is the prerequisites and the annotated
-`config.local.yaml` the other custom pages build on.
+repo and (optionally) cross‑account spokes. This page is the fleet-repo and git-token setup, the
+annotated `config.local.yaml` the other custom pages build on, the install itself, and how to
+document your deployment.
+
+> **Before you start:** complete the host and AWS account [prerequisites](prerequisites.md)
+> (tools, IAM Identity Center, ACM certificate, Route53 hosted zone).
 
 ---
 
-## 1. Host prerequisites
-
-A Linux/macOS host (EC2, Cloud Desktop, or a laptop) with Docker running and these CLIs on `PATH`.
-The install's pre‑flight checks `kind, kubectl, helm, yq, aws` plus `go-task`:
-
-| Tool | Validated version | Purpose |
-|---|---|---|
-| `docker` | any recent | runs the ephemeral `kind` bootstrap cluster |
-| `kind` | 0.24 | throwaway local cluster that bootstraps the hub |
-| `kubectl` | 1.37 | matches the hub's default EKS `kubernetesVersion` |
-| `helm` | 3.16 | installs the ACK / KRO / ESO bootstrap charts |
-| `yq` | 4.53 | every config read is a `yq` v4 expression (v3 breaks) |
-| `aws` | 2.36 | all AWS calls (v2) |
-| `go-task` | 3.x | the `task` runner |
-| `jq` | any recent | required by the CloudFront scripts (if you expose via CloudFront) |
-
-AWS credentials for the target account must resolve in your shell
-(`aws sts get-caller-identity` — never echo the secret values).
-
----
-
-## 2. AWS account prerequisites
-
-1. **IAM Identity Center (SSO) instance in the account.** The platform's ArgoCD is created as an EKS
-   ArgoCD Capability, which requires an Identity Center instance. Confirm:
-   ```bash
-   aws sso-admin list-instances --region <region>
-   ```
-2. **(HTTPS/own-domain mode only) A validated ACM certificate** in the deploy region covering
-   `*.<your-domain>`, status `ISSUED` (ALB listeners are regional). Confirm:
-   ```bash
-   aws acm list-certificates --region <region> \
-     --query "CertificateSummaryList[?DomainName=='*.<your-domain>']"
-   ```
-   *CloudFront mode needs no ACM cert — see [quick-cloudfront.md](quick-cloudfront.md).*
-3. **A public Route53 hosted zone for `<your-domain>`.** external-dns writes A/ALIAS records into it
-   to point your hostnames at the ALB. The zone must be **public** and the account's nameservers
-   must be authoritative for the domain (delegated from the registrar/parent zone). Confirm:
-   ```bash
-   aws route53 list-hosted-zones-by-name --dns-name <your-domain>
-   ```
-
----
-
-## 3. Fleet repo prerequisite — fork OR your own git provider
+## 1. Fleet repo prerequisite — fork OR your own git provider
 
 Spokes are declared in a **fleet repo** that ArgoCD reconciles. Pick one:
 
@@ -79,7 +36,7 @@ each field falls back to `repo.*`.
 
 ---
 
-## 4. Git token (only for a private fleet repo, or generative spoke push)
+## 2. Git token (only for a private fleet repo, or generative spoke push)
 
 There is **no credential field in `config.local.yaml`** — `config.schema.json` exposes only
 `fleetRepo.{url,revision,basepath}`. The credential is a **Kubernetes Secret ArgoCD recognises**,
@@ -173,7 +130,7 @@ secret for its own GitOps writes and refuses the pivot if it is absent.
 
 ---
 
-## 5. The annotated `config.local.yaml`
+## 3. The annotated `config.local.yaml`
 
 Create `config.local.yaml` in the repo root. Every key below is actually read by the provider
 (`cluster-providers/kind-kro-ack/Taskfile.yaml` is the authoritative key list — **not**
@@ -196,7 +153,7 @@ agenticRepo:
   revision: <oap-release-tag>
   basepath: gitops/addons/
 
-# Only if the fleet content lives in a DIFFERENT repo than the charts (see section 3).
+# Only if the fleet content lives in a DIFFERENT repo than the charts (see section 1).
 fleetRepo:
   url: https://github.com/<org>/<your-fleet-repo>.git
   revision: main
@@ -244,7 +201,7 @@ identityCenter:                       # REQUIRED — the ArgoCD Capability needs
 
 ---
 
-## 6. Install and verify
+## 4. Install and verify
 
 ```bash
 aws sts get-caller-identity
@@ -266,9 +223,75 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://backstage.<your-domain>
 
 ---
 
+## 5. Document your deployment
+
+> Applies to every mode in which you keep your own copy of the platform or fleet repo.
+
+When you fork the platform (or your fleet repo) for a custom deployment, keep the **README of your
+copy** honest about the choices you made, so the next operator — or future‑you — can reproduce it.
+This is documentation hygiene, not a platform step; nothing here changes the running system.
+
+### What to update in your fork's README
+
+Record the decisions that differ from the defaults:
+
+1. **Install path.** State which path you followed (CloudFront / existing fleet‑config / custom) and
+   link back to this guide's entry page, [README.md](README.md).
+2. **Exposure mode.** `insecure: true` (CloudFront) vs `insecure: false` (your own domain + ACM).
+   Note the hostname pattern (generically — e.g. `*.<your-domain>`), never a real host or cert ARN.
+3. **Fleet repo.** Which repo holds your spokes (`fleetRepo.url`) and whether it is public
+   (zero‑PAT) or private (credential via `argocd/fleet-config-repo`).
+4. **Spokes.** The list of spoke names and whether they are same‑account (`global.spokeNames`) or
+   cross‑account (`configs/multi-acct/values.yaml`).
+5. **Versions.** The `repo.revision` / `agenticRepo.revision` tags you pinned.
+6. **Cost tags.** The `platformTags` keys you set, so cost reports are reproducible
+   ([cost.md](cost.md)).
+
+### The one rule — keep it generic / zero‑secret
+
+A README is public (or shared). **Never** commit:
+
+- AWS account IDs, VPC/subnet/instance IDs, internal IPs;
+- real hostnames, CloudFront domains, IDE URLs or tokens;
+- ACM/role ARNs, Secrets Manager values, PATs;
+- usernames / aliases / internal references.
+
+Use placeholders everywhere: `<account-id>`, `<your-domain>`, `<cluster-prefix>`, `<org>`,
+`<secret-name>`. Scan before you commit:
+
+```bash
+# Flag the usual leaks in your staged README changes before committing
+git diff --cached -- README.md \
+  | grep -nE '[0-9]{12}|ghp_|github_pat_|AKIA|ASIA|-----BEGIN|arn:aws:(iam|acm)|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' \
+  && echo "⚠ review the matches above — redact before committing" || echo "clean"
+```
+
+### Suggested snippet to add to your fork's README
+
+```markdown
+## Our deployment
+
+This fork runs Platform Engineering on EKS via the **<CloudFront | own-domain | custom>** path
+(see [docs/install/README.md](docs/install/README.md)).
+
+- Exposure: `insecure: <true|false>` (<CloudFront *.cloudfront.net | HTTPS on *.your-domain>)
+- Fleet repo: `<org>/<your-fleet-repo>` (<public zero-PAT | private>)
+- Spokes: `<dev, prod, ...>` (<same-account via global.spokeNames | cross-account via configs/multi-acct>)
+- Pinned: platform `<release-tag>`, OAP `<oap-release-tag>`
+- Cost tags: `platformTags.{project, environment, owner}`
+```
+
+### Reminder — pushing is a separate, explicit action
+
+Editing the README is a local change. Pushing it to a public/shared repo under your identity is a
+**separate, deliberate** step — review the diff and confirm the zero‑secret scan passed before you
+push.
+
+---
+
 ## Next
 
 - Add a spoke / go cross‑account → [custom-multi-account.md](custom-multi-account.md)
-- Delete a spoke → [custom-delete-spoke.md](custom-delete-spoke.md)
-- See, reduce or stop the cost → [custom-cost.md](custom-cost.md)
-- Keep your fork's README in sync → [custom-update-readme.md](custom-update-readme.md)
+- Delete a spoke → [delete-spoke.md](delete-spoke.md)
+- See, reduce or stop the cost → [cost.md](cost.md)
+- Restrict the shared ALB by source IP → [alb-ip-allowlist.md](alb-ip-allowlist.md)

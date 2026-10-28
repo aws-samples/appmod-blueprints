@@ -13,7 +13,7 @@ reuse‑or‑create a distribution. This path is **three gestures**, no code cha
 
 - A Linux/macOS host with Docker and the install CLIs on `PATH`
   (`kind`, `kubectl`, `helm`, `yq` v4, `aws` v2, `go-task`) — plus **`jq`** (both CloudFront
-  scripts parse JSON with it). See [custom-prerequisites.md](custom-prerequisites.md) for the
+  scripts parse JSON with it). See [prerequisites.md](prerequisites.md) for the
   validated versions.
 - AWS credentials for the target account, resolvable by the AWS CLI/SDK. Confirm with
   `aws sts get-caller-identity` (never echo the secret values).
@@ -60,7 +60,7 @@ aws cloudfront get-distribution --id <distribution-id> \
 ### Gesture 2 — `config.local.yaml` + install
 
 Keep all your other keys (`clusterProvider`, `repo`, `agenticRepo`, `identityCenter`,
-`resourcePrefix`, …) exactly as in [custom-prerequisites.md](custom-prerequisites.md). The
+`resourcePrefix`, …) exactly as in [custom-install.md](custom-install.md#3-the-annotated-configlocalyaml). The
 exposure‑relevant keys are:
 
 ```yaml
@@ -182,7 +182,7 @@ for the full exposure design.
 ## Next
 
 - Need your **own domain** with HTTPS on the ALB instead? Use the custom path —
-  [custom-prerequisites.md](custom-prerequisites.md).
+  [custom-install.md](custom-install.md).
 - Want spokes? See [custom-multi-account.md](custom-multi-account.md).
 - A one‑command orchestration of reserve→install→attach is a possible **future** enhancement; it is
   intentionally **not** required for this procedure.
