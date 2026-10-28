@@ -66,6 +66,39 @@
         }
       }
     },
+    "agenticRepo": {
+      "type": "object",
+      "description": "Optional. OAP (Open Agentic Platform) addon-repo coordinates — the Git repo that HOSTS the agent-platform addon registry value files. Two independent readers consume this block. (1) The appmod kind-kro-ack and kind-crossplane providers read ONLY 'url' and 'revision' (yq '.agenticRepo.url' / '.agenticRepo.revision') and stamp them onto the hub cluster-secret as the snake_case annotations addons_repo_url / addons_repo_revision; the OAP addon registry (gitops/addons/registry/_defaults.yaml) and the agent-platform fan-out appsets then resolve repoURLGit / repoURLGitRevision from those annotations. (2) OAP's own 'task agentic:install' reads the FULL block — 'url', 'revision', 'basepath', and the optional in-cluster overlay keys 'overlayUrl', 'overlayRevision', 'overlayBasepath'. NOTE: under appmod's 'task install', setting this block only stamps the annotations — it does NOT install the agent platform (see #1157). Omitting the whole block renders the annotations empty, so the registry's own fallback applies and a non-OAP config behaves exactly as before.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Git repository URL hosting the OAP addon registry. The appmod providers default the annotation to \"\" (yq '// \"\"'); the https://github.com/awslabs/open-agentic-platform default is supplied downstream by the OAP registry fallback (gitops/addons/registry/_defaults.yaml {{default ...}}), not by the providers. OAP's install reads it directly."
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git branch or tag of the OAP repo to deploy from. Same mechanism as url — the appmod providers default the annotation to \"\" and the 'main' default comes from the OAP registry fallback, not the providers."
+        },
+        "basepath": {
+          "type": "string",
+          "default": "gitops/addons/",
+          "description": "Path within the OAP repo to the addon registry (must end with /). Consumed ONLY by OAP's 'task agentic:install' — the appmod providers never read it. Must be gitops/addons/ so OAP's valueFiles resolve to <repo>/gitops/addons/registry/*.yaml."
+        },
+        "overlayUrl": {
+          "type": "string",
+          "description": "Optional, consumed ONLY by OAP's 'task agentic:install'. In-cluster GitOps overlay repo URL (e.g. the platform fleet-config) used to override OAP addon values without committing to the addon repo. Empty by default → overlay disabled."
+        },
+        "overlayRevision": {
+          "type": "string",
+          "description": "Optional, consumed ONLY by OAP's 'task agentic:install'. Git branch or tag of the overlay repo. Defaults to main."
+        },
+        "overlayBasepath": {
+          "type": "string",
+          "description": "Optional, consumed ONLY by OAP's 'task agentic:install'. Path within the overlay repo to the addon configs. Empty by default."
+        }
+      }
+    },
     "hub": {
       "type": "object",
       "required": [

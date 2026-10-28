@@ -12,6 +12,29 @@ repo:
   revision: "main"
   basepath: "gitops/"
 
+# Optional: OAP (Open Agentic Platform) addon-repo coordinates — the Git repo that
+# hosts the agent-platform addon registry. Two independent readers consume this block:
+#   - the appmod kind-kro-ack / kind-crossplane providers read ONLY 'url' and 'revision'
+#     and stamp them onto the hub cluster-secret as the addons_repo_url / addons_repo_revision
+#     annotations that the OAP addon registry (gitops/addons/registry/_defaults.yaml) and
+#     the agent-platform fan-out appsets consume;
+#   - OAP's own 'task agentic:install' reads the FULL block: 'url', 'revision', 'basepath',
+#     and the optional in-cluster overlay keys 'overlayUrl', 'overlayRevision', 'overlayBasepath'.
+# NOTE: under appmod's 'task install' this block only stamps the annotations — it does NOT
+# install the agent platform (see #1157). Omit the whole block to leave the annotations empty:
+# the registry's own fallback then applies (awslabs/open-agentic-platform + main) and a
+# non-OAP config behaves exactly as before. 'basepath' is read only by OAP's install and
+# must be "gitops/addons/".
+# agenticRepo:
+#   url: "https://github.com/awslabs/open-agentic-platform"
+#   revision: "main"
+#   basepath: "gitops/addons/"          # OAP install only (appmod providers never read it)
+#   # Optional in-cluster overlay (OAP install only) — override addon values without
+#   # committing to the addon repo. Leave unset to disable the overlay.
+#   # overlayUrl: "https://<in-cluster-gitops-repo>"
+#   # overlayRevision: "main"
+#   # overlayBasepath: "gitops/addons/"
+
 # Hub cluster configuration
 hub:
   clusterName: "<unique-cluster-name>"       # Must be DNS-compatible, unique per account+region
