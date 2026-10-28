@@ -394,7 +394,10 @@ answer allow/deny for one specific proposed change. It is deliberately
 **decoupled from the agent that acts** — `aiops-agent` (or any future acting
 agent, built by any team) must call the guardrail agent and get an `allow` for
 the specific target before it opens a remediation MR. The principle, borrowed
-from the AWS DevOps Agent / A2A blog, is *one team owns the change policy, and
+from the AWS DevOps Agent / A2A blog
+([*Controlled self-healing Amazon EKS clusters with AWS DevOps Agent and A2A remote agents*](https://aws.amazon.com/blogs/mt/controlled-self-healing-amazon-eks-clusters-with-aws-devops-agent-and-a2a-remote-agents/),
+public sample code: [`aws-samples/Amazon-prometheus-bedrock-agent-example`](https://github.com/aws-samples/Amazon-prometheus-bedrock-agent-example),
+`a2a/` directory), is *one team owns the change policy, and
 every other agent has to pass through it.* Centralising the policy in one agent
 means a new acting agent inherits the same gate for free, and the policy can
 evolve in one place without touching every actor.
@@ -404,7 +407,7 @@ gates sit in series and answer different questions:
 
 | Gate | Kind | Question it answers | Enforced by |
 |---|---|---|---|
-| **Guardrail agent** | Automatic, programmable policy | "Does *policy* permit a change to this target *right now*?" (change-freeze window, min replica count, approval-ticket present) | Agent-side wiring on the MR-create path **and** a merge-blocking forge check (see below) |
+| **Guardrail agent** | Automatic, **deterministic** policy code (not an LLM) | "Does *policy* permit a change to this target *right now*?" (change-freeze window, min replica count, approval-ticket present) | Mandatory MCP-gateway policy on the MR-create path **and** a merge-blocking forge check re-evaluated at merge time (see below) |
 | **Human merge-gate** (§12) | Human judgement on the artifact | "Is *this specific MR* correct and safe to merge?" | GitLab Developer role + protected `main` (the bot cannot merge its own MR) |
 
 The guardrail agent runs **upstream**: it decides whether the agent is even
@@ -428,20 +431,52 @@ programmable gate — and **not** that specific check. Our real policy examples 
 
 The guardrail agent is the platform team's codified change policy; it is where
 "what may change, and when" lives — programmable, versioned, and owned by one
-team. (The claim that the blog's own guardrail is advisory-in-effect, and the
-code evidence for it, are recorded in the interlock-decision investigation — it
-is cited here, not re-derived.)
+team.
+
+**The guardrail is deterministic policy code, not an LLM.** Every check above is
+a plain function of inputs it reads itself — the freeze calendar, the target's
+replica count, the referenced change ticket's state — so the same change at the
+same moment always gets the same answer, and the decision is testable and
+auditable like any other code. An LLM may be used only to *explain* a decision
+(e.g. phrase the deny reason for the MR comment); it never *makes* the
+allow/deny. An LLM-judged gate would be a probabilistic control, which is what
+this design rejects for a component that blocks or permits changes.
+
+**The target comes from the change itself, never from the acting agent.** The
+guardrail does not trust a target name, label or description supplied by
+`aiops-agent`: an acting agent could mislabel it. It derives the target(s) from
+the proposed change — the files and Kubernetes resources the MR diff touches in
+the fleet-config/overlay repo (upstream: from the tool call's change payload at
+the gateway; downstream: from the MR diff the forge check reads). A change
+touching several targets is allowed only if policy allows **every** one.
+
+*Why the blog's own guardrail is not enough.* In the blog's public sample the
+"mandatory" guardrail call is enforced **only by skill text** read by the
+orchestrator's LLM (`a2a/skills/eks-troubleshooting.md`, Step 3). The acting
+agent's mutating tools (`a2a/app/argocd_agent/tools/memory_adjustment.py`,
+`a2a/app/argocd_agent/tools/restart_rollback.py`) gate only on a local,
+in-process action allowlist (`a2a/app/argocd_agent/guardrails.py`) and never call
+the guardrail agent (`a2a/app/guardrail_agent/main.py`), which answers only if
+asked. So in the sample the gate is advisory in effect: an orchestrator that
+skips the step still gets the change applied.
 
 **Enforcement: advisory-upstream + forge-enforced, never advisory-only.** The
 guardrail decision is enforced at two independent layers, consistent with §12's
 rule that the prompt is not a security boundary:
 
-1. **Upstream, agent-side (fail-fast).** `aiops-agent` must obtain an explicit
-   `allow` from the guardrail agent for the specific target **before** it calls
-   `gitlab-mcp` to open a remediation MR. This is **wiring, not prompt**: the
-   MR-create path is gated on the `allow` in the agent runtime (a guardrail
-   wrapper on the create-MR tool, or an MCP-gateway policy), so no `allow` ⇒ no
-   MR. Any non-`allow` — deny, timeout, or unreachable after a bounded retry — is
+1. **Upstream, at the MCP gateway (fail-fast, mandatory).** No MR can be opened
+   without an explicit `allow` from the guardrail agent for the target(s) derived
+   from the proposed change. This is **wiring, not prompt**, and the **required
+   enforcement layer is an MCP-gateway policy** on the agent-gateway in front of
+   `gitlab-mcp`'s MR-create tool: the gateway calls the guardrail agent and
+   refuses the tool call unless it returns `allow`. The gateway is the right
+   layer because acting agents can be built by **any team**: a policy enforced
+   at the gateway holds for every agent that reaches `gitlab-mcp` through it,
+   whatever its runtime or code. A guardrail wrapper on the create-MR tool
+   *inside* an agent's runtime is at most a **convenience** (earlier, friendlier
+   failure for agents we own); it is never the enforcement layer, because it
+   lives in the actor's own code and does not exist for another team's agent.
+   Any non-`allow` — deny, timeout, or unreachable after a bounded retry — is
    treated as **deny**; the attempt is recorded as *blocked*. This cuts off
    known-bad proposals (change-freeze window, below minimum replicas, no
    approval ticket) before they consume a human review.
@@ -455,7 +490,16 @@ rule that the prompt is not a security boundary:
    default). Where it is not Ultimate, the equivalent is a **required CI job**
    that **re-calls the guardrail agent** (it must not merely trust an
    agent-written label) and fails the pipeline on `deny`/unreachable, with
-   pipeline-must-pass branch protection.
+   pipeline-must-pass branch protection. In both variants the check passes the
+   **MR diff** to the guardrail, which derives the target(s) from the changed
+   files/resources — never from an agent-supplied target label.
+   **Re-evaluated at merge time.** "Policy permits this *right now*" must hold
+   when the change *merges*, not only when CI first ran: a change-freeze window
+   can open after the check passed. So the check is re-run immediately before
+   merge — via **merge trains** (each merge re-runs the pipeline on the
+   to-be-merged result) or a **re-run on approval / pre-merge re-run** of the
+   guardrail job (or a re-requested external status check), with a stale result
+   treated as not passed.
 
 **Advisory-only is explicitly rejected** — a prompt-instructed call the agent
 *could* skip is precisely the "strong suggestion, not an enforced boundary" §12
@@ -469,7 +513,11 @@ judgement) — each answering a different question, none redundant.
 **Ultimate** feature; the CI-job variant is the CE-compatible substitute; (b)
 GitLab's default lets a *failing or never-reported* external check merge — the
 fail-closed posture requires explicitly enabling *"Status checks must succeed"*
-and treating a missing/pending guardrail response as blocking.
+and treating a missing/pending guardrail response as blocking; (c) the
+merge-time re-evaluation depends on the forge feature available (merge trains
+are a GitLab Premium/Ultimate feature); on CE the pre-merge re-run must be
+wired explicitly (e.g. an approval-triggered pipeline), otherwise a pass from
+before a freeze window opened could still be merged.
 
 > **Relationship to the §8.1 unbounded-volume gap.** A change-freeze / rate-style
 > guardrail could *also* serve as the circuit breaker §8.1 calls for
@@ -645,14 +693,14 @@ AMP alert (e.g. PodOOMKilled)  ──▶ SNS ──▶ SQS (<prefix>-incidents)
    ▼  incident-bridge (long-poll) parses the alert, dedup-checks OPEN MRs
    ▼  A2A message/send  ──▶ aiops-agent
    ▼  RCA: read-only tools (eks-read-mcp) + skills-mcp  ── LLM ─▶ bifrost ─▶ Bedrock
-   ▼  guardrail-agent A2A allow/deny for the target  (deny / unreachable ⇒ blocked, no MR — §6.5)
+   ▼  agent-gateway policy: guardrail-agent allow/deny for the target(s) derived from the change  (deny / unreachable ⇒ blocked, no MR — §6.5)
    ▼  gitlab-mcp: create branch + MR on the fleet-config/overlay repo
-   ▼  forge requires the guardrail merge-check green (§6.5) AND a human merges  (the bot cannot merge its own MR — §12)
+   ▼  forge requires the guardrail merge-check green, re-evaluated at merge (§6.5) AND a human merges  (the bot cannot merge its own MR — §12)
    ▼  Argo CD reconciles the merged change → fix applied
 ```
 
-> The guardrail decision is enforced twice (§6.5): **upstream** the agent will not
-> open the MR without an `allow` (fail-closed at the point of action), and
+> The guardrail decision is enforced twice (§6.5): **upstream** the agent-gateway
+> refuses the MR-create call without an `allow` (fail-closed at the point of action), and
 > **downstream** the forge requires a green guardrail check before the MR can be
 > merged — so a skipped or unreachable guardrail can never yield a merge.
 
@@ -674,9 +722,10 @@ AMP alert (e.g. PodOOMKilled)  ──▶ SNS ──▶ SQS (<prefix>-incidents)
 > *their live-CR patch races `selfHeal`; our Git-MR flow makes `selfHeal` an
 > ally.* This composes with the guardrail (§6.5): the guardrail is the upstream
 > automated policy on whether to propose at all, while the Git-MR flow is what
-> makes an approved fix durable and auditable. (Code evidence — `argocd_client.py`
-> patching the CR, the demo's `selfHeal: true` — is recorded in the integration
-> note, cited here rather than re-derived.)
+> makes an approved fix durable and auditable. (Evidence in the blog's public
+> sample: `a2a/app/argocd_agent/clients/argocd_client.py` patches the
+> `Application` CR via `patch_namespaced_custom_object`, with no git client;
+> `a2a/argocd-application.yaml` sets `syncPolicy.automated.selfHeal: true`.)
 
 The incident-bridge performs a **deterministic, restart-proof duplicate check**:
 it skips forwarding when an OPEN MR already addresses the failing component
@@ -972,6 +1021,20 @@ removes the whole bundle). Core platform is unaffected.
 Review follow-ups from the design review are tracked as issues; each line links the
 tracking issue so this doc is the index.
 
+**Integration levels at a glance.** The levels below are **composable layers**
+that plug in at different points of the same pipeline — *orchestration* (who
+starts and drives the investigation), *diagnosis* (what evidence the RCA reads),
+*policy gate* (whether a change may be proposed/merged) and *apply* (how the fix
+lands) — not mutually exclusive variants. V1 is core and applies at every level;
+V2 and V3 are optional and independent of each other.
+
+| Level | What it is | What it adds vs V0 | Cost | Coexists? |
+|---|---|---|---|---|
+| **V0 — current `aiops-agent`** | AMP alert → SNS → SQS → `incident-bridge` → read-only RCA (`eks-read-mcp` + skills) → GitLab MR → human merge → Argo CD (GitOps) | — (baseline) | Already deployed: agent + MCP servers + bifrost route | Baseline for all levels |
+| **V1 — + guardrail (CORE)** | Deterministic policy agent (§6.5): freeze window, replica floor, ticket check; enforced at the MCP gateway and as a merge-time forge check | Automated "may this change, right now?" gate in series with the human merge-gate; same policy for agents built by any team | One small policy agent + gateway policy + a required forge check; policy content to own | **Core** — applies to V0, V2 and V3 alike (*policy gate*) |
+| **V2 — + AWS DevOps Agent** (optional) | Managed A2A orchestrator front-end that starts investigations and delegates to our in-cluster agents | Bridge to the AWS ecosystem: console-driven investigations, CloudWatch-alarm triggers, reuse of our A2A agents unchanged | External control plane + cross-account trust (role assuming into our account), API Gateway/VPC Link exposure; its sample patches live CRs — **we keep the Git MR** apply path | Yes — alongside `incident-bridge` (*orchestration*); does not change diagnosis, gate or apply |
+| **V3 — + K8sGPT** (optional) | Deterministic Kubernetes analyzer catalogue, LLM backend off, as one more read-only tool | Cross-object checks (e.g. Service selector ↔ pods) and breadth for unalerted issues; **no gain for the current demo class**; never produces the MR | Extra operator or MCP server, ClusterRole review (operator reads `secrets`), auto-remediation pinned off, CNCF Sandbox maturity | Yes — feeds RCA (*diagnosis*); not part of the guardrail |
+
 - **Enforce the human merge-gate — 🔴 settle before impl PRs cite this doc.** Scope
   the `gitlab-mcp` PAT to branch+MR only (not merge); protected branches so the bot
   cannot approve/merge its own MR. §12 ·
@@ -1051,21 +1114,35 @@ tracking issue so this doc is the index.
   (the sample registers the pod IP directly, which the authors call a demo
   shortcut that breaks on pod restart), **and** the `AWS_IAM` authorizer actually
   attached to each method (the sample's quick-setup script creates methods with
-  `--authorization-type NONE`). Code evidence is in the integration note (cited,
-  not re-derived).
-- **(Optional, for team discussion — not the default path) K8sGPT operator as a
-  structured diagnostic layer.** The K8sGPT operator (Amazon **Nova Lite** Bedrock
-  backend in the sample) analyses cluster health and writes findings as
-  Kubernetes CRDs (`core.k8sgpt.ai/v1alpha1` `Result` objects); the agent **reads**
-  those CRDs as structured RCA input instead of deriving the whole RCA from live
-  cluster state in the prompt. **Pro:** deterministic, queryable/auditable
-  findings as a stable RCA input. **Con:** an operator dependency and a **second
-  model** (Nova Lite alongside our Sonnet route via bifrost) — more moving parts,
-  another Bedrock model-access prerequisite, extra cost. **Open:** does K8sGPT
-  *feed* our RCA (one more read-only signal alongside `eks-read-mcp`) or *replace*
-  part of it (trusting K8sGPT findings over re-deriving)? For the team to decide —
-  not proposed as default. Code evidence (`k8sgpt_diagnostics.py` listing the
-  `results` custom objects) is in the integration note.
+  `--authorization-type NONE`). Evidence: the
+  [blog](https://aws.amazon.com/blogs/mt/controlled-self-healing-amazon-eks-clusters-with-aws-devops-agent-and-a2a-remote-agents/) and its public
+  [sample](https://github.com/aws-samples/Amazon-prometheus-bedrock-agent-example)
+  (`a2a/k8s/argocd-agent-eks/setup-apigw.sh`).
+- **(Optional, for team discussion — not the default path) K8sGPT as a
+  deterministic pre-triage feed (LLM backend off).** K8sGPT's value for us is its
+  **rule-based analyzer catalogue** (Pod, Service, Ingress, PVC, Node, webhooks,
+  HPA/PDB, Karpenter NodePool/NodeClaim, …): plain Go checks over Kubernetes
+  status that return the same findings for the same cluster state. The LLM is
+  used only for its optional "explain" step and is disabled with
+  `spec.ai.enabled: false` (operator) or `explain=false` (MCP `analyze`).
+  Integration would be **one more read-only tool** for `aiops-agent`, preferably
+  on demand via `k8sgpt serve --mcp` behind the agent-gateway (allow only
+  `analyze`/read tools), or the operator's `core.k8sgpt.ai/v1alpha1` `Result`
+  CRDs read the way the [blog sample](https://github.com/aws-samples/Amazon-prometheus-bedrock-agent-example) does
+  (`a2a/app/argocd_agent_eks/tools/k8sgpt_diagnostics.py`). **What it adds:**
+  cross-object checks we do not have (e.g. *Service has no endpoints, expected
+  label k=v*), breadth for unalerted issues, a cheap structured first pass, and a
+  "finding cleared" check after sync. **What it does not add:** anything for our
+  current demo class beyond what the AMP alert + `eks-read-mcp` already give (its
+  OOMKilled finding carries no limit/usage), and **never the fix** — it has no
+  notion of the GitOps source, so the RCA→MR path stays ours. **Costs/constraints
+  if adopted:** an extra operator (or MCP server) to run and upgrade; no second
+  model (LLM backend off; if ever on, route through bifrost rather than a separate
+  Bedrock model); auto-remediation pinned off (it mutates the cluster directly,
+  against our MR model); review the operator ClusterRole (it includes
+  cluster-wide `secrets` read); CNCF Sandbox maturity. Optional read-only
+  pre-triage, **not a default**, and it is a **detection** signal — not part of
+  the guardrail (§6.5).
 
 ---
 
