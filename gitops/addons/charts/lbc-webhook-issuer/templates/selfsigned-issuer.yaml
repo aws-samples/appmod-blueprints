@@ -1,0 +1,38 @@
+{{- /*
+Self-signed cert-manager Issuer for the aws-load-balancer-controller webhook
+serving certificate, rendered LOCALLY (as an additionalResources source of the
+aws-load-balancer-controller addon) so it carries an explicit ArgoCD sync-wave.
+
+Same class of bug as gitops/addons/charts/kargo/templates/webhook-issuer.yaml.
+With enableCertManager: true, the upstream chart (eks-charts
+aws-load-balancer-controller 1.14.1, templates/webhook.yaml) emits
+Issuer/aws-load-balancer-selfsigned-issuer and
+Certificate/aws-load-balancer-serving-cert with NO ordering hint (verified:
+`grep -rn 'sync-wave|helm.sh/hook|hook-weight'` over the 1.14.1 templates
+returns nothing), so both get the default wave 0. ArgoCD can start gating on
+the Certificate's health before it has applied the Issuer, and the Certificate
+can never become Ready while its Issuer does not exist -> first-sync deadlock
+(observed on a full event: LBC never deployed, no ALB created).
+
+This object has the SAME apiVersion+kind+name+namespace as the upstream Issuer
+(the Certificate's issuerRef points at it; the chart exposes no value to change
+that issuerRef nor to annotate the Issuer). In a multi-source Application, when
+several sources produce the same group/kind/name/namespace, ArgoCD keeps the
+one from the LAST source (and reports a RepeatedResourceWarning). The appset
+chart emits additionalResources sources AFTER the upstream chart source, so
+this copy -- with the negative wave -- is the one ArgoCD tracks and applies.
+
+The name assumes the chart's default name prefix ("aws-load-balancer", i.e. no
+nameOverride on the addon). Keep it in sync if nameOverride is ever set.
+*/ -}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: aws-load-balancer-selfsigned-issuer
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Negative wave so the Issuer is applied BEFORE the default-wave-0 webhook
+    # Certificate (ArgoCD applies lowest wave first).
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  selfSigned: {}
