@@ -369,6 +369,9 @@ aws-load-balancer-controller:
   namespace: kube-system
   chartName: aws-load-balancer-controller
   chartRepository: https://aws.github.io/eks-charts
+  # On chart bump: re-check that the Issuer name in charts/lbc-webhook-issuer
+  # (aws-load-balancer-selfsigned-issuer) still matches the issuerRef of the
+  # chart's webhook Certificate (templates/webhook.yaml) and that it still has no sync-wave.
   defaultVersion: '1.14.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
