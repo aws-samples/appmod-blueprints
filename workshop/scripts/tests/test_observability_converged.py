@@ -87,6 +87,14 @@ elif svc == "amp" and op == "list-tags-for-resource":
     if tag is None:
         sys.stderr.write("AccessDeniedException\n"); sys.exit(254)
     print(tag)
+elif svc == "eks" and op == "describe-cluster":
+    # st["eks"]: cluster name -> status ("ACTIVE", "CREATING", ...) or "error"; absent = not found.
+    v = st.get("eks", {}).get(opts["name"])
+    if v is None:
+        sys.stderr.write("ResourceNotFoundException\n"); sys.exit(254)
+    if v == "error":
+        sys.stderr.write("ThrottlingException\n"); sys.exit(254)
+    print(v)
 elif svc == "grafana" and op == "list-workspace-service-accounts":
     print("\t".join(st["sa_tokens"].keys()))
 elif svc == "grafana" and op == "list-workspace-service-account-tokens":
@@ -402,3 +410,85 @@ def test_hub_seed_adds_no_observability_keys_when_none_were_seeded(tmp_path, pro
     for existing in (None, {"aws_grafana_url": "", "spoke_dev_cluster_arn": ""}):
         meta = _hub_seed(_fresh(tmp_path), provider, existing)
         assert not set(OBS_KEYS) & set(meta), meta
+
+
+# ── spoke_* scraper keys: a spoke created after the first seed must not stay unwired ──
+
+SPOKE_KEYS = {k: v for k, v in OBS_KEYS.items() if k.startswith("spoke_")}
+
+
+def _with_meta(meta, **kw):
+    st = _state(**kw)
+    st["secrets"][f"{HUB}/config"] = json.dumps({"metadata": json.dumps(dict(meta, aws_grafana_url=AMG_HOST))})
+    return st
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_active_spoke_without_scraper_keys_is_not_converged(tmp_path, provider, env):
+    # First seed ran before the spoke existed: no spoke_<env>_* keys. The spoke is ACTIVE now,
+    # so the gate must fail and install re-seeds (which writes the keys).
+    meta = {k: v for k, v in SPOKE_KEYS.items() if not k.startswith(f"spoke_{env}_")}
+    st = _with_meta(meta, eks={f"{PREFIX}-spoke-dev": "ACTIVE", f"{PREFIX}-spoke-prod": "ACTIVE"})
+    res, calls = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode != 0, res.stdout
+    assert "observability spoke keys missing (spoke cluster ACTIVE)" in res.stdout, res.stdout
+    for k in ("cluster_arn", "private_subnet_ids", "security_group_id"):
+        assert f"spoke_{env}_{k}" in res.stdout, res.stdout
+    other = "prod" if env == "dev" else "dev"
+    assert f"spoke_{other}_" not in res.stdout, res.stdout
+    assert not [c for c in calls if c[0] == "curl"]
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_empty_scraper_keys_from_a_partial_first_seed_are_missing(tmp_path, provider):
+    # The seed writes "" for a spoke it did not find when the other one existed.
+    meta = dict(SPOKE_KEYS, spoke_prod_cluster_arn="", spoke_prod_private_subnet_ids="",
+                spoke_prod_security_group_id="")
+    st = _with_meta(meta, eks={f"{PREFIX}-spoke-dev": "ACTIVE", f"{PREFIX}-spoke-prod": "ACTIVE"})
+    res, _ = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode != 0, res.stdout
+    assert "spoke_prod_cluster_arn" in res.stdout and "spoke_dev_" not in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_active_spokes_with_scraper_keys_are_converged(tmp_path, provider):
+    st = _with_meta(SPOKE_KEYS, eks={f"{PREFIX}-spoke-dev": "ACTIVE", f"{PREFIX}-spoke-prod": "ACTIVE"})
+    res, _ = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "token accepted by AMG" in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("case", ["not-found", "creating", "api-error"])
+def test_spoke_check_skips_unless_the_spoke_is_active(tmp_path, provider, case):
+    # No spoke_* keys at all. A spoke that does not exist (yet), is not ACTIVE, or whose
+    # describe-cluster errors must NOT fail the gate: an error never triggers a re-seed
+    # (each re-seed mints a new AMG service account).
+    eks = {"not-found": {}, "creating": {f"{PREFIX}-spoke-dev": "CREATING"},
+           "api-error": {f"{PREFIX}-spoke-dev": "error", f"{PREFIX}-spoke-prod": "error"}}[case]
+    st = _with_meta({}, eks=eks)
+    res, calls = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "spoke keys missing" not in res.stdout, res.stdout
+    eks_calls = [c for c in calls if c[1:3] == ["eks", "describe-cluster"]]
+    assert sorted(c[3]["name"] for c in eks_calls) == [f"{PREFIX}-spoke-dev", f"{PREFIX}-spoke-prod"], eks_calls
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_hub_reseed_then_late_spoke_is_detected(tmp_path, provider):
+    # Chain: first seed wired only the dev spoke, hub:seed re-ran (keys kept), then prod came up.
+    meta = _hub_seed(tmp_path, provider, {"aws_grafana_url": AMG_HOST,
+                                          "spoke_dev_cluster_arn": SPOKE_KEYS["spoke_dev_cluster_arn"],
+                                          "spoke_dev_private_subnet_ids": "subnet-a,subnet-b",
+                                          "spoke_dev_security_group_id": "sg-d",
+                                          "spoke_prod_cluster_arn": "", "spoke_prod_private_subnet_ids": "",
+                                          "spoke_prod_security_group_id": ""})
+    st = _state(eks={f"{PREFIX}-spoke-dev": "ACTIVE"})
+    st["secrets"][f"{HUB}/config"] = json.dumps({"metadata": json.dumps(meta)})
+    res, _ = _run(_fresh(tmp_path), provider, "observability:converged", st)
+    assert res.returncode == 0, res.stdout + res.stderr   # prod not there yet: skip still fires
+    st["eks"][f"{PREFIX}-spoke-prod"] = "ACTIVE"
+    res, _ = _run(_fresh(tmp_path), provider, "observability:converged", st)
+    assert res.returncode != 0, res.stdout                 # prod ACTIVE, unwired: re-seed
+    assert "spoke_prod_cluster_arn" in res.stdout, res.stdout

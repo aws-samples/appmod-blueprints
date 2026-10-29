@@ -3108,6 +3108,28 @@ tasks:
           esac
         fi
 
+        # Spoke scraper keys. seed-observability writes spoke_<env>_{cluster_arn,
+        # private_subnet_ids,security_group_id} only for the spoke clusters that exist when
+        # it runs. A spoke created after that first seed leaves its keys empty, and since the
+        # checks above pass, install would keep skipping the seed. Report it only on a
+        # positive answer: the spoke cluster is ACTIVE and its keys are empty. A spoke that
+        # does not exist, or an EKS API error, is skipped: an error must never trigger a
+        # re-seed (each re-seed mints a new AMG service account).
+        SPOKE_MISSING=""
+        for SPOKE_ENV in dev prod; do
+          SPOKE_STATUS=$(aws eks describe-cluster --name "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")
+          if [ "$SPOKE_STATUS" != "ACTIVE" ]; then continue; fi
+          for k in cluster_arn private_subnet_ids security_group_id; do
+            if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") != ""' >/dev/null 2>&1; then
+              SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_$k"
+            fi
+          done
+        done
+        if [ -n "$SPOKE_MISSING" ]; then
+          echo "observability spoke keys missing (spoke cluster ACTIVE) in {{.HUB_CLUSTER_NAME}}/config metadata:$SPOKE_MISSING"
+          exit 1
+        fi
+
         # Keys are present: is the Grafana token still usable? (The token is never printed.)
         MIN_DAYS="{{.GRAFANA_TOKEN_MIN_DAYS}}"
         case "$MIN_DAYS" in ''|*[!0-9]*) MIN_DAYS=7 ;; esac
