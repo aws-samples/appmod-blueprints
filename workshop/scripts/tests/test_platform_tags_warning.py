@@ -46,7 +46,7 @@ def _run(tmp_path, config_text):
 
 @pytest.mark.parametrize("cfg", [
     "hub:\n  clusterName: acme-hub\n",                 # key absent
-    "platformTags: {}\n",                              # explicit empty (config.yaml default)
+    "platformTags: {}\n",                              # explicit empty (schema default)
     "platformTags:\n",                                 # null
 ])
 def test_warns_when_no_tags(tmp_path, cfg):
