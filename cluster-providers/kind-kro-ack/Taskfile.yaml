@@ -1203,16 +1203,26 @@ tasks:
         #     fleet-wide and orphans spokes that exist only in the overlay
         #     (see docs multi-repo-architecture.md "re-seed must preserve overlay_repo_url");
         #   - aws_argocd_url -> falls back to the CloudFront domain (which does not serve
-        #     ArgoCD) -> broken Backstage deep-links.
+        #     ArgoCD) -> broken Backstage deep-links;
+        #   - aws_grafana_url + the spoke_* scraper keys written by seed-observability ->
+        #     observability:converged then never passes, so every install re-seeds (a new
+        #     AMG service account each time); and if only the URL were kept, the install
+        #     skip would fire with nothing left to restore the spoke AMP scrapers.
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null || echo "")
         PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""
+        PRESERVED_OBS='{}'
         if [ -n "$EXISTING" ]; then
           EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
           PRESERVED_OVERLAY_URL=$(echo "$EMETA"  | jq -r '.overlay_repo_url // ""')
           PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
           PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
           PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+          # Same key list as seed-observability writes (non-empty values only).
+          PRESERVED_OBS=$(echo "$EMETA" | jq -c '[ "aws_grafana_url",
+              "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
+              "spoke_prod_cluster_arn", "spoke_prod_private_subnet_ids", "spoke_prod_security_group_id" ] as $k
+            | with_entries(select(.key as $kk | any($k[]; . == $kk)) | select((.value // "" | tostring) != ""))' 2>/dev/null || echo '{}')
         fi
         # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
         # transient describe-capability miss never blanks a good value.
@@ -1239,13 +1249,14 @@ tasks:
           --arg addons '{"provider":"kro-ack"}' \
           --arg vpc "$VPC_JSON" \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
-        # Re-merge preserved overlay wiring into the metadata (only keys that are non-empty),
-        # so a re-seed never drops the fleet-config overlay.
+        # Re-merge preserved overlay wiring and observability keys into the metadata (only
+        # keys that are non-empty), so a re-seed never drops the fleet-config overlay or the
+        # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" \
+          --arg pt "$PLATFORM_TAGS_JSON" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
-             | $m
+             | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
              | (if $orv != "" then .overlay_repo_revision = $orv else . end)
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
@@ -3060,6 +3071,55 @@ tasks:
           exit 1
         fi
 
+        # Stale URL: the AMG workspace was replaced, so aws_grafana_url (kept across
+        # re-seeds) and its token point at a dead workspace. The AMG API call below then
+        # reads as inconclusive and would count as converged, so compare the stored host
+        # with the endpoint(s) of the tag-matched ACTIVE workspace(s). Only a positive
+        # mismatch is stale: an API error or no ACTIVE match stays inconclusive (no re-seed).
+        STORED_AMG=$(printf '%s' "$C" | jq -r '(.metadata // "{}") | fromjson | .aws_grafana_url // ""')
+        STORED_AMG=${STORED_AMG#https://}
+        STORED_AMG=${STORED_AMG%%/*}
+        LIVE_AMG=""
+        for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id" --output text 2>/dev/null || true); do
+          TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+          if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ]; then
+            EP=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text 2>/dev/null || echo "")
+            EP=${EP#https://}
+            EP=${EP%%/*}
+            if [ -n "$EP" ] && [ "$EP" != "None" ]; then LIVE_AMG="$LIVE_AMG $EP"; fi
+          fi
+        done
+        if [ -n "$LIVE_AMG" ]; then
+          case " $LIVE_AMG " in
+            *" $STORED_AMG "*) ;;
+            *)
+              echo "observability stale: aws_grafana_url ($STORED_AMG) is not the endpoint of the ACTIVE AMG workspace ($LIVE_AMG )"
+              exit 1 ;;
+          esac
+        fi
+
+        # Spoke scraper keys. seed-observability writes spoke_<env>_{cluster_arn,
+        # private_subnet_ids,security_group_id} only for the spoke clusters that exist when
+        # it runs. A spoke created after that first seed leaves its keys empty, and since the
+        # checks above pass, install would keep skipping the seed. Report it only on a
+        # positive answer: the spoke cluster is ACTIVE and its keys are empty. A spoke that
+        # does not exist, or an EKS API error, is skipped: an error must never trigger a
+        # re-seed (each re-seed mints a new AMG service account).
+        SPOKE_MISSING=""
+        for SPOKE_ENV in dev prod; do
+          SPOKE_STATUS=$(aws eks describe-cluster --name "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")
+          if [ "$SPOKE_STATUS" != "ACTIVE" ]; then continue; fi
+          for k in cluster_arn private_subnet_ids security_group_id; do
+            if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") != ""' >/dev/null 2>&1; then
+              SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_$k"
+            fi
+          done
+        done
+        if [ -n "$SPOKE_MISSING" ]; then
+          echo "observability spoke keys missing (spoke cluster ACTIVE) in {{.HUB_CLUSTER_NAME}}/config metadata:$SPOKE_MISSING"
+          exit 1
+        fi
+
         # Keys are present: is the Grafana token still usable? (The token is never printed.)
         MIN_DAYS="{{.GRAFANA_TOKEN_MIN_DAYS}}"
         case "$MIN_DAYS" in ''|*[!0-9]*) MIN_DAYS=7 ;; esac
@@ -3140,16 +3200,18 @@ tasks:
           printf '{{.C_INFO}}  Last seed run: %s{{.C_RESET}}\n' "$(cat "$SEED_PENDING")"
         fi
         # Same workspace identification as seed-observability (alias/name + crossplane-name
-        # tag), restricted to ACTIVE workspaces. Single pass, no waiting.
+        # tag), restricted to ACTIVE workspaces. Single pass, no waiting. `if ...; then`,
+        # never `[ ... ] && X=true`, as the loop body's last statement: under errexit a
+        # non-matching LAST workspace would otherwise exit this task with status 1.
         AMP_OK=false
         for WS_ID in $(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp' && status.statusCode=='ACTIVE'].workspaceId" --output text 2>/dev/null); do
           TAG_VAL=$(aws amp list-tags-for-resource --resource-arn "arn:aws:aps:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:workspace/$WS_ID" --region {{.AWS_REGION}} --query "tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
-          [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amp" ] && AMP_OK=true
+          if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amp" ]; then AMP_OK=true; fi
         done
         AMG_OK=false
         for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id" --output text 2>/dev/null); do
           TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
-          [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ] && AMG_OK=true
+          if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ]; then AMG_OK=true; fi
         done
         if [ "$AMP_OK" = "true" ] && [ "$AMG_OK" = "true" ]; then
           if [ "{{.SEED_INLINE}}" = "true" ]; then
