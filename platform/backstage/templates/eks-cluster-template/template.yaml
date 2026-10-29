@@ -197,13 +197,6 @@ spec:
       input:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.repoName }}
         targetPath: ./repo
-    - id: addCluster
-      name: Add new Clusters
-      # if: ${{ (parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id) !== (parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id) }}
-      action: roadiehq:utils:fs:append
-      input:
-        path: ./repo/configs/multi-acct/values.yaml
-        content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\""
     - id: addKroClusterConfig
       name: Update kro Clusters Configuration
       # roadiehq:utils:merge deep-merges into an EXISTING YAML file (preserving
@@ -321,8 +314,7 @@ spec:
           Add new EKS cluster ${{ parameters.clusterName }} to the platform
           
           Changes:
-          - Added cluster configuration to multi-acct values
-          - Added kro cluster configuration  
+          - Added kro cluster configuration (also renders its ACK CARM IAMRoleSelectors)
           - Added Backstage component definition
           - Added fleet member file (ArgoCD cluster registration + addons)
         sourcePath: ./repo
