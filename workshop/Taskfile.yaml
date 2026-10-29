@@ -156,13 +156,15 @@ tasks:
       # concurrently with wait-for-spokes. Phase A only needs the hub; the spoke-aware
       # waits (CICDPipeline ACTIVE + ECR image) stay serial after the join below.
       # Mirrors the gitlab:init-ec2 background pattern already used above.
+      # The wrapper shell writes its own OS PID and, when Phase A exits, its rc:
+      # go-task's shell interpreter sets `$!` to a job id (e.g. "g1"), not a PID, and
+      # each cmd runs in its own interpreter, so `echo $!` + `wait` in a later cmd
+      # returned at once and the join below never waited.
       - |
-        task prewarm-rust-cicd-phase-a \
-          INSTALL_START={{.INSTALL_START}} \
-          INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}} \
+        rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
+        sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; echo $? > /tmp/prewarm-phase-a.rc' \
           > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
-        echo $! > /tmp/prewarm-phase-a.pid
-        printf '{{.C_INFO}}  prewarm Phase A started in background (PID=%s, log: /tmp/prewarm-phase-a.log){{.C_RESET}}\n' "$(cat /tmp/prewarm-phase-a.pid)"
+        printf '{{.C_INFO}}  prewarm Phase A started in background (log: /tmp/prewarm-phase-a.log){{.C_RESET}}\n'
       - task: wait-for-spokes
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Re-seed observability now that spokes are ACTIVE. The initial seed runs in background
@@ -195,13 +197,33 @@ tasks:
         else
           printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
         fi
-      # Join prewarm Phase A (should already be done — WFS took ~9-20 min, Phase A ~11 min)
-      - |
-        APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
-        if [ -n "$APID" ]; then
-          wait "$APID" 2>/dev/null || true
-        fi
-        printf '{{.C_INFO}}  prewarm Phase A joined.{{.C_RESET}}\n'
+      # Join prewarm Phase A (usually already done — WFS took ~9-20 min, Phase A ~11 min).
+      # Poll the rc file / /proc rather than `wait`: Phase A is not a job of this cmd's
+      # shell (see the launch above). Bounded by 900 s and by the same install DEADLINE
+      # Phase A uses (INSTALL_START + INSTALL_BUDGET_SEC - 420), so the join cannot starve
+      # Phase B / the pivot. Non-fatal: a failed or still-running Phase A is logged and
+      # install continues (Phase B re-enters idempotently).
+      - cmd: |
+          APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
+          MAXW=900
+          LEFT=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC | default "6600"}} - 300 - 120 - $(date +%s) ))
+          if [ "$LEFT" -lt 0 ]; then LEFT=0; fi
+          if [ "$LEFT" -lt "$MAXW" ]; then MAXW=$LEFT; fi
+          E=0
+          while [ ! -s /tmp/prewarm-phase-a.rc ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt "$MAXW" ]; do
+            sleep 5; E=$((E + 5))
+          done
+          ARC=$(cat /tmp/prewarm-phase-a.rc 2>/dev/null || echo '')
+          if [ "$ARC" = "0" ]; then
+            printf '{{.C_INFO}}  prewarm Phase A joined after %ss (rc=0, log: /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$E"
+          elif [ -n "$ARC" ]; then
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A exited rc=%s after %ss wait — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$ARC" "$E"
+          elif [ -n "$APID" ] && [ -d "/proc/$APID" ]; then
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A still running after %ss join budget — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$E"
+          else
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A left no exit status (not started or killed) — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n'
+          fi
+        ignore_error: true
       # Prewarm Phase B: wait for CICDPipeline ACTIVE + ECR image publish.
       # Phase A (scaffold) already ran concurrently with wait-for-spokes above.
       # prewarm-rust-cicd re-enters idempotently: the scaffold guard detects the
