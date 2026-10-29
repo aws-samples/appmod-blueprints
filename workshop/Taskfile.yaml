@@ -1044,7 +1044,10 @@ tasks:
   #                              <user>/rust, commit + push; rust-dev-cd (created by
   #                              prewarm-rust-cicd) syncs it. Rust is deployed with kro
   #                              only (team decision 2026-10-29); Java keeps KubeVela.
-  #                              prod is NOT pre-deployed (promotion stays a Path A step).
+  #                              prod is NOT pre-deployed (promotion stays a Path A step),
+  #                              but the team-rust namespace is ensured on spoke-dev AND
+  #                              spoke-prod first (Argo CD CreateNamespace does not create
+  #                              it on the spokes; the content's own step runs later).
   #
   # Flag: `prewarmPathA` (default true; only null/absent maps to true — never `// true`,
   #       which turns a stored false into true, see pnz1990 review #1136 point 2);
@@ -1201,6 +1204,27 @@ tasks:
         if ! $D get crd appmodservices.kro.run >/dev/null 2>&1; then
           printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s — skipping (non-fatal).{{.C_RESET}}\n' "$DEV"
           exit 0
+        fi
+        # 1b. team-rust namespace on BOTH spokes, before anything is pushed. rust-dev-cd's
+        #     CreateNamespace=true does not create it on the spoke in practice, and 30_CD
+        #     has the participant create it by hand — but this prewarm runs at install
+        #     time, before that step, so the first sync would fail with
+        #     `namespaces "team-rust" not found`. prod too: Module 3 promotes to prod.
+        #     Same idempotent pattern as the content and prewarm-pathA-frontend
+        #     (already present = no-op). A failure is logged and the task goes on.
+        RNS=team-rust; PROD="${PREFIX}-spoke-prod"; KP=$(mktemp)
+        trap 'rm -rf "$KH" "$KD" "$KP" "$W"' EXIT
+        if $D create namespace "$RNS" --dry-run=client -o yaml | $D apply -f - >/dev/null 2>&1; then
+          printf '{{.C_OK}}  ✓ namespace %s present on %s.{{.C_RESET}}\n' "$RNS" "$DEV"
+        else
+          printf '{{.C_ERR}}  ⚠ could not ensure namespace %s on %s — continuing (non-fatal).{{.C_RESET}}\n' "$RNS" "$DEV"
+        fi
+        if aws eks update-kubeconfig --name "$PROD" --region "$REGION" --kubeconfig "$KP" >/dev/null 2>&1 \
+           && kubectl --kubeconfig "$KP" create namespace "$RNS" --dry-run=client -o yaml \
+              | kubectl --kubeconfig "$KP" apply -f - >/dev/null 2>&1; then
+          printf '{{.C_OK}}  ✓ namespace %s present on %s.{{.C_RESET}}\n' "$RNS" "$PROD"
+        else
+          printf '{{.C_ERR}}  ⚠ could not ensure namespace %s on %s — continuing (non-fatal).{{.C_RESET}}\n' "$RNS" "$PROD"
         fi
         # 2. Temporary clone of the event GitLab repo (the IDE clone may be missing or
         #    carry participant edits; it is fast-forwarded at step 6).
