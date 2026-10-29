@@ -3,7 +3,7 @@ prefix names its model roles and policies after its hub, so a second stack in th
 never adopts (and rewrites) the first stack's; the default prefix keeps the legacy names.
 
 `helm template` renders platform-manifests-post with the values the platform.yaml registry
-entry passes (global.*) and the control-plane overlay's model list. The RGD is read as YAML
+entry passes (global.*) and the workshop control-plane overlay's model list. The RGD is read as YAML
 and its kro expressions are checked as text. No cluster, no AWS.
 
 Run:  python -m pytest workshop/scripts/tests/test_huggingface_iam_names.py -q
@@ -19,8 +19,8 @@ yaml = pytest.importorskip("yaml")
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 CHART = os.path.join(REPO, "gitops", "addons", "charts", "platform-manifests-post")
 OVERLAY_VALUES = os.path.join(
-    REPO, "gitops", "overlays", "environments", "control-plane", "platform-manifests-post",
-    "values.yaml")
+    REPO, "workshop", "overlay", "overlays", "environments", "control-plane",
+    "platform-manifests-post", "values.yaml")
 RGD = os.path.join(
     REPO, "gitops", "addons", "charts", "kro", "resource-groups", "manifests", "huggingface",
     "rg-huggingface-model.yaml")
