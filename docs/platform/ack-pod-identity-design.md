@@ -244,8 +244,8 @@ serviceAccount. Two ACK CRs targeting one association would fight over `roleARN`
 4. **Set `addons.provider = "kro-ack"`** in `peeks-spoke-dev/config` and
    `peeks-spoke-prod/config` (Secrets Manager) → the chart is selected and adopts the
    retained resources.
-5. Nothing to do for selectors: `multi-acct` already covers both spoke namespaces and the
-   chart no longer creates any. See "Selector ownership" below.
+5. Nothing to do for selectors: the spoke namespaces are covered (by `kro-clusters` since
+   spoke selectors moved there; by `multi-acct` at the time) and the chart no longer creates any. See "Selector ownership" below.
 
 Step 3 must precede step 4 so the RGD and the chart never manage the same association
 simultaneously. Between the two nothing manages them, but the AWS resources persist
@@ -381,7 +381,11 @@ do not help, the duplicated scope is the bug).
 Resolved by making **`multi-acct` the sole owner**: the hub was added to its `clusters` map
 and this chart's selector template was deleted outright rather than gated behind a flag.
 
-**INVARIANT: any cluster running this addon must appear in `multi-acct`'s `clusters` map.**
+**INVARIANT: any cluster running this addon must be covered by exactly one selector owner.**
+
+Update: spoke selectors later moved to the `kro-clusters` chart, which renders them from each
+spoke's own entry (`gitops/abstractions/kro/kro-clusters/README.md`); `multi-acct` now covers
+the hub only. Ownership stays single: hub -> `multi-acct-<hub>`, spoke -> `clusters-kro-<spoke>`.
 
 This also unblocks **#775**. An on-hub `EksCluster` instance needs selectors for every ACK
 group the RGD uses — measured on the 39 active resources: `eks` (18), `iam` (13), `ec2` (2,

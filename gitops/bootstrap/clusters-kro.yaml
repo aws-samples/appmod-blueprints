@@ -81,6 +81,10 @@ spec:
                 accountId: '{{ .metadata.annotations.aws_account_id }}'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
+                # The hub's own name, so kro-clusters fails to render a spoke declared with
+                # the hub's name: the hub's IAMRoleSelectors/Namespace are owned by multi-acct,
+                # and the same <svc>-<name> objects must never have two Argo CD owners.
+                hubClusterName: '{{ .metadata.annotations.aws_cluster_name }}'
                 # Propagate the deploy branch from the control-plane so kro spokes
                 # inherit the same Git revision as the rest of the fleet, instead
                 # of falling back to the EksclusterWithVpc RGD's "main" default.

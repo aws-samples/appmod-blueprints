@@ -350,10 +350,9 @@ multi-acct:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-      # Needed so the chart can self-cover the cluster it runs on. .Values.clusters only
-      # ever lists SPOKES (written by the spokes:enable-* task into the fleet-config
-      # overlay), so without this the hub gets no IAMRoleSelector and every hub-side ACK
-      # resource silently never reconciles. See templates/iam-role-selectors.yaml.
+      # Needed so the chart can self-cover the cluster it runs on. multi-acct covers the HUB
+      # only: spoke selectors are rendered by the kro-clusters chart from each spoke's own
+      # entry, so they cannot drift from the spoke set. See templates/_helpers.tpl.
       accountId: '{{.metadata.annotations.aws_account_id}}'
 
 # Self-healing restart of workload pods that raced ahead of their EKS Pod Identity
