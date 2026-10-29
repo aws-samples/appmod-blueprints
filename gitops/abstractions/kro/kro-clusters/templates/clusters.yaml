@@ -58,7 +58,15 @@ spec:
   # test/workshop events even on prod clusters. Set retain per-cluster only for
   # genuinely-persistent deployments.
   deletionPolicy: {{ $cluster.deletionPolicy | default "delete" | quote }}
-  provider: {{ $cluster.provider | default "" | quote }}
+  {{- /* Provisioner of this spoke: per-cluster value wins; else inherit the
+       control-plane's own `provider` label (global.provider, from clusters-kro.yaml):
+       "kro-ack" on a kro-ack hub, "" on a crossplane hub. It becomes the spoke
+       cluster-secret `provider` label, which picks ack_pod_identities (In [kro-ack])
+       or the Crossplane pod_identities chart (NotIn [kro-ack], so it matches "").
+       A spoke declared without the field (e.g. by the Backstage eks-cluster-template)
+       used to get "" even on a kro-ack hub, i.e. the Crossplane chart, whose providers
+       are not bootstrapped there, and no ACK pod identities. */}}
+  provider: {{ $cluster.provider | default $.Values.global.provider | default "" | quote }}
   region: {{ $cluster.region | default "us-west-2" | quote }}
   managementRegion: {{ $cluster.region | default "us-west-2" | quote }}
   k8sVersion: {{ $cluster.k8sVersion | default "1.37" | quote }}
