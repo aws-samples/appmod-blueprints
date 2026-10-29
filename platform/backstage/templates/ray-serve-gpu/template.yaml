@@ -1,17 +1,7 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: |
-    Deploy GPU-based Ray Service for larger AI models using vLLM library.
-    
-    **Optimized for:**
-    - Mistral-7B-Instruct (14GB)
-    - Models requiring GPU acceleration
-    
-    **Model Management:**
-    - Models are pre-uploaded to S3 and mounted via S3 CSI driver
-    - Path: /mnt/models/models/{model-name}
-    - Uses gpu-serve-transformers with vLLM for optimized inference
+  description: Deploys a GPU Ray Service that serves larger language models with vLLM.
   name: ray-serve-gpu
   title: Ray Service - GPU (vLLM)
   tags:
@@ -51,7 +41,7 @@ spec:
           enumNames:
             - "TinyLlama-1.1B-Chat (2GB, can run on CPU)"
             - "Mistral-7B-Instruct (14GB, requires GPU)"
-          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU."
+          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU. Models are pre-staged in S3 and mounted with the S3 CSI driver at /mnt/models/models/{model-name}."
         maxLength:
           title: Max Tokens
           type: string

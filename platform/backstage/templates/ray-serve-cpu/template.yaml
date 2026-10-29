@@ -1,17 +1,7 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: |
-    Deploy CPU-based Ray Service for smaller AI models using Transformers library.
-    
-    **Optimized for:**
-    - TinyLlama-1.1B (2GB)
-    - Models up to 7B parameters on CPU
-    
-    **Model Management:**
-    - Models are pre-uploaded to S3 and mounted via S3 CSI driver
-    - Path: /mnt/models/models/{model-name}
-    - Uses cpu-serve-config with local_files_only for fast startup
+  description: Deploys a CPU Ray Service that serves small language models with the Transformers library.
   name: ray-serve-cpu
   title: Ray Service - CPU (Transformers)
   tags:
@@ -51,7 +41,7 @@ spec:
           enumNames:
             - "TinyLlama-1.1B-Chat (2GB, CPU optimized)"
             - "GPT-2 (500MB, fast, CPU optimized)"
-          ui:help: "CPU-optimized models. For GPU models, use the GPU template."
+          ui:help: "CPU-optimized models (up to ~7B parameters). For GPU models, use the GPU template. Models are pre-staged in S3 and mounted with the S3 CSI driver at /mnt/models/models/{model-name}."
         maxLength:
           title: Max Tokens
           type: string
