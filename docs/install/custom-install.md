@@ -202,6 +202,12 @@ platformTags:
 > `AWS_PROFILE=<name>` in‑file (not with an `export` on a shell command line), so both the config
 > reads and the bare host‑side `aws` calls resolve to the target account.
 
+**Restricting the ALB by source IP (optional, own‑domain mode).** The `inboundCidrs` allowlist
+is set after install from your fleet repo, see
+[Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md). It must include the
+NAT egress IPs of the hub and of OAP spokes (`<nat-eip>/32`), re‑checked after each reinstall,
+or SSO breaks ([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
+
 ---
 
 ## 4. Install and verify

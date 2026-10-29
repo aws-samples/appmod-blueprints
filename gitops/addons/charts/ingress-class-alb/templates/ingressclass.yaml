@@ -21,6 +21,10 @@ spec:
     extraInboundCidrs  - extra entries appended after the base
   Each accepts a YAML list OR a comma-separated string. All empty/unset => field omitted
   => ALB open (unchanged behaviour). IPv4/IPv6 may be mixed (the LBC splits them).
+  When set, include the NAT gateway EIP(s) of the hub VPC and of every spoke running OAP
+  addons (<nat-eip>/32): in-cluster apps reach the public Keycloak issuer through this ALB,
+  so SSO times out without them. The EIP changes when the VPC is recreated (reinstall).
+  See docs/platform/alb-ip-allowlist.md, pitfall 1.
   Do not set on an internal ALB fronted by a CloudFront VPC origin: the ALB then sees
   private origin ENI IPs, not client IPs.
 */}}
