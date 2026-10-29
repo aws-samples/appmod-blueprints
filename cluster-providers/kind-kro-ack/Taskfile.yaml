@@ -270,6 +270,9 @@ tasks:
       #    overlaps the hub settle instead of queuing after it.
       - task: install:hub-settle-bg
       - task: install:finalize
+      # Seed inline now if AMP/AMG became ACTIVE but the keys are still missing (e.g. the
+      # background seed gave up); otherwise print the pending action. Never fails install.
+      - task: observability:converge
       - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
   install:post-sync:
@@ -298,6 +301,15 @@ tasks:
           printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
           exit 1
         fi
+        # Re-running `task install` on a seeded hub must not re-seed: every seed mints a
+        # new AMG service account + token and rotates grafana_api_key. Skip when the
+        # keys are present and the token is still valid (observability:converged also
+        # treats a token close to expiry, or one AMG rejects, as invalid, so this still
+        # rotates it in time). `task observability-seed` remains the explicit re-seed.
+        if (cd "$REPO_ROOT" && task --silent kind-kro-ack:observability:converged) >/dev/null 2>&1; then
+          printf '{{.C_INFO}}  Observability keys already seeded and Grafana token valid: background seed skipped (task observability-seed forces one).{{.C_RESET}}\n'
+          exit 0
+        fi
         # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
         # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
         # jobs when the task body exits — verified that a bare `( ... ) &` never even
@@ -305,8 +317,8 @@ tasks:
         # `sh` exits at once, orphaning the subshell so it outlives go-task. REPO_ROOT is
         # passed via the environment so paths with spaces/quotes are safe.
         REPO_ROOT="$REPO_ROOT" \
-          sh -c '( cd "$REPO_ROOT" && exec task kind-kro-ack:secrets-manager:seed-observability ) >> /tmp/observability-seed.log 2>&1 < /dev/null &'
-        printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed.log){{.C_RESET}}\n'
+          sh -c '( cd "$REPO_ROOT" && exec task kind-kro-ack:secrets-manager:seed-observability ) >> /tmp/observability-seed-{{.HUB_CLUSTER_NAME}}.log 2>&1 < /dev/null &'
+        printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed-{{.HUB_CLUSTER_NAME}}.log){{.C_RESET}}\n'
 
   install:finalize:
     internal: true
@@ -1198,16 +1210,26 @@ tasks:
         #     fleet-wide and orphans spokes that exist only in the overlay
         #     (see docs multi-repo-architecture.md "re-seed must preserve overlay_repo_url");
         #   - aws_argocd_url -> falls back to the CloudFront domain (which does not serve
-        #     ArgoCD) -> broken Backstage deep-links.
+        #     ArgoCD) -> broken Backstage deep-links;
+        #   - aws_grafana_url + the spoke_* scraper keys written by seed-observability ->
+        #     observability:converged then never passes, so every install re-seeds (a new
+        #     AMG service account each time); and if only the URL were kept, the install
+        #     skip would fire with nothing left to restore the spoke AMP scrapers.
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null || echo "")
         PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""
+        PRESERVED_OBS='{}'
         if [ -n "$EXISTING" ]; then
           EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
           PRESERVED_OVERLAY_URL=$(echo "$EMETA"  | jq -r '.overlay_repo_url // ""')
           PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
           PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
           PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+          # Same key list as seed-observability writes (non-empty values only).
+          PRESERVED_OBS=$(echo "$EMETA" | jq -c '[ "aws_grafana_url",
+              "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
+              "spoke_prod_cluster_arn", "spoke_prod_private_subnet_ids", "spoke_prod_security_group_id" ] as $k
+            | with_entries(select(.key as $kk | any($k[]; . == $kk)) | select((.value // "" | tostring) != ""))' 2>/dev/null || echo '{}')
           # Keep an opt-in set by hand on <hub>/config across re-seeds (same reason as overlay_repo_*).
           [ -n "$FLEET_SCOPE" ] || FLEET_SCOPE=$(echo "$EMETA" | jq -r 'if .fleet_scope_by_prefix == "true" then "true" else "" end')
         fi
@@ -1236,13 +1258,14 @@ tasks:
           --arg addons '{"provider":"kro-ack"}' \
           --arg vpc "$VPC_JSON" \
           '{metadata: $metadata, config: $config, server: $server, addons: $addons, vpc: $vpc}')
-        # Re-merge preserved overlay wiring into the metadata (only keys that are non-empty),
-        # so a re-seed never drops the fleet-config overlay.
+        # Re-merge preserved overlay wiring and observability keys into the metadata (only
+        # keys that are non-empty), so a re-seed never drops the fleet-config overlay or the
+        # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
-             | $m
+             | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
              | (if $orv != "" then .overlay_repo_revision = $orv else . end)
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
@@ -1667,6 +1690,8 @@ tasks:
       - printf '{{.C_INFO}}=== Helm ==={{.C_RESET}}\n' && helm list -A 2>/dev/null || echo "None"
       - printf '{{.C_INFO}}=== KRO RGDs ==={{.C_RESET}}\n' && kubectl get resourcegraphdefinitions 2>/dev/null || echo "None"
       - printf '{{.C_INFO}}=== KRO Instances ==={{.C_RESET}}\n' && kubectl get eksclusterwithvpc -A 2>/dev/null || echo "None"
+      - task: observability:converge
+        vars: {SEED_INLINE: "false"}
 
   destroy-kind:
     desc: Delete Kind cluster only (hub persists)
@@ -2686,6 +2711,48 @@ tasks:
         set -e
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/secrets"
 
+        # Per-hub state: a single-instance lock and a "pending" marker. The lock stops a
+        # second seed for the SAME hub from running concurrently (the install's background
+        # seed, observability:converge, `task observability-seed` and any host-side retry
+        # timer can otherwise overlap and each mint an AMG service account). The pending
+        # marker records why the last run could not write the keys; `task status` reports
+        # it and a successful run removes it. Hubs are keyed by name, so several hubs
+        # installed from one host do not share state.
+        SEED_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/appmod"
+        mkdir -p "$SEED_STATE_DIR"
+        SEED_LOCK="$SEED_STATE_DIR/observability-seed-{{.HUB_CLUSTER_NAME}}.lock"
+        SEED_PENDING="$SEED_STATE_DIR/observability-seed-{{.HUB_CLUSTER_NAME}}.pending"
+        if ! mkdir "$SEED_LOCK" 2>/dev/null; then
+          SEED_OTHER=$(cat "$SEED_LOCK/pid" 2>/dev/null || echo "")
+          if [ -n "$SEED_OTHER" ] && ps -p "$SEED_OTHER" >/dev/null 2>&1; then
+            echo "Observability seed already running for {{.HUB_CLUSTER_NAME}} (pid $SEED_OTHER); not starting a second one."
+            exit 0
+          fi
+          # Stale lock (holder gone): take it over. (`ps -p`, not `kill -0`: go-task's
+          # built-in shell implements kill -0 incorrectly and reports live pids as dead.)
+          rm -rf "$SEED_LOCK"
+          mkdir "$SEED_LOCK"
+        fi
+        echo "$$" > "$SEED_LOCK/pid"
+        trap 'rm -rf "$SEED_LOCK"' EXIT
+        # Keys could not be written: record why and FAIL, so the caller (and the log)
+        # shows it. Nothing retries this on its own on a generic host; the message says
+        # how to converge, and mentions the retry timer only where it actually exists.
+        seed_pending() {
+          printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" > "$SEED_PENDING"
+          echo ""
+          echo "============================================================"
+          echo "PENDING: $1"
+          echo "  Observability keys for {{.HUB_CLUSTER_NAME}} were NOT written (marker: $SEED_PENDING)."
+          echo "  Once the observability-aws ArgoCD app is Synced and AMP/AMG are ACTIVE, run"
+          echo "  'task observability-seed' (or re-run 'task install'). 'task status' shows what is missing."
+          if [ -f /etc/systemd/system/peeks-observability-seed.timer ]; then
+            echo "  On this host peeks-observability-seed.timer also re-runs this seed on a schedule."
+          fi
+          echo "============================================================"
+          exit 1
+        }
+
         # Poll for AMP workspace (up to 60 min — Crossplane provisioning of AMP/AMG
         # can take well over 30 min on busy accounts; the previous 30 min ceiling
         # was too short and left Grafana unseeded on slow installs).
@@ -2707,14 +2774,7 @@ tasks:
           sleep 30
         done
         if [ -z "$AMP_WORKSPACE_ID" ] || [ "$AMP_WORKSPACE_ID" = "None" ]; then
-          echo ""
-          echo "============================================================"
-          echo "WARN: AMP workspace not created after 60 min."
-          echo "  The peeks-observability-seed.timer will keep retrying this"
-          echo "  automatically; or run 'task observability-seed' manually once"
-          echo "  the observability-aws ArgoCD app is Synced and AMP/AMG are ACTIVE."
-          echo "============================================================"
-          exit 0
+          seed_pending "AMP workspace {{.RESOURCE_PREFIX}}-observability-amp not created after 60 min."
         fi
         AMP_ENDPOINT=$(aws amp describe-workspace --workspace-id "$AMP_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.prometheusEndpoint" --output text)
         echo "Found AMP endpoint: $AMP_ENDPOINT"
@@ -2738,8 +2798,7 @@ tasks:
           sleep 30
         done
         if [ -z "$AMG_WORKSPACE_ID" ] || [ "$AMG_WORKSPACE_ID" = "None" ]; then
-          echo "WARN: AMG workspace not found. Run 'task observability-seed' later."
-          exit 0
+          seed_pending "AMG workspace {{.RESOURCE_PREFIX}}-observability not ACTIVE after 15 min."
         fi
         AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WORKSPACE_ID" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text)
         echo "Found AMG endpoint: $AMG_ENDPOINT"
@@ -2748,13 +2807,15 @@ tasks:
         SA_NAME="crossplane-$(date +%s)"
         SA_ID=$(aws grafana create-workspace-service-account --workspace-id "$AMG_WORKSPACE_ID" --grafana-role ADMIN --name "$SA_NAME" --region {{.AWS_REGION}} --query "id" --output text 2>/dev/null || echo "")
         if [ -z "$SA_ID" ] || [ "$SA_ID" = "None" ]; then
-          echo "WARN: Could not create AMG service account. Skipping."
-          exit 0
+          seed_pending "Could not create an AMG service account on $AMG_WORKSPACE_ID."
         fi
-        AMG_API_KEY=$(aws grafana create-workspace-service-account-token --workspace-id "$AMG_WORKSPACE_ID" --service-account-id "$SA_ID" --name "token-$SA_NAME" --seconds-to-live 2592000 --region {{.AWS_REGION}} --query "serviceAccountToken.key" --output text 2>/dev/null || echo "")
+        # Record when the token lapses (epoch seconds) next to it, so observability:converged
+        # can rotate it before it expires instead of only noticing once Grafana rejects it.
+        AMG_KEY_TTL=2592000
+        AMG_API_KEY_EXPIRES_AT=$(( $(date +%s) + AMG_KEY_TTL ))
+        AMG_API_KEY=$(aws grafana create-workspace-service-account-token --workspace-id "$AMG_WORKSPACE_ID" --service-account-id "$SA_ID" --name "token-$SA_NAME" --seconds-to-live "$AMG_KEY_TTL" --region {{.AWS_REGION}} --query "serviceAccountToken.key" --output text 2>/dev/null || echo "")
         if [ -z "$AMG_API_KEY" ]; then
-          echo "WARN: Could not create AMG service account token. Skipping."
-          exit 0
+          seed_pending "Could not create an AMG service account token on $AMG_WORKSPACE_ID."
         fi
 
         # Install required Grafana plugins (X-Ray for trace visualization)
@@ -2805,12 +2866,13 @@ tasks:
           --arg amp_query_url "$AMP_ENDPOINT" \
           --arg amp_region "{{.AWS_REGION}}" \
           --arg grafana_api_key "$AMG_API_KEY" \
+          --arg grafana_api_key_expires_at "$AMG_API_KEY_EXPIRES_AT" \
           --arg grafana_url "$AMG_ENDPOINT" \
           --arg user_password "$USER_PASS" \
           --arg backstage_postgres_password "$BS_PG_PASS" \
           --arg user_password_hash "$KARGO_HASH" \
           --arg user_password_key "$KARGO_KEY" \
-          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_api_key_expires_at: $grafana_api_key_expires_at, grafana_url: $grafana_url, user_password: $user_password, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
         # Generate the grafana_mysql_password the grafana-dashboards
         # ExternalSecret expects, but only if it isn't already there
         # (so re-runs don't rotate it out from under live consumers).
@@ -2868,6 +2930,8 @@ tasks:
           --secret-string "$CONFIG_UPDATED" \
           --region {{.AWS_REGION}}
         echo "Updated hub config with AMG URL: $AMG_ENDPOINT"
+        # All observability keys are now written: clear any earlier pending marker.
+        rm -f "$SEED_PENDING"
 
         # Populate spoke scraper values into hub Secrets Manager secret (dynamic, no file commits needed)
         CONFIG_KEY="{{.HUB_CLUSTER_NAME}}/config"
@@ -2962,6 +3026,13 @@ tasks:
           echo "WARN: Could not get Keycloak admin token. SAML client not updated."
         fi
       - |
+        # Another seed for this hub still holds the lock (the first command exited early
+        # without seeding): leave the nudge to that run. Our own lock is already released.
+        SEED_LOCK="${XDG_STATE_HOME:-$HOME/.local/state}/appmod/observability-seed-{{.HUB_CLUSTER_NAME}}.lock"
+        SEED_OTHER=$(cat "$SEED_LOCK/pid" 2>/dev/null || echo "")
+        if [ -n "$SEED_OTHER" ] && ps -p "$SEED_OTHER" >/dev/null 2>&1; then
+          exit 0
+        fi
         # Nudge Grafana to converge now that grafana_api_key/AMG creds are seeded.
         # The grafana-admin-credentials ExternalSecret -> Secret -> external-grafana
         # instance chain only reconciles once these creds exist; and the
@@ -2978,6 +3049,172 @@ tasks:
         echo "Grafana ExternalSecrets resynced and grafana-operator restarted to pick up seeded credentials."
 
 
+
+  # ── Observability convergence (no host-side retry timer required) ───────────
+  # seed-observability runs in the BACKGROUND during install and gives up after a
+  # fixed wait when AMP/AMG are slow. Rather than rely on a host timer (only the
+  # Workshop Studio IDE installs one), make convergence a re-runnable, idempotent
+  # step: observability:converged is a cheap READ-ONLY check of the seeded keys (and of
+  # the Grafana token: not expiring within GRAFANA_TOKEN_MIN_DAYS, accepted by AMG), and
+  # observability:converge seeds INLINE when they are missing and AMP/AMG are ACTIVE,
+  # or prints the exact pending action otherwise. `task install` runs it at the end;
+  # `task status` runs it in report-only mode (SEED_INLINE=false).
+  observability:converged:
+    desc: Read-only check that observability keys are seeded and the Grafana token is usable for this hub (exit 0 = converged)
+    vars:
+      # The Grafana token (30-day TTL) counts as INVALID once it expires within this many
+      # days, so install / observability:converge re-seed (rotate) it before it lapses.
+      # Override with the GRAFANA_TOKEN_MIN_DAYS environment variable.
+      GRAFANA_TOKEN_MIN_DAYS: '{{.GRAFANA_TOKEN_MIN_DAYS | default "7"}}'
+    cmds:
+      - |
+        MISSING=""
+        S=$(aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/secrets" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null || echo '{}')
+        for k in grafana_api_key amp_endpoint_url amp_region; do
+          printf '%s' "$S" | jq -e --arg k "$k" '(.[$k] // "") != ""' >/dev/null 2>&1 || MISSING="$MISSING {{.HUB_CLUSTER_NAME}}/secrets:$k"
+        done
+        C=$(aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/config" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null || echo '{}')
+        printf '%s' "$C" | jq -e '(.metadata // "{}") | fromjson | (.aws_grafana_url // "") != ""' >/dev/null 2>&1 || MISSING="$MISSING {{.HUB_CLUSTER_NAME}}/config:metadata.aws_grafana_url"
+        aws secretsmanager describe-secret --secret-id "{{.RESOURCE_PREFIX}}/platform/amp" --region {{.AWS_REGION}} >/dev/null 2>&1 || MISSING="$MISSING {{.RESOURCE_PREFIX}}/platform/amp"
+        if [ -n "$MISSING" ]; then
+          echo "observability keys missing:$MISSING"
+          exit 1
+        fi
+
+        # Stale URL: the AMG workspace was replaced, so aws_grafana_url (kept across
+        # re-seeds) and its token point at a dead workspace. The AMG API call below then
+        # reads as inconclusive and would count as converged, so compare the stored host
+        # with the endpoint(s) of the tag-matched ACTIVE workspace(s). Only a positive
+        # mismatch is stale: an API error or no ACTIVE match stays inconclusive (no re-seed).
+        STORED_AMG=$(printf '%s' "$C" | jq -r '(.metadata // "{}") | fromjson | .aws_grafana_url // ""')
+        STORED_AMG=${STORED_AMG#https://}
+        STORED_AMG=${STORED_AMG%%/*}
+        LIVE_AMG=""
+        for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id" --output text 2>/dev/null || true); do
+          TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+          if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ]; then
+            EP=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.endpoint" --output text 2>/dev/null || echo "")
+            EP=${EP#https://}
+            EP=${EP%%/*}
+            if [ -n "$EP" ] && [ "$EP" != "None" ]; then LIVE_AMG="$LIVE_AMG $EP"; fi
+          fi
+        done
+        if [ -n "$LIVE_AMG" ]; then
+          case " $LIVE_AMG " in
+            *" $STORED_AMG "*) ;;
+            *)
+              echo "observability stale: aws_grafana_url ($STORED_AMG) is not the endpoint of the ACTIVE AMG workspace ($LIVE_AMG )"
+              exit 1 ;;
+          esac
+        fi
+
+        # Keys are present: is the Grafana token still usable? (The token is never printed.)
+        MIN_DAYS="{{.GRAFANA_TOKEN_MIN_DAYS}}"
+        case "$MIN_DAYS" in ''|*[!0-9]*) MIN_DAYS=7 ;; esac
+        NOW=$(date +%s)
+        # 1. Expiry. seed-observability records it as grafana_api_key_expires_at (epoch s).
+        #    A hub seeded before that has none: fall back, best effort, to the newest token
+        #    of the seed's service accounts (crossplane-*) on this hub's AMG workspace.
+        EXP=$(printf '%s' "$S" | jq -r '.grafana_api_key_expires_at // "" | tostring')
+        EXP_SRC="recorded"
+        case "$EXP" in ''|*[!0-9]*)
+          EXP_SRC="newest AMG token"
+          EXP=$(for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id" --output text 2>/dev/null); do
+              TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+              [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ] || continue
+              for SA in $(aws grafana list-workspace-service-accounts --workspace-id "$WS" --region {{.AWS_REGION}} --query "serviceAccounts[?starts_with(name,'crossplane-')].id" --output text 2>/dev/null); do
+                aws grafana list-workspace-service-account-tokens --workspace-id "$WS" --service-account-id "$SA" --region {{.AWS_REGION}} --output json 2>/dev/null || true
+              done
+            done | jq -rs '[.[].serviceAccountTokens[]?] | (max_by(.createdAt) // {}) | .expiresAt // empty
+              | if type == "number" then floor else (sub("\\.[0-9]+"; "") | sub("(\\+00:00|Z)$"; "Z") | fromdateiso8601) end' 2>/dev/null || true)
+          ;;
+        esac
+        EXP_NOTE="expiry unknown"
+        case "$EXP" in ''|*[!0-9]*) ;; *)
+          LEFT=$(( EXP - NOW ))
+          if [ "$LEFT" -lt $(( MIN_DAYS * 86400 )) ]; then
+            echo "observability token invalid: grafana_api_key expires in $(( LEFT / 86400 ))d (< ${MIN_DAYS}d, $EXP_SRC expiry)"
+            exit 1
+          fi
+          EXP_NOTE="expires in $(( LEFT / 86400 ))d"
+          ;;
+        esac
+        # 2. One light AMG API call with the token. Only 401/403 make it invalid: a network
+        #    error or a 5xx is inconclusive and must not trigger a re-seed (each re-seed
+        #    mints a new AMG service account). The header goes through a 0600 file so the
+        #    token never appears in a process argument list.
+        AMG=$(printf '%s' "$C" | jq -r '(.metadata // "{}") | fromjson | .aws_grafana_url // ""')
+        AMG=${AMG#https://}
+        AMG=${AMG%%/*}
+        HDR=$(mktemp)
+        chmod 600 "$HDR"
+        trap 'rm -f "$HDR"' EXIT
+        printf '%s' "$S" | jq -r '"Authorization: Bearer " + .grafana_api_key' > "$HDR"
+        CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "@$HDR" "https://$AMG/api/org" 2>/dev/null || true)
+        rm -f "$HDR"
+        case "$CODE" in
+          401|403)
+            echo "observability token invalid: grafana_api_key rejected by AMG (HTTP $CODE)"
+            exit 1 ;;
+          200) API="token accepted by AMG" ;;
+          *) API="AMG check inconclusive (HTTP ${CODE:-none})" ;;
+        esac
+        echo "observability keys seeded for {{.HUB_CLUSTER_NAME}} ($API, $EXP_NOTE)"
+        exit 0
+
+  observability:converge:
+    desc: Seed observability inline when keys are missing and AMP/AMG are ACTIVE; otherwise print the pending action
+    vars:
+      SEED_INLINE: '{{.SEED_INLINE | default "true"}}'
+    cmds:
+      - |
+        REPO_ROOT="{{.ROOT_DIR}}"
+        SEED_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/appmod"
+        SEED_LOCK="$SEED_STATE_DIR/observability-seed-{{.HUB_CLUSTER_NAME}}.lock"
+        SEED_PENDING="$SEED_STATE_DIR/observability-seed-{{.HUB_CLUSTER_NAME}}.pending"
+        SEED_LOG="/tmp/observability-seed-{{.HUB_CLUSTER_NAME}}.log"
+        printf '{{.C_INFO}}=== Observability (Grafana/AMP keys) ==={{.C_RESET}}\n'
+        if CHECK=$(cd "$REPO_ROOT" && task --silent kind-kro-ack:observability:converged 2>/dev/null); then
+          printf '{{.C_OK}}✓ %s{{.C_RESET}}\n' "$CHECK"
+          exit 0
+        fi
+        printf '{{.C_INFO}}  %s{{.C_RESET}}\n' "$CHECK"
+        SEED_OTHER=$(cat "$SEED_LOCK/pid" 2>/dev/null || echo "")
+        if [ -n "$SEED_OTHER" ] && ps -p "$SEED_OTHER" >/dev/null 2>&1; then
+          printf '{{.C_INFO}}  A seed is already running for this hub (pid %s, log %s). Run task status again later.{{.C_RESET}}\n' "$SEED_OTHER" "$SEED_LOG"
+          exit 0
+        fi
+        if [ -f "$SEED_PENDING" ]; then
+          printf '{{.C_INFO}}  Last seed run: %s{{.C_RESET}}\n' "$(cat "$SEED_PENDING")"
+        fi
+        # Same workspace identification as seed-observability (alias/name + crossplane-name
+        # tag), restricted to ACTIVE workspaces. Single pass, no waiting. `if ...; then`,
+        # never `[ ... ] && X=true`, as the loop body's last statement: under errexit a
+        # non-matching LAST workspace would otherwise exit this task with status 1.
+        AMP_OK=false
+        for WS_ID in $(aws amp list-workspaces --region {{.AWS_REGION}} --query "workspaces[?alias=='{{.RESOURCE_PREFIX}}-observability-amp' && status.statusCode=='ACTIVE'].workspaceId" --output text 2>/dev/null); do
+          TAG_VAL=$(aws amp list-tags-for-resource --resource-arn "arn:aws:aps:{{.AWS_REGION}}:{{.AWS_ACCOUNT_ID}}:workspace/$WS_ID" --region {{.AWS_REGION}} --query "tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+          if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amp" ]; then AMP_OK=true; fi
+        done
+        AMG_OK=false
+        for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability' && status=='ACTIVE'].id" --output text 2>/dev/null); do
+          TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+          if [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ]; then AMG_OK=true; fi
+        done
+        if [ "$AMP_OK" = "true" ] && [ "$AMG_OK" = "true" ]; then
+          if [ "{{.SEED_INLINE}}" = "true" ]; then
+            printf '{{.C_STEP}}▸ AMP and AMG are ACTIVE: seeding observability inline...{{.C_RESET}}\n'
+            if (cd "$REPO_ROOT" && task kind-kro-ack:secrets-manager:seed-observability); then
+              printf '{{.C_OK}}✓ Observability keys seeded.{{.C_RESET}}\n'
+            else
+              printf '{{.C_ERR}}✗ Inline observability seed failed. Re-run: task observability-seed{{.C_RESET}}\n'
+            fi
+          else
+            printf '{{.C_INFO}}  PENDING ACTION: AMP and AMG are ACTIVE. Run: task observability-seed{{.C_RESET}}\n'
+          fi
+        else
+          printf '{{.C_INFO}}  PENDING: AMP ACTIVE=%s, AMG ACTIVE=%s. Once both are ACTIVE run: task observability-seed (or re-run task install).{{.C_RESET}}\n' "$AMP_OK" "$AMG_OK"
+        fi
 
   hub:create-mgmt-roles:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
