@@ -10,4 +10,7 @@ spec:
     apiKey:
       key: GF_SECURITY_ADMIN_APIKEY
       name: grafana-admin-credentials
-    url: "https://{{ .Values.grafana_url}}"
+    {{- /* grafana_url is empty until the provider seeds aws_grafana_url. Render a reserved,
+    self-describing host (RFC 6761 .invalid never resolves) instead of a bare "https://"
+    or a plausible dead URL, so the Grafana CR status names the missing key. */}}
+    url: "https://{{ .Values.grafana_url | default "aws-grafana-url-not-seeded.invalid" }}"
