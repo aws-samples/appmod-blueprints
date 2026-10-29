@@ -35,7 +35,13 @@ spec:
               repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
               revision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/members/*/values.yaml'
+              # Multi-hub scoping (OPT-IN), same contract as fleet-secrets.yaml and
+              # clusters-kro.yaml: with fleet_scope_by_prefix: "true" on the hub
+              # cluster-secret, member files are read from
+              # members/<resource_prefix>/*/values.yaml, so each hub provisions OIDC
+              # clients only for its own spokes. Default (absent or not "true"):
+              # members/*/values.yaml, byte-identical to the single-hub / workshop layout.
+                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/members/{{ if eq (index .metadata.annotations "fleet_scope_by_prefix") "true" }}{{ with (index .metadata.annotations "resource_prefix") }}{{ . }}/{{ end }}{{ end }}*/values.yaml'
   template:
     metadata:
       name: 'client-provisioner-{{ .clusterName }}'
