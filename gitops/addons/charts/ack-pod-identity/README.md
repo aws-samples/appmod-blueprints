@@ -69,12 +69,13 @@ a selector covering the namespace for both `iam.services.k8s.aws` and
 `eks.services.k8s.aws`, the CRs are created but **never reconciled** — the failure mode is
 silence, not an error.
 
-**INVARIANT: every cluster running this addon must appear in `multi-acct`'s `clusters` map.**
-`multi-acct` is the sole owner of `IAMRoleSelector`; this chart deliberately creates none.
+**INVARIANT: every cluster running this addon is either the hub (covered by `multi-acct`) or a
+`kro-clusters` entry (covered by `clusters-kro-<spoke>`).** Each `IAMRoleSelector` has exactly one
+owner; this chart deliberately creates none.
 It briefly shipped its own as a stopgap while the hub was missing from that map, but that
 duplicated ownership: two selectors with an identical `(namespace, group)` scope put the ACK
 controller in an infinite reconcile loop (empty `status{}`, zero AWS API calls, no events) —
-see issue #813. Adding a cluster to `multi-acct` also gives it the `ec2` and
+see issue #813. The hub's `multi-acct` coverage also gives it the `ec2` and
 `secretsmanager` selectors that an on-hub `EksCluster` instance needs (issue #775).
 
 ## Sync ordering
