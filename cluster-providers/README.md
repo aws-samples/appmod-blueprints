@@ -176,7 +176,18 @@ Authorization and teardown therefore key on something other than the name:
   `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) finds VPCs by the prefix tag (plus
   the two legacy names for pre-tag installs) and keeps only those that also carry the cluster
   tag (or a legacy name), so a spoke named anything else is cleaned up too. It never selects the hub's VPC or a CloudFormation-owned one (the self-paced
-  template's IDE/hub VPC).
+  template's IDE/hub VPC), a VPC whose prefix tag is another prefix, a VPC that still hosts a
+  live EKS cluster (for example a spoke kept with `deletionPolicy: retain`), or the VPC of a
+  cluster the teardown inventory lists as retained. On kind-kro-ack the hub's own kro-made VPC
+  is removed by `scripts/sweep-hub-vpc.py` (step 6h2) once the hub cluster is gone; a
+  CloudFormation-owned hub VPC (workshop) is left to the stack. The IAM role sweep skips any
+  role a live cluster still references (`scripts/sweep-iam-guard.py`). Before any addon is
+  removed, `scripts/protect-shared-iam.py` (`hub:destroy-addons` step 0) marks retain/Orphan
+  the hub's Crossplane/ACK IAM resources this teardown must not delete: a fixed-name role
+  outside `<prefix>-` that a chart creates on every hub (each hub holds a managed resource for
+  the same role), or a role a live cluster outside the stack still references. Such a shared
+  role is deleted later (`scripts/sweep-shared-iam.py`, step 6b2) only when no live cluster
+  references it any more.
 
 Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
 renders the cluster, so an invalid name creates nothing at all:

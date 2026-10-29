@@ -60,6 +60,46 @@ DENIED = [FIXTURE["secrets"][1], "ws-denied", "devlake-denied", "DENIEDDENIED", 
 ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", "s-okok", FIXTURE["log_groups"][3]]
 UNREACHABLE = FIXTURE["secrets"][2]
 
+# The RDS (6eii), log-group (6g) and VPC (6h/6h2) sweeps are python helpers using boto3:
+# a fake boto3 on PYTHONPATH answers them from the same fixture and fails the denied
+# deletes the way botocore does (ClientError carrying the code and a message naming the
+# principal). Nothing is sent and no wait is slept.
+FAKE_BOTO3 = r'''
+import json, os, time
+time.sleep = lambda *a, **k: None
+_FX = json.load(open(os.environ["FAKE_AWS_FIXTURE"]))
+class ClientError(Exception):
+    def __init__(self, code, op):
+        self.response = {"Error": {"Code": code, "Message": "User: arn:aws:sts::%s:assumed-role/SharedRole/i-0 "
+                                   "is not authorized to perform: %s" % (_FX["acct"], op)}}
+        super().__init__("An error occurred (%s) when calling the %s operation: %s"
+                         % (code, op, self.response["Error"]["Message"]))
+class _Client:
+    def __init__(self, svc):
+        self._svc = svc
+    def __getattr__(self, op):
+        def call(**kw):
+            with open(os.environ["FAKE_AWS_LOG"], "a") as f:
+                f.write(json.dumps([self._svc, op, kw]) + "\n")
+            if (self._svc, op) == ("rds", "describe_db_instances"):
+                return {"DBInstances": [{"DBInstanceIdentifier": d, "DBInstanceStatus": "available"}
+                                        for d in _FX["dbs"]]}
+            if (self._svc, op) == ("logs", "describe_log_groups"):
+                return {"logGroups": [{"logGroupName": g} for g in _FX["log_groups"]
+                                      if g.startswith(kw.get("logGroupNamePrefix", ""))]}
+            if (self._svc, op) == ("ec2", "describe_vpcs"):
+                return {"Vpcs": []}
+            if op.startswith(("describe_", "list_", "get_")):
+                return {}
+            target = next((v for v in kw.values() if isinstance(v, str)), "")
+            if target in _FX["deny"]:
+                raise ClientError("AccessDeniedException", op)
+            return {}
+        return call
+def client(svc, **kw):
+    return _Client(svc)
+'''
+
 FAKE_AWS = r'''#!{python} -I
 import json, os, sys
 import jmespath
@@ -139,15 +179,19 @@ def _step6():
 
 
 def _run(tmp_path):
-    cmd = _step6()
-    bindir = tmp_path / "bin"
+    cmd = _step6().replace("{{.ROOT_DIR}}", REPO)
+    bindir, pylib = tmp_path / "bin", tmp_path / "pylib" / "boto3"
     bindir.mkdir()
+    pylib.mkdir(parents=True)
+    (pylib / "__init__.py").write_text(FAKE_BOTO3)
     (bindir / "aws").write_text(FAKE_AWS.replace("{python}", sys.executable))
-    (bindir / "aws").chmod(0o755)
+    (bindir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    for b in ("aws", "python3"):
+        (bindir / b).chmod(0o755)
     fixture, log = tmp_path / "fixture.json", tmp_path / "aws.jsonl"
     fixture.write_text(json.dumps(dict(FIXTURE, acct=ACCT, oidc_url=OIDC)))
     log.write_text("")
-    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", PYTHONPATH=str(tmp_path / "pylib"),
                FAKE_AWS_FIXTURE=str(fixture), FAKE_AWS_LOG=str(log))
     tvars = {"AWS_REGION": REGION, "RESOURCE_PREFIX": PREFIX, "HUB_CLUSTER_NAME": HUB}
     if TASK:
@@ -161,7 +205,7 @@ def _run(tmp_path):
         for k, v in tvars.items():
             cmd = cmd.replace("{{.%s}}" % k, v)
         script = tmp_path / "step6.sh"
-        script.write_text("set -euo pipefail\n" + cmd.replace("{{.ROOT_DIR}}", str(tmp_path)))
+        script.write_text("set -euo pipefail\n" + cmd)
         res = subprocess.run(["bash", str(script)], cwd=tmp_path, env=env,
                              capture_output=True, text=True, timeout=120)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -206,7 +250,7 @@ def test_the_step_runs_to_the_end_after_failures(run):
     res, calls = run
     ops = [c[1] for c in calls]
     assert res.returncode == 0, res.stdout + res.stderr
-    last_delete = max(i for i, o in enumerate(ops) if o == "delete-log-group")
+    last_delete = max(i for i, o in enumerate(ops) if o == "delete_log_group")
     assert "describe-vpcs" in ops[last_delete:], "step 6i never ran: " + ", ".join(ops[last_delete:])
 
 
