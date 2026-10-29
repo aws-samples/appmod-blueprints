@@ -1163,6 +1163,13 @@ tasks:
         PLATFORM_TAGS_JSON=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
         if [ "$PLATFORM_TAGS_JSON" = "null" ] || [ -z "$PLATFORM_TAGS_JSON" ]; then PLATFORM_TAGS_JSON='{}'; fi
         echo "[hub:seed] platform_tags=$PLATFORM_TAGS_JSON"
+        # Multi-hub fleet scoping (opt-in, see gitops/bootstrap/clusters-kro.yaml and
+        # fleet-secrets.yaml): config `fleetScopeByPrefix: true` stamps the metadata key
+        # fleet_scope_by_prefix="true" (ESO -> hub cluster-secret annotation) so the hub
+        # globs clusters/<resource_prefix>/*.json from its FIRST render. Absent/false ->
+        # key not written -> legacy clusters/*.json, byte-identical to today.
+        FLEET_SCOPE=$(yq '.fleetScopeByPrefix // false' {{.CONFIG_FILE}} 2>/dev/null || echo false)
+        [ "$FLEET_SCOPE" = "true" ] || FLEET_SCOPE=""
         # Preserve overlay + argocd wiring across re-seeds. This task rebuilds the entire
         # <hub>/config metadata from scratch and has no status: guard, so it runs on every
         # install. Without re-merging these, a second run WIPES:
@@ -1180,6 +1187,8 @@ tasks:
           PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
           PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
           PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+          # Keep an opt-in set by hand on <hub>/config across re-seeds (same reason as overlay_repo_*).
+          [ -n "$FLEET_SCOPE" ] || FLEET_SCOPE=$(echo "$EMETA" | jq -r 'if .fleet_scope_by_prefix == "true" then "true" else "" end')
         fi
         # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
         # transient describe-capability miss never blanks a good value.
@@ -1210,13 +1219,14 @@ tasks:
         # so a re-seed never drops the fleet-config overlay.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" \
           '.metadata |= ( (fromjson) as $m
              | $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
              | (if $orv != "" then .overlay_repo_revision = $orv else . end)
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
              | (if $pt  != "" and $pt != "{}" then .platform_tags = $pt else . end)
+             | (if $fs == "true" then .fleet_scope_by_prefix = "true" else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
