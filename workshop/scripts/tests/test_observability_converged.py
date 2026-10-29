@@ -59,10 +59,34 @@ if svc == "secretsmanager" and op == "get-secret-value":
     print(v)
 elif svc == "secretsmanager" and op == "describe-secret":
     sys.exit(0 if opts["secret-id"] in st["secrets"] else 254)
+elif svc == "secretsmanager" and op in ("create-secret", "put-secret-value"):
+    sid = opts.get("secret-id") or opts.get("name")
+    if op == "create-secret" and sid in st["secrets"]:
+        sys.stderr.write("ResourceExistsException\n"); sys.exit(254)
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps(["put", sid, opts["secret-string"]]) + "\n")
+elif svc == "secretsmanager" and op == "restore-secret":
+    sys.exit(254)
 elif svc == "grafana" and op == "list-workspaces":
+    if st["amg_ws"] is None:
+        sys.stderr.write("ThrottlingException\n"); sys.exit(254)
     print(st["amg_ws"] or "")
 elif svc == "grafana" and op == "describe-workspace":
-    print(st["amg_tag"])
+    if "endpoint" in opts.get("query", ""):
+        print(st["amg_endpoint"])
+    else:
+        tag = st["amg_tag"]
+        tag = tag.get(opts["workspace-id"]) if isinstance(tag, dict) else tag
+        if tag is None:
+            sys.stderr.write("AccessDeniedException\n"); sys.exit(254)
+        print(tag)
+elif svc == "amp" and op == "list-workspaces":
+    print("\t".join(st["amp_tags"].keys()))
+elif svc == "amp" and op == "list-tags-for-resource":
+    tag = st["amp_tags"].get(opts["resource-arn"].rsplit("/", 1)[-1])
+    if tag is None:
+        sys.stderr.write("AccessDeniedException\n"); sys.exit(254)
+    print(tag)
 elif svc == "grafana" and op == "list-workspace-service-accounts":
     print("\t".join(st["sa_tokens"].keys()))
 elif svc == "grafana" and op == "list-workspace-service-account-tokens":
@@ -113,7 +137,8 @@ def _state(**kw):
         f"{PREFIX}/platform/amp": {},
     }
     st = {"secrets": secrets, "token": TOKEN, "curl": 200, "amg_ws": "g-0123abcd",
-          "amg_tag": f"{PREFIX}-amg", "sa_tokens": {}, "converged": True}
+          "amg_tag": f"{PREFIX}-amg", "amg_endpoint": AMG_HOST, "amp_tags": {},
+          "sa_tokens": {}, "converged": True}
     st.update(kw)
     st["secrets"] = {k: (json.dumps(v) if isinstance(v, dict) else v)
                      for k, v in st["secrets"].items() if v is not None}
@@ -125,7 +150,7 @@ def _task(provider, name):
         return yaml.safe_load(f)["tasks"][name]
 
 
-def _run(tmp_path, provider, name, state, env_extra=None):
+def _run(tmp_path, provider, name, state, env_extra=None, tvars_extra=None, task_vars=True):
     t = _task(provider, name)
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
@@ -139,9 +164,9 @@ def _run(tmp_path, provider, name, state, env_extra=None):
     env.update(PATH=f"{bindir}:{os.environ['PATH']}", FAKE_STATE=str(st), FAKE_LOG=str(log),
                **(env_extra or {}))
     tvars = dict({k: "" for k in COLORS}, HUB_CLUSTER_NAME=HUB, RESOURCE_PREFIX=PREFIX,
-                 AWS_REGION=REGION, AWS_ACCOUNT_ID=ACCOUNT)
+                 AWS_REGION=REGION, AWS_ACCOUNT_ID=ACCOUNT, **(tvars_extra or {}))
     task = {"cmds": t["cmds"]}
-    if "vars" in t:
+    if "vars" in t and task_vars:
         task["vars"] = t["vars"]
     tf = tmp_path / "Taskfile.yaml"   # phase1-observability-bg checks $ROOT_DIR/Taskfile.yaml
     tf.write_text(yaml.safe_dump({"version": "3", "set": ["errexit", "nounset", "pipefail"],
@@ -291,3 +316,89 @@ def test_seed_records_token_expiry_with_the_same_ttl(provider):
     assert '--seconds-to-live "$AMG_KEY_TTL"' in cmd
     assert '--arg grafana_api_key_expires_at "$AMG_API_KEY_EXPIRES_AT"' in cmd
     assert "grafana_api_key_expires_at: $grafana_api_key_expires_at" in cmd
+
+
+# ── Review of #1168: stale URL, converge under errexit, keys kept through the hub re-seed ──
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_stale_grafana_url_is_not_converged(tmp_path, provider):
+    # The AMG workspace was replaced: the stored host is dead (curl inconclusive) and the
+    # tag-matched ACTIVE workspace has another endpoint -> not converged, so install re-seeds.
+    res, calls = _converged(tmp_path, provider, curl="fail",
+                            amg_endpoint="g-new.grafana-workspace.us-west-2.amazonaws.com")
+    assert res.returncode != 0, res.stdout
+    assert f"observability stale: aws_grafana_url ({AMG_HOST})" in res.stdout, res.stdout
+    assert not [c for c in calls if c[0] == "curl"]
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("case", ["list-fails", "no-active-match", "describe-fails"])
+def test_stale_check_is_inconclusive_without_a_positive_mismatch(tmp_path, provider, case):
+    kw = {"list-fails": {"amg_ws": None}, "no-active-match": {"amg_ws": ""},
+          "describe-fails": {"amg_tag": {}}}[case]
+    res, _ = _converged(tmp_path, provider, curl="fail", **kw)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "AMG check inconclusive" in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("last", ["non-matching", "lookup-fails"])
+def test_converge_survives_a_non_matching_last_workspace(tmp_path, provider, last):
+    # errexit: `[ ... ] && OK=true` as the loop body's last statement made the task exit 1
+    # when the LAST ACTIVE workspace listed did not match (or its tag lookup failed).
+    amp = {"w1": f"{PREFIX}-amp"}
+    amg = {"g1": f"{PREFIX}-amg"}
+    if last == "non-matching":
+        amp["w2"], amg["g2"] = "other-amp", "other-amg"
+    else:
+        amp["w2"] = None
+    # lookup-fails: w2 is listed but its tag lookup errors; g2 is listed but describe errors.
+    st = _state(converged=False, amp_tags=amp, amg_ws="g1\tg2", amg_tag=amg)
+    res, _ = _run(tmp_path, provider, "observability:converge", st)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "AMP and AMG are ACTIVE: seeding observability inline" in res.stdout, res.stdout
+
+
+OBS_KEYS = {"aws_grafana_url": AMG_HOST,
+            "spoke_dev_cluster_arn": "arn:aws:eks:us-west-2:111122223333:cluster/acme-spoke-dev",
+            "spoke_dev_private_subnet_ids": "subnet-a,subnet-b", "spoke_dev_security_group_id": "sg-d",
+            "spoke_prod_cluster_arn": "arn:aws:eks:us-west-2:111122223333:cluster/acme-spoke-prod",
+            "spoke_prod_private_subnet_ids": "subnet-c,subnet-d", "spoke_prod_security_group_id": "sg-p"}
+
+
+def _hub_seed(tmp_path, provider, existing_meta):
+    (tmp_path / "private").mkdir(exist_ok=True)
+    (tmp_path / "private" / "git-domain").write_text("git.example.com\n")
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text("domain: example.com\n")
+    st = _state()
+    st["secrets"][f"{HUB}/config"] = (json.dumps({"metadata": json.dumps(existing_meta)})
+                                      if existing_meta is not None else None)
+    st["secrets"] = {k: v for k, v in st["secrets"].items() if v is not None}
+    res, calls = _run(tmp_path, provider, "secrets-manager:seed", st, task_vars=False, tvars_extra={
+        "CONFIG_FILE": str(cfg), "INGRESS_DOMAIN": "example.com", "ARGOCD_URL": "argo.example.com",
+        "CLUSTER_ARN": "arn:hub", "VPC_ID": "vpc-1", "PRIVATE_SUBNET_IDS": "subnet-1,subnet-2",
+        "SUBNET_IDS": "subnet-1,subnet-2", "CLUSTER_SG": "sg-1"})
+    assert res.returncode == 0, res.stdout + res.stderr
+    puts = [c for c in calls if c[0] == "put" and c[1] == f"{HUB}/config"]
+    assert len(puts) == 1, calls
+    return json.loads(json.loads(puts[0][2])["metadata"])
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_hub_reseed_keeps_grafana_url_and_spoke_scraper_keys(tmp_path, provider):
+    meta = _hub_seed(tmp_path, provider, dict(OBS_KEYS, aws_argocd_url="argo.example.com"))
+    for k, v in OBS_KEYS.items():
+        assert meta.get(k) == v, (k, meta)
+    # ...so the gate passes on the re-seeded secret and install skips the re-seed.
+    st = _state()
+    st["secrets"][f"{HUB}/config"] = json.dumps({"metadata": json.dumps(meta)})
+    res, _ = _run(_fresh(tmp_path), provider, "observability:converged", st)
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_hub_seed_adds_no_observability_keys_when_none_were_seeded(tmp_path, provider):
+    for existing in (None, {"aws_grafana_url": "", "spoke_dev_cluster_arn": ""}):
+        meta = _hub_seed(_fresh(tmp_path), provider, existing)
+        assert not set(OBS_KEYS) & set(meta), meta
