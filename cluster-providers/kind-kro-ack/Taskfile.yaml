@@ -878,11 +878,11 @@ tasks:
           # Cluster, IAM roles, OIDC provider, security groups, access entries, the ack/
           # argocd/kro Capabilities and all pod-identity associations), and kro then
           # ENFORCES retain — it never reverts it. This is what makes the hub:pivot
-          # kind-side retain guard pass deterministically (a transient `kubectl annotate`
+          # kind-side retain guard pass deterministically (a transient 'kubectl annotate'
           # on kro-owned children is reverted by kro within ~1s, which was aborting the
           # pivot before it ever stopped kind or adopted on the hub), and it guarantees
           # kind can never issue an AWS Delete on the real hub when it is stopped/deleted.
-          # The `destroy` task flips this to "delete" so teardown still removes the AWS
+          # The 'destroy' task flips this to "delete" so teardown still removes the AWS
           # resources (ACK cascade) instead of orphaning them to the sweep.
           deletionPolicy: retain
           region: {{.AWS_REGION}}
