@@ -187,7 +187,15 @@ Authorization and teardown therefore key on something other than the name:
   outside `<prefix>-` that a chart creates on every hub (each hub holds a managed resource for
   the same role), or a role a live cluster outside the stack still references. Such a shared
   role is deleted later (`scripts/sweep-shared-iam.py`, step 6b2) only when no live cluster
-  references it any more.
+  references it any more. A role that a live cluster's access entry still lists (for example
+  a hub's Argo CD capability role left in a retained spoke's access entries) is kept by
+  `scripts/sweep-iam-guard.py` on purpose: remove the stale access entry, or delete the role
+  once that cluster is gone. After the hub is deleted, `scripts/sweep-hub-leftovers.py`
+  (step 2b) removes, for this stack's removed clusters only, the available EBS volumes they
+  owned (Retain StorageClass PVCs), their target groups with no load balancer and the hub's
+  unused CloudWatch Logs delivery sources/destinations; `DeleteCluster` is retried while EKS
+  answers `ResourceInUseException`, and the secret sweep includes secrets already scheduled
+  for deletion.
 
 Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
 renders the cluster, so an invalid name creates nothing at all:

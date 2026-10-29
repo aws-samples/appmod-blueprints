@@ -692,6 +692,120 @@ def sweep_shared_roles(iam, names, protected, dry_run=False):
     return deleted, kept
 
 
+# ------------------------------------------- hub leftovers (EBS, TGs, log delivery)
+#
+# Found by a real teardown: things the controllers leave once the hub is gone.
+#   * EBS volumes of PVCs whose StorageClass is Retain (status available, tag
+#     kubernetes.io/cluster/<cluster>=owned);
+#   * target groups of the load-balancer-controller (step 1 deletes the ALBs only);
+#   * CloudWatch Logs delivery sources/destinations of the EKS capability logs
+#     (step 2 deletes the deliveries only).
+# Each is scoped to a cluster of THIS stack (the hub, or <prefix>-*) that is no
+# longer live, so a live or retained cluster's resources are never touched.
+
+def _stack_cluster(name, prefix, hub):
+    return bool(name) and (name == hub or name.startswith(f'{prefix}-'))
+
+
+def gone_stack_clusters(prefix, hub, clusters, inventory=None, assume_deleted=()):
+    """Predicate: cluster name belongs to this stack and is neither live nor retained."""
+    live = set(live_clusters(clusters, assume_deleted))
+    retained = retained_clusters(inventory or {})
+    return lambda n: _stack_cluster(n, prefix, hub) and n not in live and n not in retained
+
+
+def select_ebs_volumes(ec2, is_gone):
+    sel, skipped = [], []
+    for v in _paginate_token(ec2.describe_volumes, 'Volumes',
+                             Filters=[{'Name': 'status', 'Values': ['available']}]):
+        owners = [t['Key'].split('/', 2)[2] for t in (v.get('Tags') or [])
+                  if t['Key'].startswith('kubernetes.io/cluster/') and t.get('Value') == 'owned']
+        if not owners:
+            continue
+        if any(is_gone(o) for o in owners):
+            sel.append((v['VolumeId'], owners[0]))
+        else:
+            skipped.append((v['VolumeId'], owners[0]))
+    return sel, skipped
+
+
+def select_target_groups(elbv2, is_gone):
+    tgs = _paginate_token(elbv2.describe_target_groups, 'TargetGroups', token_in='Marker', token_out='NextMarker')
+    sel, skipped = [], []
+    for i in range(0, len(tgs), 20):
+        chunk = tgs[i:i + 20]
+        tags = {d['ResourceArn']: {t['Key']: t['Value'] for t in d.get('Tags', [])}
+                for d in elbv2.describe_tags(ResourceArns=[t['TargetGroupArn'] for t in chunk])['TagDescriptions']}
+        for t in chunk:
+            cl = tags.get(t['TargetGroupArn'], {}).get('elbv2.k8s.aws/cluster', '')
+            if not cl:
+                continue
+            if is_gone(cl) and not t.get('LoadBalancerArns'):
+                sel.append((t['TargetGroupArn'], cl))
+            else:
+                skipped.append((t['TargetGroupArn'], cl))
+    return sel, skipped
+
+
+def select_log_deliveries(logs, hub, hub_gone):
+    """Delivery sources/destinations named after the hub, once the hub is gone and
+    no delivery references them."""
+    if not hub_gone:
+        return [], []
+    used_src, used_dst = set(), set()
+    for d in _paginate_token(logs.describe_deliveries, 'deliveries', 'nextToken'):
+        used_src.add(d.get('deliverySourceName', ''))
+        used_dst.add(d.get('deliveryDestinationArn', ''))
+    srcs = [s['name'] for s in _paginate_token(logs.describe_delivery_sources, 'deliverySources', 'nextToken')
+            if hub in s.get('name', '') and s['name'] not in used_src]
+    dsts = [d['name'] for d in _paginate_token(logs.describe_delivery_destinations, 'deliveryDestinations', 'nextToken')
+            if hub in d.get('name', '') and d.get('arn', '') not in used_dst]
+    return srcs, dsts
+
+
+def _paginate_token(fn, key, token_in='NextToken', token_out=None, **kw):
+    """Generic pager: token_in is the request parameter, token_out the response key."""
+    token_out = token_out or token_in
+    out, tok = [], None
+    while True:
+        resp = fn(**kw, **({token_in: tok} if tok else {}))
+        out += resp.get(key, [])
+        tok = resp.get(token_out)
+        if not tok:
+            return out
+
+
+def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
+                        dry_run=False, assume_deleted=()):
+    is_gone = gone_stack_clusters(prefix, hub, clusters, inventory, assume_deleted)
+    verb = 'would delete' if dry_run else 'delete'
+    n = 0
+    vols, vkeep = select_ebs_volumes(ec2, is_gone)
+    for vid, cl in vkeep:
+        log(f'  keep EBS volume {vid}: cluster {cl} is live, retained or not this stack')
+    for vid, cl in vols:
+        log(f'  {verb} EBS volume {vid} (available, owned by removed cluster {cl})')
+        if not dry_run and _try(lambda: ec2.delete_volume(VolumeId=vid), f'EBS volume {vid}'):
+            n += 1
+    tgs, _ = select_target_groups(elbv2, is_gone)
+    for arn, cl in tgs:
+        name = arn.rsplit('/', 2)[-2] if arn.count('/') >= 2 else arn
+        log(f'  {verb} target group {name} (no load balancer, cluster {cl} removed)')
+        if not dry_run and _try(lambda: elbv2.delete_target_group(TargetGroupArn=arn), f'target group {name}'):
+            n += 1
+    srcs, dsts = select_log_deliveries(logs, hub, is_gone(hub))
+    for s in srcs:
+        log(f'  {verb} CloudWatch Logs delivery source {s}')
+        if not dry_run and _try(lambda: logs.delete_delivery_source(name=s), f'delivery source {s}'):
+            n += 1
+    for d in dsts:
+        log(f'  {verb} CloudWatch Logs delivery destination {d}')
+        if not dry_run and _try(lambda: logs.delete_delivery_destination(name=d), f'delivery destination {d}'):
+            n += 1
+    return {'volumes': [v for v, _ in vols], 'target_groups': [a for a, _ in tgs],
+            'delivery_sources': srcs, 'delivery_destinations': dsts, 'deleted': n}
+
+
 def parse_common(argv, usage):
     """Tiny argv parser shared by the CLIs: positionals + --dry-run, --inventory,
     --assume-deleted NAME (repeatable, --dry-run only)."""

@@ -2116,17 +2116,30 @@ tasks:
       # Kind is already dead so KRO cannot recreate it.
       - printf '{{.C_ERR}}▸ Deleting hub EKS cluster via AWS API...{{.C_RESET}}\n'
       - cmd: |
-          STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
-            --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "$STATUS" != "NOT_FOUND" ] && [ "$STATUS" != "DELETING" ]; then
-            # Keep stderr: this is where ResourceInUseException ("Cluster has
-            # capabilities attached") appears when the capability wait above timed
-            # out. Discarding it is why the cluster could survive a destroy that
-            # reported success. Still `|| true` so later cleanup steps run; the
-            # check at the end of destroy is what fails the task.
-            aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} || true
-            echo "  Submitted hub EKS cluster deletion"
-          fi
+          # The capability deletes above can leave the cluster in an update for a few
+          # minutes: DeleteCluster then answers ResourceInUseException ("update in
+          # progress", or capabilities still attached). One call was not enough (a real
+          # teardown had to resubmit it by hand), so retry until the cluster is DELETING
+          # or gone. Keep stderr: a persistent refusal must stay visible. Still `|| true`
+          # semantics (ignore_error) so later cleanup steps run; the check at the end of
+          # destroy is what fails the task.
+          TRIES="${HUB_DELETE_TRIES:-20}"; DELAY="${HUB_DELETE_RETRY_SEC:-30}"
+          for i in $(seq 1 "$TRIES"); do
+            STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+              --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+            case "$STATUS" in NOT_FOUND|DELETING) break ;; esac
+            if OUT=$(aws eks delete-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} 2>&1); then
+              echo "  Submitted hub EKS cluster deletion"
+              break
+            fi
+            printf '%s\n' "$OUT" >&2
+            case "$OUT" in
+              *ResourceInUseException*)
+                printf '  [%s/%s] hub cluster busy (ResourceInUseException), retrying in %ss...\n' "$i" "$TRIES" "$DELAY"
+                sleep "$DELAY" ;;
+              *) break ;;
+            esac
+          done
         ignore_error: true
       - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
       - cmd: |
@@ -2162,6 +2175,13 @@ tasks:
           for ID in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?contains(deliverySourceName, '{{.HUB_CLUSTER_NAME}}')].id" --output text 2>/dev/null); do
             aws logs delete-delivery --id "$ID" --region "$REGION" 2>/dev/null || true
           done
+          # 2b. What the controllers leave once the hub is gone, for this stack's removed
+          #     clusters only (hub or ${PREFIX}-*, not live, not retained): available EBS
+          #     volumes owned by them (Retain StorageClass PVCs), their target groups with
+          #     no load balancer (step 1 deletes ALBs only), and the hub's CloudWatch Logs
+          #     delivery sources/destinations no delivery uses (step 2 deletes deliveries).
+          python3 "{{.ROOT_DIR}}/scripts/sweep-hub-leftovers.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
           #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
           #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
@@ -2294,8 +2314,12 @@ tasks:
               --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
           done
           echo "  deleted bootstrap secrets (if existed)"
-          # 6di. Delete all other peeks-* Secrets Manager secrets by prefix.
+          # 6di. Delete all other peeks-* Secrets Manager secrets by prefix. Include the
+          #      ones already scheduled for deletion (ACK deletes <spoke>/config with a
+          #      recovery window): without --include-planned-deletion they are invisible
+          #      here and block a redeploy with the same name until the window ends.
           for SECRET_ARN in $(aws secretsmanager list-secrets --region "$REGION" \
+                --include-planned-deletion \
                 --filters Key=name,Values="${PREFIX}" \
                 --query 'SecretList[].ARN' --output text 2>/dev/null | tr '\t' '\n'); do
             [ -z "$SECRET_ARN" ] && continue
