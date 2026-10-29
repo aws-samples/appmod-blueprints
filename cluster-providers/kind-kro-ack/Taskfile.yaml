@@ -1615,7 +1615,14 @@ tasks:
             CB=$(echo "$APP_OUTPUT" | awk -v n="crossplane-base-{{.HUB_CLUSTER_NAME}}" '$1==n && $2!="Synced"')
             if [ -n "$CB" ]; then
               printf '  Force-syncing crossplane-base (still OutOfSync after 5min)...\n'
-              KUBECONFIG="$KC" kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+              # Argo CD reads sync options from the operation, not from app.spec (argo-cd
+              # controller/sync.go), so a bare .operation patch silently drops the app's
+              # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
+              # spec.syncPolicy.syncOptions; with none (or on any read error) the body is unchanged.
+              OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+              OP_BODY=$(KUBECONFIG="$KC" kubectl get application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd -o json 2>/dev/null \
+                | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
+              KUBECONFIG="$KC" kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p "${OP_BODY:-$OP_BASE}" 2>/dev/null || true
               FORCED=1
             fi
           fi
@@ -2609,7 +2616,14 @@ tasks:
           if [ "$i" -ge 20 ] && [ -z "${FORCED:-}" ]; then
             FORCED=1
             printf '{{.C_WARN}}  Providers not all Healthy after 5min — force-syncing crossplane-base...{{.C_RESET}}\n'
-            KUBECONFIG=$KC kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+            # Argo CD reads sync options from the operation, not from app.spec (argo-cd
+            # controller/sync.go), so a bare .operation patch silently drops the app's
+            # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
+            # spec.syncPolicy.syncOptions; with none (or on any read error) the body is unchanged.
+            OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+            OP_BODY=$(KUBECONFIG=$KC kubectl get application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd -o json 2>/dev/null \
+              | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
+            KUBECONFIG=$KC kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p "${OP_BODY:-$OP_BASE}" 2>/dev/null || true
           fi
           sleep 15
         done
@@ -3417,8 +3431,17 @@ tasks:
           eval "$KC" kubectl patch application "$app" -n argocd \
             --type='json' -p='[{"op":"remove","path":"/operation"}]' 2>/dev/null || true
           sleep 3
-          eval "$KC" kubectl patch application "$app" -n argocd --type merge \
-            -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' \
+          # Argo CD reads sync options from the operation, not from app.spec (argo-cd
+          # controller/sync.go), so a bare .operation patch silently drops the app's
+          # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
+          # spec.syncPolicy.syncOptions; with none (or on any read error) the body is unchanged.
+          OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+          OP_BODY=$(KUBECONFIG="${KC#KUBECONFIG=}" kubectl get application "$app" -n argocd -o json 2>/dev/null \
+            | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
+          # No eval here: eval re-parses the JSON body, and bash brace expansion splits
+          # it into several words (the pre-existing eval form never sent a valid patch).
+          KUBECONFIG="${KC#KUBECONFIG=}" kubectl patch application "$app" -n argocd --type merge \
+            -p "${OP_BODY:-$OP_BASE}" \
             2>/dev/null || true
         done
       - printf '{{.C_STEP}}▸ Waiting for pod identity associations to be Ready...{{.C_RESET}}\n'
