@@ -477,7 +477,8 @@ devlake:
     devlake:
       grafana:
         external:
-          url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
+          # Empty until aws_grafana_url is seeded, unless in-cluster grafana is enabled.
+          url: '{{if index .metadata.annotations "aws_grafana_url"}}{{index .metadata.annotations "aws_grafana_url"}}{{else if eq (index .metadata.labels "enable_grafana" | default "false") "true"}}{{printf "%s/grafana" .metadata.annotations.ingress_domain_name}}{{end}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
