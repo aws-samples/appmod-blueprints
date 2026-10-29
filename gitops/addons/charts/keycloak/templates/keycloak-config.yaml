@@ -661,7 +661,11 @@ spec:
             - |
               #! /bin/bash
 
-              set -ex -o pipefail
+              # No xtrace (set -x) here: this script handles the Keycloak admin password,
+              # the users' password, the admin access token and every OIDC client secret,
+              # and xtrace would print each of them to the pod log. Progress is reported
+              # with plain echo lines that carry no secret value.
+              set -e -o pipefail
 
               # Set non-interactive mode to avoid prompts during package installation
               export DEBIAN_FRONTEND=noninteractive
@@ -837,6 +841,7 @@ spec:
               export ADMIN_PASSWORD=$(cat /var/secrets/KC_BOOTSTRAP_ADMIN_PASSWORD)
               export USER1_PASSWORD=$(cat /var/secrets/USER_PASSWORD)
               export ARGOCD_PASSWORD=$USER1_PASSWORD
+              echo "getting a Keycloak admin token"
               HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/response.txt -X POST -H "Content-Type: application/x-www-form-urlencoded" \
                 --data-urlencode "username=admin" \
                 --data-urlencode "password=${ADMIN_PASSWORD}" \

@@ -1590,10 +1590,11 @@ spec:
                  args:
                    - |
                      echo "Updating deployment manifests with new image tag"
-                     #activate debugging
-                     set -x
+                     # No xtrace (set -x) here: REPO_URL embeds the GitLab token, and
+                     # xtrace would print it to the workflow step log.
 
                      # Clone the repository
+                     echo "Cloning {{workflow.parameters.repo-name}}"
                      REPO_URL="https://{{workflow.parameters.git-username}}:$GITLAB_TOKEN@${schema.spec.gitlab.hostname}/{{workflow.parameters.git-username}}/{{workflow.parameters.repo-name}}.git"
                      git clone $REPO_URL /tmp/repo
                      cd /tmp/repo/{{workflow.parameters.deployment-path}}
