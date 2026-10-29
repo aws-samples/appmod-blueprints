@@ -92,6 +92,12 @@ domain: "<your-domain>"                      # e.g. idp.example.com
 insecure: false
 certificateArn: ""                           # optional ACM ARN for the HTTPS listener (insecure=false)
 resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resources only
+# Multi-hub fleet scoping (opt-in, kind-kro-ack). When true, hub:seed stamps
+# fleet_scope_by_prefix="true" on <hub>/config, and the hub discovers only
+# clusters/<resourcePrefix>/*.json and fleet/members/<resourcePrefix>/*/values.yaml.
+# Default false: the flat clusters/*.json + fleet/members/*/values.yaml layout.
+# A value set by hand on <hub>/config is kept across re-seeds.
+fleetScopeByPrefix: false
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
 
