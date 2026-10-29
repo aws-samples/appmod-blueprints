@@ -103,10 +103,16 @@ ingressSecurityGroups: ""
 #     `platform_tags` annotation.
 # Primary use: SpringClean retention (auto-delete=no) so cost/janitor sweepers do
 # not reap long-lived workshop infrastructure; also cost-allocation / compliance.
-# Values must be strings. Empty/omitted -> no extra tags are applied.
-platformTags: {}
-  # auto-delete: "no"
-  # cost-center: "peeks"
+# Values must be strings. Empty/omitted -> no extra tags are applied, and
+# `task install` (kind-kro-ack) prints a warning. For a long-lived install in an
+# account that runs a cleanup sweeper, set its retention tag here BEFORE installing,
+# e.g. auto-delete: "no" (adding tags later needs a re-run of `task install`).
+# The same map takes any other AWS tag (e.g. owner, cost-center); every key is
+# propagated to the hub, the spokes and their VPCs.
+platformTags:
+  auto-delete: "no"
+  # owner: "<your-team>"
+  # cost-center: "<your-cost-center>"
 
 # AWS Identity Center (required for EKS ArgoCD Capability)
 identityCenter:
