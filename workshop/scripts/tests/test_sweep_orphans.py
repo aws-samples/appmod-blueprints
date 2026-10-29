@@ -377,6 +377,15 @@ def test_clean_vpc_deletes_everything_in_dependency_order():
     assert not [c for c in ec2.calls if "vpc-a-hub" not in str(c[1])], "touched another VPC"
 
 
+def test_clean_vpc_disassociates_route_tables_before_deleting_subnets():
+    # Deleting a subnet drops its association: disassociating afterwards only
+    # fails with InvalidAssociationID.NotFound (seen on a real teardown).
+    ec2, _, _ = account()
+    assert sl.clean_vpc(ec2, "vpc-a-hub", sleep=NOSLEEP)
+    ops = [c[0] for c in ec2.writes_on("vpc-a-hub")]
+    assert ops.index("disassociate_route_table") < ops.index("delete_subnet") < ops.index("delete_route_table")
+
+
 def test_clean_vpc_waits_for_detached_enis_and_deletes_them():
     ec2, _, _ = account()
     ec2.enis["eni-old"] = {"NetworkInterfaceId": "eni-old", "VpcId": "vpc-a-hub", "Status": "available",

@@ -23,7 +23,6 @@ tagged for a cluster the destroy inventory lists as retained.
 import os
 import sys
 
-import boto3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
@@ -34,11 +33,12 @@ def main(argv, ec2=None, eks=None):
     prefix = pos[0] if len(pos) > 0 else 'peeks'
     region = pos[1] if len(pos) > 1 else 'us-west-2'
     hub = pos[2] if len(pos) > 2 else ''
-    ec2 = ec2 or boto3.client('ec2', region_name=region)
-    eks = eks or boto3.client('eks', region_name=region)
+    ec2 = ec2 or sl.client('ec2', region)
+    eks = eks or sl.client('eks', region)
     try:
         clusters = sl.cluster_inventory(eks)
     except Exception as e:
+        sl.reraise_credentials(e)
         # Fail closed: without the cluster list we cannot tell a live VPC from an orphan.
         sl.log(f'  ⚠ cannot list EKS clusters ({e}); not sweeping spoke VPCs')
         return 1
@@ -47,9 +47,10 @@ def main(argv, ec2=None, eks=None):
         selected, skipped = sl.select_spoke_vpcs(ec2, prefix, hub, clusters, inv, o['assume_deleted'])
         return 1 if sl.run_vpc_sweep(ec2, 'spoke', selected, skipped, o['dry_run']) else 0
     except Exception as e:
+        sl.reraise_credentials(e)
         sl.log(f'  ⚠ spoke VPC sweep failed ({sl.err_code(e)})')
         return 1
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'sweep-spoke-vpcs'))

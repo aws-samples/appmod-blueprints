@@ -12,7 +12,6 @@ ENIs sit in the hub VPC and would otherwise block sweep-hub-vpc.py.
 import os
 import sys
 
-import boto3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
@@ -24,14 +23,15 @@ def main(argv, rds=None, sleep=None):
         sl.log(__doc__)
         return 2
     prefix, region = pos[:2]
-    rds = rds or boto3.client('rds', region_name=region)
+    rds = rds or sl.client('rds', region)
     kw = {'sleep': sleep} if sleep else {}
     try:
         return sl.sweep_rds(rds, prefix, dry_run=o['dry_run'], wait=not o['no_wait'], **kw)
     except Exception as e:
+        sl.reraise_credentials(e)
         sl.log(f'  ⚠ RDS sweep failed ({sl.err_code(e)}); DevLake databases not cleaned')
         return 1
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'sweep-rds'))

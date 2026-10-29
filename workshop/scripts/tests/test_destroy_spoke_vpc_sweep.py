@@ -80,6 +80,13 @@ class _Client:
         return call
 def client(svc, **kw):
     return _Client(svc)
+class Session:  # sweep_lib.session(): same profile as the CLI, credentials checked
+    def __init__(self, **kw):
+        pass
+    def get_credentials(self):
+        return object()
+    def client(self, svc, **kw):
+        return _Client(svc)
 '''
 
 FAKE_AWS = r'''#!{python} -I

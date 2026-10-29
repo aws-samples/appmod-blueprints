@@ -29,11 +29,11 @@ def main(argv, eks=None, iam=None, out=sys.stdout):
         return 0
     try:
         if eks is None or iam is None:
-            import boto3
-            eks = eks or boto3.client('eks', region_name=pos[0])
-            iam = iam or boto3.client('iam')
+            eks = eks or sl.client('eks', pos[0])
+            iam = iam or sl.client('iam', pos[0])
         protected = sl.protected_roles(eks, sl.cluster_inventory(eks), o['assume_deleted'])
     except Exception as e:
+        sl.reraise_credentials(e)
         print(f'  WARN cannot read the live EKS clusters ({sl.err_code(e)}): '
               f'keeping the shared role(s) {", ".join(names)} (fail closed)', file=out)
         return 0
@@ -44,4 +44,4 @@ def main(argv, eks=None, iam=None, out=sys.stdout):
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'sweep-shared-iam'))

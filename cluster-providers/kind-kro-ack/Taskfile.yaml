@@ -1969,6 +1969,26 @@ tasks:
             printf '{{.C_INFO}}  Secrets, AMP, OIDC and VPC cleanup.{{.C_RESET}}\n'
             exit 1
           fi
+      # Preflight: the python helpers must use the SAME credentials as the aws CLI calls.
+      # The aws CLI v2 reads AWS_PROFILE before AWS_DEFAULT_PROFILE, botocore the other
+      # way round: with both set to different profiles, every helper got no (or other)
+      # credentials, failed closed and skipped the hub VPC, RDS, log group and IAM
+      # sweeps while destroy printed "✓ Destroy complete". The helpers now follow the
+      # CLI's rule (scripts/sweep_lib.py align_profile); this check proves it before
+      # anything is torn down. A helper that later loses its credentials records it in
+      # private/destroy-sweep-failures, and the final check fails destroy.
+      - cmd: |
+          mkdir -p "{{.ROOT_DIR}}/private"; rm -f "{{.ROOT_DIR}}/private/destroy-sweep-failures"
+          CLI_ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)
+          if [ -z "$CLI_ACCOUNT" ] || [ "$CLI_ACCOUNT" = "None" ]; then
+            printf '{{.C_ERR}}✗ aws sts get-caller-identity failed: no AWS credentials for the aws CLI. Refusing to start.{{.C_RESET}}\n'
+            exit 1
+          fi
+          if ! python3 "{{.ROOT_DIR}}/scripts/sweep-credentials-check.py" "{{.AWS_REGION}}" "$CLI_ACCOUNT"; then
+            printf '{{.C_ERR}}✗ The teardown helpers (boto3) do not see the aws CLI credentials. Refusing to start.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Set one profile for both: export AWS_PROFILE=<p> AWS_DEFAULT_PROFILE=<p>, or unset the other.{{.C_RESET}}\n'
+            exit 1
+          fi
       - |
         # [#1033] Pivot-aware kubeconfig. After a hub self-adoption pivot kind is stopped
         # (detach=stop) or gone (detach=delete), so `kind get kubeconfig` fails and the kind
@@ -1979,10 +1999,10 @@ tasks:
         if docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}" | grep -q . \
            && kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}} 2>/dev/null; then
           printf '{{.C_INFO}}  kind running — using kind kubeconfig for teardown.{{.C_RESET}}\n'
-          printf 'kind' > /tmp/peeks-destroy-mode
+          printf 'kind' > {{.ROOT_DIR}}/private/destroy-mode
         else
           printf '{{.C_INFO}}  kind not running (pivoted/stopped/gone) — using hub kubeconfig for teardown.{{.C_RESET}}\n'
-          printf 'hub' > /tmp/peeks-destroy-mode
+          printf 'hub' > {{.ROOT_DIR}}/private/destroy-mode
           aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
             --kubeconfig {{.KUBECONFIG}} --alias {{.KIND_CLUSTER_NAME}} 2>/dev/null \
             || printf '{{.C_INFO}}  (hub kubeconfig unavailable — hub may already be gone; teardown continues best-effort.){{.C_RESET}}\n'
@@ -1992,7 +2012,7 @@ tasks:
       # capability roles and needs none of this; it also hard-fails when the hub is already gone
       # (the task has no ignore_error). Only refresh on the kind kubeconfig.
       - cmd: |
-          if [ "$(cat /tmp/peeks-destroy-mode 2>/dev/null)" = "kind" ]; then
+          if [ "$(cat {{.ROOT_DIR}}/private/destroy-mode 2>/dev/null)" = "kind" ]; then
             ( cd "{{.ROOT_DIR}}" && task kind-kro-ack:credentials:refresh )
           else
             printf '{{.C_INFO}}  skipping credentials:refresh (hub/pivoted kubeconfig — hub ACK uses capability roles; review #1033 N4).{{.C_RESET}}\n'
@@ -2180,8 +2200,10 @@ tasks:
           #     volumes owned by them (Retain StorageClass PVCs), their target groups with
           #     no load balancer (step 1 deletes ALBs only), and the hub's CloudWatch Logs
           #     delivery sources/destinations no delivery uses (step 2 deletes deliveries).
+          #     With a Route53 domain: the A/AAAA/CNAME records external-dns made for them
+          #     (owner TXT = cluster name), never the hosted zone or a record it does not own.
           python3 "{{.ROOT_DIR}}/scripts/sweep-hub-leftovers.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
-            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" --domain "{{.DOMAIN}}" 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
           #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
           #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
@@ -2191,7 +2213,7 @@ tasks:
           # Never delete a role a live EKS cluster still references (cluster role, access
           # entry, capability, pod identity): a spoke kept with deletionPolicy=retain holds
           # the hub's roles in its access entries. Fail closed when the clusters can't be read.
-          if PROTECTED=$(python3 "{{.ROOT_DIR}}/scripts/sweep-iam-guard.py" "$REGION" 2>/dev/null); then
+          if PROTECTED=$(python3 "{{.ROOT_DIR}}/scripts/sweep-iam-guard.py" "$REGION"); then
             ROLE_SWEEP=true
           else
             ROLE_SWEEP=false; PROTECTED=""
@@ -2266,7 +2288,7 @@ tasks:
           DENY_RE='(-team-stack-|SharedRole)'
           # Same live-cluster guard as step 3: a role a live EKS cluster still references
           # (e.g. a retained spoke's access entries) is skipped; fail closed.
-          if PROTECTED=$(python3 "{{.ROOT_DIR}}/scripts/sweep-iam-guard.py" "$REGION" 2>/dev/null); then
+          if PROTECTED=$(python3 "{{.ROOT_DIR}}/scripts/sweep-iam-guard.py" "$REGION"); then
             ROLE_SWEEP=true
           else
             ROLE_SWEEP=false; PROTECTED=""
@@ -2479,6 +2501,13 @@ tasks:
       - cmd: |
           if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then
             printf '{{.C_ERR}}✗ Destroy incomplete: EKS cluster {{.HUB_CLUSTER_NAME}} still exists. Re-run task destroy.{{.C_RESET}}\n'
+            exit 1
+          fi
+          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
+          if [ -s "$FAILED" ]; then
+            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep helpers had no AWS credentials and swept nothing: %s{{.C_RESET}}\n' \
+              "$(sort -u "$FAILED" | tr '\n' ' ')"
+            printf '{{.C_INFO}}  Fix the credentials (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
             exit 1
           fi
           printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'

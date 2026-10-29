@@ -31,6 +31,7 @@ It is optional: every sweep falls back to AWS tags when it is missing.
 teardown on a live environment by treating the named clusters as already gone.
 """
 import json
+import os
 import re
 import sys
 import time
@@ -39,9 +40,114 @@ PREFIX_TAG = 'platform.gitops.io/prefix'
 CLUSTER_TAG = 'platform.gitops.io/cluster'
 LIVE = 'live'
 
+# Exit code of a sweep CLI that got no AWS credentials. destroy records it and
+# fails at the end instead of printing "Destroy complete" over skipped sweeps.
+CREDENTIALS_EXIT = 3
+FAILURES_FILE_ENV = 'SWEEP_FAILURES_FILE'
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_FAILURES_FILE = os.path.join(_ROOT, 'private', 'destroy-sweep-failures')
+
 
 def log(msg):
     print(msg, flush=True)
+
+
+# ------------------------------------------------------------- credentials
+#
+# The aws CLI v2 picks the profile from AWS_PROFILE before AWS_DEFAULT_PROFILE;
+# botocore (boto3) reads them the other way round. When the environment carries
+# both with different values (a shell or sandbox exporting
+# AWS_DEFAULT_PROFILE=default while the operator sets AWS_PROFILE=<env>), every
+# `aws` call in the Taskfile used <env> while the python helpers used `default`
+# and got no credentials. align_profile() makes boto3 follow the CLI's rule.
+# It only touches AWS_DEFAULT_PROFILE, so explicit env credentials keep their
+# usual precedence over the profile, exactly as for the CLI.
+
+class CredentialsError(Exception):
+    """boto3 found no AWS credentials (or they could not be loaded)."""
+
+
+_CRED_ERRORS = ('NoCredentialsError', 'PartialCredentialsError', 'CredentialRetrievalError',
+                'NoAuthTokenError', 'ProfileNotFound', 'TokenRetrievalError', 'SSOTokenLoadError',
+                'UnauthorizedSSOTokenError', 'CredentialsError')
+
+
+def align_profile(environ=None):
+    """Make AWS_DEFAULT_PROFILE follow AWS_PROFILE (aws CLI v2 precedence).
+    Returns the profile now in effect ('' when none is set)."""
+    env = os.environ if environ is None else environ
+    prof = env.get('AWS_PROFILE', '')
+    if prof and env.get('AWS_DEFAULT_PROFILE') != prof:
+        env['AWS_DEFAULT_PROFILE'] = prof
+    return prof or env.get('AWS_DEFAULT_PROFILE', '')
+
+
+def is_credentials_error(e):
+    return (any(k.__name__ in _CRED_ERRORS for k in type(e).__mro__)
+            or 'Unable to locate credentials' in str(e))
+
+
+def reraise_credentials(e):
+    """Call first in a broad `except Exception` handler: a missing credential is
+    not a per-resource failure to log and skip, it must stop the helper."""
+    if is_credentials_error(e):
+        raise e
+
+
+_SESSIONS = {}
+
+
+def session(region=None, boto3_mod=None):
+    """A boto3 session using the same profile as the aws CLI, with credentials
+    checked up front (raises CredentialsError)."""
+    prof = align_profile()
+    key = (region, prof)
+    if key in _SESSIONS:
+        return _SESSIONS[key]
+    if boto3_mod is None:
+        import boto3 as boto3_mod
+    try:
+        s = boto3_mod.Session(region_name=region)
+        creds = s.get_credentials()
+    except Exception as e:
+        if is_credentials_error(e):
+            raise CredentialsError(f'cannot load AWS credentials for profile {prof or "<none>"} '
+                                   f'({type(e).__name__})') from e
+        raise
+    if creds is None:
+        raise CredentialsError(f'no AWS credentials found for profile {prof or "<none>"} '
+                               '(the aws CLI and boto3 must see the same credentials)')
+    _SESSIONS[key] = s
+    return s
+
+
+def client(service, region=None, boto3_mod=None):
+    return session(region, boto3_mod).client(service, region_name=region)
+
+
+def record_failure(name, path=None):
+    path = path or os.environ.get(FAILURES_FILE_ENV) or DEFAULT_FAILURES_FILE
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'a') as f:
+            f.write(name + '\n')
+    except OSError:
+        pass
+
+
+def run_cli(main, argv, name, failures_path=None):
+    """Run a sweep CLI. A credential failure prints a clear error on stderr,
+    is recorded for destroy's final check, and exits CREDENTIALS_EXIT."""
+    try:
+        return main(argv)
+    except Exception as e:
+        if not is_credentials_error(e):
+            raise
+        print(f'ERROR {name}: no usable AWS credentials ({e if isinstance(e, CredentialsError) else type(e).__name__}). '
+              'Nothing was swept. Check `aws sts get-caller-identity` and AWS_PROFILE / '
+              'AWS_DEFAULT_PROFILE, then re-run task destroy.', file=sys.stderr, flush=True)
+        record_failure(name, failures_path)
+        return CREDENTIALS_EXIT
 
 
 def tag(obj, key):
@@ -154,6 +260,7 @@ def select_spoke_vpcs(ec2, prefix, hub, clusters, inventory=None, assume_deleted
             for v in ec2.describe_vpcs(Filters=filters)['Vpcs']:
                 found[v['VpcId']] = v
         except Exception as e:
+            reraise_credentials(e)
             log(f'  describe-vpcs ({desc}): {e}')
     busy = busy_vpcs(clusters, assume_deleted)
     retained = retained_clusters(inventory)
@@ -188,6 +295,7 @@ def select_hub_vpc(ec2, prefix, hub, clusters, inventory=None, assume_deleted=()
             for v in ec2.describe_vpcs(VpcIds=[hint])['Vpcs']:
                 found[v['VpcId']] = v
         except Exception as e:
+            reraise_credentials(e)
             if 'NotFound' not in str(e):
                 log(f'  describe-vpcs {hint}: {e}')
     if hub:
@@ -197,6 +305,7 @@ def select_hub_vpc(ec2, prefix, hub, clusters, inventory=None, assume_deleted=()
                     {'Name': f'tag:{CLUSTER_TAG}', 'Values': [hub]}])['Vpcs']:
                 found[v['VpcId']] = v
         except Exception as e:
+            reraise_credentials(e)
             log(f'  describe-vpcs (hub tags): {e}')
     busy = busy_vpcs(clusters, assume_deleted)
     retained = retained_clusters(inventory)
@@ -256,7 +365,9 @@ def err_code(e):
     if code:
         return code
     m = re.search(r'An error occurred \(([^)]+)\)', str(e))
-    return m.group(1) if m else 'unknown error'
+    if m:
+        return m.group(1)
+    return type(e).__name__ if is_credentials_error(e) else 'unknown error'
 
 
 def _try(fn, what):
@@ -264,6 +375,7 @@ def _try(fn, what):
         fn()
         return True
     except Exception as e:
+        reraise_credentials(e)
         log(f'    ⚠ {what} not deleted ({err_code(e)})')
         return False
 
@@ -333,13 +445,17 @@ def clean_vpc(ec2, vpc_id, sleep=None, attempts=30, delay=10):
                 GroupId=sg['GroupId'], IpPermissions=sg['IpPermissionsEgress']), f'revoke {sg["GroupId"]}')
     for sg in c['sg']:
         _try(lambda: ec2.delete_security_group(GroupId=sg['GroupId']), f'SG {sg["GroupId"]}')
-    for sn in c['subnet']:
-        _try(lambda: ec2.delete_subnet(SubnetId=sn['SubnetId']), f'subnet {sn["SubnetId"]}')
+    # Disassociate the route tables while their subnets still exist: deleting a
+    # subnet drops its association, and disassociating afterwards only fails
+    # with InvalidAssociationID.NotFound.
     for rt in c['rt']:
         for a in rt.get('Associations', []):
             if a.get('RouteTableAssociationId') and not a.get('Main'):
                 _try(lambda: ec2.disassociate_route_table(AssociationId=a['RouteTableAssociationId']),
                      'disassociate route table')
+    for sn in c['subnet']:
+        _try(lambda: ec2.delete_subnet(SubnetId=sn['SubnetId']), f'subnet {sn["SubnetId"]}')
+    for rt in c['rt']:
         _try(lambda: ec2.delete_route_table(RouteTableId=rt['RouteTableId']), f'RT {rt["RouteTableId"]}')
     if _try(lambda: ec2.delete_vpc(VpcId=vpc_id), f'VPC {vpc_id}'):
         log(f'  ✓ deleted VPC {vpc_id}')
@@ -684,6 +800,7 @@ def sweep_shared_roles(iam, names, protected, dry_run=False):
             log(f'  deleted shared role {name} (no live cluster references it)')
             deleted.append(name)
         except Exception as e:
+            reraise_credentials(e)
             if err_code(e) == 'NoSuchEntity':
                 log(f'  shared role {name} already gone')
                 continue
@@ -714,12 +831,25 @@ def gone_stack_clusters(prefix, hub, clusters, inventory=None, assume_deleted=()
     return lambda n: _stack_cluster(n, prefix, hub) and n not in live and n not in retained
 
 
+EKS_CLUSTER_NAME_TAG = 'eks:eks-cluster-name'
+
+
+def volume_owners(v):
+    """Clusters an EBS volume belongs to: the in-tree/OSS CSI driver tags
+    kubernetes.io/cluster/<name>=owned, the EKS Auto Mode CSI driver tags
+    eks:eks-cluster-name=<name>."""
+    tags = v.get('Tags') or []
+    owners = [t['Key'].split('/', 2)[2] for t in tags
+              if t['Key'].startswith('kubernetes.io/cluster/') and t.get('Value') == 'owned']
+    owners += [t['Value'] for t in tags if t['Key'] == EKS_CLUSTER_NAME_TAG and t.get('Value')]
+    return list(dict.fromkeys(owners))
+
+
 def select_ebs_volumes(ec2, is_gone):
     sel, skipped = [], []
     for v in _paginate_token(ec2.describe_volumes, 'Volumes',
                              Filters=[{'Name': 'status', 'Values': ['available']}]):
-        owners = [t['Key'].split('/', 2)[2] for t in (v.get('Tags') or [])
-                  if t['Key'].startswith('kubernetes.io/cluster/') and t.get('Value') == 'owned']
+        owners = volume_owners(v)
         if not owners:
             continue
         if any(is_gone(o) for o in owners):
@@ -763,6 +893,111 @@ def select_log_deliveries(logs, hub, hub_gone):
     return srcs, dsts
 
 
+# external-dns (registry txt, txtOwnerId = the cluster name) writes, next to each
+# record it manages, a TXT record "heritage=external-dns,external-dns/owner=<id>,...".
+# Its name is the record's name with a "<type>-" prefix (new format) or the same
+# name (legacy format). destroy removes external-dns together with the addons, so
+# the records of the hub's ingresses (alias to a load balancer that is gone)
+# stay in the zone. Only these are swept: A/AAAA/CNAME records owned by a removed
+# cluster of the stack, plus their TXT registry records. Never a hosted zone, an
+# NS/SOA, a record without an external-dns owner TXT (ACM validation CNAMEs,
+# hand-made records), a "_"-prefixed name, or a record of another owner.
+DNS_OWNER_RE = re.compile(r'heritage=external-dns,.*?external-dns/owner=([^,"]+)')
+DNS_TYPE_PREFIXES = {'a-': ('A',), 'aaaa-': ('AAAA',), 'cname-': ('CNAME', 'A')}
+DNS_DATA_TYPES = ('A', 'AAAA', 'CNAME')
+
+
+def _fqdn(n):
+    return n.rstrip('.').lower() + '.'
+
+
+def _zone_matches(zone_name, domain):
+    z, d = _fqdn(zone_name), _fqdn(domain)
+    return d == z or d.endswith('.' + z)
+
+
+def dns_owner(rrset):
+    if rrset.get('Type') != 'TXT':
+        return ''
+    for r in rrset.get('ResourceRecords') or []:
+        m = DNS_OWNER_RE.search(r.get('Value', ''))
+        if m:
+            return m.group(1)
+    return ''
+
+
+def select_dns_records(r53, domain, is_gone):
+    """[(zone_id, zone_name, [rrsets to delete])], [(name, owner)] kept.
+    Only hosted zones the ingress domain belongs to (external-dns domainFilters +
+    --aws-zone-match-parent); nothing when no domain is configured."""
+    if not domain:
+        return [], []
+    plans, kept = [], []
+    for z in _paginate_token(r53.list_hosted_zones, 'HostedZones', token_in='Marker', token_out='NextMarker'):
+        if not _zone_matches(z['Name'], domain):
+            continue
+        zid = z['Id'].rsplit('/', 1)[-1]
+        rrsets, kw = [], {'HostedZoneId': zid}
+        while True:
+            resp = r53.list_resource_record_sets(**kw)
+            rrsets += resp.get('ResourceRecordSets', [])
+            if not resp.get('IsTruncated'):
+                break
+            kw.update(StartRecordName=resp['NextRecordName'], StartRecordType=resp['NextRecordType'])
+            if resp.get('NextRecordIdentifier'):
+                kw['StartRecordIdentifier'] = resp['NextRecordIdentifier']
+        by_name = {}
+        for rr in rrsets:
+            by_name.setdefault(_fqdn(rr['Name']), []).append(rr)
+        delete, seen = [], set()
+
+        def add(rr):
+            k = (_fqdn(rr['Name']), rr['Type'], rr.get('SetIdentifier', ''))
+            if k not in seen:
+                seen.add(k)
+                delete.append(rr)
+        for rr in rrsets:
+            owner = dns_owner(rr)
+            name = _fqdn(rr['Name'])
+            if not owner or name.startswith('_') or not name.endswith(_fqdn(z['Name'])):
+                continue
+            if not is_gone(owner):
+                kept.append((name, owner))
+                continue
+            first, _, rest = name.partition('.')
+            targets = [(name, DNS_DATA_TYPES)]  # legacy format: same name
+            for pfx, types in DNS_TYPE_PREFIXES.items():
+                if first.startswith(pfx) and len(first) > len(pfx):
+                    targets = [(first[len(pfx):] + '.' + rest, types)]
+                    break
+            add(rr)
+            for tname, types in targets:
+                for data in by_name.get(tname, []):
+                    if data['Type'] in types and not tname.startswith('_'):
+                        add(data)
+        if delete:
+            # Data records first, then their TXT registry records.
+            delete.sort(key=lambda r: r['Type'] == 'TXT')
+            plans.append((zid, z['Name'], delete))
+    return plans, kept
+
+
+def sweep_dns_records(r53, plans, dry_run=False):
+    n = 0
+    verb = 'would delete' if dry_run else 'delete'
+    for zid, zname, rrsets in plans:
+        for rr in rrsets:
+            log(f'  {verb} Route53 {rr["Type"]} {rr["Name"]} (zone {zname.rstrip(".")}, external-dns owner removed)')
+        if dry_run:
+            continue
+        changes = [{'Action': 'DELETE', 'ResourceRecordSet': rr} for rr in rrsets]
+        if _try(lambda: r53.change_resource_record_sets(
+                HostedZoneId=zid, ChangeBatch={'Comment': 'kind-kro-ack destroy: external-dns leftovers',
+                                               'Changes': changes}), f'Route53 records in {zname}'):
+            n += len(rrsets)
+    return n
+
+
 def _paginate_token(fn, key, token_in='NextToken', token_out=None, **kw):
     """Generic pager: token_in is the request parameter, token_out the response key."""
     token_out = token_out or token_in
@@ -776,7 +1011,7 @@ def _paginate_token(fn, key, token_in='NextToken', token_out=None, **kw):
 
 
 def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
-                        dry_run=False, assume_deleted=()):
+                        dry_run=False, assume_deleted=(), r53=None, domain=''):
     is_gone = gone_stack_clusters(prefix, hub, clusters, inventory, assume_deleted)
     verb = 'would delete' if dry_run else 'delete'
     n = 0
@@ -802,14 +1037,21 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
         log(f'  {verb} CloudWatch Logs delivery destination {d}')
         if not dry_run and _try(lambda: logs.delete_delivery_destination(name=d), f'delivery destination {d}'):
             n += 1
+    dns = []
+    if r53 is not None and domain:
+        plans, dkeep = select_dns_records(r53, domain, is_gone)
+        for name, owner in dkeep:
+            log(f'  keep Route53 records of {name}: external-dns owner {owner} is live, retained or not this stack')
+        dns = [f'{rr["Type"]} {rr["Name"]}' for _, _, rrs in plans for rr in rrs]
+        n += sweep_dns_records(r53, plans, dry_run)
     return {'volumes': [v for v, _ in vols], 'target_groups': [a for a, _ in tgs],
-            'delivery_sources': srcs, 'delivery_destinations': dsts, 'deleted': n}
+            'delivery_sources': srcs, 'delivery_destinations': dsts, 'dns_records': dns, 'deleted': n}
 
 
 def parse_common(argv, usage):
     """Tiny argv parser shared by the CLIs: positionals + --dry-run, --inventory,
     --assume-deleted NAME (repeatable, --dry-run only)."""
-    pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False}
+    pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False, 'domain': ''}
     it = iter(argv)
     for a in it:
         if a == '--dry-run':
@@ -818,6 +1060,8 @@ def parse_common(argv, usage):
             opts['no_wait'] = True
         elif a == '--inventory':
             opts['inventory'] = next(it, '')
+        elif a == '--domain':
+            opts['domain'] = next(it, '')
         elif a == '--assume-deleted':
             opts['assume_deleted'].append(next(it, ''))
         elif a.startswith('--'):

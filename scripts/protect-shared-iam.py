@@ -65,14 +65,17 @@ def main(argv, eks=None, kubectl=None, out=sys.stdout):
         return 0
     inv = sl.load_inventory(o['inventory'])
     own = {hub} | sl.deleted_clusters(inv)
-    guard_ok, protected = True, set()
+    guard_ok, protected, cred_failed = True, set(), False
     try:
         if eks is None:
-            import boto3
-            eks = boto3.client('eks', region_name=region)
+            eks = sl.client('eks', region)
         protected = sl.protected_roles(eks, sl.cluster_inventory(eks), assume_deleted=own)
     except Exception as e:
+        # A missing credential must NOT stop this step: it would let the hub's
+        # controllers delete every role once the addons go. Retain everything
+        # (fail closed) and report the credential failure loudly at the end.
         guard_ok = False
+        cred_failed = sl.is_credentials_error(e)
         print(f'  WARN reference check failed ({sl.err_code(e) or type(e).__name__}): '
               'retaining every role CR (fail closed)', file=out)
     retain, delete = sl.select_shared_iam_crs(items, prefix, protected, guard_ok)
@@ -104,8 +107,14 @@ def main(argv, eks=None, kubectl=None, out=sys.stdout):
             print(f'  ERROR could not retain {resource} {name}', file=out)
     print(f'  {len(retain)} IAM managed resource(s) retained, {len(delete)} left to their '
           f'controller (owned by {prefix}-, not used outside this stack)', file=out)
+    if cred_failed:
+        print('ERROR protect-shared-iam: no usable AWS credentials for boto3: every IAM managed '
+              'resource was retained (fail closed). Fix AWS_PROFILE / AWS_DEFAULT_PROFILE and re-run.',
+              file=sys.stderr, flush=True)
+        sl.record_failure('protect-shared-iam')
+        return sl.CREDENTIALS_EXIT
     return 1 if failed else 0
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'protect-shared-iam'))

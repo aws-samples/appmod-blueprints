@@ -21,7 +21,6 @@ hub itself, if its deletion failed).
 import os
 import sys
 
-import boto3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
@@ -33,11 +32,12 @@ def main(argv, ec2=None, eks=None):
         sl.log(__doc__)
         return 2
     prefix, region, hub = pos[:3]
-    ec2 = ec2 or boto3.client('ec2', region_name=region)
-    eks = eks or boto3.client('eks', region_name=region)
+    ec2 = ec2 or sl.client('ec2', region)
+    eks = eks or sl.client('eks', region)
     try:
         clusters = sl.cluster_inventory(eks)
     except Exception as e:
+        sl.reraise_credentials(e)
         sl.log(f'  ⚠ cannot list EKS clusters ({e}); not sweeping the hub VPC')
         return 1
     inv = sl.load_inventory(o['inventory'])
@@ -45,9 +45,10 @@ def main(argv, ec2=None, eks=None):
         selected, skipped = sl.select_hub_vpc(ec2, prefix, hub, clusters, inv, o['assume_deleted'])
         return 1 if sl.run_vpc_sweep(ec2, 'hub', selected, skipped, o['dry_run']) else 0
     except Exception as e:
+        sl.reraise_credentials(e)
         sl.log(f'  ⚠ hub VPC sweep failed ({sl.err_code(e)})')
         return 1
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'sweep-hub-vpc'))

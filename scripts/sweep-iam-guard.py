@@ -14,7 +14,6 @@ sweep (fail closed) instead of deleting blind.
 import os
 import sys
 
-import boto3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
@@ -25,11 +24,12 @@ def main(argv, eks=None, out=sys.stdout):
     if not pos or not pos[0]:
         print(__doc__, file=sys.stderr)
         return 2
-    eks = eks or boto3.client('eks', region_name=pos[0])
+    eks = eks or sl.client('eks', pos[0])
     try:
         clusters = sl.cluster_inventory(eks)
         roles = sl.protected_roles(eks, clusters, o['assume_deleted'])
     except Exception as e:
+        sl.reraise_credentials(e)
         print(f'sweep-iam-guard: {e}', file=sys.stderr)
         return 1
     for r in sorted(roles):
@@ -38,4 +38,4 @@ def main(argv, eks=None, out=sys.stdout):
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'sweep-iam-guard'))

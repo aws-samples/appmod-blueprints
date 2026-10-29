@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
 
 
-def main(argv, ec2=None, elbv2=None, logs=None, eks=None, out=sys.stdout):
+def main(argv, ec2=None, elbv2=None, logs=None, eks=None, out=sys.stdout, r53=None):
     pos, o = sl.parse_common(argv, __doc__)
     if len(pos) < 3 or not all(pos[:3]):
         print(__doc__, file=sys.stderr)
@@ -28,25 +28,30 @@ def main(argv, ec2=None, elbv2=None, logs=None, eks=None, out=sys.stdout):
     prefix, region, hub = pos[:3]
     try:
         if None in (ec2, elbv2, logs, eks):
-            import boto3
-            ec2 = ec2 or boto3.client('ec2', region_name=region)
-            elbv2 = elbv2 or boto3.client('elbv2', region_name=region)
-            logs = logs or boto3.client('logs', region_name=region)
-            eks = eks or boto3.client('eks', region_name=region)
+            ec2 = ec2 or sl.client('ec2', region)
+            elbv2 = elbv2 or sl.client('elbv2', region)
+            logs = logs or sl.client('logs', region)
+            eks = eks or sl.client('eks', region)
+            if r53 is None and o['domain']:
+                r53 = sl.client('route53', region)
         clusters = sl.cluster_inventory(eks)
     except Exception as e:
+        sl.reraise_credentials(e)
         print(f'  ⚠ cannot read the EKS clusters ({sl.err_code(e)}): hub leftovers not swept', file=out)
         return 0
     try:
         r = sl.sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters,
-                                   sl.load_inventory(o['inventory']), o['dry_run'], o['assume_deleted'])
+                                   sl.load_inventory(o['inventory']), o['dry_run'], o['assume_deleted'],
+                                   r53=r53, domain=o['domain'])
     except Exception as e:
+        sl.reraise_credentials(e)
         print(f'  ⚠ hub leftover sweep stopped ({sl.err_code(e)})', file=out)
         return 0
-    total = sum(len(r[k]) for k in ('volumes', 'target_groups', 'delivery_sources', 'delivery_destinations'))
+    total = sum(len(r[k]) for k in ('volumes', 'target_groups', 'delivery_sources', 'delivery_destinations',
+                                         'dns_records'))
     print(f'  hub leftovers: {total} selected, {r["deleted"]} deleted', file=out)
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(sl.run_cli(main, sys.argv[1:], 'sweep-hub-leftovers'))

@@ -192,10 +192,19 @@ Authorization and teardown therefore key on something other than the name:
   `scripts/sweep-iam-guard.py` on purpose: remove the stale access entry, or delete the role
   once that cluster is gone. After the hub is deleted, `scripts/sweep-hub-leftovers.py`
   (step 2b) removes, for this stack's removed clusters only, the available EBS volumes they
-  owned (Retain StorageClass PVCs), their target groups with no load balancer and the hub's
-  unused CloudWatch Logs delivery sources/destinations; `DeleteCluster` is retried while EKS
+  owned (Retain StorageClass PVCs, tagged `kubernetes.io/cluster/<name>=owned` or, with the
+  EKS Auto Mode CSI driver, `eks:eks-cluster-name=<name>`), their target groups with no load
+  balancer, the hub's unused CloudWatch Logs delivery sources/destinations and, when `domain`
+  is in a Route53 hosted zone, the A/AAAA/CNAME records external-dns made for them (identified
+  by its owner TXT record, owner = cluster name; never the zone, NS/SOA, ACM validation or
+  hand-made records); `DeleteCluster` is retried while EKS
   answers `ResourceInUseException`, and the secret sweep includes secrets already scheduled
   for deletion.
+- The python helpers use the same AWS profile as the `aws` CLI calls of the task
+  (`AWS_PROFILE` wins over `AWS_DEFAULT_PROFILE`, as for the CLI; boto3 alone reads them the
+  other way round). `destroy` checks before starting that both resolve to the same account,
+  and a helper that has no credentials exits 3, is recorded in
+  `private/destroy-sweep-failures` and makes `destroy` fail instead of reporting success.
 
 Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
 renders the cluster, so an invalid name creates nothing at all:
