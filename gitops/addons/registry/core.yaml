@@ -493,8 +493,17 @@ external-dns:
         operator: In
         values: ['true']
   valuesObject:
+    # Scope of the names external-dns may manage. Defaults to the cluster's own
+    # ingress_domain_name. Set the optional `external_dns_domain_filters`
+    # cluster-secret annotation (from `<cluster>/config` metadata in Secrets
+    # Manager) to widen it to a single domain, typically the parent zone, when an
+    # addon publishes a host that is a SIBLING of ingress_domain_name. Example:
+    # the open-agentic-platform agent-gateway `agents.<parent>` host, see
+    # https://github.com/awslabs/open-agentic-platform/issues/116. kro-provisioned
+    # clusters (rg-eks) already set it equal to their domainName, so they are
+    # unchanged. An empty or missing annotation falls back to ingress_domain_name.
     domainFilters:
-      - '{{.metadata.annotations.ingress_domain_name}}'
+      - '{{default .metadata.annotations.ingress_domain_name (index .metadata.annotations "external_dns_domain_filters")}}'
     txtOwnerId: '{{.metadata.annotations.aws_cluster_name}}'
     extraArgs:
       - --aws-zone-match-parent

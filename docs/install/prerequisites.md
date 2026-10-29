@@ -50,6 +50,16 @@ AWS credentials for the target account must resolve in your shell
    ```
    *CloudFront mode needs no domain — the `*.cloudfront.net` name is used instead.*
 
+   By default external-dns only manages names under `<your-domain>` (`domainFilters` =
+   `ingress_domain_name`). When an addon publishes a host that is a **sibling** of
+   `<your-domain>` in its parent zone, widen that scope. One example is the
+   open-agentic-platform agent-gateway, whose agents host is `agents.<parent-zone>`
+   (see [open-agentic-platform#116](https://github.com/awslabs/open-agentic-platform/issues/116)).
+   To widen it, add `external_dns_domain_filters: <parent-zone>` to the `metadata` of the
+   `<cluster>/config` secret in Secrets Manager. It becomes a cluster-secret annotation.
+   An empty or missing value keeps the default. The wildcard certificate must also
+   cover that sibling, for example `*.<parent-zone>`.
+
 ---
 
 ## Next
