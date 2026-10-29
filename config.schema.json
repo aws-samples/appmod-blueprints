@@ -243,6 +243,11 @@
       "pattern": "^[a-z][a-z0-9-]*$",
       "description": "Prefix for KRO tenant-facing resources (ECR repos, S3 buckets). Infrastructure resources use clusterName instead."
     },
+    "fleetScopeByPrefix": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opt-in multi-hub fleet scoping (kind-kro-ack). When true, hub:seed stamps fleet_scope_by_prefix=\"true\" on <hub>/config (ESO -> hub cluster-secret annotation), and gitops/bootstrap/clusters-kro.yaml and fleet-secrets.yaml discover only clusters/<resourcePrefix>/*.json and fleet/members/<resourcePrefix>/*/values.yaml. When false or omitted the key is not written and the flat clusters/*.json + fleet/members/*/values.yaml layout is used, unchanged. A value set by hand on <hub>/config is preserved across re-seeds."
+    },
     "platformTags": {
       "type": "object",
       "additionalProperties": {

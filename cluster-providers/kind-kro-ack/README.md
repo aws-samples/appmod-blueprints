@@ -87,6 +87,10 @@ task install
 3. **Same RGDs for bootstrap and runtime** — the hub uses identical RGDs to provision spokes
 4. **Pod Identity native** — ACK uses Pod Identity on the hub; on Kind bootstrap, credentials Secret is mounted
 
+## Multi-hub fleet scoping (opt-in)
+
+Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `config.local.yaml`. `hub:seed` then writes `fleet_scope_by_prefix: "true"` into the `<hub>/config` metadata, which ESO copies onto the hub cluster-secret, and the hub discovers only `clusters/<resourcePrefix>/*.json` and `fleet/members/<resourcePrefix>/*/values.yaml`. When the key is absent or `false`, nothing is written and the flat `clusters/*.json` / `fleet/members/*/values.yaml` layout is used, exactly as before. A value set by hand on `<hub>/config` is kept on re-seed; to turn it off, remove the key from `<hub>/config` too.
+
 ## Credentials on Kind
 
 ACK controllers on Kind cannot use Pod Identity (no IMDS). The Taskfile creates an `aws-credentials` Secret and configures each ACK controller Helm chart with:
