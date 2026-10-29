@@ -1,24 +1,14 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: |
-    Deploy GPU-based Ray Service for larger AI models using vLLM library.
-    
-    **Optimized for:**
-    - Mistral-7B-Instruct (14GB)
-    - Models requiring GPU acceleration
-    
-    **Model Management:**
-    - Models are pre-uploaded to S3 and mounted via S3 CSI driver
-    - Path: /mnt/models/models/{model-name}
-    - Uses gpu-serve-transformers with vLLM for optimized inference
+  description: Deploys a GPU Ray Service that serves larger language models with the Transformers library.
   name: ray-serve-gpu
-  title: Ray Service - GPU (vLLM)
+  title: Ray Service - GPU (Transformers)
   tags:
     - ray
     - ai
     - gpu
-    - vllm
+    - transformers
 spec:
   owner: guest
   type: service
@@ -51,7 +41,7 @@ spec:
           enumNames:
             - "TinyLlama-1.1B-Chat (2GB, can run on CPU)"
             - "Mistral-7B-Instruct (14GB, requires GPU)"
-          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU."
+          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU. Models are pre-staged in S3. By default, they are mounted from S3 with the S3 CSI driver at /mnt/models/models/{model-name}. See gitops/workloads/ray/MODEL-MANAGEMENT.md for other model-loading options."
         maxLength:
           title: Max Tokens
           type: string
@@ -60,7 +50,7 @@ spec:
         rayServeFile:
           title: Ray Serve Config (ZIP)
           type: string
-          ui:help: "Optional. URL to a custom Ray Serve application ZIP (vLLM). Leave blank to use the workshop's configured revision (workshop_git_branch)."
+          ui:help: "Optional. URL to a custom Ray Serve application ZIP (Transformers). Leave blank to use the workshop's configured revision (workshop_git_branch)."
       required:
         - name
     - title: Resource Configuration

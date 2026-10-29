@@ -2,10 +2,20 @@
 
 ## Overview
 
-Ray Serve deployments use models pre-uploaded to S3 and mounted via the S3 CSI driver. This approach provides:
+By default, Ray Serve deployments use models pre-uploaded to S3 and mounted via the S3 CSI driver (Mountpoint for Amazon S3). This approach provides:
 - Fast deployment (no HuggingFace downloads during pod startup)
 - Consistent model versions across deployments
 - Shared model storage across multiple Ray services
+
+The S3 CSI mount is the default in these templates, not the only way to load a model. See [Model Loading Options](#model-loading-options) for the alternatives and when to use each.
+
+## Model Loading Options
+
+| Option | How it works | Used in this repo | When to use it |
+|--------|--------------|-------------------|----------------|
+| S3 CSI mount (default) | The RayService pods mount the model bucket at `/mnt/models` with the S3 CSI driver, and the serve app reads the weights from `/mnt/models/models/{model-name}`. | CPU and GPU templates (`ray-service.yaml`) | Small and medium models, quick start, one copy of the weights shared by every Ray service. Reads go to S3, so load time grows with model size. |
+| Copy to node-local storage | An init container copies the weights to node-local storage (an `emptyDir`) before the serve container starts. The copy can come off the S3 CSI mount (`rsync`, `cp`) or straight from S3 (`aws s3 sync`, `s5cmd`). The app then loads from local disk. | Trainium template: the `copy-model` init container runs `rsync` from `/mnt/models/models/{model-name}` to `/tmp/neuron-compile-cache/{model-name}` | Larger models, or runtimes that read the weights several times (for example Neuron compilation). You pay the copy once per pod start, then load at local-disk speed. Size the `emptyDir` for the model. |
+| Run:ai Model Streamer | vLLM streams Safetensors weights from S3 straight into GPU memory with `--load-format runai_streamer` (for example `vllm serve s3://<bucket>/<model> --load-format runai_streamer`). Needs `vllm[runai]`. | Not used. The CPU and GPU apps here use Transformers, so this needs a custom vLLM serve app passed in `rayServeFile`. | Large models on GPU where load time matters, without a separate copy step. Requires a vLLM-based app and Safetensors weights. See the [vLLM Run:ai Model Streamer docs](https://docs.vllm.ai/en/latest/models/extensions/runai_model_streamer.html). |
 
 ## Current Models
 
@@ -130,11 +140,17 @@ kubectl exec -n ray-system <ray-pod-name> -c ray-head -- ls -lh /mnt/models/mode
 - Supports both CPU and GPU (auto-detects)
 - File: `app.py`, `serve_config.py`, `requirements.txt`
 
-### GPU Serve Config (`gpu-serve-config.zip`)
-- Uses vLLM for optimized inference
+### GPU Serve Config (`gpu-serve-transformers.zip`)
+- Uses Transformers library (`AutoModelForCausalLM`), not vLLM
+- Loads models from S3-mounted path (`local_files_only=True`)
 - Requires GPU nodes
-- Better performance for larger models
-- File: `vllm_serve.py`
+- File: `app.py`
+
+### Trainium Serve Config (`trainium-serve-neuron.zip`)
+- Uses vLLM on the AWS Neuron SDK
+- Loads models from node-local storage (copied off the S3 mount by an init container)
+- Requires Trainium nodes
+- File: `app.py`
 
 ## S3 Bucket Configuration
 
