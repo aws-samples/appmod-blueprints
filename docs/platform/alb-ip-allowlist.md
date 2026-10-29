@@ -206,14 +206,23 @@ it back to Git on the next sync).
 ## Related hardening: close Langfuse self‑registration
 
 The other half of the same AppSec fix is to stop anyone who can reach Langfuse from creating a
-local account. When the agentic platform (OAP) is deployed, its `langfuse` chart exposes
-`keycloak.disableSignup` (default `"false"`), rendered as `AUTH_DISABLE_SIGNUP`. Set it the same
-way, in the overlay of your fleet repo:
+local account. When the agentic platform (OAP) is deployed, use its `langfuse` chart's
+`keycloak.disableUsernamePassword`, rendered as `AUTH_DISABLE_USERNAME_PASSWORD`. It turns off
+Langfuse's local email/password sign‑up **and** sign‑in, while Keycloak SSO keeps working,
+first‑time SSO users included. This key is added by
+[awslabs/open-agentic-platform#103](https://github.com/awslabs/open-agentic-platform/pull/103),
+with a default of `"true"`: once that PR is in the OAP revision you deploy, nothing needs to be
+set. Until then, the key is ignored. To set it explicitly, use the overlay of your fleet repo:
 
 ```yaml
 # overlays/clusters/<hub-name>/langfuse/values.yaml
 keycloak:
-  disableSignup: "true"   # string value; users must sign in through Keycloak SSO
+  disableUsernamePassword: "true"   # string value; "false" brings back local accounts
 ```
 
-Existing users and Keycloak SSO sign‑in are unaffected; only new self‑registration is refused.
+On a hub that is already running, the Langfuse pod must restart before the change takes effect.
+
+> **Do not use `keycloak.disableSignup: "true"`** (`AUTH_DISABLE_SIGNUP`) to close
+> self‑registration. Langfuse then refuses to create **any** new user, SSO included: a Keycloak
+> user who has never opened Langfuse cannot sign in, and gets "Sign up is disabled." On a fresh
+> install that is every user. Keep it at its default `"false"`.
