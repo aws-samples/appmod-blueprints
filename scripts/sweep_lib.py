@@ -17,6 +17,10 @@ Safety rules shared by every sweep:
     retained.
   * Never delete an IAM role that a live EKS cluster still references (cluster
     role, access entry, capability role, pod identity association).
+  * Never let the hub's own controllers delete an IAM role or policy outside the
+    stack's prefix, or a role a live cluster outside the stack still references:
+    protect-shared-iam.py marks those managed resources retain/Orphan before the
+    addons are removed (hub:destroy-addons step 0).
 
 The "inventory" is a JSON file written by destroy BEFORE the hub is torn down,
 while the hub API and kro instances can still be read:
@@ -546,6 +550,146 @@ def protected_roles(eks, clusters, assume_deleted=()):
             if not token:
                 break
     return names
+
+
+# ------------------------------------------------- shared IAM managed resources
+#
+# A chart can create an IAM role with a FIXED name, not prefixed by the stack
+# (for example an agent observability role every hub creates under the same
+# name). Each hub that runs the chart then holds a managed resource for the SAME
+# AWS role, with the default deletion policy. Removing one hub's addons makes its
+# controller delete the role, which the other hubs' pod identity associations
+# still use. Before the addons are removed, destroy marks such resources
+# retain/Orphan so the controller forgets them without an AWS delete.
+
+# resource -> (namespaced, family). family picks the patch: Crossplane v1
+# (cluster-scoped, spec.deletionPolicy), Crossplane v2 (namespaced, no
+# deletionPolicy: drop Delete from managementPolicies), ACK (annotation).
+IAM_CR_KINDS = {
+    'roles.iam.aws.upbound.io': (False, 'xp1'),
+    'policies.iam.aws.upbound.io': (False, 'xp1'),
+    'rolepolicyattachments.iam.aws.upbound.io': (False, 'xp1'),
+    'roles.iam.aws.m.upbound.io': (True, 'xp2'),
+    'policies.iam.aws.m.upbound.io': (True, 'xp2'),
+    'rolepolicyattachments.iam.aws.m.upbound.io': (True, 'xp2'),
+    'roles.iam.services.k8s.aws': (True, 'ack'),
+    'policies.iam.services.k8s.aws': (True, 'ack'),
+}
+XP_NO_DELETE = ['Observe', 'Create', 'Update', 'LateInitialize']
+
+
+def iam_cr_aws_role(resource, item):
+    """AWS name the CR acts on: the role for a role or an attachment, the policy
+    name for a policy. External name first (what Crossplane uses), then ACK's
+    spec.name, then the attachment's role, then the object name."""
+    meta = item.get('metadata') or {}
+    spec = item.get('spec') or {}
+    fp = spec.get('forProvider') or {}
+    if resource.startswith('rolepolicyattachments.'):
+        return fp.get('role') or (fp.get('roleRef') or {}).get('name') or ''
+    ext = (meta.get('annotations') or {}).get('crossplane.io/external-name')
+    return ext or spec.get('name') or meta.get('name', '')
+
+
+def already_retained(family, item):
+    meta = item.get('metadata') or {}
+    spec = item.get('spec') or {}
+    if family == 'ack':
+        return (meta.get('annotations') or {}).get('services.k8s.aws/deletion-policy') == 'retain'
+    if family == 'xp1':
+        return spec.get('deletionPolicy') == 'Orphan'
+    mp = spec.get('managementPolicies')
+    return bool(mp) and 'Delete' not in mp and '*' not in mp
+
+
+def select_shared_iam_crs(items_by_kind, prefix, protected, guard_ok=True):
+    """Managed IAM resources this hub must NOT delete: the AWS name is outside
+    <prefix>-, or a live cluster outside this stack still references the role,
+    or the reference check failed (fail closed: keep every role CR; the
+    prefix-scoped role sweep of steps 3/6b deletes this stack's own leftovers).
+    Returns (retain, kept_for_delete): lists of
+    (resource, ns, name, aws, reason, already_retained)."""
+    retain, delete = [], []
+    own = f'{prefix}-'
+    for resource, items in items_by_kind.items():
+        namespaced, family = IAM_CR_KINDS[resource]
+        for it in items:
+            meta = it.get('metadata') or {}
+            ns = meta.get('namespace', '') if namespaced else ''
+            aws = iam_cr_aws_role(resource, it)
+            row = (resource, ns, meta.get('name', ''), aws)
+            done = already_retained(family, it)
+            is_policy = resource.startswith('policies.')
+            if not aws.startswith(own):
+                retain.append(row + (f'not owned by this stack (outside {own}*)', done))
+            elif not is_policy and not guard_ok:
+                retain.append(row + ('reference check unavailable (fail closed)', done))
+            elif not is_policy and aws in protected:
+                retain.append(row + ('still used by a live cluster outside this stack', done))
+            else:
+                delete.append(row + ('', done))
+    return retain, delete
+
+
+def retain_patch(family):
+    """kubectl arguments (after the resource/name) that retain the AWS object."""
+    if family == 'ack':
+        return ['annotate', '--overwrite', 'services.k8s.aws/deletion-policy=retain']
+    if family == 'xp1':
+        return ['patch', '--type', 'merge', '-p', json.dumps({'spec': {'deletionPolicy': 'Orphan'}})]
+    return ['patch', '--type', 'merge', '-p', json.dumps({'spec': {'managementPolicies': XP_NO_DELETE}})]
+
+
+def shared_roles_record_path(inventory_path):
+    """Where protect-shared-iam.py records the fixed-name roles it retained, next
+    to the inventory, for the last-user cleanup after the hub is gone."""
+    import os
+    return os.path.join(os.path.dirname(inventory_path) or '.', 'shared-iam-retained.json')
+
+
+def load_shared_roles(path):
+    try:
+        with open(path) as f:
+            return sorted({r for r in json.load(f).get('roles', []) if r})
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def delete_role(iam, name):
+    """Detach managed policies, drop inline policies and instance profiles, delete."""
+    for p in _paginate(iam.list_attached_role_policies, 'AttachedPolicies', RoleName=name):
+        iam.detach_role_policy(RoleName=name, PolicyArn=p['PolicyArn'])
+    for p in _paginate(iam.list_role_policies, 'PolicyNames', RoleName=name):
+        iam.delete_role_policy(RoleName=name, PolicyName=p)
+    for ip in _paginate(iam.list_instance_profiles_for_role, 'InstanceProfiles', RoleName=name):
+        iam.remove_role_from_instance_profile(InstanceProfileName=ip['InstanceProfileName'], RoleName=name)
+    iam.delete_role(RoleName=name)
+
+
+def sweep_shared_roles(iam, names, protected, dry_run=False):
+    """Delete the recorded shared roles once no live cluster references them (this
+    stack was the last user). Returns (deleted, kept) name lists."""
+    deleted, kept = [], []
+    for name in names:
+        if name in protected:
+            log(f'  keep shared role {name}: still used by a live EKS cluster')
+            kept.append(name)
+            continue
+        if dry_run:
+            log(f'  would delete shared role {name} (no live cluster references it)')
+            deleted.append(name)
+            continue
+        try:
+            delete_role(iam, name)
+            log(f'  deleted shared role {name} (no live cluster references it)')
+            deleted.append(name)
+        except Exception as e:
+            if err_code(e) == 'NoSuchEntity':
+                log(f'  shared role {name} already gone')
+                continue
+            log(f'    ⚠ shared role {name} not deleted ({err_code(e)})')
+            kept.append(name)
+    return deleted, kept
 
 
 def parse_common(argv, usage):

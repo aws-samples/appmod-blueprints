@@ -1672,6 +1672,20 @@ tasks:
       # below no-ops (2>/dev/null || true) and the task still completes cleanly.
       - cmd: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig >/dev/null 2>&1
         ignore_error: true
+      # 0. Shared IAM: before any addon goes, mark retain/Orphan the hub's IAM managed
+      #    resources (Crossplane/ACK roles, policies, attachments) that this teardown must
+      #    not delete in AWS: a fixed-name role outside <prefix>- that a chart creates on
+      #    every hub (each hub holds a CR for the SAME role, deletion policy Delete), or a
+      #    role a live cluster outside this stack still references. Removing the addons
+      #    then only makes the controller forget them. Read-only on AWS; no-op when the
+      #    hub is unreachable. See scripts/protect-shared-iam.py.
+      - cmd: |
+          printf '{{.C_STEP}}▸ Protecting shared IAM resources from this teardown...{{.C_RESET}}\n'
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 "{{.ROOT_DIR}}/scripts/protect-shared-iam.py" \
+            "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" \
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || \
+            printf '{{.C_ERR}}  ⚠ some shared IAM resources could not be marked retain (see above).{{.C_RESET}}\n'
+        ignore_error: true
       - printf '{{.C_ERR}}▸ Stopping all regeneration...{{.C_RESET}}\n'
       # 1. bootstrap ApplicationSet (preserveResources) — stop recreating bootstrap App
       - '{{.KC}} patch applicationset bootstrap -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}'' 2>/dev/null || true'
@@ -2255,6 +2269,12 @@ tasks:
             done
             echo "  deleting IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
           done
+          # 6b2. Shared fixed-name roles (outside ${PREFIX}-) that hub:destroy-addons step 0
+          #      retained instead of letting the hub's controller delete them: delete each
+          #      one only when no live EKS cluster references it any more (this stack was
+          #      its last user). Kept while another hub's pod identity still uses it.
+          python3 "{{.ROOT_DIR}}/scripts/sweep-shared-iam.py" "$REGION" \
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
           # 6c. ALL remaining peeks-* IAM policies (not just ACK-tagged).
           [ -n "$PREFIX" ] && aws iam list-policies --scope Local \
               --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" \
