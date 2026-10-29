@@ -181,7 +181,27 @@ tasks:
           var: REQUIRED_CLIS
       - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      - task: config:check-platform-tags
       - printf '{{.C_OK}}✓ Pre-flight checks passed.{{.C_RESET}}\n'
+
+  config:check-platform-tags:
+    desc: Warn when config.local.yaml sets no platformTags (hub and spokes then get no retention/cost tags)
+    cmds:
+      - |
+        # platformTags is optional and defaults to {} (config.schema.json): nothing is
+        # tagged then, which is fine for throwaway installs. But the omission is silent and
+        # only surfaces when an account janitor reaps the hub or a spoke (EKS, VPC, NAT,
+        # EIP), so say it at install time. Warning only: the tags themselves are a choice
+        # of the account owner (e.g. auto-delete: "no" for a retention sweeper), never a
+        # platform default.
+        PT=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
+        if [ -z "$PT" ] || [ "$PT" = "null" ] || [ "$PT" = "{}" ]; then
+          printf '{{.C_WARN}}⚠ No platformTags in %s: the hub and spoke AWS resources (EKS, VPC, NAT, EIP) get no platform-wide tags.{{.C_RESET}}\n' "{{.CONFIG_FILE}}"
+          printf '{{.C_WARN}}  If this account runs a cleanup sweeper, set the retention tag it honours before installing, e.g.{{.C_RESET}}\n'
+          printf '{{.C_WARN}}    platformTags:{{.C_RESET}}\n'
+          printf '{{.C_WARN}}      auto-delete: "no"{{.C_RESET}}\n'
+          printf '{{.C_WARN}}  (see config.yaml). Adding them after the install needs a re-run of task install (hub:claim + hub:seed).{{.C_RESET}}\n'
+        fi
 
   install:
     desc: Bootstrap the platform (idempotent)
@@ -774,6 +794,7 @@ tasks:
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
     cmds:
+      - task: config:check-platform-tags
       - |
         # Guard: argoCdHubRoleArn cannot be empty — IAM would reject the trust policy.
         if [ -z "{{.CALLER_ROLE_ARN}}" ]; then

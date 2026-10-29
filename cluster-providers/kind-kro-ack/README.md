@@ -40,7 +40,14 @@ identityCenter:
   region: us-east-1  # Region where IDC is deployed
   identityStoreId: d-XXXXXXXXXX  # Optional, auto-detected if omitted
   adminGroupId: ""  # Optional, created by idc:setup if empty
+platformTags:  # Optional AWS tags on the hub and every spoke (EKS, VPC, NAT, EIP)
+  auto-delete: "no"  # e.g. the retention tag of the account's cleanup sweeper, if any
+  # Any other AWS tag works the same way (e.g. owner, cost-center): each key is
+  # propagated to the hub, the spokes and their VPCs.
+  # owner: "<your-team>"
 ```
+
+`platformTags` is optional. Without it nothing is tagged and `task install` prints a warning, because an account cleanup sweeper may then reap the hub or the spokes. Set it before installing: `hub:claim` tags the hub and `hub:seed` passes the tags to every spoke (hub cluster-secret `platform_tags` annotation, then `awsTags` on each `EksclusterWithVpc`).
 
 **IDC prerequisite**: An Identity Center instance must exist in your account/organization. The `idc:setup` task creates groups and users automatically. With `IDC_CONFIGURE_SKIP=true` (for example a second stack in an account whose Identity Center another stack already uses) it prints a notice, creates nothing and makes no Identity Center call. It then also leaves `identityCenter.identityStoreId` and `identityCenter.adminGroupId` unset, and `hub:claim` maps the Argo CD capability's ADMIN SSO group from `adminGroupId`, so set both keys in `config.local.yaml` yourself when you use the knob.
 
