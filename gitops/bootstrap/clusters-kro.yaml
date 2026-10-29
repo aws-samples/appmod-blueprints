@@ -91,6 +91,10 @@ spec:
                 # resource-groups-kro/platform-cluster-kro), which already resolves
                 # accountId/managementAccountId via `default $.Values.global.accountId`.
                 accountId: '{{ .metadata.annotations.aws_account_id }}'
+                # Default provisioner for spokes that do not set `provider` themselves:
+                # the hub's own `provider` label ("kro-ack" on kro-ack, absent -> "" on
+                # crossplane). `index` so a hub secret without the label yields "".
+                provider: '{{ index .metadata.labels "provider" }}'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
                 # Propagate the deploy branch from the control-plane so kro spokes

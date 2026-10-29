@@ -218,7 +218,13 @@ spec:
       action: roadiehq:utils:merge
       input:
         path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/values.yaml
-        content:
+        # `content` is passed as a YAML STRING, not an object. The scaffolder only
+        # renders `${{ }}` inside VALUES of an object input, never inside mapping
+        # KEYS, so an object here wrote the literal key `${{ parameters.clusterName }}:`
+        # and clusters-kro-<cluster> rendered nothing. A string is rendered as a
+        # whole (key included) and roadiehq:utils:merge YAML.parse()s it before
+        # merging ("supports the case where dynamic keys are required").
+        content: |
           clusters:
             ${{ parameters.clusterName }}:
               managementAccountId: "${{ parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}"
@@ -263,6 +269,26 @@ spec:
       input:
         path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
         content: '{"clusterName": "${{ parameters.clusterName }}"}'
+    - id: addFleetMember
+      name: Register the cluster as a fleet member (ArgoCD cluster secret + addons)
+      # Same member file `task spokes:enable-kro` writes for a KRO spoke. The
+      # fleet-secrets ApplicationSet discovers fleet/members/*/values.yaml and, in
+      # externalSecret mode, builds the spoke's ArgoCD cluster registration Secret
+      # from the <cluster>/config entry the EksclusterWithVpc RGD writes to Secrets
+      # Manager. `labels` select the tenant/environment enabled-addons overlays.
+      # Without this file the spoke is provisioned but never registered: no
+      # cluster secret, no addons.
+      action: roadiehq:utils:fs:write
+      input:
+        path: ./repo/gitops/fleet/members/${{ parameters.clusterName }}/values.yaml
+        content: |
+          clusterName: ${{ parameters.clusterName }}
+          mode: externalSecret
+          externalSecret:
+            enabled: true
+          labels:
+            environment: ${{ parameters.environment }}
+            tenant: ${{ parameters.tenant }}
     - id: addComponent
       name: Add new component for Cluster
       action: roadiehq:utils:fs:write
@@ -298,6 +324,7 @@ spec:
           - Added cluster configuration to multi-acct values
           - Added kro cluster configuration  
           - Added Backstage component definition
+          - Added fleet member file (ArgoCD cluster registration + addons)
         sourcePath: ./repo
         targetPath: .
         branchName: cluster-${{ parameters.clusterName }}
