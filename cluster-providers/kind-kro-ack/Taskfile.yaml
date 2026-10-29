@@ -281,6 +281,15 @@ tasks:
           printf '{{.C_ERR}}✗ observability seed not started: no Taskfile.yaml at %s (repo root misresolved).{{.C_RESET}}\n' "$REPO_ROOT"
           exit 1
         fi
+        # Re-running `task install` on a seeded hub must not re-seed: every seed mints a
+        # new AMG service account + token and rotates grafana_api_key. Skip when the
+        # keys are present and the token is still valid (observability:converged also
+        # treats a token close to expiry, or one AMG rejects, as invalid, so this still
+        # rotates it in time). `task observability-seed` remains the explicit re-seed.
+        if (cd "$REPO_ROOT" && task --silent kind-kro-ack:observability:converged) >/dev/null 2>&1; then
+          printf '{{.C_INFO}}  Observability keys already seeded and Grafana token valid: background seed skipped (task observability-seed forces one).{{.C_RESET}}\n'
+          exit 0
+        fi
         # DETACH via double-fork (`sh -c '... &'`), NOT a bare `( ... ) &`.
         # go-task runs cmds through the mvdan/sh interpreter, which KILLS its background
         # jobs when the task body exits — verified that a bare `( ... ) &` never even
@@ -2758,7 +2767,11 @@ tasks:
         if [ -z "$SA_ID" ] || [ "$SA_ID" = "None" ]; then
           seed_pending "Could not create an AMG service account on $AMG_WORKSPACE_ID."
         fi
-        AMG_API_KEY=$(aws grafana create-workspace-service-account-token --workspace-id "$AMG_WORKSPACE_ID" --service-account-id "$SA_ID" --name "token-$SA_NAME" --seconds-to-live 2592000 --region {{.AWS_REGION}} --query "serviceAccountToken.key" --output text 2>/dev/null || echo "")
+        # Record when the token lapses (epoch seconds) next to it, so observability:converged
+        # can rotate it before it expires instead of only noticing once Grafana rejects it.
+        AMG_KEY_TTL=2592000
+        AMG_API_KEY_EXPIRES_AT=$(( $(date +%s) + AMG_KEY_TTL ))
+        AMG_API_KEY=$(aws grafana create-workspace-service-account-token --workspace-id "$AMG_WORKSPACE_ID" --service-account-id "$SA_ID" --name "token-$SA_NAME" --seconds-to-live "$AMG_KEY_TTL" --region {{.AWS_REGION}} --query "serviceAccountToken.key" --output text 2>/dev/null || echo "")
         if [ -z "$AMG_API_KEY" ]; then
           seed_pending "Could not create an AMG service account token on $AMG_WORKSPACE_ID."
         fi
@@ -2811,12 +2824,13 @@ tasks:
           --arg amp_query_url "$AMP_ENDPOINT" \
           --arg amp_region "{{.AWS_REGION}}" \
           --arg grafana_api_key "$AMG_API_KEY" \
+          --arg grafana_api_key_expires_at "$AMG_API_KEY_EXPIRES_AT" \
           --arg grafana_url "$AMG_ENDPOINT" \
           --arg user_password "$USER_PASS" \
           --arg backstage_postgres_password "$BS_PG_PASS" \
           --arg user_password_hash "$KARGO_HASH" \
           --arg user_password_key "$KARGO_KEY" \
-          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_url: $grafana_url, user_password: $user_password, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
+          '. + {amp_endpoint_url: $amp_query_url, amp_region: $amp_region, grafana_api_key: $grafana_api_key, grafana_api_key_expires_at: $grafana_api_key_expires_at, grafana_url: $grafana_url, user_password: $user_password, backstage_postgres_password: $backstage_postgres_password, user_password_hash: $user_password_hash, user_password_key: $user_password_key}')
         # Generate the grafana_mysql_password the grafana-dashboards
         # ExternalSecret expects, but only if it isn't already there
         # (so re-runs don't rotate it out from under live consumers).
@@ -2998,12 +3012,18 @@ tasks:
   # seed-observability runs in the BACKGROUND during install and gives up after a
   # fixed wait when AMP/AMG are slow. Rather than rely on a host timer (only the
   # Workshop Studio IDE installs one), make convergence a re-runnable, idempotent
-  # step: observability:converged is a cheap READ-ONLY check of the seeded keys, and
+  # step: observability:converged is a cheap READ-ONLY check of the seeded keys (and of
+  # the Grafana token: not expiring within GRAFANA_TOKEN_MIN_DAYS, accepted by AMG), and
   # observability:converge seeds INLINE when they are missing and AMP/AMG are ACTIVE,
   # or prints the exact pending action otherwise. `task install` runs it at the end;
   # `task status` runs it in report-only mode (SEED_INLINE=false).
   observability:converged:
-    desc: Read-only check that observability keys are seeded for this hub (exit 0 = converged)
+    desc: Read-only check that observability keys are seeded and the Grafana token is usable for this hub (exit 0 = converged)
+    vars:
+      # The Grafana token (30-day TTL) counts as INVALID once it expires within this many
+      # days, so install / observability:converge re-seed (rotate) it before it lapses.
+      # Override with the GRAFANA_TOKEN_MIN_DAYS environment variable.
+      GRAFANA_TOKEN_MIN_DAYS: '{{.GRAFANA_TOKEN_MIN_DAYS | default "7"}}'
     cmds:
       - |
         MISSING=""
@@ -3014,12 +3034,64 @@ tasks:
         C=$(aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/config" --region {{.AWS_REGION}} --query SecretString --output text 2>/dev/null || echo '{}')
         printf '%s' "$C" | jq -e '(.metadata // "{}") | fromjson | (.aws_grafana_url // "") != ""' >/dev/null 2>&1 || MISSING="$MISSING {{.HUB_CLUSTER_NAME}}/config:metadata.aws_grafana_url"
         aws secretsmanager describe-secret --secret-id "{{.RESOURCE_PREFIX}}/platform/amp" --region {{.AWS_REGION}} >/dev/null 2>&1 || MISSING="$MISSING {{.RESOURCE_PREFIX}}/platform/amp"
-        if [ -z "$MISSING" ]; then
-          echo "observability keys seeded for {{.HUB_CLUSTER_NAME}}"
-          exit 0
+        if [ -n "$MISSING" ]; then
+          echo "observability keys missing:$MISSING"
+          exit 1
         fi
-        echo "observability keys missing:$MISSING"
-        exit 1
+
+        # Keys are present: is the Grafana token still usable? (The token is never printed.)
+        MIN_DAYS="{{.GRAFANA_TOKEN_MIN_DAYS}}"
+        case "$MIN_DAYS" in ''|*[!0-9]*) MIN_DAYS=7 ;; esac
+        NOW=$(date +%s)
+        # 1. Expiry. seed-observability records it as grafana_api_key_expires_at (epoch s).
+        #    A hub seeded before that has none: fall back, best effort, to the newest token
+        #    of the seed's service accounts (crossplane-*) on this hub's AMG workspace.
+        EXP=$(printf '%s' "$S" | jq -r '.grafana_api_key_expires_at // "" | tostring')
+        EXP_SRC="recorded"
+        case "$EXP" in ''|*[!0-9]*)
+          EXP_SRC="newest AMG token"
+          EXP=$(for WS in $(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id" --output text 2>/dev/null); do
+              TAG_VAL=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query "workspace.tags.\"crossplane-name\"" --output text 2>/dev/null || echo "")
+              [ "$TAG_VAL" = "{{.RESOURCE_PREFIX}}-amg" ] || continue
+              for SA in $(aws grafana list-workspace-service-accounts --workspace-id "$WS" --region {{.AWS_REGION}} --query "serviceAccounts[?starts_with(name,'crossplane-')].id" --output text 2>/dev/null); do
+                aws grafana list-workspace-service-account-tokens --workspace-id "$WS" --service-account-id "$SA" --region {{.AWS_REGION}} --output json 2>/dev/null || true
+              done
+            done | jq -rs '[.[].serviceAccountTokens[]?] | (max_by(.createdAt) // {}) | .expiresAt // empty
+              | if type == "number" then floor else (sub("\\.[0-9]+"; "") | sub("(\\+00:00|Z)$"; "Z") | fromdateiso8601) end' 2>/dev/null || true)
+          ;;
+        esac
+        EXP_NOTE="expiry unknown"
+        case "$EXP" in ''|*[!0-9]*) ;; *)
+          LEFT=$(( EXP - NOW ))
+          if [ "$LEFT" -lt $(( MIN_DAYS * 86400 )) ]; then
+            echo "observability token invalid: grafana_api_key expires in $(( LEFT / 86400 ))d (< ${MIN_DAYS}d, $EXP_SRC expiry)"
+            exit 1
+          fi
+          EXP_NOTE="expires in $(( LEFT / 86400 ))d"
+          ;;
+        esac
+        # 2. One light AMG API call with the token. Only 401/403 make it invalid: a network
+        #    error or a 5xx is inconclusive and must not trigger a re-seed (each re-seed
+        #    mints a new AMG service account). The header goes through a 0600 file so the
+        #    token never appears in a process argument list.
+        AMG=$(printf '%s' "$C" | jq -r '(.metadata // "{}") | fromjson | .aws_grafana_url // ""')
+        AMG=${AMG#https://}
+        AMG=${AMG%%/*}
+        HDR=$(mktemp)
+        chmod 600 "$HDR"
+        trap 'rm -f "$HDR"' EXIT
+        printf '%s' "$S" | jq -r '"Authorization: Bearer " + .grafana_api_key' > "$HDR"
+        CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "@$HDR" "https://$AMG/api/org" 2>/dev/null || true)
+        rm -f "$HDR"
+        case "$CODE" in
+          401|403)
+            echo "observability token invalid: grafana_api_key rejected by AMG (HTTP $CODE)"
+            exit 1 ;;
+          200) API="token accepted by AMG" ;;
+          *) API="AMG check inconclusive (HTTP ${CODE:-none})" ;;
+        esac
+        echo "observability keys seeded for {{.HUB_CLUSTER_NAME}} ($API, $EXP_NOTE)"
+        exit 0
 
   observability:converge:
     desc: Seed observability inline when keys are missing and AMP/AMG are ACTIVE; otherwise print the pending action
