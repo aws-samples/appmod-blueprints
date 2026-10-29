@@ -4,10 +4,22 @@ sweep-cloudfront.py HUB_CLUSTER_NAME
 Deletes CloudFront VPC origins and distributions associated with a peeks hub cluster.
 Called by task kind-kro-ack:destroy step 6a.
 """
-import boto3, sys, time
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sweep_lib as sl  # noqa: E402
 
 hub = sys.argv[1] if len(sys.argv) > 1 else 'peeks-hub'
-cf = boto3.client('cloudfront')
+try:
+    # Same profile as the aws CLI calls of the task, credentials checked up front:
+    # without them the listing below "found nothing" and the sweep reported success.
+    cf = sl.client('cloudfront')
+except sl.CredentialsError as e:
+    print(f'ERROR sweep-cloudfront: {e}. Nothing was swept.', file=sys.stderr)
+    sl.record_failure('sweep-cloudfront')
+    sys.exit(sl.CREDENTIALS_EXIT)
 
 # Find VPC origins for this hub (named <hub>-*)
 vo_ids = set()
