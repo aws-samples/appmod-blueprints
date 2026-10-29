@@ -1355,6 +1355,17 @@ tasks:
           aws ec2 describe-subnets --subnet-ids $SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' ','
       CLUSTER_SG:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
+      # Public egress address(es) of the hub VPC's NAT gateway(s), as comma-separated /32s.
+      # Written as nat_egress_cidrs below, so the ingress-class-alb chart can keep in-cluster
+      # SSO working behind an allowlist (docs/platform/alb-ip-allowlist.md pitfall 1). Empty
+      # when the VPC has no NAT or the call fails (the cmd below then keeps the stored value).
+      # Same lookup as kind-kro-ack secrets-manager:seed.
+      NAT_EGRESS_CIDRS:
+        sh: |
+          aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
+            --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
+            --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null \
+          | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, - || true
       INGRESS_DOMAIN: '{{.DOMAIN}}'
       ADMIN_ROLE_NAME:
         sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
@@ -1385,6 +1396,12 @@ tasks:
         PREV_ARGOCD=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .aws_argocd_url) // empty' 2>/dev/null)
         ARGOCD_FINAL="{{.ARGOCD_URL}}"
         [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PREV_ARGOCD"
+        # Same rule for the NAT egress list: a transient describe miss must not drop the hub
+        # NAT from an allowlist that is already live (that would break in-cluster SSO).
+        PREV_NAT=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .nat_egress_cidrs) // empty' 2>/dev/null)
+        NAT_FINAL="{{.NAT_EGRESS_CIDRS}}"
+        [ -z "$NAT_FINAL" ] && NAT_FINAL="${PREV_NAT:-}"
+        echo "[hub:seed] nat_egress_cidrs=${NAT_FINAL:-<none>}"
         # Also keep the observability keys seed-observability writes into this metadata
         # (aws_grafana_url + spoke_* AMP scraper wiring). Dropping them makes
         # observability:converged fail on every re-install, so each install re-seeds and
@@ -1413,6 +1430,9 @@ tasks:
         if [ -n "$OVL_URL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg u "$OVL_URL" --arg r "$OVL_REV" --arg b "$OVL_BP" '. + {overlay_repo_url:$u, overlay_repo_revision:$r, overlay_repo_basepath:$b}')
           echo "Preserving existing overlay wiring: overlay_repo_url=$OVL_URL"
+        fi
+        if [ -n "$NAT_FINAL" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg n "$NAT_FINAL" '. + {nat_egress_cidrs:$n}')
         fi
         if [ "$PREV_OBS" != "{}" ]; then
           METADATA=$(echo "$METADATA" | jq -c --argjson o "$PREV_OBS" '$o + .')

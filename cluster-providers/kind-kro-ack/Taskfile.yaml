@@ -1145,6 +1145,18 @@ tasks:
           echo ""
       VPC_ID:
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+      # Public egress address(es) of the hub VPC's NAT gateway(s), as comma-separated /32s.
+      # Known here: hub:wait-for-eks waited for the eksclusterwithvpc instance to be ACTIVE,
+      # and rg-vpc gates natGateway1 on state=available (BYO VPC: its existing NATs). Written
+      # as nat_egress_cidrs below, so the ingress-class-alb chart can keep in-cluster SSO
+      # working behind an allowlist (docs/platform/alb-ip-allowlist.md pitfall 1). Empty when
+      # the VPC has no NAT or the call fails (the cmd below then keeps the stored value).
+      NAT_EGRESS_CIDRS:
+        sh: |
+          aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
+            --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
+            --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null \
+          | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, - || true
       # Private subnets + cluster SG for the devlake RDS `vpc` object (see cmds). Mirrors the
       # kind-crossplane seed so the aws-resources ExternalSecret / init-env-config Job can
       # populate a non-empty vpc-config EnvironmentConfig.
@@ -1217,7 +1229,7 @@ tasks:
         #     skip would fire with nothing left to restore the spoke AMP scrapers.
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null || echo "")
-        PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""
+        PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""; PRESERVED_NAT=""
         PRESERVED_OBS='{}'
         if [ -n "$EXISTING" ]; then
           EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
@@ -1225,6 +1237,7 @@ tasks:
           PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
           PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
           PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+          PRESERVED_NAT=$(echo "$EMETA"          | jq -r '.nat_egress_cidrs // ""')
           # Same key list as seed-observability writes (non-empty values only).
           PRESERVED_OBS=$(echo "$EMETA" | jq -c '[ "aws_grafana_url",
               "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
@@ -1237,6 +1250,11 @@ tasks:
         # transient describe-capability miss never blanks a good value.
         ARGOCD_FINAL="{{.ARGOCD_URL}}"
         [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PRESERVED_ARGOCD"
+        # Same rule for the NAT egress list: a transient describe miss must not drop the hub
+        # NAT from an allowlist that is already live (that would break in-cluster SSO).
+        NAT_FINAL="{{.NAT_EGRESS_CIDRS}}"
+        [ -z "$NAT_FINAL" ] && NAT_FINAL="${PRESERVED_NAT:-}"
+        echo "[hub:seed] nat_egress_cidrs=${NAT_FINAL:-<none>}"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /
         # .cluster_security_group_id from it to build the vpc-config EnvironmentConfig that the
@@ -1263,7 +1281,7 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
@@ -1271,6 +1289,7 @@ tasks:
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
              | (if $pt  != "" and $pt != "{}" then .platform_tags = $pt else . end)
              | (if $fs == "true" then .fleet_scope_by_prefix = "true" else . end)
+             | (if $nat != "" then .nat_egress_cidrs = $nat else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
