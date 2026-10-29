@@ -9,7 +9,7 @@
 #   chat-ui, eks-mcp, gitlab-mcp, incident-bridge, skills-mcp (PEEKS .kiro/skills baked in),
 #   strands-agent
 #
-# Run in the demo3 account (382076407153, owner of the seb-demo public ECR alias), us-east-1
+# Run in the account that owns the public ECR alias (<account-id>), us-east-1
 # region for the ecr-public control plane. Requires privilegedMode (Docker) + a service role
 # with ecr-public:* and sts:GetServiceBearerToken.
 #
