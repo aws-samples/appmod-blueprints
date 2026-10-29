@@ -184,10 +184,13 @@ identityCenter:                       # REQUIRED — the ArgoCD Capability needs
   region: <region>                    # where the IdC instance lives (often us-east-1)
   adminGroupId: <group-id>            # IdC group granted ArgoCD admin
 
-# Optional cost-allocation / retention tags applied to EVERY resource the platform creates.
-# platformTags:
-#   project: <your-project>
+# AWS tags applied to EVERY resource the platform creates (hub, spokes, their VPCs).
+# auto-delete: "no" keeps an account cleanup sweeper from reaping a long-lived install;
+# add any other tag the same way (e.g. owner, cost-center).
+platformTags:
+  auto-delete: "no"
 #   owner: <your-team>
+#   cost-center: <your-cost-center>
 
 # Spokes are declared in your fleet repo (kro-clusters/values.yaml), not here; add accountId
 # to a spoke's entry for a cross-account spoke -> see custom-multi-account.md.

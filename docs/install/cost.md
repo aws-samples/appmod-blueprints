@@ -64,7 +64,8 @@ annotation):
 
 ```yaml
 platformTags:
-  project: <your-project>
+  auto-delete: "no"        # retention: keeps an account cleanup sweeper from reaping the install
+  project: <your-project>  # any other AWS tag works the same way (hub, spokes and their VPCs)
   environment: <your-env>
   owner: <your-team>
 ```
