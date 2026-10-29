@@ -132,8 +132,8 @@ pod_identities:
 # the 409 ResourceInUseException conflict on a shared SA cannot recur.
 #
 # namespace = cluster name (NOT crossplane-system): ACK resolves which IAM role to assume
-# per namespace via IAMRoleSelector/CARM, and the existing selectors (from multi-acct) are
-# keyed on namespaceSelector.names = <cluster name>. destinationHub keeps the CRs on the
+# per namespace via IAMRoleSelector/CARM, and the existing selectors (multi-acct for the hub,
+# kro-clusters for each spoke) are keyed on namespaceSelector.names = <cluster name>. destinationHub keeps the CRs on the
 # hub, where the ACK capability reconciles them, matching the EksCluster RGD convention.
 ack_pod_identities:
   namespace: '{{.metadata.annotations.aws_cluster_name}}'
@@ -156,10 +156,12 @@ ack_pod_identities:
     # "no EC2 IMDS role found" until the podidentity-pod-restart CronJob rescues it.
     # Wave -4 buys the whole -4..5 window instead.
     #
-    # Lower bound: must stay AFTER multi-acct (wave -5). multi-acct is the SOLE owner of
-    # IAMRoleSelectors (CARM), and ACK cannot reconcile this chart's CRs without a selector
-    # covering their namespace for iam+eks. INVARIANT: every cluster running this addon must
-    # appear in multi-acct's `clusters` map. This chart used to ship its own selectors as a
+    # Lower bound: must stay AFTER multi-acct (wave -5). The IAMRoleSelectors (CARM) have
+    # exactly one owner each -- multi-acct for the hub, the kro-clusters chart
+    # (clusters-kro-<spoke>, rendered before the spoke exists) for every spoke -- and ACK
+    # cannot reconcile this chart's CRs without a selector covering their namespace for
+    # iam+eks. INVARIANT: every cluster running this addon is either the hub or a
+    # kro-clusters entry. This chart used to ship its own selectors as a
     # stopgap for the hub; that duplicated ownership and risked the issue #813 failure mode
     # (two selectors with an identical (namespace, group) scope put the ACK controller in an
     # infinite reconcile loop -- empty status, zero API calls, silent).
@@ -367,6 +369,9 @@ aws-load-balancer-controller:
   namespace: kube-system
   chartName: aws-load-balancer-controller
   chartRepository: https://aws.github.io/eks-charts
+  # On chart bump: re-check that the Issuer name in charts/lbc-webhook-issuer
+  # (aws-load-balancer-selfsigned-issuer) still matches the issuerRef of the
+  # chart's webhook Certificate (templates/webhook.yaml) and that it still has no sync-wave.
   defaultVersion: '1.14.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'

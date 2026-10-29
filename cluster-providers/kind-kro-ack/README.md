@@ -40,7 +40,14 @@ identityCenter:
   region: us-east-1  # Region where IDC is deployed
   identityStoreId: d-XXXXXXXXXX  # Optional, auto-detected if omitted
   adminGroupId: ""  # Optional, created by idc:setup if empty
+platformTags:  # Optional AWS tags on the hub and every spoke (EKS, VPC, NAT, EIP)
+  auto-delete: "no"  # e.g. the retention tag of the account's cleanup sweeper, if any
+  # Any other AWS tag works the same way (e.g. owner, cost-center): each key is
+  # propagated to the hub, the spokes and their VPCs.
+  # owner: "<your-team>"
 ```
+
+`platformTags` is optional. Without it nothing is tagged and `task install` prints a warning, because an account cleanup sweeper may then reap the hub or the spokes. Set it before installing: `hub:claim` tags the hub and `hub:seed` passes the tags to every spoke (hub cluster-secret `platform_tags` annotation, then `awsTags` on each `EksclusterWithVpc`).
 
 **IDC prerequisite**: An Identity Center instance must exist in your account/organization. The `idc:setup` task creates groups and users automatically. With `IDC_CONFIGURE_SKIP=true` (for example a second stack in an account whose Identity Center another stack already uses) it prints a notice, creates nothing and makes no Identity Center call. It then also leaves `identityCenter.identityStoreId` and `identityCenter.adminGroupId` unset, and `hub:claim` maps the Argo CD capability's ADMIN SSO group from `adminGroupId`, so set both keys in `config.local.yaml` yourself when you use the knob.
 
@@ -86,6 +93,10 @@ task install
 2. **Simpler resource model** — KRO ResourceGraphDefinitions are plain YAML with CEL expressions
 3. **Same RGDs for bootstrap and runtime** — the hub uses identical RGDs to provision spokes
 4. **Pod Identity native** — ACK uses Pod Identity on the hub; on Kind bootstrap, credentials Secret is mounted
+
+## Multi-hub fleet scoping (opt-in)
+
+Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `config.local.yaml`. `hub:seed` then writes `fleet_scope_by_prefix: "true"` into the `<hub>/config` metadata, which ESO copies onto the hub cluster-secret, and the hub discovers only `clusters/<resourcePrefix>/*.json` and `fleet/members/<resourcePrefix>/*/values.yaml`. When the key is absent or `false`, nothing is written and the flat `clusters/*.json` / `fleet/members/*/values.yaml` layout is used, exactly as before. A value set by hand on `<hub>/config` is kept on re-seed; to turn it off, remove the key from `<hub>/config` too.
 
 ## Credentials on Kind
 

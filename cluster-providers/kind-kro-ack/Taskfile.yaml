@@ -181,7 +181,27 @@ tasks:
           var: REQUIRED_CLIS
       - test -f {{.CONFIG_FILE}} || { echo "config.local.yaml not found"; exit 1; }
       - aws sts get-caller-identity >/dev/null || { echo "AWS credentials not configured"; exit 1; }
+      - task: config:check-platform-tags
       - printf '{{.C_OK}}✓ Pre-flight checks passed.{{.C_RESET}}\n'
+
+  config:check-platform-tags:
+    desc: Warn when config.local.yaml sets no platformTags (hub and spokes then get no retention/cost tags)
+    cmds:
+      - |
+        # platformTags is optional and defaults to {} (config.schema.json): nothing is
+        # tagged then, which is fine for throwaway installs. But the omission is silent and
+        # only surfaces when an account janitor reaps the hub or a spoke (EKS, VPC, NAT,
+        # EIP), so say it at install time. Warning only: the tags themselves are a choice
+        # of the account owner (e.g. auto-delete: "no" for a retention sweeper), never a
+        # platform default.
+        PT=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
+        if [ -z "$PT" ] || [ "$PT" = "null" ] || [ "$PT" = "{}" ]; then
+          printf '{{.C_WARN}}⚠ No platformTags in %s: the hub and spoke AWS resources (EKS, VPC, NAT, EIP) get no platform-wide tags.{{.C_RESET}}\n' "{{.CONFIG_FILE}}"
+          printf '{{.C_WARN}}  If this account runs a cleanup sweeper, set the retention tag it honours before installing, e.g.{{.C_RESET}}\n'
+          printf '{{.C_WARN}}    platformTags:{{.C_RESET}}\n'
+          printf '{{.C_WARN}}      auto-delete: "no"{{.C_RESET}}\n'
+          printf '{{.C_WARN}}  (see config.yaml). Adding them after the install needs a re-run of task install (hub:claim + hub:seed).{{.C_RESET}}\n'
+        fi
 
   install:
     desc: Bootstrap the platform (idempotent)
@@ -774,6 +794,7 @@ tasks:
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)
     cmds:
+      - task: config:check-platform-tags
       - |
         # Guard: argoCdHubRoleArn cannot be empty — IAM would reject the trust policy.
         if [ -z "{{.CALLER_ROLE_ARN}}" ]; then
@@ -1175,6 +1196,13 @@ tasks:
         PLATFORM_TAGS_JSON=$(yq -o=json -I=0 '.platformTags // {}' {{.CONFIG_FILE}} 2>/dev/null || echo '{}')
         if [ "$PLATFORM_TAGS_JSON" = "null" ] || [ -z "$PLATFORM_TAGS_JSON" ]; then PLATFORM_TAGS_JSON='{}'; fi
         echo "[hub:seed] platform_tags=$PLATFORM_TAGS_JSON"
+        # Multi-hub fleet scoping (opt-in, see gitops/bootstrap/clusters-kro.yaml and
+        # fleet-secrets.yaml): config `fleetScopeByPrefix: true` stamps the metadata key
+        # fleet_scope_by_prefix="true" (ESO -> hub cluster-secret annotation) so the hub
+        # globs clusters/<resource_prefix>/*.json from its FIRST render. Absent/false ->
+        # key not written -> legacy clusters/*.json, byte-identical to today.
+        FLEET_SCOPE=$(yq '.fleetScopeByPrefix // false' {{.CONFIG_FILE}} 2>/dev/null || echo false)
+        [ "$FLEET_SCOPE" = "true" ] || FLEET_SCOPE=""
         # Preserve overlay + argocd wiring across re-seeds. This task rebuilds the entire
         # <hub>/config metadata from scratch and has no status: guard, so it runs on every
         # install. Without re-merging these, a second run WIPES:
@@ -1202,6 +1230,8 @@ tasks:
               "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
               "spoke_prod_cluster_arn", "spoke_prod_private_subnet_ids", "spoke_prod_security_group_id" ] as $k
             | with_entries(select(.key as $kk | any($k[]; . == $kk)) | select((.value // "" | tostring) != ""))' 2>/dev/null || echo '{}')
+          # Keep an opt-in set by hand on <hub>/config across re-seeds (same reason as overlay_repo_*).
+          [ -n "$FLEET_SCOPE" ] || FLEET_SCOPE=$(echo "$EMETA" | jq -r 'if .fleet_scope_by_prefix == "true" then "true" else "" end')
         fi
         # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
         # transient describe-capability miss never blanks a good value.
@@ -1233,13 +1263,14 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
              | (if $orv != "" then .overlay_repo_revision = $orv else . end)
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
              | (if $pt  != "" and $pt != "{}" then .platform_tags = $pt else . end)
+             | (if $fs == "true" then .fleet_scope_by_prefix = "true" else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
