@@ -7,7 +7,7 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  package: xpkg.crossplane.io/crossplane-contrib/function-patch-and-transform:{{ .Values.functions.patchAndTransform.version }}
+  package: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:{{ .Values.functions.patchAndTransform.version }}
 {{- end }}
 {{- if .Values.functions.environmentConfigs.version }}
 ---
@@ -31,5 +31,5 @@ metadata:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  package: xpkg.crossplane.io/crossplane-contrib/function-cel-filter:{{ .Values.functions.celFilter.version }}
+  package: xpkg.upbound.io/crossplane-contrib/function-cel-filter:{{ .Values.functions.celFilter.version }}
 {{- end }}
