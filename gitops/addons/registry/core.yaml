@@ -504,6 +504,17 @@ external-dns:
       - key: enable_external_dns
         operator: In
         values: ['true']
+  # Only deploy where the cluster has an ingress domain. An empty domainFilters
+  # entry renders --domain-filter= (no filter), which made external-dns manage every
+  # public zone of the account. The cluster generator's label selector cannot see
+  # annotations, so this is an ArgoCD post-selector on the generated params.
+  postSelector:
+    matchExpressions:
+      - key: metadata.annotations.ingress_domain_name
+        operator: Exists
+      - key: metadata.annotations.ingress_domain_name
+        operator: NotIn
+        values: ['']
   valuesObject:
     domainFilters:
       - '{{.metadata.annotations.ingress_domain_name}}'
