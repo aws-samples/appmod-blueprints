@@ -180,3 +180,7 @@ config.local.yaml
 # Pinned platform artifact clone (OAP-style consumption)
 .platform/
 *.creds
+
+# Python bytecode
+__pycache__/
+*.pyc

@@ -116,6 +116,7 @@ MIGRATE these 4 (enabled in at least one environment, real consumer exists):
 | lbc | enable_aws_load_balancer_controller | kube-system | aws-load-balancer-controller-sa | verified live deploy SA |
 | external-dns | enable_external_dns | **kube-system** | **external-dns-sa** | FIX A — see below |
 | keycloak | enable_keycloak | keycloak | keycloak-config | control-plane only |
+| aws-for-fluentbit | enable_aws_for_fluentbit | kube-system | aws-for-fluent-bit | added later: CloudWatch Logs, spokes (dev+prod) |
 
 DO NOT MIGRATE YET — **disabled addons, NOT dead code** (correction, see below):
 
