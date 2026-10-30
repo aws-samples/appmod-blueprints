@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ray Serve deployments use models pre-uploaded to S3 and mounted via the S3 CSI driver. This approach provides:
+Ray Serve deployments use models pre-uploaded to S3 and mounted via the S3 CSI driver. The workshop install stages them for you; on any other install you stage them yourself (see [Staging models outside the workshop](#staging-models-outside-the-workshop)). This approach provides:
 - Fast deployment (no HuggingFace downloads during pod startup)
 - Consistent model versions across deployments
 - Shared model storage across multiple Ray services
@@ -14,7 +14,45 @@ Ray Serve deployments use models pre-uploaded to S3 and mounted via the S3 CSI d
 | TinyLlama-1.1B | 2 GB | `/mnt/models/models/tinyllama` | CPU deployments, fast inference, testing |
 | Mistral-7B-Instruct | 13.5 GB | `/mnt/models/models/mistral-7b` | GPU deployments, high-quality generation |
 
+## Staging models outside the workshop
+
+The workshop install runs `ray:setup` and `ray:prestage-models` for you. The provider `install` tasks do not call them, so on any other install (appmod direct, OAP, your own fleet) the Ray Serve templates find no models until you stage them.
+
+A RayService reads its model from `/mnt/models/models/<modelName>`, where `/mnt/models` is the root of the bucket `<resource_prefix>-ray-models-<aws_account_id>` and `<modelName>` is the template's **Model** value (`tinyllama`, `gpt2`, `mistral-7b`). Each model must therefore sit under `models/<modelName>/` in that bucket.
+
+1. Create the bucket, the S3 CSI driver addon, the IAM roles and the pod identity associations (it also builds the vLLM image in the background, which needs Docker):
+
+   ```bash
+   # kind-kro-ack or kind-crossplane provider, from the repository root
+   task <provider>:ray:setup
+   ```
+
+2. Stage each model under the name the template uses. Pass both `MODEL_REPO_ID` (HuggingFace repo id) and `MODEL_NAME` (the template's **Model** value): `MODEL_REPO_ID` defaults to TinyLlama even when you change `MODEL_NAME`.
+
+   ```bash
+   task <provider>:ray:prestage-models                                   # tinyllama
+   task <provider>:ray:prestage-models MODEL_REPO_ID=gpt2 MODEL_NAME=gpt2
+   task <provider>:ray:prestage-models MODEL_REPO_ID=<hf-repo-id> MODEL_NAME=mistral-7b
+   ```
+
+   The task skips a model already present under `models/<MODEL_NAME>/`.
+
+Providers that do not include the Ray tasks (`byoc`, `terraform`) can call the shared Taskfile directly with the same values:
+
+```bash
+task -t cluster-providers/common/Taskfile.ray.yaml setup \
+  HUB_CLUSTER_NAME=<cluster> RESOURCE_PREFIX=<resource_prefix> \
+  AWS_ACCOUNT_ID=<aws_account_id> AWS_REGION=<region> ROOT_DIR=$PWD
+task -t cluster-providers/common/Taskfile.ray.yaml prestage-models \
+  RESOURCE_PREFIX=<resource_prefix> AWS_ACCOUNT_ID=<aws_account_id> AWS_REGION=<region> \
+  MODEL_REPO_ID=gpt2 MODEL_NAME=gpt2
+```
+
+Do not copy the workshop's `huggingfaceModels` list into your own overlay as a substitute: those `HuggingFaceModel` instances upload to `models/<modelId with "/" replaced by "-">` (for example `models/TinyLlama-TinyLlama-1.1B-Chat-v1.0`), which is not the `models/<modelName>` path the templates read, and they rely on the bucket and pod identities that `ray:setup` creates.
+
 ## Adding New Models
+
+> The model prestage job described below is off by default (`modelPrestage.enabled: false` in `gitops/addons/charts/ray-operator/values.yaml`). The simpler path is `ray:prestage-models` with a new `MODEL_NAME` (see above), plus Step 2 to expose the model in the template.
 
 ### Step 1: Update Model Prestage Job
 

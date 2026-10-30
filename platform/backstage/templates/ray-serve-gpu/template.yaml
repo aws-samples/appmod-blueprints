@@ -10,6 +10,7 @@ metadata:
     
     **Model Management:**
     - Models are pre-uploaded to S3 and mounted via S3 CSI driver
+    - Outside the workshop, stage them first with `ray:setup` + `ray:prestage-models` (gitops/workloads/ray/MODEL-MANAGEMENT.md)
     - Path: /mnt/models/models/{model-name}
     - Uses gpu-serve-transformers with vLLM for optimized inference
   name: ray-serve-gpu

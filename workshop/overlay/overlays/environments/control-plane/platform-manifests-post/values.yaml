@@ -6,8 +6,13 @@
 # <resource_prefix>-ray-models-<account>, a bucket the generic platform does not create:
 # only the workshop install creates it (`<provider>:ray:setup`). Declaring the models in
 # the generic overlay made every non-workshop hub start downloads that waited 20 min for
-# a bucket that never comes, then failed. A non-workshop install that wants pre-staged
-# models provides the bucket and adds this same list to its own overlay.
+# a bucket that never comes, then failed.
+#
+# Outside the workshop, copying this list is not enough: these Workflows upload to
+# models/<modelId with "/" replaced by "-">, while the Ray templates read
+# models/<modelName>, and the S3 CSI driver and pod identities come only from
+# `ray:setup`. Use `ray:setup` + `ray:prestage-models` instead, as described in
+# gitops/workloads/ray/MODEL-MANAGEMENT.md ("Staging models outside the workshop").
 #
 # HuggingFace models are in platform-manifests-post (wave 8) to ensure the
 # HuggingFaceModel KRO RGD is fully processed before these resources are applied.
