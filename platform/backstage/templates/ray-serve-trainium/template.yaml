@@ -1,17 +1,7 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  description: |
-    Deploy Trainium-based Ray Service for AI models using AWS Neuron SDK.
-    
-    **Optimized for:**
-    - Mistral-7B-Instruct (14GB)
-    - Models requiring AWS Trainium acceleration
-    
-    **Model Management:**
-    - Models are pre-compiled for Neuron and uploaded to S3
-    - Path: /mnt/models/models/{model-name}
-    - Uses vLLM with Neuron backend for optimized inference
+  description: Deploys an AWS Trainium Ray Service that serves language models with vLLM on the AWS Neuron SDK.
   name: ray-serve-trainium
   title: Ray Service - Trainium (AWS Neuron)
   tags:
@@ -55,7 +45,7 @@ spec:
             - "Qwen2.5-1.5B-Instruct (1.5B params, vLLM compatible, fits trn1.2xlarge)"
             - "GPT-2-Neuron (NOT SUPPORTED - vLLM doesn't support GPT-2 on Neuron)"
             - "Mistral-7B-Instruct-Neuron (14GB, requires trn1.32xlarge)"
-          ui:help: "Models for AWS Trainium. TinyLlama and Qwen2.5 are recommended for trn1.2xlarge."
+          ui:help: "Models for AWS Trainium. TinyLlama and Qwen2.5 are recommended for trn1.2xlarge. Models are pre-compiled for Neuron and pre-staged in S3. By default, they are mounted from S3 with the S3 CSI driver at /mnt/models/models/{model-name}, then copied to node-local storage before loading. See gitops/workloads/ray/MODEL-MANAGEMENT.md for other model-loading options."
         maxLength:
           title: Max Tokens
           type: string
