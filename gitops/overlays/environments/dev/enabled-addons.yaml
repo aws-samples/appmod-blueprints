@@ -6,6 +6,12 @@ enabledAddons:
   default_storage_class: true
   external_secrets: true
   external_dns: true
+  # cert-manager is required by the AWS Load Balancer Controller webhook serving
+  # certificate (enableCertManager: true) and by kubevela's admission webhook, both
+  # enabled above. prod already lists it; workshop spokes also get it from
+  # overlays/tenants/workshop, so this is a no-op there and only fixes dev spokes
+  # of any other tenant.
+  cert_manager: true
   # Security
   kyverno: true
   kyverno_policies: true
