@@ -238,3 +238,105 @@ class TestSeed:
     def test_the_secret_is_never_printed(self, tmp_path, provider):
         _, res = _seed(tmp_path, provider, f"{NAT_A}/32")
         assert "not-a-real-token" not in res.stdout + res.stderr
+
+
+# --- secrets-manager:seed-nat-egress: one-key refresh on a live hub ------------------------
+#
+# Contract (both providers):
+#   - its VPC_ID / NAT_EGRESS_CIDRS vars ARE the seed's (YAML aliases), so the lookup and the
+#     NAT_LOOKUP_FAILED marker semantics cannot drift;
+#   - it merges only nat_egress_cidrs into the stored <hub>/config metadata, every other key
+#     and the other top-level fields stay byte-for-byte;
+#   - NAT found -> key set/replaced; no NAT -> key removed; unchanged -> no write;
+#   - failed lookup -> no write, exit 1, the stored value stays; marker never written;
+#   - unreadable secret -> no write (never creates <hub>/config), exit 1;
+#   - then nudges ESO through hub:force-eso-refresh.
+REFRESH = "secrets-manager:seed-nat-egress"
+
+
+def _refresh_task(provider):
+    with open(PROVIDERS[provider]) as f:
+        task = yaml.safe_load(f)["tasks"].get(REFRESH)
+    if task is None:
+        pytest.fail(f"no task {REFRESH} in {PROVIDERS[provider]}")
+    return task
+
+
+def _refresh(tmp_path, provider, nat, existing):
+    """Run the task's shell cmds with NAT_EGRESS_CIDRS=nat against a stored secret."""
+    sf, env = _env(tmp_path, {"secret": existing})
+    cmds = [c for c in _refresh_task(provider)["cmds"] if isinstance(c, str)]
+    res = _go(tmp_path, env, "\n".join(cmds),
+              {"HUB_CLUSTER_NAME": HUB, "AWS_REGION": REGION, "VPC_ID": "vpc-0", "NAT_EGRESS_CIDRS": nat})
+    return res, json.loads(sf.read_text())
+
+
+def _stored(provider, tmp_path, nat):
+    first, _ = _seed(tmp_path, provider, nat)
+    return first
+
+
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestRefreshTask:
+    def test_reuses_the_seed_lookup(self, provider):
+        seed, refresh = _task(provider)["vars"], _refresh_task(provider)["vars"]
+        assert refresh["NAT_EGRESS_CIDRS"] == seed["NAT_EGRESS_CIDRS"]
+        assert refresh["VPC_ID"] == seed["VPC_ID"]
+
+    def test_lookup_var_runs_in_the_refresh_task(self, tmp_path, provider):
+        var = _refresh_task(provider)["vars"]["NAT_EGRESS_CIDRS"]["sh"]
+        sf, env = _env(tmp_path, {"nat_fails": True})
+        res = _go(tmp_path, env, var, {"AWS_REGION": REGION, "VPC_ID": "vpc-0"})
+        assert res.stdout.strip() == FAILED
+
+    def test_nudges_eso_after_the_write(self, provider):
+        cmds = _refresh_task(provider)["cmds"]
+        assert cmds[-1] == {"task": "hub:force-eso-refresh"}
+        assert "hub:force-eso-refresh" in yaml.safe_load(open(PROVIDERS[provider]))["tasks"]
+
+    def test_new_eip_replaces_only_that_key(self, tmp_path, provider):
+        stored = _stored(provider, _sub(tmp_path, "s"), f"{NAT_A}/32")
+        res, st = _refresh(_sub(tmp_path, "r"), provider, f"{NAT_B}/32", stored)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert len(st["writes"]) == 1
+        new = json.loads(st["writes"][0])
+        assert _meta(st["writes"][0]) == dict(_meta(stored), nat_egress_cidrs=f"{NAT_B}/32")
+        old = json.loads(stored)
+        assert {k: v for k, v in new.items() if k != "metadata"} == {k: v for k, v in old.items() if k != "metadata"}
+
+    def test_no_nat_removes_the_key(self, tmp_path, provider):
+        stored = _stored(provider, _sub(tmp_path, "s"), f"{NAT_A}/32")
+        res, st = _refresh(_sub(tmp_path, "r"), provider, "", stored)
+        assert res.returncode == 0, res.stdout + res.stderr
+        meta = _meta(st["writes"][0])
+        assert "nat_egress_cidrs" not in meta
+        assert dict(meta, nat_egress_cidrs=f"{NAT_A}/32") == _meta(stored)
+
+    def test_adds_the_key_when_none_was_stored(self, tmp_path, provider):
+        stored = _stored(provider, _sub(tmp_path, "s"), "")
+        res, st = _refresh(_sub(tmp_path, "r"), provider, f"{NAT_A}/32", stored)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _meta(st["writes"][0]) == dict(_meta(stored), nat_egress_cidrs=f"{NAT_A}/32")
+
+    def test_unchanged_value_writes_nothing(self, tmp_path, provider):
+        stored = _stored(provider, _sub(tmp_path, "s"), f"{NAT_A}/32")
+        res, st = _refresh(_sub(tmp_path, "r"), provider, f"{NAT_A}/32", stored)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert st["writes"] == []
+
+    def test_failed_lookup_keeps_the_stored_value_and_fails(self, tmp_path, provider):
+        stored = _stored(provider, _sub(tmp_path, "s"), f"{NAT_A}/32")
+        res, st = _refresh(_sub(tmp_path, "r"), provider, FAILED, stored)
+        assert res.returncode != 0
+        assert st["writes"] == [] and st["secret"] == stored
+        assert not any(c[:2] == ["secretsmanager", "get-secret-value"] for c in st.get("calls", []))
+
+    def test_unreadable_secret_is_never_created(self, tmp_path, provider):
+        res, st = _refresh(tmp_path, provider, f"{NAT_A}/32", None)
+        assert res.returncode != 0
+        assert st["writes"] == []
+
+    def test_the_secret_is_never_printed(self, tmp_path, provider):
+        stored = _stored(provider, _sub(tmp_path, "s"), f"{NAT_A}/32")
+        res, _ = _refresh(_sub(tmp_path, "r"), provider, f"{NAT_B}/32", stored)
+        assert "not-a-real-token" not in res.stdout + res.stderr

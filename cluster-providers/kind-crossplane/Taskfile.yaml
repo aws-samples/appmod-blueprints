@@ -1361,7 +1361,7 @@ tasks:
           echo ""
       CLUSTER_ARN:
         sh: kubectl -n crossplane-system get clusters.eks.aws.upbound.io hub -o jsonpath='{.status.atProvider.arn}' 2>/dev/null || echo "arn:aws:eks:{{.AWS_REGION}}:$(yq '.aws.accountId' {{.CONFIG_FILE}}):cluster/$(yq '.hub.clusterName' {{.CONFIG_FILE}})"
-      VPC_ID:
+      VPC_ID: &hub_vpc_id
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
       SUBNET_IDS:
         sh: aws eks describe-cluster --name $(yq '.hub.clusterName' {{.CONFIG_FILE}}) --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' ','
@@ -1377,7 +1377,7 @@ tasks:
       # when the VPC has no NAT; NAT_LOOKUP_FAILED when the call fails (the cmd below then
       # keeps the stored value).
       # Same lookup as kind-kro-ack secrets-manager:seed.
-      NAT_EGRESS_CIDRS:
+      NAT_EGRESS_CIDRS: &nat_egress_cidrs
         sh: |
           # A failed call prints NAT_LOOKUP_FAILED (never written to the secret) so the cmd can
           # tell it apart from a successful lookup that found no NAT ("").
@@ -1481,6 +1481,53 @@ tasks:
           --secret-string "$SECRET_VALUE" \
           --region {{.AWS_REGION}}
         echo "Seeded Secrets Manager: $SECRET_KEY"
+
+  secrets-manager:seed-nat-egress:
+    desc: Refresh only nat_egress_cidrs in <hub>/config from the hub VPC's NAT gateways, then force an ESO refresh
+    vars:
+      # Same lookup as secrets-manager:seed (YAML aliases, not a copy): sorted /32s of the
+      # VPC's available NAT gateways, "" when there is none, NAT_LOOKUP_FAILED on an error.
+      VPC_ID: *hub_vpc_id
+      NAT_EGRESS_CIDRS: *nat_egress_cidrs
+    cmds:
+      - |
+        # For a live hub whose NAT gateway or EIP was replaced: re-running the whole
+        # secrets-manager:seed would rebuild <hub>/config and drop the keys other tasks merged
+        # in since, so this merges only nat_egress_cidrs, with the seed's semantics:
+        #   - lookup failed  -> nothing written, the stored value stays (exit 1);
+        #   - no NAT         -> the key is removed (a stored /32 may be a released EIP);
+        #   - NAT found      -> the key is set to the new list.
+        # ESO then turns it into the hub cluster-secret annotation and ArgoCD re-renders
+        # ingress-class-alb (docs/platform/alb-ip-allowlist.md pitfall 1).
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        NAT="{{.NAT_EGRESS_CIDRS}}"
+        if [ "$NAT" = "NAT_LOOKUP_FAILED" ]; then
+          printf '{{.C_ERR}}⚠ NAT gateway lookup failed for VPC %s (needs ec2:DescribeNatGateways) — nat_egress_cidrs left unchanged.{{.C_RESET}}\n' "{{.VPC_ID}}"
+          exit 1
+        fi
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null) || CONFIG_EXISTING=""
+        if [ -z "$CONFIG_EXISTING" ]; then
+          printf '{{.C_ERR}}⚠ %s not readable — run the install (secrets-manager:seed) first.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        fi
+        STORED=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .nat_egress_cidrs // ""') || {
+          printf '{{.C_ERR}}⚠ %s metadata is not JSON — nat_egress_cidrs not updated.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        }
+        if [ "$STORED" = "$NAT" ]; then
+          printf '{{.C_OK}}✓ nat_egress_cidrs already up to date in %s (%s).{{.C_RESET}}\n' "$SECRET_KEY" "${NAT:-<none>}"
+          exit 0
+        fi
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq --arg n "$NAT" \
+          '.metadata = (.metadata // "{}" | (if type == "string" then fromjson else . end)
+             | (if $n == "" then del(.nat_egress_cidrs) else .nat_egress_cidrs = $n end) | tojson)')
+        aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$CONFIG_UPDATED" \
+          --region {{.AWS_REGION}} >/dev/null
+        printf '{{.C_OK}}✓ nat_egress_cidrs in %s: %s -> %s{{.C_RESET}}\n' "$SECRET_KEY" "${STORED:-<none>}" "${NAT:-<none>}"
+      - task: hub:force-eso-refresh
 
   secrets-manager:seed-keycloak:
     desc: Seed keycloak passwords into AWS Secrets Manager
