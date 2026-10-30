@@ -360,6 +360,16 @@ identities:
       # hub's. IAM has no way to name a hosted zone by domain and the platform does
       # not publish zone IDs, so the record-name condition is the zone scope. With
       # an empty domain the condition matches no record name: writes are denied.
+      # external-dns's TXT registry (registry: txt, no txtPrefix/txtSuffix) names the
+      # ownership record of a host <type>-<first label>.<rest>. For a host under the
+      # domain that stays under *.<domain>, but for the domain itself it is
+      # a-<domain> / aaaa-<domain> / cname-<domain>, which is not a subdomain. The
+      # record and its TXT go in one change batch, so ForAllValues would deny both.
+      # Those three names (the types an Ingress/Service source produces) are allowed
+      # explicitly, only when a domain is set: the if/end sit INSIDE the JSON strings
+      # so the raw document stays valid JSON for test_chart_drift.py, and with an
+      # empty domain the block renders away. Setting a txtPrefix/txtSuffix on
+      # external-dns needs this list updated too.
       # The document is rendered through `tpl` (see templates/policy.yaml).
       document: |
         {
@@ -375,7 +385,10 @@ identities:
                 "ForAllValues:StringLike": {
                   "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
                     "{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
-                    "*.{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}"
+                    "*.{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}{{ if .Values.aws.ingressDomainName }}",
+                    "a-{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
+                    "aaaa-{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
+                    "cname-{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}{{ end }}"
                   ]
                 }
               }
