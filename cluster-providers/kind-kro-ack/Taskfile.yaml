@@ -1952,6 +1952,10 @@ tasks:
     desc: Full teardown — delete KRO instances, wait for ACK to clean up AWS resources, delete Kind
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
+      # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
+      # (step 2b) and take a final snapshot of the DevLake databases before they are
+      # deleted (6eii). Default false: deleted without a snapshot, as before.
+      DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
     cmds:
       # Preflight: the extended sweep (step 6) runs python helpers that import boto3.
       # boto3 was an UNDECLARED prerequisite: when absent, the sweep died on
@@ -2196,14 +2200,17 @@ tasks:
             aws logs delete-delivery --id "$ID" --region "$REGION" 2>/dev/null || true
           done
           # 2b. What the controllers leave once the hub is gone, for this stack's removed
-          #     clusters only (hub or ${PREFIX}-*, not live, not retained): available EBS
+          #     clusters only (exact names: the hub, the inventory's spokes and
+          #     ${PREFIX}-spoke-dev/-prod; never ${PREFIX}-*; not live, not retained): available EBS
           #     volumes owned by them (Retain StorageClass PVCs), their target groups with
           #     no load balancer (step 1 deletes ALBs only), and the hub's CloudWatch Logs
           #     delivery sources/destinations no delivery uses (step 2 deletes deliveries).
           #     With a Route53 domain: the A/AAAA/CNAME records external-dns made for them
           #     (owner TXT = cluster name), never the hosted zone or a record it does not own.
+          #     DESTROY_KEEP_DATA=true keeps those EBS volumes (listed, not deleted).
+          KEEP_DATA_ARGS=""; [ "{{.DESTROY_KEEP_DATA}}" = true ] && KEEP_DATA_ARGS="--keep-data"
           python3 "{{.ROOT_DIR}}/scripts/sweep-hub-leftovers.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
-            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" --domain "{{.DOMAIN}}" 2>&1 || true
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" --domain "{{.DOMAIN}}" $KEEP_DATA_ARGS 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
           #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
           #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
@@ -2219,7 +2226,15 @@ tasks:
             ROLE_SWEEP=false; PROTECTED=""
             echo "  ⚠ cannot read the live EKS clusters: not sweeping IAM roles (a live cluster may use them)"
           fi
-          [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ] && aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
+          # A failing list call must not abort this step under pipefail (that skipped 4-5):
+          # warn, record it for the final check, go on.
+          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
+          ROLES=""
+          if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
+            ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null) \
+              || { echo "  ⚠ aws iam list-roles failed: ACK IAM roles not swept (3)"; echo "iam-list-roles(3)" >> "$FAILED"; ROLES=""; }
+          fi
+          printf '%s\n' "$ROLES" | tr '\t' '\n' | while read ROLE; do
             [ -z "$ROLE" ] && continue
             echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (infra/bootstrap/CFN — not swept)"; continue; }
             printf '%s\n' "$PROTECTED" | grep -qxF "$ROLE" && { echo "  skip role $ROLE (still used by a live EKS cluster)"; continue; }
@@ -2236,7 +2251,12 @@ tasks:
           done
           # 4. Orphaned ACK-managed customer IAM policies (same scoping as roles:
           #    prefix + services.k8s.aws/* tag + name denylist; DENY_RE from step 3).
-          [ -n "$PREFIX" ] && aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null | tr '\t' '\n' | while read POL; do
+          POLS=""
+          if [ -n "$PREFIX" ]; then
+            POLS=$(aws iam list-policies --scope Local --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null) \
+              || { echo "  ⚠ aws iam list-policies failed: ACK IAM policies not swept (4)"; echo "iam-list-policies(4)" >> "$FAILED"; POLS=""; }
+          fi
+          printf '%s\n' "$POLS" | tr '\t' '\n' | while read POL; do
             [ -z "$POL" ] && continue
             echo "$POL" | grep -qE "$DENY_RE" && { echo "  skip policy $POL (infra/bootstrap — not swept)"; continue; }
             ACK=$(aws iam list-policy-tags --policy-arn "$POL" --query "length(Tags[?starts_with(Key, 'services.k8s.aws/')])" --output text 2>/dev/null || echo 0)
@@ -2294,8 +2314,16 @@ tasks:
             ROLE_SWEEP=false; PROTECTED=""
             echo "  ⚠ cannot read the live EKS clusters: not sweeping IAM roles (a live cluster may use them)"
           fi
-          [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ] && aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" \
-              --output text 2>/dev/null | tr '\t' '\n' | while read ROLE; do
+          # A failing list call must not abort step 6 under pipefail (that skipped 6b2-6i
+          # and destroy still printed success): warn, record it for the final check, go on.
+          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
+          ROLES=""
+          if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
+            ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" \
+                --output text 2>/dev/null) \
+              || { echo "  ⚠ aws iam list-roles failed: IAM roles not swept (6b)"; echo "iam-list-roles(6b)" >> "$FAILED"; ROLES=""; }
+          fi
+          printf '%s\n' "$ROLES" | tr '\t' '\n' | while read ROLE; do
             [ -z "$ROLE" ] && continue
             echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (CFN — not swept)"; continue; }
             printf '%s\n' "$PROTECTED" | grep -qxF "$ROLE" && { echo "  skip role $ROLE (still used by a live EKS cluster)"; continue; }
@@ -2318,9 +2346,13 @@ tasks:
           python3 "{{.ROOT_DIR}}/scripts/sweep-shared-iam.py" "$REGION" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
           # 6c. ALL remaining peeks-* IAM policies (not just ACK-tagged).
-          [ -n "$PREFIX" ] && aws iam list-policies --scope Local \
-              --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" \
-              --output text 2>/dev/null | tr '\t' '\n' | while read POL; do
+          POLS=""
+          if [ -n "$PREFIX" ]; then
+            POLS=$(aws iam list-policies --scope Local \
+                --query "Policies[?starts_with(PolicyName, '${PREFIX}-')].Arn" --output text 2>/dev/null) \
+              || { echo "  ⚠ aws iam list-policies failed: IAM policies not swept (6c)"; echo "iam-list-policies(6c)" >> "$FAILED"; POLS=""; }
+          fi
+          printf '%s\n' "$POLS" | tr '\t' '\n' | while read POL; do
             [ -z "$POL" ] && continue
             echo "$POL" | grep -qE "$DENY_RE" && continue
             for V in $(aws iam list-policy-versions --policy-arn "$POL" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do
@@ -2391,7 +2423,10 @@ tasks:
           #       standalone devlake-* instances (KubeVela path), skipping the final
           #       snapshot as before. Waits (bounded) for the deletions to finish: the
           #       database ENIs would otherwise block the hub VPC sweep (6h2).
-          python3 "{{.ROOT_DIR}}/scripts/sweep-rds.py" "$PREFIX" "$REGION" 2>&1 || true
+          #       DESTROY_KEEP_DATA=true takes a final snapshot of each database instead
+          #       (the databases are still deleted: their ENIs would block the VPC sweep).
+          KEEP_DATA_ARGS=""; [ "{{.DESTROY_KEEP_DATA}}" = true ] && KEEP_DATA_ARGS="--keep-data"
+          python3 "{{.ROOT_DIR}}/scripts/sweep-rds.py" "$PREFIX" "$REGION" $KEEP_DATA_ARGS 2>&1 || true
           # 6f. EKS OIDC providers for peeks clusters. IRSA uses cluster-specific OIDC
           #     providers that accumulate across re-deploys (one per EKS cluster per run).
           #     Only delete providers whose URL matches ${REGION} — never delete providers
@@ -2423,8 +2458,9 @@ tasks:
               echo "  ⚠ OIDC provider $OIDC_ID not deleted ($(awserr "$ERR"))"
             fi
           done
-          # 6g. CloudWatch Log Groups of the EKS clusters this destroy removed: the hub,
-          #     every ${PREFIX}-* cluster and the spokes the inventory lists (any name).
+          # 6g. CloudWatch Log Groups of the EKS clusters this destroy removed, by exact
+          #     name: the hub, the spokes the inventory lists (any name) and
+          #     ${PREFIX}-spoke-dev/-prod. Never a ${PREFIX}-* wildcard.
           #     Kept while the cluster is still live or retained.
           python3 "{{.ROOT_DIR}}/scripts/sweep-log-groups.py" "$PREFIX" "$REGION" "$HUB" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
@@ -2438,8 +2474,15 @@ tasks:
           #      it): NAT + EIP, IGW, endpoints, subnets, route tables, SGs. Only once the
           #      hub cluster is gone, and never a CloudFormation-owned VPC (workshop: the hub
           #      runs in the IDE VPC, which 6i and the stack own).
-          python3 "{{.ROOT_DIR}}/scripts/sweep-hub-vpc.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" \
-            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
+          #      Skipped when hub.network.vpcId is set: the hub then runs in a VPC this
+          #      stack did not create (cluster-providers/terraform/vpc.tf stamps the same
+          #      tags the sweep accepts, so the tags cannot tell them apart).
+          if [ -n "{{.HUB_VPC_ID}}" ]; then
+            echo "  skip hub VPC sweep: hub.network.vpcId is set ({{.HUB_VPC_ID}} was not created by this stack)"
+          else
+            python3 "{{.ROOT_DIR}}/scripts/sweep-hub-vpc.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" \
+              --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
+          fi
           # 6i. IDE VPC non-default security groups (created by workshop, not by CFN).
           #     These include ALB SGs, EKS cluster SGs, RDS SGs, AMG SGs, k8s-traffic SGs.
           #     If left, they block CFN's VPC deletion → DELETE_FAILED on VPC subnet.
@@ -2505,9 +2548,9 @@ tasks:
           fi
           FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           if [ -s "$FAILED" ]; then
-            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep helpers had no AWS credentials and swept nothing: %s{{.C_RESET}}\n' \
+            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, or a failed list call) and swept nothing: %s{{.C_RESET}}\n' \
               "$(sort -u "$FAILED" | tr '\n' ' ')"
-            printf '{{.C_INFO}}  Fix the credentials (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
             exit 1
           fi
           printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'

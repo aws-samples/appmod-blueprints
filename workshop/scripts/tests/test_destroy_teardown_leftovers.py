@@ -210,6 +210,18 @@ def test_a_longer_prefix_is_not_ours():
     assert elbv2.deleted == ["k8s-own"]
 
 
+def test_keep_data_keeps_the_volumes_and_still_sweeps_the_rest():
+    ec2, elbv2, logs, inv = account()
+    r = sl.sweep_hub_leftovers(ec2, elbv2, logs, "hb", "hb-hub", {}, inv, keep_data=True)
+    assert ec2.deleted == [] and r["volumes"] == []
+    assert sorted(elbv2.deleted) == ["k8s-backstag", "k8s-kargo"]
+
+
+def test_final_snapshot_id_is_a_valid_rds_identifier():
+    sid = sl.final_snapshot_id("hb-devlake-db", now=0)
+    assert sid == "hb-devlake-db-final-19700101000000" and "--" not in sid
+
+
 # ------------------------------------------------------------------ Taskfile
 
 def destroy_cmds():

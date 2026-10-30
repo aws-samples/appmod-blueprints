@@ -514,7 +514,17 @@ def _paginate(fn, key, **kw):
             return out
 
 
-def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, delay=20):
+def final_snapshot_id(ident, now=None):
+    """Snapshot name for a database deleted with --keep-data: <id>-final-<UTC stamp>
+    (letters, digits and single hyphens, as RDS requires)."""
+    import time
+    stamp = time.strftime('%Y%m%d%H%M%S', time.gmtime(now))
+    return f'{ident.rstrip("-")}-final-{stamp}'[-255:].lstrip('-')
+
+
+def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, delay=20, keep_data=False):
+    """keep_data: take a final snapshot of each cluster and standalone instance before
+    the delete (the database is still deleted: its ENIs would block the hub VPC sweep)."""
     clusters, instances, subnet_groups = select_rds(rds, prefix)
     if not (clusters or instances or subnet_groups):
         log('  No DevLake RDS resources to clean.')
@@ -525,21 +535,31 @@ def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, de
         elif dry_run:
             log(f'  [dry-run] would delete RDS instance {i["DBInstanceIdentifier"]}')
         elif i.get('DBInstanceStatus') != 'deleting':
-            # Same flags the previous bash step used for devlake-* instances.
-            if _try(lambda: rds.delete_db_instance(
-                    DBInstanceIdentifier=i['DBInstanceIdentifier'], SkipFinalSnapshot=True,
-                    DeleteAutomatedBackups=True), f'RDS instance {i["DBInstanceIdentifier"]}'):
-                log(f'  ✓ initiated RDS deletion: {i["DBInstanceIdentifier"]}')
+            iid = i['DBInstanceIdentifier']
+            # Default: the flags the previous bash step used for devlake-* instances. A
+            # cluster member cannot take its own final snapshot: its cluster does (below).
+            if keep_data and not i.get('DBClusterIdentifier'):
+                snap = final_snapshot_id(iid)
+                kw = dict(SkipFinalSnapshot=False, FinalDBSnapshotIdentifier=snap, DeleteAutomatedBackups=False)
+            else:
+                snap, kw = '', dict(SkipFinalSnapshot=True, DeleteAutomatedBackups=not keep_data)
+            if _try(lambda: rds.delete_db_instance(DBInstanceIdentifier=iid, **kw), f'RDS instance {iid}'):
+                log(f'  ✓ initiated RDS deletion: {iid}' + (f' (final snapshot {snap})' if snap else ''))
     for c in clusters:
         cid = c['DBClusterIdentifier']
         if c.get('DeletionProtection'):
             log(f'  skip RDS cluster {cid}: DeletionProtection is on')
         elif dry_run:
-            log(f'  [dry-run] would delete RDS cluster {cid} (skip final snapshot)')
+            log(f'  [dry-run] would delete RDS cluster {cid} '
+                + ('(final snapshot)' if keep_data else '(skip final snapshot)'))
         elif c.get('Status') != 'deleting':
-            if _try(lambda: rds.delete_db_cluster(DBClusterIdentifier=cid, SkipFinalSnapshot=True),
-                    f'RDS cluster {cid}'):
-                log(f'  ✓ initiated RDS cluster deletion: {cid}')
+            if keep_data:
+                snap = final_snapshot_id(cid)
+                kw = dict(SkipFinalSnapshot=False, FinalDBSnapshotIdentifier=snap)
+            else:
+                snap, kw = '', dict(SkipFinalSnapshot=True)
+            if _try(lambda: rds.delete_db_cluster(DBClusterIdentifier=cid, **kw), f'RDS cluster {cid}'):
+                log(f'  ✓ initiated RDS cluster deletion: {cid}' + (f' (final snapshot {snap})' if snap else ''))
     for g in subnet_groups:
         if dry_run:
             log(f'  [dry-run] would delete DB subnet group {g}')
@@ -1056,13 +1076,17 @@ def _paginate_token(fn, key, token_in='NextToken', token_out=None, **kw):
 
 
 def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
-                        dry_run=False, assume_deleted=(), r53=None, domain=''):
+                        dry_run=False, assume_deleted=(), r53=None, domain='', keep_data=False):
     is_gone = gone_stack_clusters(prefix, hub, clusters, inventory, assume_deleted)
     verb = 'would delete' if dry_run else 'delete'
     n = 0
     vols, vkeep = select_ebs_volumes(ec2, is_gone)
     for vid, cl in vkeep:
         log(f'  keep EBS volume {vid}: cluster {cl} is live, retained or not this stack')
+    if keep_data:
+        for vid, cl in vols:
+            log(f'  keep EBS volume {vid} (owned by removed cluster {cl}): DESTROY_KEEP_DATA=true')
+        vols = []
     for vid, cl in vols:
         log(f'  {verb} EBS volume {vid} (available, owned by removed cluster {cl})')
         if not dry_run and _try(lambda: ec2.delete_volume(VolumeId=vid), f'EBS volume {vid}'):
@@ -1096,13 +1120,16 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
 def parse_common(argv, usage):
     """Tiny argv parser shared by the CLIs: positionals + --dry-run, --inventory,
     --assume-deleted NAME (repeatable, --dry-run only)."""
-    pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False, 'domain': ''}
+    pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False, 'domain': '',
+                     'keep_data': False}
     it = iter(argv)
     for a in it:
         if a == '--dry-run':
             opts['dry_run'] = True
         elif a == '--no-wait':
             opts['no_wait'] = True
+        elif a == '--keep-data':
+            opts['keep_data'] = True
         elif a == '--inventory':
             opts['inventory'] = next(it, '')
         elif a == '--domain':

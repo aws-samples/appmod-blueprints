@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-sweep-hub-leftovers.py PREFIX AWS_REGION HUB [--inventory FILE] [--dry-run [--assume-deleted CLUSTER ...]]
+sweep-hub-leftovers.py PREFIX AWS_REGION HUB [--inventory FILE] [--domain D] [--keep-data]
+                       [--dry-run [--assume-deleted CLUSTER ...]]
 
 task kind-kro-ack:destroy step 2b, after the hub cluster is deleted. Removes what
 the controllers leave behind once the hub is gone, for clusters of THIS stack
-(the hub, or <PREFIX>-*) that are no longer live and not retained:
+(exact names: the hub, the inventory's kro cluster instances, <PREFIX>-spoke-dev
+and <PREFIX>-spoke-prod) that are no longer live and not retained:
   * EBS volumes in status available tagged kubernetes.io/cluster/<cluster>=owned
-    (PVCs of a Retain StorageClass);
+    (PVCs of a Retain StorageClass); kept with --keep-data;
   * target groups tagged elbv2.k8s.aws/cluster=<cluster> with no load balancer
     (step 1 deletes the ALBs only);
   * CloudWatch Logs delivery sources and destinations named after the hub that
@@ -42,7 +44,7 @@ def main(argv, ec2=None, elbv2=None, logs=None, eks=None, out=sys.stdout, r53=No
     try:
         r = sl.sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters,
                                    sl.load_inventory(o['inventory']), o['dry_run'], o['assume_deleted'],
-                                   r53=r53, domain=o['domain'])
+                                   r53=r53, domain=o['domain'], keep_data=o['keep_data'])
     except Exception as e:
         sl.reraise_credentials(e)
         print(f'  ⚠ hub leftover sweep stopped ({sl.err_code(e)})', file=out)
