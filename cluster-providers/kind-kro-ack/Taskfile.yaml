@@ -2231,7 +2231,7 @@ tasks:
           else
             ROLE_SWEEP=false; PROTECTED=""
             echo "  ⚠ cannot read the live EKS clusters of every enabled region: not sweeping IAM roles (3)"
-            echo "iam-guard(3)" >> "$FAILED"
+            { echo "iam-guard(3)" >> "$FAILED"; } 2>/dev/null || true
           fi
           ROLES=""
           if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
@@ -2320,7 +2320,7 @@ tasks:
           else
             ROLE_SWEEP=false; PROTECTED=""
             echo "  ⚠ cannot read the live EKS clusters of every enabled region: not sweeping IAM roles (6b)"
-            echo "iam-guard(6b)" >> "$FAILED"
+            { echo "iam-guard(6b)" >> "$FAILED"; } 2>/dev/null || true
           fi
           ROLES=""
           if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
