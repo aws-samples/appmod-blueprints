@@ -554,6 +554,24 @@ renders a single **KubeVela OAM Application**.
 > upstream entry, apart from the derived fleet-repo value below, which resolves to
 > the same MR project).
 
+> **This is narrower than it may read against #926.** @shapirov103 scoped
+> `aiops-agent` to the workshop there specifically because of a hard dependency on
+> OAP (external repo, then unpinned on main) and on the personal-registry image
+> default ([#945](https://github.com/aws-samples/appmod-blueprints/issues/945)),
+> suggesting the solution move happen "after release of OAP so that we can
+> properly manage dependencies." Neither has changed: OAP's newest tag is still a
+> pre-release
+> ([`v0.1.0-rc5`](https://github.com/awslabs/open-agentic-platform/releases/tag/v0.1.0-rc5)),
+> and `#945` is still open (`chart/values.yaml` still defaults `imageRegistry` to
+> `public.ecr.aws/seb-demo`). What this PR moves upstream is only the registry
+> *definition* — `aiops-agent` stays exactly as opt-in as it was in the overlay
+> (disabled by default, same `enable_aiops_agent` gate), and a hub that flips
+> `aiops_agent: true` inherits the OAP-prerelease and personal-registry
+> dependencies identically either way. So this does not widen that surface, only
+> stops the definition from drifting between copies — it does not, by itself,
+> resolve #945 or wait for an OAP release, and those remain open items before
+> `aiops-agent` is recommended for a production deployment.
+
 ### 7.0 Purpose & operating modes
 
 `aiops-agent` is an **AIOps-style reference agent** for the platform: it observes
