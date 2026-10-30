@@ -3100,10 +3100,18 @@ tasks:
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
-            # Record the name only when it is not the workshop name and the operator has
-            # not set one (an operator-set spoke_<env>_cluster_name is never overwritten).
+            # Record the name only when there is something new to remember: on a first run
+            # (no PRESET_NAME yet), only when it is not the workshop convention name, which
+            # is re-derived for free every time. Once a name IS recorded (operator-set or
+            # self-recorded), it is kept as-is as long as it still resolves (CLUSTER stays
+            # equal to it); if that cluster is gone, the resolver already fell through to a
+            # different one, so CLUSTER != PRESET_NAME and the stale name is corrected.
             RECORD_NAME=""
-            if [ "$CLUSTER" != "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" ] && [ -z "$PRESET_NAME" ]; then RECORD_NAME="$CLUSTER"; fi
+            if [ -n "$PRESET_NAME" ]; then
+              if [ "$CLUSTER" != "$PRESET_NAME" ]; then RECORD_NAME="$CLUSTER"; fi
+            elif [ "$CLUSTER" != "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" ]; then
+              RECORD_NAME="$CLUSTER"
+            fi
             if [ "$SPOKE_ENV" = "dev" ]; then
               SPOKE_DEV_ARN="$SPOKE_ARN"
               SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
