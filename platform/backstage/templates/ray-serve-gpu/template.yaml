@@ -41,7 +41,7 @@ spec:
           enumNames:
             - "TinyLlama-1.1B-Chat (2GB, can run on CPU)"
             - "Mistral-7B-Instruct (14GB, requires GPU)"
-          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU. Models are pre-staged in S3. By default, they are mounted from S3 with the S3 CSI driver at /mnt/models/models/{model-name}. See gitops/workloads/ray/MODEL-MANAGEMENT.md for other model-loading options."
+          ui:help: "GPU-optimized models. Mistral-7B requires GPU, TinyLlama can run on CPU. Models are pre-staged in S3. Outside the workshop, stage them first with ray:setup and ray:prestage-models. By default, they are mounted from S3 with the S3 CSI driver at /mnt/models/models/{model-name}. See gitops/workloads/ray/MODEL-MANAGEMENT.md for other model-loading options."
         maxLength:
           title: Max Tokens
           type: string

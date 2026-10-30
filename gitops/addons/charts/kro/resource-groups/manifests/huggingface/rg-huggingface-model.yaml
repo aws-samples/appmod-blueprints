@@ -153,6 +153,17 @@ spec:
     
     # Argo Workflow for model download
     - id: downloadWorkflow
+      # The instance is Ready only once the model is actually staged in S3. Before, the
+      # instance went ACTIVE/Ready as soon as the Workflow object existed, so a Workflow
+      # that failed (e.g. bucket never created) still showed a Ready model. A Failed
+      # Workflow now leaves the instance not Ready. This is a leaf node: nothing in the
+      # graph waits on it, so sync is unchanged. Health depends on the Argo CD version:
+      # without a built-in kro.run health check (before 3.6) the instance does not affect
+      # the app's health; from 3.6 on (argoproj/argo-cd#28743) a download that is still
+      # running or has failed keeps platform-manifests-post Progressing (Degraded if kro
+      # reports the instance FAILED/ERROR) until the model is staged.
+      readyWhen:
+        - ${downloadWorkflow.status.?phase.orValue("") == "Succeeded"}
       template:
         apiVersion: argoproj.io/v1alpha1
         kind: Workflow
@@ -162,16 +173,13 @@ spec:
         spec:
           serviceAccountName: ${serviceAccount.metadata.name}
           entrypoint: download-and-upload
-          # Reap the wait-bucket retry-attempt pods once the workflow succeeds.
-          # The wait-bucket step retries (retryPolicy: Always, limit 40) through the
-          # provisioning race until the out-of-band S3 bucket exists; each failed
-          # attempt leaves a Pod that Argo does NOT garbage-collect by default,
-          # leaving ~30 Failed pods behind in ray-system on a healthy deployment.
-          # OnWorkflowSuccess keeps every pod of a genuinely failed workflow (so it
-          # stays debuggable), and on success GCs ALL of that workflow's pods — not
-          # only the retry failures but the download/upload pods and their logs too
-          # (no labelSelector). That's fine here: a succeeded run needs no debugging
-          # and the stack doesn't archive pod logs.
+          # On success, GC ALL of this workflow's pods (download/upload included): a
+          # succeeded run needs no debugging and the stack doesn't archive pod logs.
+          # On failure, keep the pods so the run stays debuggable. That no longer means
+          # dozens of pods: wait-bucket polls inside ONE pod (see below) instead of one
+          # pod per retry attempt, so a failed run keeps 1 wait-bucket pod (with the
+          # whole poll log), not ~23. A single podGC strategy cannot express "drop
+          # failed wait attempts, keep the rest", which is why the fix is in the step.
           podGC:
             strategy: OnWorkflowSuccess
           
@@ -180,7 +188,7 @@ spec:
               steps:
                 # Ordering gate (durable fix for the provisioning race): the model
                 # staging bucket (${schema.spec.s3Bucket}) is created out-of-band -- by
-                # the IDE Taskfile `create-ray-models-bucket` (or CDK in guided events)
+                # the install Taskfile (`<provider>:ray:setup`, run by the workshop flow)
                 # -- asynchronously from this ArgoCD-rendered Workflow (sync-wave 10).
                 # With no ordering between the two, the upload step could run before the
                 # bucket existed and fail hard with NoSuchBucket on a one-shot Workflow
@@ -194,26 +202,34 @@ spec:
                     template: upload
             
             - name: wait-bucket
-              # Poll until the bucket exists. retryStrategy re-runs the step on any
-              # non-zero exit (head-bucket 404/403 while the bucket is not yet created),
-              # covering ~20 min of the provisioning race before giving up.
+              # Poll until the bucket exists, covering ~20 min of the provisioning race
+              # before giving up. The loop runs inside ONE pod: a step-level
+              # retryStrategy (the previous approach) created a new Pod per attempt and
+              # left one Failed pod per attempt behind when the bucket never appeared.
+              # retryStrategy is kept only for pod-level errors (eviction, node loss).
               retryStrategy:
-                limit: "40"
-                retryPolicy: "Always"
-                backoff:
-                  duration: "20s"
-                  factor: "1"
-                  maxDuration: "20m"
+                limit: "2"
+                retryPolicy: "OnError"
+              activeDeadlineSeconds: 1500
               container:
                 image: amazon/aws-cli:latest
                 command: [bash, -c]
                 args:
                   - |
-                    set -e
                     BUCKET="${schema.spec.s3Bucket}"
                     echo "Waiting for s3://$BUCKET to exist (region ${schema.spec.region})..."
-                    aws s3api head-bucket --bucket "$BUCKET" --region ${schema.spec.region}
-                    echo "Bucket $BUCKET is ready."
+                    i=0
+                    while [ "$i" -lt 60 ]; do
+                      i=$((i + 1))
+                      if ERR=$(aws s3api head-bucket --bucket "$BUCKET" --region ${schema.spec.region} 2>&1); then
+                        echo "Bucket $BUCKET is ready."
+                        exit 0
+                      fi
+                      echo "[$i/60] not ready yet: $ERR"
+                      sleep 20
+                    done
+                    echo "Bucket $BUCKET still missing after ~20 min; giving up."
+                    exit 1
             
             - name: download
               container:
