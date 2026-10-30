@@ -2188,14 +2188,19 @@ tasks:
       - cmd: |
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
           # 1. ALBs from the load-balancer-controller — scoped by the elbv2.k8s.aws/cluster
-          #    tag to our "${PREFIX}-*" clusters (hub + spokes). Tag-based (not name-based)
-          #    so we never touch unrelated clusters' ALBs, and we also catch non-"k8s-*"
-          #    names (e.g. the hub ingress ALB).
+          #    tag to THIS stack's clusters by exact name (scripts/stack-clusters.py: the hub,
+          #    the inventory's spokes, ${PREFIX}-spoke-dev/-prod; a retained spoke excluded).
+          #    Never "${PREFIX}-*": destroying prefix "peeks" must not delete the ALBs of a live
+          #    "peeks-a-hub". Tag-based (not name-based) so we also catch non-"k8s-*" names
+          #    (e.g. the hub ingress ALB).
+          OURS=$(python3 "{{.ROOT_DIR}}/scripts/stack-clusters.py" "$PREFIX" "{{.HUB_CLUSTER_NAME}}" \
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json") || OURS=""
           for ARN in $(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null); do
             CL=$(aws elbv2 describe-tags --region "$REGION" --resource-arns "$ARN" --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster']|[0].Value" --output text 2>/dev/null)
-            case "$CL" in
-              "${PREFIX}-"*) echo "  deleting ALB $ARN (cluster $CL)"; aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" --region "$REGION" 2>/dev/null || true ;;
-            esac
+            # (an if, not `case ... continue`: go-task's shell ignores continue inside a case arm)
+            if [ -n "$CL" ] && [ "$CL" != None ] && printf '%s\n' "$OURS" | grep -qxF "$CL"; then
+              echo "  deleting ALB $ARN (cluster $CL)"; aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" --region "$REGION" 2>/dev/null || true
+            fi
           done
           # 2. Orphaned CloudWatch delivery sources for this hub
           for ID in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?contains(deliverySourceName, '{{.HUB_CLUSTER_NAME}}')].id" --output text 2>/dev/null); do

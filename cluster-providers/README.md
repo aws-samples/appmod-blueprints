@@ -196,7 +196,8 @@ Authorization and teardown therefore key on something other than the name:
   once that cluster is gone. After the hub is deleted, `scripts/sweep-hub-leftovers.py`
   (step 2b) removes, for this stack's removed clusters only (by exact name: the hub, the
   spokes the teardown inventory lists, `<prefix>-spoke-dev`/`-prod`; never a `<prefix>-*`
-  wildcard, so a `peeks-a-hub` stack survives destroying prefix `peeks`), the available EBS volumes they
+  wildcard, so a `peeks-a-hub` stack survives destroying prefix `peeks`; step 1 selects the
+  load-balancer-controller ALBs by the same exact names, minus retained spokes), the available EBS volumes they
   owned (Retain StorageClass PVCs, tagged `kubernetes.io/cluster/<name>=owned` or, with the
   EKS Auto Mode CSI driver, `eks:eks-cluster-name=<name>`), their target groups with no load
   balancer, the hub's unused CloudWatch Logs delivery sources/destinations and, when `domain`

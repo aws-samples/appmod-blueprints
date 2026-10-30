@@ -164,6 +164,12 @@ out = {
 }.get((svc, op), {})
 if (svc, op) == ("iam", "get-open-id-connect-provider"):
     out = {"Url": opts["open-id-connect-provider-arn"].split("oidc-provider/", 1)[1]}
+if (svc, op) == ("elbv2", "describe-load-balancers"):
+    out = {"LoadBalancers": [{"LoadBalancerArn": a} for a in fx.get("albs", {})]}
+if (svc, op) == ("elbv2", "describe-tags"):
+    arn_ = opts.get("resource-arns", "")
+    out = {"TagDescriptions": [{"ResourceArn": arn_, "Tags": [
+        {"Key": "elbv2.k8s.aws/cluster", "Value": fx.get("albs", {}).get(arn_, "")}]}]}
 if (svc, op) == ("logs", "describe-log-groups"):
     out = {"logGroups": [{"logGroupName": g} for g in fx["log_groups"]
                          if g.startswith(opts.get("log-group-name-prefix", ""))]}
@@ -301,6 +307,23 @@ def test_a_failed_iam_guard_is_recorded_for_the_final_check(tmp_path, marker, st
     assert not [c for c in calls if c[:2] == ["iam", "list-roles"]], "roles listed despite the failed guard"
     failed = (tmp_path / "private" / "destroy-sweep-failures").read_text().split()
     assert "iam-guard(%s)" % step in failed
+
+
+def test_step1_deletes_only_the_albs_of_this_stacks_clusters_by_exact_name(tmp_path):
+    """Review #1174 (re-review): step 1 matched "${PREFIX}-*", so destroying prefix
+    acme also deleted the ALBs of a live acme-a-hub. Only the exact stack names go
+    (hub, inventory spokes, legacy spokes); a retained spoke keeps its ALB."""
+    (tmp_path / "private").mkdir(exist_ok=True)
+    (tmp_path / "private" / "destroy-inventory.json").write_text(json.dumps({
+        "hub_vpc_id": "", "clusters": [{"name": "team-dev", "deletionPolicy": "delete"},
+                                       {"name": f"{PREFIX}-prod", "deletionPolicy": "retain"}]}))
+    albs = {f"arn:alb/{n}": n for n in (HUB, "team-dev", f"{PREFIX}-spoke-dev", f"{PREFIX}-a-hub",
+                                         f"{PREFIX}-prod", "other-hub")}
+    albs["arn:alb/untagged"] = ""
+    res, calls = _run(tmp_path, marker="# 3. Orphaned ACK-managed IAM roles", fixture={"albs": albs})
+    assert res.returncode == 0, res.stdout + res.stderr
+    gone = sorted(c[2]["load-balancer-arn"] for c in calls if c[:2] == ["elbv2", "delete-load-balancer"])
+    assert gone == sorted(f"arn:alb/{n}" for n in (HUB, "team-dev", f"{PREFIX}-spoke-dev"))
 
 
 def test_hub_vpc_sweep_is_skipped_for_a_pre_existing_vpc(tmp_path):
