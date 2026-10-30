@@ -276,6 +276,27 @@ Set the value in that one file, commit (for the spoke overlay) or re-run the ins
 
 Keeping all of those aligned to the same version (as this repo does) is purely for consistency — the authoritative value a running cluster gets always comes from the single source-of-truth field in the table above.
 
+#### Pin the version in your fleet-config overlay
+
+Pin `k8sVersion` explicitly for every KRO spoke in **your** fleet-config overlay instead of relying on the chart default. The `clusters-kro` ApplicationSet (`gitops/bootstrap/clusters-kro.yaml`) renders the `kro-clusters` chart with two value files, the second one winning:
+
+1. `$values/<fleetRepoBasepath>fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml` (base fleet repo)
+2. `$overlay/<overlay_repo_basepath or fleetRepoBasepath>fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml` (the overlay repo from the hub cluster-secret `overlay_repo_url`, falling back to the fleet repo when no overlay is wired)
+
+```yaml
+# <overlay>/fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml
+clusters:
+  <spoke-name>:
+    k8sVersion: "1.37"
+```
+
+The hub is not rendered by this chart (it refuses a spoke named like the hub). Pin the hub with `hub.kubernetesVersion` in your `config.local.yaml`; the provider Taskfile reads it (`HUB_K8S_VERSION` in `cluster-providers/kind-kro-ack/Taskfile.yaml`) when it creates the hub.
+
+Why pin it:
+
+- `kro-clusters/templates/clusters.yaml` falls back to `| default "1.37"`. A spoke without `k8sVersion` follows that default, so **when upstream bumps the default, every unpinned spoke is upgraded** on the next sync. Hub installs without `hub.kubernetesVersion` behave the same way through the Taskfile `yq ... // "1.37"` fallback.
+- A version change is an **in-place EKS control-plane upgrade**. It is one-way (EKS cannot downgrade) and must go **one minor version at a time** (for example 1.36 → 1.37). Check add-on and API compatibility before raising the pinned value.
+
 ### Per-cluster addon exception
 
 Create `gitops/overlays/clusters/<cluster>/addon-overrides.yaml`:

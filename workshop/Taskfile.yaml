@@ -156,15 +156,27 @@ tasks:
       # concurrently with wait-for-spokes. Phase A only needs the hub; the spoke-aware
       # waits (CICDPipeline ACTIVE + ECR image) stay serial after the join below.
       # Mirrors the gitlab:init-ec2 background pattern already used above.
+      # The wrapper shell writes its own OS PID and, when Phase A exits, its rc:
+      # go-task's shell interpreter sets `$!` to a job id (e.g. "g1"), not a PID, and
+      # each cmd runs in its own interpreter, so `echo $!` + `wait` in a later cmd
+      # returned at once and the join below never waited.
       - |
-        task prewarm-rust-cicd-phase-a \
-          INSTALL_START={{.INSTALL_START}} \
-          INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}} \
+        rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
+        sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; echo $? > /tmp/prewarm-phase-a.rc' \
           > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
-        echo $! > /tmp/prewarm-phase-a.pid
-        printf '{{.C_INFO}}  prewarm Phase A started in background (PID=%s, log: /tmp/prewarm-phase-a.log){{.C_RESET}}\n' "$(cat /tmp/prewarm-phase-a.pid)"
+        printf '{{.C_INFO}}  prewarm Phase A started in background (log: /tmp/prewarm-phase-a.log){{.C_RESET}}\n'
       - task: wait-for-spokes
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Pre-deploy the Path A Next.js frontend on spoke-dev in the background (needs
+      # only spoke-dev; ~30-60 s). Same detach pattern as Phase A (fds closed so the SSM
+      # tee / cfn-signal never wait on it); joined before the hub pivot below.
+      # The child writes its own OS PID: go-task's shell interpreter sets `$!` to a job
+      # id (e.g. "g1"), not a PID, so `echo $!` cannot be used to join it later.
+      - |
+        printf '' > /tmp/prewarm-pathA-frontend.pid
+        sh -c 'echo $$ > /tmp/prewarm-pathA-frontend.pid; exec task prewarm-pathA-frontend INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}' \
+          > /tmp/prewarm-pathA-frontend.log 2>&1 < /dev/null &
+        printf '{{.C_INFO}}  prewarm-pathA-frontend started in background (log: /tmp/prewarm-pathA-frontend.log){{.C_RESET}}\n'
       # Re-seed observability now that spokes are ACTIVE. The initial seed runs in background
       # during hub install (before spokes exist) so spoke_dev/prod_cluster_arn annotations
       # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
@@ -195,13 +207,33 @@ tasks:
         else
           printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
         fi
-      # Join prewarm Phase A (should already be done — WFS took ~9-20 min, Phase A ~11 min)
-      - |
-        APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
-        if [ -n "$APID" ]; then
-          wait "$APID" 2>/dev/null || true
-        fi
-        printf '{{.C_INFO}}  prewarm Phase A joined.{{.C_RESET}}\n'
+      # Join prewarm Phase A (usually already done — WFS took ~9-20 min, Phase A ~11 min).
+      # Poll the rc file / /proc rather than `wait`: Phase A is not a job of this cmd's
+      # shell (see the launch above). Bounded by 900 s and by the same install DEADLINE
+      # Phase A uses (INSTALL_START + INSTALL_BUDGET_SEC - 420), so the join cannot starve
+      # Phase B / the pivot. Non-fatal: a failed or still-running Phase A is logged and
+      # install continues (Phase B re-enters idempotently).
+      - cmd: |
+          APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
+          MAXW=900
+          LEFT=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC | default "6600"}} - 300 - 120 - $(date +%s) ))
+          if [ "$LEFT" -lt 0 ]; then LEFT=0; fi
+          if [ "$LEFT" -lt "$MAXW" ]; then MAXW=$LEFT; fi
+          E=0
+          while [ ! -s /tmp/prewarm-phase-a.rc ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt "$MAXW" ]; do
+            sleep 5; E=$((E + 5))
+          done
+          ARC=$(cat /tmp/prewarm-phase-a.rc 2>/dev/null || echo '')
+          if [ "$ARC" = "0" ]; then
+            printf '{{.C_INFO}}  prewarm Phase A joined after %ss (rc=0, log: /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$E"
+          elif [ -n "$ARC" ]; then
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A exited rc=%s after %ss wait — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$ARC" "$E"
+          elif [ -n "$APID" ] && [ -d "/proc/$APID" ]; then
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A still running after %ss join budget — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$E"
+          else
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A left no exit status (not started or killed) — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n'
+          fi
+        ignore_error: true
       # Prewarm Phase B: wait for CICDPipeline ACTIVE + ECR image publish.
       # Phase A (scaffold) already ran concurrently with wait-for-spokes above.
       # prewarm-rust-cicd re-enters idempotently: the scaffold guard detects the
@@ -214,6 +246,26 @@ tasks:
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
         ignore_error: true
       - 'printf "{{.C_INFO}}  [%ds] prewarm-rust-cicd done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Pre-deploy the Rust app to dev with kro (Path A 30_CD kro tab, dev only): needs
+      # rust-dev-cd from prewarm-rust-cicd, so it runs right after it. Short (clone,
+      # commit, push); does not wait for the Rollout.
+      - task: prewarm-pathA-rust-kro
+        vars:
+          INSTALL_START: '{{.INSTALL_START}}'
+          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+        ignore_error: true
+      - 'printf "{{.C_INFO}}  [%ds] prewarm-pathA-rust-kro done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Join the background frontend prewarm (its waits are capped by the same DEADLINE).
+      # Poll /proc rather than `wait`: each go-task cmd runs in its own shell interpreter,
+      # so the child is not one of this shell's jobs (and kill -0 is not supported by it).
+      - cmd: |
+          FPID=$(cat /tmp/prewarm-pathA-frontend.pid 2>/dev/null || echo '')
+          E=0
+          while [ -n "$FPID" ] && [ -d "/proc/$FPID" ] && [ "$E" -lt 420 ]; do
+            sleep 5; E=$((E + 5))
+          done
+          printf '{{.C_INFO}}  prewarm-pathA-frontend joined after %ss (log: /tmp/prewarm-pathA-frontend.log).{{.C_RESET}}\n' "$E"
+        ignore_error: true
       # [#1033] FINAL step — hub self-adoption pivot (detach from the ephemeral kind bootstrap
       # cluster). Runs LAST, after overlay wiring + spokes + idc + ray are all up, so:
       #   (a) the fleet-config overlay is wired and the hub is fully settled before we detach;
@@ -222,8 +274,8 @@ tasks:
       #       (never a CFN CREATE_FAILED, review #1). kind-kro-ack only; disable with
       #       HUB_PIVOT_ON_INSTALL=false. ignore_error + the inner guard both keep it non-fatal.
       #   (c) the pivot must also END inside the install's time budget. The self-paced
-      #       template's SSM step kills `task install` at 7000 s (IDE WaitCondition: 7200 s),
-      #       and a kill skips hub:pivot's EXIT trap: kind stays stopped mid-gate and the stack
+      #       template's SSM step kills `task install` at 9000 s (cdk/lib/team-stack.ts SetupIDE
+      #       timeoutSeconds; IDE WaitCondition: 9200 s), and a kill skips hub:pivot's EXIT trap: kind stays stopped mid-gate and the stack
       #       ends CREATE_FAILED. So the adoption gate gets what is left of INSTALL_BUDGET_SEC,
       #       minus 300 s for the pivot's own steps (or its abort), and at most
       #       HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC (default 900 s; legacy PIVOT_ADOPT_TIMEOUT_SEC
@@ -798,7 +850,7 @@ tasks:
         #    (0 means "wait forever" to both), so callers check `left() > 0` and skip.
         left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
         if [ -n "$DEADLINE" ] && [ "$(left)" -le 0 ]; then
-          printf '{{.C_INFO}}  ⚠ install budget already spent — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  ⚠ install budget already spent — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           exit 0
         fi
 
@@ -833,7 +885,7 @@ tasks:
           printf '{{.C_ERR}}  ⚠ no budget left for the workflow-controller wait — continuing anyway (non-fatal).{{.C_RESET}}\n'
         fi
         if ! $KUBE get crd workflows.argoproj.io >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  ⚠ Workflow CRD not served yet — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  ⚠ Workflow CRD not served yet — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           rm -f "$KC"; exit 0
         fi
 
@@ -870,7 +922,7 @@ tasks:
           printf '{{.C_INFO}}  ↩ GitLab repo %s/%s-cicd already exists but CICDPipeline not registered — NOT re-scaffolding (publish:gitlab would fail); waiting for ACTIVE.{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
         fi
         if [ -z "$BUDGET_OK" ] && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-          printf '{{.C_ERR}}  ⚠ install budget spent before scaffold could start — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  ⚠ install budget spent before scaffold could start — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           rm -f "$KC"; exit 0
         fi
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
@@ -1004,6 +1056,297 @@ tasks:
         fi
         rm -f "$KC"
       - printf '{{.C_OK}}✓ prewarm-rust-cicd done.{{.C_RESET}}\n'
+
+  # ============================================================
+  # PRE-WARM PATH A — pre-run the Module 2 Path A deploy steps DURING install, so
+  # a participant who only does Path B still meets the prerequisites of Module 3
+  # "Metrics Driven Decisions" and Module 5 (DORA), and Path A starts with a
+  # working /unicorn frontend.
+  #
+  #   prewarm-pathA-frontend   — the content's "Manually deploy the frontend" step:
+  #                              `kubectl apply` of applications/next-js/deployment/dev
+  #                              (kro AppmodService next-js-app, ns team-nextjs) on
+  #                              spoke-dev. Stays OUT of GitOps, exactly like the content.
+  #   prewarm-pathA-rust-kro   — the kro tab of 30_CD "Deploying the Application", for dev
+  #                              only: render templates/kro/{application,services}.yaml
+  #                              into deployment/dev/ of the event GitLab repo
+  #                              <user>/rust, commit + push; rust-dev-cd (created by
+  #                              prewarm-rust-cicd) syncs it. Rust is deployed with kro
+  #                              only (team decision 2026-10-29); Java keeps KubeVela.
+  #                              prod is NOT pre-deployed (promotion stays a Path A step),
+  #                              but the team-rust namespace is ensured on spoke-dev AND
+  #                              spoke-prod first (Argo CD CreateNamespace does not create
+  #                              it on the spokes; the content's own step runs later).
+  #
+  # Flag: `prewarmPathA` (create-config.sh writes false until content !888 drops the
+  #       Rust KubeVela tab; an absent key maps to true — never `// true`,
+  #       which turns a stored false into true, see pnz1990 review #1136 point 2);
+  #       PREWARM_PATH_A overrides both ways. prewarm-pathA-rust-kro also needs
+  #       prewarmRustCicd (no pipeline -> no rust-dev-cd -> nothing syncs the manifest).
+  # Contract: best-effort (`set +e`, every path exits 0, `ignore_error` in install),
+  #       idempotent, and bound by the same DEADLINE as prewarm-rust-cicd so the #1033
+  #       pivot keeps its headroom. Neither task waits for the app to become Healthy:
+  #       the Rust Rollout pulls `:initial`, which the pipeline's initial build publishes
+  #       ~8 min after the CICDPipeline goes ACTIVE, and converges on its own.
+  # ============================================================
+  prewarm-pathA-frontend:
+    desc: "Pre-deploy the Path A Next.js frontend (kro AppmodService next-js-app) to spoke-dev (flagged, idempotent, non-fatal)"
+    vars:
+      ENABLED:
+        sh: |
+          ENV_OVERRIDE="${PREWARM_PATH_A:-}"
+          if [ -n "$ENV_OVERRIDE" ]; then echo "$ENV_OVERRIDE"; else V=$(yq '.prewarmPathA' {{.CONFIG_FILE}}); [ "$V" = "null" ] && V=true; echo "$V"; fi
+      INSTALL_START: '{{.INSTALL_START | default ""}}'
+      INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+    cmds:
+      - |
+        # Strictly non-fatal: disable errexit so no internal check can fail the install.
+        set +e
+        PREFIX="{{.RESOURCE_PREFIX}}"; CLUSTER="${PREFIX}-spoke-dev"; NS=team-nextjs; APP=next-js-app
+        if [ "{{.ENABLED}}" != "true" ]; then
+          printf '{{.C_INFO}}▸ prewarm-pathA-frontend: disabled (prewarmPathA=false / PREWARM_PATH_A=false) — skipping.{{.C_RESET}}\n'
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Pre-deploying the Path A frontend (%s) to %s (best-effort)…{{.C_RESET}}\n' "$APP" "$CLUSTER"
+        # Same DEADLINE as prewarm-rust-cicd (pivot steps 300 + skip floor 120 + gate 300).
+        DEADLINE=""
+        if [ -n "{{.INSTALL_START}}" ]; then
+          DEADLINE=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC}} - 300 - 120 - 300 ))
+        fi
+        left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
+        if [ "$(left)" -le 0 ]; then
+          printf '{{.C_INFO}}  ⚠ install budget spent — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-frontend).{{.C_RESET}}\n'
+          exit 0
+        fi
+        KC=$(mktemp)
+        trap 'rm -f "$KC"' EXIT
+        if ! aws eks update-kubeconfig --name "$CLUSTER" --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ cannot get %s kubeconfig — skipping (non-fatal).{{.C_RESET}}\n' "$CLUSTER"
+          exit 0
+        fi
+        K="kubectl --kubeconfig $KC"
+        # 1. Idempotent fast-exit.
+        if $K get appmodservice "$APP" -n "$NS" >/dev/null 2>&1; then
+          printf '{{.C_OK}}  ✓ AppmodService %s already exists in %s — nothing to do.{{.C_RESET}}\n' "$APP" "$NS"
+          exit 0
+        fi
+        # 2. The AppmodService API must be served on spoke-dev (wait-for-spokes is
+        #    tolerant, so the spoke may still be syncing its addons). Bounded wait.
+        T=300; [ "$(left)" -lt "$T" ] && T=$(left)
+        E=0
+        until $K get crd appmodservices.kro.run >/dev/null 2>&1; do
+          if [ "$E" -ge "$T" ]; then
+            printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-frontend).{{.C_RESET}}\n' "$CLUSTER" "$E"
+            exit 0
+          fi
+          sleep 15; E=$((E + 15))
+        done
+        # 3. Manifest source: the participant's IDE clone of <user>/next-js (what the
+        #    content applies), else this repo's copy (identical seed content).
+        SRC="$HOME/environment/applications/next-js/deployment/dev/application.yaml"
+        [ -f "$SRC" ] || SRC="{{.PLATFORM_DIR}}/applications/next-js/deployment/dev/application.yaml"
+        if [ ! -f "$SRC" ]; then
+          printf '{{.C_ERR}}  ⚠ next-js manifest not found — skipping (non-fatal).{{.C_RESET}}\n'
+          exit 0
+        fi
+        $K create namespace "$NS" --dry-run=client -o yaml | $K apply -f - >/dev/null
+        # Explicit envsubst variable list: only the manifest's three placeholders.
+        if CLUSTER_NAME="$CLUSTER" AWS_ACCOUNT_ID="{{.AWS_ACCOUNT_ID}}" RESOURCE_PREFIX="$PREFIX" \
+             envsubst '${CLUSTER_NAME} ${AWS_ACCOUNT_ID} ${RESOURCE_PREFIX}' < "$SRC" | $K apply -f -; then
+          printf '{{.C_OK}}  ✓ frontend %s applied to %s/%s (ALB target registration continues in the background).{{.C_RESET}}\n' "$APP" "$CLUSTER" "$NS"
+        else
+          printf '{{.C_ERR}}  ⚠ kubectl apply of %s failed — continuing (non-fatal).{{.C_RESET}}\n' "$APP"
+        fi
+      - printf '{{.C_OK}}✓ prewarm-pathA-frontend done.{{.C_RESET}}\n'
+
+  prewarm-pathA-rust-kro:
+    desc: "Pre-deploy the Rust app to dev with kro (Path A 30_CD kro tab, dev only) via the event GitLab repo (flagged, idempotent, non-fatal)"
+    vars:
+      APP_NAME: '{{.PREWARM_RUST_APP | default "rust"}}'
+      ENABLED:
+        sh: |
+          ENV_OVERRIDE="${PREWARM_PATH_A:-}"
+          if [ -n "$ENV_OVERRIDE" ]; then echo "$ENV_OVERRIDE"; else V=$(yq '.prewarmPathA' {{.CONFIG_FILE}}); [ "$V" = "null" ] && V=true; echo "$V"; fi
+      CICD_ENABLED:
+        sh: |
+          ENV_OVERRIDE="${PREWARM_RUST_CICD:-}"
+          if [ -n "$ENV_OVERRIDE" ]; then echo "$ENV_OVERRIDE"; else V=$(yq '.prewarmRustCicd' {{.CONFIG_FILE}}); [ "$V" = "null" ] && V=true; echo "$V"; fi
+      GIT_DOMAIN:
+        sh: |
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
+          else
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
+          fi
+      # Same credential resolution as gitlab:clone-repos (the IDE clones use it too).
+      GIT_PASSWORD:
+        sh: yq '.hub.gitlabRootPassword // ""' {{.CONFIG_FILE}} | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' | grep -v '^$' || aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // empty'
+      INSTALL_START: '{{.INSTALL_START | default ""}}'
+      INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+    cmds:
+      - |
+        # Strictly non-fatal: disable errexit so no internal check can fail the install.
+        set +e
+        APP="{{.APP_NAME}}"; PREFIX="{{.RESOURCE_PREFIX}}"; REGION="{{.AWS_REGION}}"; ACC="{{.AWS_ACCOUNT_ID}}"
+        DEV="${PREFIX}-spoke-dev"; CD_APP="${APP}-dev-cd"
+        if [ "{{.ENABLED}}" != "true" ]; then
+          printf '{{.C_INFO}}▸ prewarm-pathA-rust-kro: disabled (prewarmPathA=false / PREWARM_PATH_A=false) — skipping.{{.C_RESET}}\n'
+          exit 0
+        fi
+        if [ "{{.CICD_ENABLED}}" != "true" ]; then
+          printf '{{.C_INFO}}▸ prewarm-pathA-rust-kro: prewarmRustCicd=false, so there is no %s to sync the manifest — skipping.{{.C_RESET}}\n' "$CD_APP"
+          exit 0
+        fi
+        printf '{{.C_STEP}}▸ Pre-deploying %s to dev with kro via %s (best-effort)…{{.C_RESET}}\n' "$APP" "$CD_APP"
+        DEADLINE=""
+        if [ -n "{{.INSTALL_START}}" ]; then
+          DEADLINE=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC}} - 300 - 120 - 300 ))
+        fi
+        left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
+        if [ "$(left)" -le 0 ]; then
+          printf '{{.C_INFO}}  ⚠ install budget spent — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n'
+          exit 0
+        fi
+        if [ -z "{{.GIT_DOMAIN}}" ] || [ -z "{{.GIT_PASSWORD}}" ]; then
+          printf '{{.C_ERR}}  ⚠ GitLab domain or credentials not resolved — skipping (non-fatal).{{.C_RESET}}\n'
+          exit 0
+        fi
+        KH=$(mktemp); KD=$(mktemp); W=$(mktemp -d)
+        trap 'rm -rf "$KH" "$KD" "$W"' EXIT
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region "$REGION" --kubeconfig "$KH" >/dev/null 2>&1 \
+           || ! aws eks update-kubeconfig --name "$DEV" --region "$REGION" --kubeconfig "$KD" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ cannot get hub/%s kubeconfig — skipping (non-fatal).{{.C_RESET}}\n' "$DEV"
+          exit 0
+        fi
+        H="kubectl --kubeconfig $KH"; D="kubectl --kubeconfig $KD"
+        # 0. rust-dev-cd must exist (it is created by the rust-cicd app synced from the
+        #    scaffolded repo, right after the CICDPipeline). Bounded wait.
+        T=180; [ "$(left)" -lt "$T" ] && T=$(left)
+        E=0
+        until $H get applications.argoproj.io "$CD_APP" -n argocd >/dev/null 2>&1; do
+          if [ "$E" -ge "$T" ]; then
+            printf '{{.C_ERR}}  ⚠ Argo CD app %s not found after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "$CD_APP" "$E"
+            exit 0
+          fi
+          sleep 15; E=$((E + 15))
+        done
+        # 1. The AppmodService API must be served on spoke-dev.
+        if ! $D get crd appmodservices.kro.run >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s — skipping (non-fatal).{{.C_RESET}}\n' "$DEV"
+          exit 0
+        fi
+        # 1b. team-rust namespace on BOTH spokes, before anything is pushed. rust-dev-cd's
+        #     CreateNamespace=true does not create it on the spoke in practice, and 30_CD
+        #     has the participant create it by hand — but this prewarm runs at install
+        #     time, before that step, so the first sync would fail with
+        #     `namespaces "team-rust" not found`. prod too: Module 3 promotes to prod.
+        #     Same idempotent pattern as the content and prewarm-pathA-frontend
+        #     (already present = no-op). A failure is logged and the task goes on.
+        RNS=team-rust; PROD="${PREFIX}-spoke-prod"; KP=$(mktemp)
+        trap 'rm -rf "$KH" "$KD" "$KP" "$W"' EXIT
+        if $D create namespace "$RNS" --dry-run=client -o yaml | $D apply -f - >/dev/null 2>&1; then
+          printf '{{.C_OK}}  ✓ namespace %s present on %s.{{.C_RESET}}\n' "$RNS" "$DEV"
+        else
+          printf '{{.C_ERR}}  ⚠ could not ensure namespace %s on %s — continuing (non-fatal).{{.C_RESET}}\n' "$RNS" "$DEV"
+        fi
+        if aws eks update-kubeconfig --name "$PROD" --region "$REGION" --kubeconfig "$KP" >/dev/null 2>&1 \
+           && kubectl --kubeconfig "$KP" create namespace "$RNS" --dry-run=client -o yaml \
+              | kubectl --kubeconfig "$KP" apply -f - >/dev/null 2>&1; then
+          printf '{{.C_OK}}  ✓ namespace %s present on %s.{{.C_RESET}}\n' "$RNS" "$PROD"
+        else
+          printf '{{.C_ERR}}  ⚠ could not ensure namespace %s on %s — continuing (non-fatal).{{.C_RESET}}\n' "$RNS" "$PROD"
+        fi
+        # 2. Temporary clone of the event GitLab repo (the IDE clone may be missing or
+        #    carry participant edits; it is fast-forwarded at step 6).
+        if ! git clone -q "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/${APP}.git" "$W/repo" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ could not clone %s/%s from the event GitLab — skipping (non-fatal).{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
+          exit 0
+        fi
+        cd "$W/repo" || exit 0
+        # 3. Anti-overwrite guard, per file: a dev application.yaml already exists (a
+        #    participant, an earlier run, or Module 3) — never touch it, nor anything
+        #    else in deployment/dev. services.yaml is only written when absent.
+        if [ -e deployment/dev/application.yaml ]; then
+          printf '{{.C_OK}}  ✓ deployment/dev/application.yaml already present in %s/%s — not touching it.{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
+          exit 0
+        fi
+        WRITE_SVC=yes
+        [ -e deployment/dev/services.yaml ] && WRITE_SVC=""
+        if [ ! -f deployment/templates/kro/application.yaml ] || [ ! -f deployment/templates/kro/services.yaml ]; then
+          printf '{{.C_ERR}}  ⚠ deployment/templates/kro/ not found in %s/%s — skipping (non-fatal).{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
+          exit 0
+        fi
+        # 4. Render EXACTLY what the 30_CD kro tab does for dev — application.yaml (the
+        #    AppmodService) AND services.yaml (the env-independent `rust-microservice`
+        #    Service the next-js frontend calls) — with the deterministic tag `initial`
+        #    (the tag the pipeline's initial build publishes; ECR may still be empty at
+        #    this point — the Rollout converges once the image lands).
+        TAG=initial
+        mkdir -p deployment/dev
+        # Every render step is checked: a failed envsubst/sed/cp would otherwise leave
+        # a 0-byte or partial file that passes the placeholder grep below, gets
+        # committed, and is then protected forever by the anti-overwrite guard (step 3).
+        RENDER_OK=yes
+        RESOURCE_PREFIX="$PREFIX" envsubst '${RESOURCE_PREFIX}' \
+          < deployment/templates/kro/application.yaml > deployment/dev/application.yaml || RENDER_OK=""
+        [ -n "$RENDER_OK" ] && { sed -i \
+          -e "s|<image>|${ACC}.dkr.ecr.${REGION}.amazonaws.com/${PREFIX}/${APP}:${TAG}|" \
+          -e "s|<environment>|dev|g" \
+          -e "s|<cluster_name>|${DEV}|" \
+          -e "s|\${AWS_ACCOUNT_ID}|${ACC}|" \
+          -e "s|\${AWS_REGION}|${REGION}|" \
+          deployment/dev/application.yaml || RENDER_OK=""; }
+        FILES="deployment/dev/application.yaml"
+        if [ -n "$WRITE_SVC" ]; then
+          [ -n "$RENDER_OK" ] && { cp deployment/templates/kro/services.yaml deployment/dev/services.yaml \
+            && sed -i -e "s|<environment>|dev|g" deployment/dev/services.yaml || RENDER_OK=""; }
+          FILES="$FILES deployment/dev/services.yaml"
+        else
+          printf '{{.C_INFO}}  deployment/dev/services.yaml already present — kept as is.{{.C_RESET}}\n'
+        fi
+        # shellcheck disable=SC2086
+        for F in $FILES; do [ -s "$F" ] || RENDER_OK=""; done
+        if [ -z "$RENDER_OK" ]; then
+          printf '{{.C_ERR}}  ⚠ rendering %s failed or produced an empty file — not pushing (non-fatal).{{.C_RESET}}\n' "$FILES"
+          exit 0
+        fi
+        # shellcheck disable=SC2086
+        if grep -qE '<[a-z_]+>|\$\{' $FILES; then
+          printf '{{.C_ERR}}  ⚠ rendered manifest still has unresolved placeholders — not pushing (non-fatal).{{.C_RESET}}\n'
+          exit 0
+        fi
+        # 5. Commit + push to the event GitLab (literal refspec, never forced). The
+        #    pipeline's CI also pushes to main ("chore: update rust image to …"), so
+        #    rebase and retry on a non-fast-forward.
+        # shellcheck disable=SC2086
+        git add $FILES
+        git -c user.name="PEEKS platform" -c user.email="platform@workshops.aws" \
+          commit -qm "platform: pre-deploy ${APP} to dev with kro (prewarm)" || { printf '{{.C_ERR}}  ⚠ commit failed — skipping (non-fatal).{{.C_RESET}}\n'; exit 0; }
+        PUSHED=""
+        for _ in 1 2 3; do
+          if git push -q origin HEAD:refs/heads/main >/dev/null 2>&1; then PUSHED=yes; break; fi
+          git pull -q --rebase origin main >/dev/null 2>&1 || break
+          # Re-check the guard: what landed meanwhile may be a participant's own manifest.
+          if [ "$(git log -1 --format=%s -- deployment/dev/application.yaml)" != "platform: pre-deploy ${APP} to dev with kro (prewarm)" ]; then
+            printf '{{.C_OK}}  ✓ a dev manifest was pushed concurrently — not overwriting it.{{.C_RESET}}\n'
+            exit 0
+          fi
+        done
+        if [ -z "$PUSHED" ]; then
+          printf '{{.C_ERR}}  ⚠ push to %s/%s failed after retries — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
+          exit 0
+        fi
+        printf '{{.C_OK}}  ✓ pushed %s (image :%s) to %s/%s.{{.C_RESET}}\n' "$FILES" "$TAG" "{{.GIT_USERNAME}}" "$APP"
+        # 6. Fast-forward the participant's IDE clone (same rule as gitlab:clone-repos:
+        #    ff-only, never clobber local commits).
+        IDE="$HOME/environment/applications/${APP}"
+        if [ -d "$IDE/.git" ]; then
+          git -C "$IDE" pull --ff-only -q >/dev/null 2>&1 \
+            || printf '{{.C_INFO}}  IDE clone %s not fast-forwarded (local changes) — the participant pulls it in 30_CD.{{.C_RESET}}\n' "$IDE"
+        fi
+        # 7. Nudge Argo CD; do not wait for Healthy.
+        $H annotate applications.argoproj.io "$CD_APP" -n argocd argocd.argoproj.io/refresh=normal --overwrite >/dev/null 2>&1 || true
+      - printf '{{.C_OK}}✓ prewarm-pathA-rust-kro done.{{.C_RESET}}\n'
 
   # ============================================================
   # PRE-REQUISITES

@@ -878,11 +878,11 @@ tasks:
           # Cluster, IAM roles, OIDC provider, security groups, access entries, the ack/
           # argocd/kro Capabilities and all pod-identity associations), and kro then
           # ENFORCES retain — it never reverts it. This is what makes the hub:pivot
-          # kind-side retain guard pass deterministically (a transient `kubectl annotate`
+          # kind-side retain guard pass deterministically (a transient 'kubectl annotate'
           # on kro-owned children is reverted by kro within ~1s, which was aborting the
           # pivot before it ever stopped kind or adopted on the hub), and it guarantees
           # kind can never issue an AWS Delete on the real hub when it is stopped/deleted.
-          # The `destroy` task flips this to "delete" so teardown still removes the AWS
+          # The 'destroy' task flips this to "delete" so teardown still removes the AWS
           # resources (ACK cascade) instead of orphaning them to the sweep.
           deletionPolicy: retain
           region: {{.AWS_REGION}}
@@ -1143,8 +1143,26 @@ tasks:
             sleep 10
           done
           echo ""
-      VPC_ID:
+      VPC_ID: &hub_vpc_id
         sh: aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.vpcId' --output text
+      # Public egress address(es) of the hub VPC's NAT gateway(s), as comma-separated /32s.
+      # Known here: hub:wait-for-eks waited for the eksclusterwithvpc instance to be ACTIVE,
+      # and rg-vpc gates natGateway1 on state=available (BYO VPC: its existing NATs). Written
+      # as nat_egress_cidrs below, so the ingress-class-alb chart can keep in-cluster SSO
+      # working behind an allowlist (docs/platform/alb-ip-allowlist.md pitfall 1). Empty when
+      # the VPC has no NAT; NAT_LOOKUP_FAILED when the call fails (the cmd then keeps the
+      # stored value).
+      NAT_EGRESS_CIDRS: &nat_egress_cidrs
+        sh: |
+          # A failed call prints NAT_LOOKUP_FAILED (never written to the secret) so the cmd can
+          # tell it apart from a successful lookup that found no NAT ("").
+          if NAT_RAW=$(aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
+              --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
+              --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null); then
+            printf '%s\n' "$NAT_RAW" | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, -
+          else
+            echo NAT_LOOKUP_FAILED
+          fi
       # Private subnets + cluster SG for the devlake RDS `vpc` object (see cmds). Mirrors the
       # kind-crossplane seed so the aws-resources ExternalSecret / init-env-config Job can
       # populate a non-empty vpc-config EnvironmentConfig.
@@ -1217,7 +1235,7 @@ tasks:
         #     skip would fire with nothing left to restore the spoke AMP scrapers.
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null || echo "")
-        PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""
+        PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""; PRESERVED_NAT=""
         PRESERVED_OBS='{}'; PRESERVED_EDF=""
         if [ -n "$EXISTING" ]; then
           EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
@@ -1225,6 +1243,7 @@ tasks:
           PRESERVED_OVERLAY_REV=$(echo "$EMETA"  | jq -r '.overlay_repo_revision // ""')
           PRESERVED_OVERLAY_BASE=$(echo "$EMETA" | jq -r '.overlay_repo_basepath // ""')
           PRESERVED_ARGOCD=$(echo "$EMETA"       | jq -r '.aws_argocd_url // ""')
+          PRESERVED_NAT=$(echo "$EMETA"          | jq -r '.nat_egress_cidrs // ""')
           # Same key list as seed-observability writes (non-empty values only).
           PRESERVED_OBS=$(echo "$EMETA" | jq -c '[ "aws_grafana_url",
               "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
@@ -1239,6 +1258,16 @@ tasks:
         # transient describe-capability miss never blanks a good value.
         ARGOCD_FINAL="{{.ARGOCD_URL}}"
         [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PRESERVED_ARGOCD"
+        # NAT egress list: keep the stored value ONLY when the describe call failed, so a
+        # transient error never drops the hub NAT from a live allowlist (that would break
+        # in-cluster SSO). A lookup that succeeds and finds no NAT drops the key: a stored /32
+        # may be a released EIP that AWS can hand to another account.
+        NAT_FINAL="{{.NAT_EGRESS_CIDRS}}"
+        if [ "$NAT_FINAL" = "NAT_LOOKUP_FAILED" ]; then
+          echo "[hub:seed] NAT gateway lookup failed; keeping the stored nat_egress_cidrs"
+          NAT_FINAL="${PRESERVED_NAT:-}"
+        fi
+        echo "[hub:seed] nat_egress_cidrs=${NAT_FINAL:-<none>}"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /
         # .cluster_security_group_id from it to build the vpc-config EnvironmentConfig that the
@@ -1265,7 +1294,7 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$PRESERVED_EDF" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$PRESERVED_EDF" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
@@ -1274,12 +1303,60 @@ tasks:
              | (if $pt  != "" and $pt != "{}" then .platform_tags = $pt else . end)
              | (if $fs == "true" then .fleet_scope_by_prefix = "true" else . end)
              | (if $edf != "" then .external_dns_domain_filters = $edf else . end)
+             | (if $nat != "" then .nat_egress_cidrs = $nat else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \
           --name "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}} 2>/dev/null \
         || aws secretsmanager put-secret-value \
           --secret-id "$SECRET_KEY" --secret-string "$SECRET_VALUE" --region {{.AWS_REGION}}
+
+  secrets-manager:seed-nat-egress:
+    desc: Refresh only nat_egress_cidrs in <hub>/config from the hub VPC's NAT gateways, then force an ESO refresh
+    vars:
+      # Same lookup as secrets-manager:seed (YAML aliases, not a copy): sorted /32s of the
+      # VPC's available NAT gateways, "" when there is none, NAT_LOOKUP_FAILED on an error.
+      VPC_ID: *hub_vpc_id
+      NAT_EGRESS_CIDRS: *nat_egress_cidrs
+    cmds:
+      - |
+        # For a live hub whose NAT gateway or EIP was replaced: re-running the whole
+        # secrets-manager:seed would rebuild <hub>/config and drop the keys other tasks merged
+        # in since, so this merges only nat_egress_cidrs, with the seed's semantics:
+        #   - lookup failed  -> nothing written, the stored value stays (exit 1);
+        #   - no NAT         -> the key is removed (a stored /32 may be a released EIP);
+        #   - NAT found      -> the key is set to the new list.
+        # ESO then turns it into the hub cluster-secret annotation and ArgoCD re-renders
+        # ingress-class-alb (docs/platform/alb-ip-allowlist.md pitfall 1).
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        NAT="{{.NAT_EGRESS_CIDRS}}"
+        if [ "$NAT" = "NAT_LOOKUP_FAILED" ]; then
+          printf '{{.C_ERR}}⚠ NAT gateway lookup failed for VPC %s (needs ec2:DescribeNatGateways) — nat_egress_cidrs left unchanged.{{.C_RESET}}\n' "{{.VPC_ID}}"
+          exit 1
+        fi
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null) || CONFIG_EXISTING=""
+        if [ -z "$CONFIG_EXISTING" ]; then
+          printf '{{.C_ERR}}⚠ %s not readable — run the install (secrets-manager:seed) first.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        fi
+        STORED=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .nat_egress_cidrs // ""') || {
+          printf '{{.C_ERR}}⚠ %s metadata is not JSON — nat_egress_cidrs not updated.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        }
+        if [ "$STORED" = "$NAT" ]; then
+          printf '{{.C_OK}}✓ nat_egress_cidrs already up to date in %s (%s).{{.C_RESET}}\n' "$SECRET_KEY" "${NAT:-<none>}"
+          exit 0
+        fi
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq --arg n "$NAT" \
+          '.metadata = (.metadata // "{}" | (if type == "string" then fromjson else . end)
+             | (if $n == "" then del(.nat_egress_cidrs) else .nat_egress_cidrs = $n end) | tojson)')
+        aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$CONFIG_UPDATED" \
+          --region {{.AWS_REGION}} >/dev/null
+        printf '{{.C_OK}}✓ nat_egress_cidrs in %s: %s -> %s{{.C_RESET}}\n' "$SECRET_KEY" "${STORED:-<none>}" "${NAT:-<none>}"
+      - task: hub:force-eso-refresh
 
   secrets-manager:seed-argocd-url:
     desc: Fill aws_argocd_url in <hub>/config from the Argo CD capability when it is still empty
@@ -2021,6 +2098,28 @@ tasks:
             printf '{{.C_INFO}}  Secrets, AMP, OIDC and VPC cleanup.{{.C_RESET}}\n'
             exit 1
           fi
+      # Record the OIDC issuer ids of the clusters this destroy is about to delete,
+      # BEFORE any of them goes. Step 6f only deletes IAM OIDC providers it can tie to
+      # this install: an issuer id recorded here, or an ACK services.k8s.aws/namespace
+      # tag naming one of this install's clusters. Read-only, best-effort.
+      - cmd: |
+          REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"; HUB="{{.HUB_CLUSTER_NAME}}"
+          OUT="/tmp/${HUB}-destroy-oidc-ids"
+          : > "$OUT"
+          CANDS=" $HUB ${PREFIX}-spoke-dev ${PREFIX}-spoke-prod "
+          for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
+            T=$(aws eks describe-cluster --name "$C" --region "$REGION" \
+              --query 'cluster.tags."platform.gitops.io/prefix"' --output text 2>/dev/null || true)
+            case "$CANDS" in *" $C "*) continue ;; esac
+            if [ "$T" = "$PREFIX" ]; then CANDS="$CANDS$C "; fi
+          done
+          for C in $CANDS; do
+            OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
+              --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
+            case "$OI" in https://*) echo "${OI##*/} $C" >> "$OUT" ;; esac
+          done
+          printf '{{.C_INFO}}  recorded %s OIDC issuer id(s) of this install in %s{{.C_RESET}}\n' "$(wc -l < "$OUT" | tr -d ' ')" "$OUT"
+        ignore_error: true
       - |
         # [#1033] Pivot-aware kubeconfig. After a hub self-adoption pivot kind is stopped
         # (detach=stop) or gone (detach=delete), so `kind get kubeconfig` fails and the kind
@@ -2351,22 +2450,32 @@ tasks:
               echo "  ⚠ RDS instance $DB not deleted ($(awserr "$ERR"))"
             fi
           done
-          # 6f. EKS OIDC providers for peeks clusters. IRSA uses cluster-specific OIDC
+          # 6f. EKS OIDC providers of THIS install. IRSA uses cluster-specific OIDC
           #     providers that accumulate across re-deploys (one per EKS cluster per run).
-          #     Only delete providers whose URL matches ${REGION} — never delete providers
-          #     for other regions (agent-sandbox, us-east-1 deployments, etc.).
-          ACCT=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null)
-          # Build the list of known active clusters to preserve their OIDC providers
+          #     Only providers whose URL matches ${REGION} are considered, and only those
+          #     this install owns are deleted:
+          #       - the issuer id was recorded at the start of destroy for one of this
+          #         install's clusters (/tmp/${HUB}-destroy-oidc-ids), or
+          #       - the ACK tag services.k8s.aws/namespace (set by the rg-eks oidcProvider,
+          #         namespace = cluster name) names one of OWNED_CLUSTERS (6ei).
+          #     Untagged or foreign providers (other stacks, other tools) are never deleted;
+          #     a skip line is printed for each. Active clusters' providers are always kept.
           ACTIVE_OIDCS=""
           for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
             OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
               --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
             if [ -n "$OI" ]; then ACTIVE_OIDCS="$ACTIVE_OIDCS ${OI##*/}"; fi
           done
+          RECORDED_OIDCS="/tmp/${HUB}-destroy-oidc-ids"
+          [ -f "$RECORDED_OIDCS" ] || echo "  ⚠ $RECORDED_OIDCS missing — OIDC ownership falls back to the ACK namespace tag only"
           for ARN in $(aws iam list-open-id-connect-providers \
                 --query 'OpenIDConnectProviderList[].Arn' --output text 2>/dev/null | tr '\t' '\n'); do
-            URL=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$ARN" \
-              --query 'Url' --output text 2>/dev/null || true)
+            INFO=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$ARN" \
+              --query '[Url, Tags[?Key==`services.k8s.aws/namespace`] | [0].Value]' \
+              --output text 2>/dev/null || true)
+            URL=$(printf '%s' "$INFO" | cut -f1)
+            NS=$(printf '%s' "$INFO" | cut -f2)
+            if [ "$NS" = "None" ]; then NS=""; fi
             # Only sweep EKS OIDC providers in this region
             echo "$URL" | grep -q "oidc.eks.${REGION}.amazonaws.com" || continue
             OIDC_ID="${URL##*/}"
@@ -2376,8 +2485,20 @@ tasks:
               if [ "$AO" = "$OIDC_ID" ]; then KEEP=true; break; fi
             done
             $KEEP && { echo "  skip active cluster OIDC $OIDC_ID"; continue; }
+            OWNER=""
+            if [ -f "$RECORDED_OIDCS" ]; then
+              OWNER=$(awk -v id="$OIDC_ID" '$1 == id { print $2; exit }' "$RECORDED_OIDCS")
+              if [ -n "$OWNER" ]; then OWNER="issuer of $OWNER"; fi
+            fi
+            if [ -z "$OWNER" ] && [ -n "$NS" ]; then
+              case "$OWNED_CLUSTERS" in *" $NS "*) OWNER="tag services.k8s.aws/namespace=$NS" ;; esac
+            fi
+            if [ -z "$OWNER" ]; then
+              echo "  skip OIDC provider $OIDC_ID (not owned by this install; services.k8s.aws/namespace=${NS:-<none>})"
+              continue
+            fi
             if ERR=$(aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>&1); then
-              echo "  ✓ deleted OIDC provider $OIDC_ID"
+              echo "  ✓ deleted OIDC provider $OIDC_ID ($OWNER)"
             else
               echo "  ⚠ OIDC provider $OIDC_ID not deleted ($(awserr "$ERR"))"
             fi
@@ -2477,10 +2598,6 @@ tasks:
           else
             echo "{{.DOMAIN}}"
           fi
-      KC_ADMIN_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // empty'
-      USER_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "workshop-user-2026"'
       ARGOCD_URL:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
     cmds:
@@ -2494,8 +2611,12 @@ tasks:
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
         printf '\n'
         printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
-        printf '  User:       user1 / {{.USER_PASSWORD}}\n'
-        printf '  Keycloak:   admin / {{.KC_ADMIN_PASSWORD}}\n'
+        # Never print the password values: this output is tee'd into install logs
+        # (task install, workshop urls step). Point to the secret and the command instead.
+        printf '  User:       user1   (password: key user_password)\n'
+        printf '  Keycloak:   admin   (password: key keycloak_admin_password)\n'
+        printf '  Stored in Secrets Manager secret {{.HUB_CLUSTER_NAME}}/keycloak ({{.AWS_REGION}}). Retrieve with:\n'
+        printf "    aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query SecretString --output text | jq -r .user_password\n"
         # Log discoverability (review #1053): point to the background settle log + its
         # status marker so the hub-settle outcome is findable from the final summary.
         if [ -f /tmp/hub-full-sync-settle.log ]; then

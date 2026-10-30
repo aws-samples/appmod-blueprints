@@ -1,6 +1,6 @@
 """Hermetic tests for the last step of `task install` (workshop/Taskfile.yaml): the #1033 hub
 pivot gets only what is left of the install's time budget, so it always ends before the
-self-paced template's SSM step would kill `task install` (7000 s; a kill skips the pivot's
+self-paced template's SSM step would kill `task install` (9000 s; a kill skips the pivot's
 EXIT trap and leaves kind stopped mid-gate).
 
 The step's shell block is read verbatim from the Taskfile, its go-task variables are filled
