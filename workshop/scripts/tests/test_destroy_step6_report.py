@@ -81,6 +81,8 @@ class _Client:
         def call(**kw):
             with open(os.environ["FAKE_AWS_LOG"], "a") as f:
                 f.write(json.dumps([self._svc, op, kw]) + "\n")
+            if op in _FX.get("boto_fail_ops", []):  # e.g. EKS denied in one region by an SCP
+                raise ClientError("AccessDeniedException", op)
             if (self._svc, op) == ("rds", "describe_db_instances"):
                 return {"DBInstances": [{"DBInstanceIdentifier": d, "DBInstanceStatus": "available"}
                                         for d in _FX["dbs"]]}
@@ -182,14 +184,14 @@ else:
 '''
 
 
-def _step6():
+def _step6(marker="# 6g."):
     with open(TASKFILE) as f:
         cmds = yaml.safe_load(f)["tasks"]["destroy"]["cmds"]
-    return next(c["cmd"] for c in cmds if isinstance(c, dict) and "# 6g." in c.get("cmd", ""))
+    return next(c["cmd"] for c in cmds if isinstance(c, dict) and marker in c.get("cmd", ""))
 
 
 def _run(tmp_path, **overrides):
-    cmd = _step6().replace("{{.ROOT_DIR}}", REPO)
+    cmd = _step6(overrides.pop("marker", "# 6g.")).replace("{{.ROOT_DIR}}", REPO)
     bindir, pylib = tmp_path / "bin", tmp_path / "pylib" / "boto3"
     bindir.mkdir()
     pylib.mkdir(parents=True)
@@ -202,7 +204,8 @@ def _run(tmp_path, **overrides):
     fixture.write_text(json.dumps(dict(FIXTURE, acct=ACCT, oidc_url=OIDC, **overrides.pop("fixture", {}))))
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", PYTHONPATH=str(tmp_path / "pylib"),
-               FAKE_AWS_FIXTURE=str(fixture), FAKE_AWS_LOG=str(log))
+               FAKE_AWS_FIXTURE=str(fixture), FAKE_AWS_LOG=str(log),
+               SWEEP_FAILURES_FILE=str(tmp_path / "private" / "destroy-sweep-failures"))
     tvars = {"AWS_REGION": REGION, "RESOURCE_PREFIX": PREFIX, "HUB_CLUSTER_NAME": HUB, "HUB_VPC_ID": "",
              "DESTROY_KEEP_DATA": "false", **overrides.pop("tvars", {})}
     (tmp_path / "private").mkdir(exist_ok=True)
@@ -285,6 +288,19 @@ def test_a_failing_list_roles_does_not_skip_the_rest_of_step6(tmp_path):
     assert "IAM roles not swept" in res.stdout and "IAM policies not swept" in res.stdout
     failed = (tmp_path / "private" / "destroy-sweep-failures").read_text().split()
     assert "iam-list-roles(6b)" in failed and "iam-list-policies(6c)" in failed
+
+
+@pytest.mark.parametrize("marker,step", [("# 3. Orphaned ACK-managed IAM roles", "3"), ("# 6g.", "6b")])
+def test_a_failed_iam_guard_is_recorded_for_the_final_check(tmp_path, marker, step):
+    """Review #1174 (re-review): when the all-region guard can't read EKS (one region
+    denied is enough), the role sweep is skipped. That must land in
+    destroy-sweep-failures, or destroy prints success with the roles left behind."""
+    res, calls = _run(tmp_path, marker=marker, fixture={"boto_fail_ops": ["list_clusters"]})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "not sweeping IAM roles (%s)" % step in res.stdout
+    assert not [c for c in calls if c[:2] == ["iam", "list-roles"]], "roles listed despite the failed guard"
+    failed = (tmp_path / "private" / "destroy-sweep-failures").read_text().split()
+    assert "iam-guard(%s)" % step in failed
 
 
 def test_hub_vpc_sweep_is_skipped_for_a_pre_existing_vpc(tmp_path):

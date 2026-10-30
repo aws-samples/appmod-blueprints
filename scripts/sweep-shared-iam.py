@@ -8,7 +8,8 @@ shared-iam-retained.json next to the inventory) once NO live EKS cluster in ANY
 enabled region references them any more: IAM is global, so a hub in another
 region that uses the same fixed-name role keeps it. A role another live cluster
 still uses (pod identity association, access entry, capability, cluster role) is
-kept. If any region's clusters cannot be read, nothing is deleted (fail closed). A hub that recreates the role later (its own managed
+kept. If any region's clusters cannot be read, nothing is deleted (fail closed)
+and the step is recorded in destroy-sweep-failures. A hub that recreates the role later (its own managed
 resource) does so on its next reconcile.
 """
 import os
@@ -35,6 +36,8 @@ def main(argv, eks=None, iam=None, out=sys.stdout, ec2=None, eks_for=None):
         sl.reraise_credentials(e)
         print(f'  WARN cannot read the live EKS clusters of every enabled region ({sl.err_code(e)}): '
               f'keeping the shared role(s) {", ".join(names)} (fail closed)', file=out)
+        # Not deleted means left behind: destroy's final check must not print success.
+        sl.record_failure('sweep-shared-iam(guard)')
         return 0
     deleted, kept = sl.sweep_shared_roles(iam, names, protected, o['dry_run'])
     print(f'  shared IAM roles: {len(deleted)} {"to delete" if o["dry_run"] else "deleted"}, '

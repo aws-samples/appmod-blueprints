@@ -16,6 +16,8 @@ import json
 import os
 import sys
 
+import pytest
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import sweep_lib as sl  # noqa: E402
@@ -114,6 +116,14 @@ def inventory(tmp_path, clusters):
     p = tmp_path / "destroy-inventory.json"
     p.write_text(json.dumps({"hub_vpc_id": "", "clusters": clusters}))
     return str(p)
+
+
+@pytest.fixture(autouse=True)
+def _failures_file(tmp_path, monkeypatch):
+    """Keep record_failure() out of the repo's private/ directory."""
+    path = tmp_path / "private" / "destroy-sweep-failures"
+    monkeypatch.setenv(sl.FAILURES_FILE_ENV, str(path))
+    return path
 
 
 # ------------------------------------------------------------------ selection
@@ -344,6 +354,16 @@ def test_shared_role_is_kept_when_any_region_is_unreadable(tmp_path, capsys):
     assert mod.main(["us-west-2", "--inventory", record(tmp_path, [SHARED])], iam=iam,
                     ec2=FakeEc2Regions(["ap-south-1", "us-west-2"]), eks_for=eks_for) == 0
     assert iam.calls == [] and "fail closed" in capsys.readouterr().out
+
+
+def test_shared_sweep_guard_failure_is_recorded_for_the_final_check(tmp_path, _failures_file):
+    """Review #1174 (re-review): a role kept because a region can't be read is left
+    behind, so destroy must not print success."""
+    mod = load("sweep-shared-iam.py")
+    eks_for = EksByRegion({"us-west-2": {}, "ap-south-1": None})
+    mod.main(["us-west-2", "--inventory", record(tmp_path, [SHARED])], iam=FakeIam([SHARED]),
+             ec2=FakeEc2Regions(["ap-south-1", "us-west-2"]), eks_for=eks_for)
+    assert _failures_file.read_text().split() == ["sweep-shared-iam(guard)"]
 
 
 def test_shared_role_is_deleted_when_no_region_uses_it(tmp_path):

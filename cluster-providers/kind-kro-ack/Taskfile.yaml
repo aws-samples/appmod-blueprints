@@ -2221,16 +2221,18 @@ tasks:
           DENY_RE='(-team-stack-|SharedRole|-cluster-mgmt-|-cluster-role$|-cluster-node-role$|-crossplane-provider|Crossplane.*ProviderRole|-argo-rollouts)'
           # Never delete a role a live EKS cluster still references (cluster role, access
           # entry, capability, pod identity): a spoke kept with deletionPolicy=retain holds
-          # the hub's roles in its access entries. Fail closed when the clusters can't be read.
+          # the hub's roles in its access entries. Fail closed when the clusters can't be read,
+          # and record it: the roles are left behind, so the final check must not print ✓.
+          # A failing list call must not abort this step under pipefail (that skipped 4-5):
+          # warn, record it for the final check, go on.
+          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           if PROTECTED=$(python3 "{{.ROOT_DIR}}/scripts/sweep-iam-guard.py" "$REGION"); then
             ROLE_SWEEP=true
           else
             ROLE_SWEEP=false; PROTECTED=""
-            echo "  ⚠ cannot read the live EKS clusters: not sweeping IAM roles (a live cluster may use them)"
+            echo "  ⚠ cannot read the live EKS clusters of every enabled region: not sweeping IAM roles (3)"
+            echo "iam-guard(3)" >> "$FAILED"
           fi
-          # A failing list call must not abort this step under pipefail (that skipped 4-5):
-          # warn, record it for the final check, go on.
-          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           ROLES=""
           if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
             ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" --output text 2>/dev/null) \
@@ -2309,16 +2311,17 @@ tasks:
           #     re-deploy. Same denylist as step 3 to protect CFN/cluster roles.
           DENY_RE='(-team-stack-|SharedRole)'
           # Same live-cluster guard as step 3: a role a live EKS cluster still references
-          # (e.g. a retained spoke's access entries) is skipped; fail closed.
+          # (e.g. a retained spoke's access entries) is skipped; fail closed, and record it.
+          # A failing list call must not abort step 6 under pipefail (that skipped 6b2-6i
+          # and destroy still printed success): warn, record it for the final check, go on.
+          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           if PROTECTED=$(python3 "{{.ROOT_DIR}}/scripts/sweep-iam-guard.py" "$REGION"); then
             ROLE_SWEEP=true
           else
             ROLE_SWEEP=false; PROTECTED=""
-            echo "  ⚠ cannot read the live EKS clusters: not sweeping IAM roles (a live cluster may use them)"
+            echo "  ⚠ cannot read the live EKS clusters of every enabled region: not sweeping IAM roles (6b)"
+            echo "iam-guard(6b)" >> "$FAILED"
           fi
-          # A failing list call must not abort step 6 under pipefail (that skipped 6b2-6i
-          # and destroy still printed success): warn, record it for the final check, go on.
-          FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           ROLES=""
           if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
             ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" \
@@ -2550,7 +2553,7 @@ tasks:
           fi
           FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           if [ -s "$FAILED" ]; then
-            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, or a failed list call) and swept nothing: %s{{.C_RESET}}\n' \
+            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, a failed list call, or EKS unreadable in an enabled region) and swept nothing: %s{{.C_RESET}}\n' \
               "$(sort -u "$FAILED" | tr '\n' ' ')"
             printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
             exit 1
