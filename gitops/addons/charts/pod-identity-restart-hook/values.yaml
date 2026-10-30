@@ -3,3 +3,5 @@ targets: []
   #   namespace: kube-system
   #   serviceAccount: aws-load-balancer-controller-sa
   #   deploymentLabel: app.kubernetes.io/name=aws-load-balancer-controller
+  #   # Optional: deployment (default) or daemonset.
+  #   workloadKind: deployment
