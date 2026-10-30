@@ -2474,10 +2474,6 @@ tasks:
           else
             echo "{{.DOMAIN}}"
           fi
-      KC_ADMIN_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // empty'
-      USER_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "workshop-user-2026"'
       ARGOCD_URL:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
     cmds:
@@ -2491,8 +2487,12 @@ tasks:
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
         printf '\n'
         printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
-        printf '  User:       user1 / {{.USER_PASSWORD}}\n'
-        printf '  Keycloak:   admin / {{.KC_ADMIN_PASSWORD}}\n'
+        # Never print the password values: this output is tee'd into install logs
+        # (task install, workshop urls step). Point to the secret and the command instead.
+        printf '  User:       user1   (password: key user_password)\n'
+        printf '  Keycloak:   admin   (password: key keycloak_admin_password)\n'
+        printf '  Stored in Secrets Manager secret {{.HUB_CLUSTER_NAME}}/keycloak ({{.AWS_REGION}}). Retrieve with:\n'
+        printf "    aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query SecretString --output text | jq -r .user_password\n"
         # Log discoverability (review #1053): point to the background settle log + its
         # status marker so the hub-settle outcome is findable from the final summary.
         if [ -f /tmp/hub-full-sync-settle.log ]; then
