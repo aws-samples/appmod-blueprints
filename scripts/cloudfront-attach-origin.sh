@@ -61,8 +61,17 @@ command -v jq  >/dev/null 2>&1 || die "jq not found"
 # ingress is reconciled — it typically takes 1–3 min to appear. A fresh install therefore
 # races the controller: querying once and failing on the first miss aborts `task install`
 # (and everything after it: spokes, overlay, IDC) even though the ALB materialises moments
-# later. Poll for it up to ALB_WAIT_SECONDS (default 600) before giving up.
-ALB_WAIT="${ALB_WAIT_SECONDS:-600}"
+# later. Poll for it up to ALB_WAIT_SECONDS (default 1800) before giving up.
+#
+# Why 1800 and not "1-3 min": `task install` returns while ArgoCD is still converging, and
+# the ALB sits at the end of a cross-Application CRD chain (cert-manager -> load balancer
+# controller -> ingress-class-alb IngressClassParams -> ALB). On the rc7b install the chain
+# finished 23 min after `task install` returned, so a 600s budget aborted the whole
+# workshop install (spokes, overlay, IDC never ran). The retry cap on those two addons
+# (gitops/addons/registry/core.yaml) removes most of that lag; this budget covers a slow
+# first sync of cert-manager itself. The loop returns as soon as the ALB exists, so a
+# healthy install waits no longer than before.
+ALB_WAIT="${ALB_WAIT_SECONDS:-1800}"
 ALB=""
 WAITED=0
 while :; do

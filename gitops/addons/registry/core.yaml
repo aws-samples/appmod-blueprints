@@ -359,6 +359,30 @@ ingress-class-alb:
       - key: enable_ingress_class_alb
         operator: In
         values: ['true']
+  # Inherited default syncPolicy, with the retry backoff capped at 1m instead of 10m.
+  # With controllerMode oss this app renders elbv2.k8s.aws/IngressClassParams, whose CRD
+  # is installed by the aws-load-balancer-controller app. The sync-wave above orders the
+  # ApplicationSets, not the syncs of the Applications they generate, so on a fresh
+  # cluster every attempt fails ("no matches for kind IngressClassParams") until that CRD
+  # exists. With a 10m cap the doubling backoff can sleep up to 10 minutes past the moment
+  # the CRD lands, and no IngressClassParams means no platform ALB, which is what
+  # cloudfront-attach-origin.sh waits for (rc7b: CRD 11:40:27, ICP 11:49:04 after 9
+  # retries). A 1m cap makes the ICP follow the CRD within a minute. Only the retry
+  # cadence of a failing sync changes; a healthy app is never retried. NOTE: a per-addon
+  # syncPolicy fully overrides the default, so the default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
     loadBalancerName: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
@@ -398,6 +422,30 @@ aws-load-balancer-controller:
         values: ['true']
   goTemplateOptions:
     - "missingkey=zero"
+  # Inherited default syncPolicy, with the retry backoff capped at 1m instead of 10m.
+  # enableCertManager:true makes this app render cert-manager Certificate/Issuer objects,
+  # so on a fresh cluster every attempt fails until the cert-manager app (a separate
+  # Application; the sync-wave orders ApplicationSets, not Application syncs) has
+  # installed its CRDs and webhook. With a 10m cap the doubling backoff can sleep up to
+  # 10 minutes past that point, and the LBC CRDs (elbv2 IngressClassParams, needed by
+  # ingress-class-alb) and the controller itself (which creates the platform ALB) wait
+  # with it (rc7b: cert-manager CRDs 11:19:14, LBC CRDs 11:40:27 after 9 retries). A 1m
+  # cap makes the LBC follow cert-manager within a minute. Only the retry cadence of a
+  # failing sync changes. NOTE: a per-addon syncPolicy fully overrides the default, so
+  # the default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     vpcId: '{{.metadata.annotations.aws_vpc_id}}'
