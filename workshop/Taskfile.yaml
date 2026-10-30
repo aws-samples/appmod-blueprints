@@ -821,7 +821,7 @@ tasks:
         #    (0 means "wait forever" to both), so callers check `left() > 0` and skip.
         left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
         if [ -n "$DEADLINE" ] && [ "$(left)" -le 0 ]; then
-          printf '{{.C_INFO}}  ⚠ install budget already spent — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  ⚠ install budget already spent — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           exit 0
         fi
 
@@ -856,7 +856,7 @@ tasks:
           printf '{{.C_ERR}}  ⚠ no budget left for the workflow-controller wait — continuing anyway (non-fatal).{{.C_RESET}}\n'
         fi
         if ! $KUBE get crd workflows.argoproj.io >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  ⚠ Workflow CRD not served yet — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  ⚠ Workflow CRD not served yet — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           rm -f "$KC"; exit 0
         fi
 
@@ -893,7 +893,7 @@ tasks:
           printf '{{.C_INFO}}  ↩ GitLab repo %s/%s-cicd already exists but CICDPipeline not registered — NOT re-scaffolding (publish:gitlab would fail); waiting for ACTIVE.{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
         fi
         if [ -z "$BUDGET_OK" ] && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-          printf '{{.C_ERR}}  ⚠ install budget spent before scaffold could start — skipping prewarm (non-fatal; retry via task workshop:prewarm-rust-cicd).{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  ⚠ install budget spent before scaffold could start — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           rm -f "$KC"; exit 0
         fi
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
@@ -1085,7 +1085,7 @@ tasks:
         fi
         left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
         if [ "$(left)" -le 0 ]; then
-          printf '{{.C_INFO}}  ⚠ install budget spent — skipping (non-fatal; retry via task workshop:prewarm-pathA-frontend).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  ⚠ install budget spent — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-frontend).{{.C_RESET}}\n'
           exit 0
         fi
         KC=$(mktemp)
@@ -1106,7 +1106,7 @@ tasks:
         E=0
         until $K get crd appmodservices.kro.run >/dev/null 2>&1; do
           if [ "$E" -ge "$T" ]; then
-            printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s after %ss — skipping (non-fatal; retry via task workshop:prewarm-pathA-frontend).{{.C_RESET}}\n' "$CLUSTER" "$E"
+            printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-frontend).{{.C_RESET}}\n' "$CLUSTER" "$E"
             exit 0
           fi
           sleep 15; E=$((E + 15))
@@ -1174,7 +1174,7 @@ tasks:
         fi
         left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
         if [ "$(left)" -le 0 ]; then
-          printf '{{.C_INFO}}  ⚠ install budget spent — skipping (non-fatal; retry via task workshop:prewarm-pathA-rust-kro).{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  ⚠ install budget spent — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n'
           exit 0
         fi
         if [ -z "{{.GIT_DOMAIN}}" ] || [ -z "{{.GIT_PASSWORD}}" ]; then
@@ -1195,7 +1195,7 @@ tasks:
         E=0
         until $H get applications.argoproj.io "$CD_APP" -n argocd >/dev/null 2>&1; do
           if [ "$E" -ge "$T" ]; then
-            printf '{{.C_ERR}}  ⚠ Argo CD app %s not found after %ss — skipping (non-fatal; retry via task workshop:prewarm-pathA-rust-kro).{{.C_RESET}}\n' "$CD_APP" "$E"
+            printf '{{.C_ERR}}  ⚠ Argo CD app %s not found after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "$CD_APP" "$E"
             exit 0
           fi
           sleep 15; E=$((E + 15))
@@ -1253,22 +1253,32 @@ tasks:
         #    this point — the Rollout converges once the image lands).
         TAG=initial
         mkdir -p deployment/dev
+        # Every render step is checked: a failed envsubst/sed/cp would otherwise leave
+        # a 0-byte or partial file that passes the placeholder grep below, gets
+        # committed, and is then protected forever by the anti-overwrite guard (step 3).
+        RENDER_OK=yes
         RESOURCE_PREFIX="$PREFIX" envsubst '${RESOURCE_PREFIX}' \
-          < deployment/templates/kro/application.yaml > deployment/dev/application.yaml
-        sed -i \
+          < deployment/templates/kro/application.yaml > deployment/dev/application.yaml || RENDER_OK=""
+        [ -n "$RENDER_OK" ] && { sed -i \
           -e "s|<image>|${ACC}.dkr.ecr.${REGION}.amazonaws.com/${PREFIX}/${APP}:${TAG}|" \
           -e "s|<environment>|dev|g" \
           -e "s|<cluster_name>|${DEV}|" \
           -e "s|\${AWS_ACCOUNT_ID}|${ACC}|" \
           -e "s|\${AWS_REGION}|${REGION}|" \
-          deployment/dev/application.yaml
+          deployment/dev/application.yaml || RENDER_OK=""; }
         FILES="deployment/dev/application.yaml"
         if [ -n "$WRITE_SVC" ]; then
-          cp deployment/templates/kro/services.yaml deployment/dev/services.yaml
-          sed -i -e "s|<environment>|dev|g" deployment/dev/services.yaml
+          [ -n "$RENDER_OK" ] && { cp deployment/templates/kro/services.yaml deployment/dev/services.yaml \
+            && sed -i -e "s|<environment>|dev|g" deployment/dev/services.yaml || RENDER_OK=""; }
           FILES="$FILES deployment/dev/services.yaml"
         else
           printf '{{.C_INFO}}  deployment/dev/services.yaml already present — kept as is.{{.C_RESET}}\n'
+        fi
+        # shellcheck disable=SC2086
+        for F in $FILES; do [ -s "$F" ] || RENDER_OK=""; done
+        if [ -z "$RENDER_OK" ]; then
+          printf '{{.C_ERR}}  ⚠ rendering %s failed or produced an empty file — not pushing (non-fatal).{{.C_RESET}}\n' "$FILES"
+          exit 0
         fi
         # shellcheck disable=SC2086
         if grep -qE '<[a-z_]+>|\$\{' $FILES; then
@@ -1293,7 +1303,7 @@ tasks:
           fi
         done
         if [ -z "$PUSHED" ]; then
-          printf '{{.C_ERR}}  ⚠ push to %s/%s failed after retries — skipping (non-fatal; retry via task workshop:prewarm-pathA-rust-kro).{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
+          printf '{{.C_ERR}}  ⚠ push to %s/%s failed after retries — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "{{.GIT_USERNAME}}" "$APP"
           exit 0
         fi
         printf '{{.C_OK}}  ✓ pushed %s (image :%s) to %s/%s.{{.C_RESET}}\n' "$FILES" "$TAG" "{{.GIT_USERNAME}}" "$APP"
