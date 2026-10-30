@@ -294,6 +294,14 @@ aws-for-fluentbit:
     # region, from the same aws_region annotation every other AWS addon reads.
     cloudWatchLogs:
       region: '{{.metadata.annotations.aws_region}}'
+      # One log group per cluster, so the spokes of an account and region do not
+      # all write into the chart default /aws/eks/fluentbit-cloudwatch/logs. It
+      # stays under /aws/eks/fluentbit-cloudwatch/, the prefix the aws-for-fluentbit
+      # pod identity policy is scoped to (crossplane-pod-identity / ack-pod-identity),
+      # which also allows logs:PutRetentionPolicy for the retention below.
+      logGroupName: '/aws/eks/fluentbit-cloudwatch/{{.metadata.annotations.aws_cluster_name}}/logs'
+      # The chart default sets no retention, so the logs never expire.
+      logRetentionDays: 7
     # Pinned to the chart's default name so the aws-for-fluentbit pod identity
     # (crossplane-pod-identity / ack-pod-identity) always targets this SA.
     serviceAccount:

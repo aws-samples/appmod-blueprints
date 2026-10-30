@@ -414,8 +414,9 @@ identities:
       purpose: aws-for-fluentbit-pod-identity
     policy:
       name: FluentBitCloudWatchLogsPolicy
-      # Scoped to the chart's log group prefix (cloudWatchLogs.logGroupName defaults
-      # to /aws/eks/fluentbit-cloudwatch/logs). The trailing * also covers the
+      # Scoped to the chart's log group prefix (the registry sets cloudWatchLogs.
+      # logGroupName to /aws/eks/fluentbit-cloudwatch/<cluster>/logs; the chart
+      # default is /aws/eks/fluentbit-cloudwatch/logs). The trailing * also covers the
       # :log-stream:* ARNs PutLogEvents is authorised against.
       document: |
         {
