@@ -401,6 +401,44 @@ identities:
           ]
         }
 
+  aws-for-fluentbit:
+    enabled: false
+    roleName: FluentBitPodIdentityRole
+    namespace: kube-system
+    serviceAccount: aws-for-fluent-bit
+    tags:
+      managed-by: crossplane
+      purpose: aws-for-fluentbit-pod-identity
+    policy:
+      name: FluentBitCloudWatchLogsPolicy
+      # Scoped to the chart's log group prefix (cloudWatchLogs.logGroupName defaults
+      # to /aws/eks/fluentbit-cloudwatch/logs). The trailing * also covers the
+      # :log-stream:* ARNs PutLogEvents is authorised against.
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents",
+                "logs:PutRetentionPolicy"
+              ],
+              "Resource": "arn:aws:logs:*:*:log-group:/aws/eks/fluentbit-cloudwatch/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:DescribeLogGroups"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
   keycloak:
     enabled: false
     roleName: KeycloakConfigPodIdentityRole

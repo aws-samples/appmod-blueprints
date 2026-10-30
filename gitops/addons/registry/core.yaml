@@ -84,6 +84,8 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      aws-for-fluentbit:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_for_fluentbit")}}'
       keycloak:
         enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:
@@ -198,6 +200,8 @@ ack_pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      aws-for-fluentbit:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_for_fluentbit")}}'
       keycloak:
         enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:

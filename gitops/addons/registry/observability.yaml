@@ -272,7 +272,10 @@ aws-for-fluentbit:
   chartRepository: https://aws.github.io/eks-charts
   defaultVersion: "0.2.0"
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: "3"
+    # Wave 5, with the other pod-identity consumers (lbc / external-dns): after
+    # pod_identities (wave 4) and ack_pod_identities (wave -4) have created the
+    # aws-for-fluentbit association, so the DaemonSet pods start with credentials.
+    argocd.argoproj.io/sync-wave: "5"
   selector:
     matchExpressions:
       - key: enable_aws_for_fluentbit
@@ -291,6 +294,23 @@ aws-for-fluentbit:
     # region, from the same aws_region annotation every other AWS addon reads.
     cloudWatchLogs:
       region: '{{.metadata.annotations.aws_region}}'
+    # Pinned to the chart's default name so the aws-for-fluentbit pod identity
+    # (crossplane-pod-identity / ack-pod-identity) always targets this SA.
+    serviceAccount:
+      name: aws-for-fluent-bit
+  additionalResources:
+    # Restart the DaemonSet once if its pods started before the pod identity
+    # association existed (same mechanism as lbc / external-dns).
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
+      helm:
+        releaseName: aws-for-fluentbit-credential-check
+        valuesObject:
+          targets:
+            - name: aws-for-fluentbit
+              namespace: kube-system
+              serviceAccount: aws-for-fluent-bit
+              workloadKind: daemonset
+              deploymentLabel: app.kubernetes.io/name=aws-for-fluent-bit
 
 cni-metrics-helper:
   namespace: kube-system

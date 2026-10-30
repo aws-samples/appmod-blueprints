@@ -1,4 +1,6 @@
 {{- range $target := .Values.targets }}
+{{- /* workloadKind: deployment (default, unchanged behaviour) or daemonset. */}}
+{{- $kind := $target.workloadKind | default "deployment" }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -19,7 +21,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["{{ $kind }}s"]
     verbs: ["get", "list", "patch"]
   - apiGroups: [""]
     resources: ["pods"]
@@ -73,9 +75,9 @@ spec:
               if kubectl get pod $POD -n $NS -o jsonpath='{.spec.containers[0].env[*].name}' | grep -q AWS_CONTAINER_CREDENTIALS_FULL_URI; then
                 echo "Pod identity credentials already injected, no restart needed"
               else
-                echo "Missing pod identity credentials, restarting deployment"
-                kubectl rollout restart deployment -n $NS -l $LABEL
-                kubectl rollout status deployment -n $NS -l $LABEL --timeout=120s
+                echo "Missing pod identity credentials, restarting {{ $kind }}"
+                kubectl rollout restart {{ $kind }} -n $NS -l $LABEL
+                kubectl rollout status {{ $kind }} -n $NS -l $LABEL --timeout=120s
               fi
       restartPolicy: Never
 {{- end }}
