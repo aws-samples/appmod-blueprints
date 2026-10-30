@@ -174,7 +174,9 @@ re‑creates/swaps automatically.
 
 With `insecure: true` the ALB is **internal**, and CloudFront is the public edge. Treat every UI
 behind it as internet‑exposed: ensure each enforces its own auth, and consider a WAF on the
-distribution. See the repo's [docs/platform/cloudfront-exposure.md](../platform/cloudfront-exposure.md)
+distribution. If that WAF filters by source IP, add the NAT egress IPs of the hub and of OAP
+spokes to its IP set, or in‑cluster SSO times out
+([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)). See the repo's [docs/platform/cloudfront-exposure.md](../platform/cloudfront-exposure.md)
 for the full exposure design.
 
 ---

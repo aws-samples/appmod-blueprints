@@ -498,8 +498,15 @@ tasks:
           # After a 3min grace period, nudge out-of-sync apps every 5min to reset stuck backoff
           if [ $ELAPSED -ge 180 ] && [ $((ELAPSED - LAST_NUDGE)) -ge 300 ]; then
             for a in $(echo "$APPS" | awk '$2!="Synced" && NF>0 {print $1}'); do
+              # Argo CD reads sync options from the operation, not from app.spec (argo-cd
+              # controller/sync.go), so a bare .operation patch silently drops the app's
+              # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
+              # spec.syncPolicy.syncOptions; with none (or on any read error) the body is unchanged.
+              OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+              OP_BODY=$($KC_HUB get application "$a" -n argocd -o json 2>/dev/null \
+                | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
               $KC_HUB patch application "$a" -n argocd --type merge \
-                -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' >/dev/null 2>&1 || true
+                -p "${OP_BODY:-$OP_BASE}" >/dev/null 2>&1 || true
             done
             LAST_NUDGE=$ELAPSED
             printf '{{.C_INFO}}  ↻ nudged out-of-sync spoke apps{{.C_RESET}}\n'
@@ -2544,8 +2551,15 @@ tasks:
         # argocd CLI or a valid ArgoCD auth token — it uses the IDE's cluster-admin
         # access entry that grant-ide-access sets up on the hub.
         if [ "$PRUNED" = false ]; then
+          # Argo CD reads sync options from the operation, not from app.spec (argo-cd
+          # controller/sync.go), so a bare .operation patch silently drops the app's
+          # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
+          # spec.syncPolicy.syncOptions; with none (or on any read error) the body is unchanged.
+          OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}'
+          OP_BODY=$($KC_HUB get application "$APP" -n argocd -o json 2>/dev/null \
+            | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
           $KC_HUB patch application "$APP" -n argocd --type merge \
-            -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}' \
+            -p "${OP_BODY:-$OP_BASE}" \
             2>/dev/null && PRUNED=true || \
             printf '{{.C_ERR}}⚠ kubectl patch also failed. The spoke will be deleted when kind-kro-ack:destroy runs hub:destroy-addons.{{.C_RESET}}\n'
         fi
