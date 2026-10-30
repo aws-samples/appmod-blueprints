@@ -10,6 +10,9 @@ EXPOSE 8000
 # Wrap the stdio server. IMPORTANT: run STATEFUL — supergateway wrapping a stdio
 # server needs a warm process + per-session routing, otherwise each request spawns
 # a new process that never received `initialize` and tools/list fails.
-CMD ["supergateway", "--stdio", "awslabs.eks-mcp-server --allow-sensitive-data-access --auth-mode iam", \
+# Read-only is EXPLICIT (--no-allow-write): never rely on the server default, and never
+# copy the upstream README snippet that passes --allow-write. The aiops chart repeats
+# this line as the container `command`, so keep both in sync.
+CMD ["supergateway", "--stdio", "awslabs.eks-mcp-server --no-allow-write --allow-sensitive-data-access --auth-mode iam", \
      "--outputTransport", "streamableHttp", "--port", "8000", \
      "--streamableHttpPath", "/mcp", "--healthEndpoint", "/health", "--stateful", "--logLevel", "info"]

@@ -28,6 +28,9 @@ hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
 {{- $hub := printf "%s-hub" .Values.clusterPrefix -}}
 {{- $roleKey := printf "%s/%s/aiops-agent/aiops-agent" .Values.region $hub -}}
 {{- $agentRole := printf "%s-%s-role" (printf "%s-aiops-agent" $hub | trunc 50) (sha256sum $roleKey | trunc 8) -}}
+{{- /* eks-read-mcp has its own SA (and so its own trait-named role): it is the principal of the EKS AccessEntries. */ -}}
+{{- $mcpRoleKey := printf "%s/%s/aiops-agent/eks-read-mcp" .Values.region $hub -}}
+{{- $eksMcpRole := printf "%s-%s-role" (printf "%s-eks-read-mcp" $hub | trunc 50) (sha256sum $mcpRoleKey | trunc 8) -}}
 {{- $polKey := printf "%s/%s/aiops-agent/aiops-agent-hub/eks-read-access" .Values.region $hub -}}
 {{- $eksReadPolicy := printf "%s-%s-iam-policy" (printf "%s-aiops-agent-hub-eks-read-access" $hub | trunc 100) (sha256sum $polKey | trunc 8) -}}
 {{- .Files.Get "files/aiops-agent-app.yaml"
@@ -44,6 +47,7 @@ hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
       | replace "REPLACE_REG_INCIDENT_BRIDGE" (default $reg (index $ib     "registry"))
       | replace "REPLACE_TAG_INCIDENT_BRIDGE" (default $tag (index $ib     "tag" | toString))
       | replace "REPLACE_AGENT_ROLE_NAME"     $agentRole
+      | replace "REPLACE_EKS_MCP_ROLE_NAME"   $eksMcpRole
       | replace "REPLACE_EKS_READ_POLICY_NAME" $eksReadPolicy
       | replace "REPLACE_ACCOUNT_ID"     (.Values.accountId     | toString)
       | replace "REPLACE_CLUSTER_PREFIX" .Values.clusterPrefix
