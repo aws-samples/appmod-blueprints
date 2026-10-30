@@ -376,7 +376,8 @@ def r53_account():
 
 
 def is_gone_hb(live=("ha-hub",)):
-    return sl.gone_stack_clusters("hb", "hb-hub", {n: {"status": "ACTIVE", "vpc": ""} for n in live}, {})
+    return sl.gone_stack_clusters("hb", "hb-hub", {n: {"status": "ACTIVE", "vpc": ""} for n in live},
+                                  {"clusters": [{"name": "hb-dev", "deletionPolicy": "delete"}]})
 
 
 def test_external_dns_records_of_the_removed_stack_only_are_deleted():
@@ -422,11 +423,21 @@ def test_dns_dry_run_writes_nothing(capsys):
     assert "would delete Route53 A hb." in capsys.readouterr().out
 
 
-def test_hub_leftovers_cli_passes_the_domain_to_route53(capsys):
+def test_dns_records_of_a_nested_prefix_hub_are_kept():
+    """Review #1174: prefix "hb" must not take the records of "hb-a-hub", even when
+    that hub is not live in this region (it may run in another region, same zone)."""
+    r53 = FakeR53({ZONE: [alias("a.hb." + ZONE, "A"), txt("a-a.hb." + ZONE, "hb-a-hub")]})
+    plans, kept = sl.select_dns_records(r53, "platform.example.com", is_gone_hb(live=()))
+    assert plans == [] and ("a-a.hb." + ZONE, "hb-a-hub") in kept
+
+
+def test_hub_leftovers_cli_passes_the_domain_to_route53(capsys, tmp_path):
     from test_destroy_teardown_leftovers import FakeEc2, FakeElbv2, FakeLogs, FakeEks
     mod = load("sweep-hub-leftovers.py")
     r53 = r53_account()
-    rc = mod.main(["hb", "us-west-2", "hb-hub", "--domain", "hb.platform.example.com"],
+    inv = tmp_path / "destroy-inventory.json"
+    inv.write_text('{"clusters": [{"name": "hb-dev", "deletionPolicy": "delete"}]}')
+    rc = mod.main(["hb", "us-west-2", "hb-hub", "--domain", "hb.platform.example.com", "--inventory", str(inv)],
                   ec2=FakeEc2({}), elbv2=FakeElbv2({}), logs=FakeLogs([], []), eks=FakeEks(["ha-hub"]), r53=r53)
     assert rc == 0 and len(r53.changes) == 1
     assert "hub leftovers: 6 selected, 6 deleted" in capsys.readouterr().out

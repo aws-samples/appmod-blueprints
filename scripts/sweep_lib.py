@@ -564,13 +564,13 @@ def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, de
 def select_log_groups(logs, prefix, hub, clusters, inventory=None, assume_deleted=()):
     """(selected, [(group, reason)]) EKS log groups of clusters this destroy removed.
 
-    A group /aws/eks/<name>/... is ours when <name> is the hub, starts with
-    <prefix>-, or is a cluster the inventory lists with deletionPolicy=delete
-    (spokes can have any name). It is kept when <name> is still a live cluster
-    or a retained one.
+    A group /aws/eks/<name>/... is ours when <name> is exactly one of this stack's
+    clusters (stack_cluster_names: the hub, the inventory's kro cluster instances,
+    the legacy <prefix>-spoke-dev/-prod), never by a <prefix>-* wildcard. It is
+    kept when <name> is still a live cluster or a retained one.
     """
     inventory = inventory or {'clusters': []}
-    ours_extra = deleted_clusters(inventory)
+    ours = stack_cluster_names(prefix, hub, inventory)
     retained = retained_clusters(inventory)
     live = live_clusters(clusters, assume_deleted)
     groups = []
@@ -590,7 +590,7 @@ def select_log_groups(logs, prefix, hub, clusters, inventory=None, assume_delete
         if len(parts) < 4 or not parts[3]:
             continue
         name = parts[3]
-        if not (name == hub or name.startswith(f'{prefix}-') or name in ours_extra):
+        if name not in ours:
             continue
         if name in retained:
             skipped.append((g, f'cluster {name} is kept by deletionPolicy=retain'))
@@ -846,18 +846,34 @@ def sweep_shared_roles(iam, names, protected, dry_run=False):
 #   * target groups of the load-balancer-controller (step 1 deletes the ALBs only);
 #   * CloudWatch Logs delivery sources/destinations of the EKS capability logs
 #     (step 2 deletes the deliveries only).
-# Each is scoped to a cluster of THIS stack (the hub, or <prefix>-*) that is no
-# longer live, so a live or retained cluster's resources are never touched.
+# Each is scoped to a cluster of THIS stack (stack_cluster_names: exact names, no
+# <prefix>-* wildcard) that is no longer live, so a live or retained cluster's
+# resources, and another stack whose prefix starts with ours, are never touched.
 
-def _stack_cluster(name, prefix, hub):
-    return bool(name) and (name == hub or name.startswith(f'{prefix}-'))
+LEGACY_SPOKES = ('spoke-dev', 'spoke-prod')
+
+
+def stack_cluster_names(prefix, hub, inventory=None):
+    """The clusters of THIS stack, by exact name: the hub, every kro cluster instance
+    the inventory recorded (spokes can have any name), and the legacy
+    <prefix>-spoke-dev/-prod spokes (the same set step 6ei uses for AMP scrapers).
+    Never a <prefix>-* wildcard: destroying prefix "peeks" must not select the
+    resources of a "peeks-a-hub" that shares the account or the hosted zone."""
+    names = {hub} | {c.get('name') for c in (inventory or {}).get('clusters', [])}
+    names |= {f'{prefix}-{s}' for s in LEGACY_SPOKES}
+    return {n for n in names if n}
+
+
+def _stack_cluster(name, prefix, hub, inventory=None):
+    return bool(name) and name in stack_cluster_names(prefix, hub, inventory)
 
 
 def gone_stack_clusters(prefix, hub, clusters, inventory=None, assume_deleted=()):
     """Predicate: cluster name belongs to this stack and is neither live nor retained."""
     live = set(live_clusters(clusters, assume_deleted))
     retained = retained_clusters(inventory or {})
-    return lambda n: _stack_cluster(n, prefix, hub) and n not in live and n not in retained
+    ours = stack_cluster_names(prefix, hub, inventory)
+    return lambda n: bool(n) and n in ours and n not in live and n not in retained
 
 
 EKS_CLUSTER_NAME_TAG = 'eks:eks-cluster-name'

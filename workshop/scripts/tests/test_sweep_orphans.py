@@ -562,6 +562,14 @@ def test_log_group_sweep_deletes_and_dry_run_does_not():
 
 # ------------------------------------------------------------------ misc
 
+def test_log_groups_of_a_longer_prefix_are_not_ours():
+    """Review #1174: destroying prefix "ha" must not delete the log groups of an
+    "ha-a-hub" stack, nor of an hb-* cluster the inventory does not list."""
+    logs = FakeLogs(["/aws/eks/ha-hub/cluster", "/aws/eks/ha-a-hub/cluster", "/aws/eks/ha-unlisted/cluster"])
+    sel, _ = sl.select_log_groups(logs, "ha", "ha-hub", {}, {"clusters": []})
+    assert sel == ["/aws/eks/ha-hub/cluster"]
+
+
 def test_retained_prefix_named_spoke_keeps_its_log_groups():
     logs = FakeLogs(["/aws/eks/ha-staging/cluster"])
     inv = {"clusters": [{"name": "ha-staging", "deletionPolicy": "retain"}]}
