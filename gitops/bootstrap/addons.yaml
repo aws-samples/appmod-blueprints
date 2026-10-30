@@ -56,8 +56,8 @@ spec:
               - $defaults/{{ .metadata.annotations.addonsRepoBasepath }}overlays/clusters/{{ .nameNormalized }}/overrides.yaml
               # Overlay (fleet-config) overlays/* content is at the REPO ROOT
               # (overlay_repo_basepath=""). Use it AS-IS (no gitops/ fallback) so the
-              # root-seeded overlays/environments/<env>/overrides.yaml (which INTRODUCES the
-              # aiops-agent registry entry on the hub) is actually read. Matches the appset-chart
+              # root-seeded overlays/environments/<env>/overrides.yaml (consumer addon
+              # valuesObject overrides) is actually read. Matches the appset-chart
               # Convention (overlayRepoURLGitBasePath, also no fallback) for configs/* + per-addon
               # overlay values. The $defaults/* lines above already cover the base repo overrides.
               - $overlay/{{ index .metadata.annotations "overlay_repo_basepath" }}overlays/environments/{{ .metadata.labels.environment }}/overrides.yaml

@@ -18,10 +18,12 @@
 > renamed `peeks-agent` → `aiops-agent`
 > ([appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954))
 > **and relocated under `workshop/aiops-agent/`** (chart at
-> `workshop/aiops-agent/chart`, sources under `workshop/aiops-agent/src/`). This
-> keeps the generic `gitops/addons/` tree **agent-free**: the agent is introduced
-> as a **workshop-overlay** addon (§6.3/§7), not a base-platform registry entry.
-> The `workshop/` path is the interim home for the workshop deployment. The
+> `workshop/aiops-agent/chart`, sources under `workshop/aiops-agent/src/`). Its
+> **registry entry is upstream** in `gitops/addons/registry/platform.yaml`,
+> **disabled by default** (gated by `enable_aiops_agent`); an overlay only decides
+> whether to deploy it (`aiops_agent: true`) — see §7 for why this reverses the
+> earlier "agent-free base registry" decision. The `workshop/` path is the interim
+> home of the chart. The
 > enablement/registry key is `aiops_agent` / `enable_aiops_agent` — this design is
 > the source implementation PRs copy the key from (§6.4, §13).
 
@@ -173,7 +175,7 @@ rough edges · ⏳ Planned, not yet implemented.
 
 | Repository | Role | Contents (relevant to this design) |
 |---|---|---|
-| **`appmod-blueprints`** (this repo) | Platform + generator + the agent | `platform-charts/appset-chart` (the ApplicationSet generator, Source B); `workshop/aiops-agent/chart` (the agent chart + OAM app, sources under `workshop/aiops-agent/src/` — moved under `workshop/` in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**; base `gitops/addons/` tree stays agent-free); `workshop/overlay/overlays/environments/<env>/overrides.yaml` (agent registry entry — workshop overlay, **not** base `platform.yaml`); `workshop/overlay/overlays/environments/<env>/enabled-addons.yaml` (feature flags, incl. `aiops_agent`) |
+| **`appmod-blueprints`** (this repo) | Platform + generator + the agent | `platform-charts/appset-chart` (the ApplicationSet generator, Source B); `workshop/aiops-agent/chart` (the agent chart + OAM app, sources under `workshop/aiops-agent/src/` — moved under `workshop/` in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**); `gitops/addons/registry/platform.yaml` (agent registry entry — **upstream, disabled by default**, gated `enable_aiops_agent`; §7); `workshop/overlay/overlays/environments/<env>/enabled-addons.yaml` (feature flags, incl. `aiops_agent` — the overlay only decides) |
 | **`open-agentic-platform`** (OAP) | Agentic components (Source A) | `gitops/addons/charts/{bifrost,agent-gateway,oam-agent-components,langfuse,otel-collector,agent-sandbox*,litellm,crossplane-agentcore,gateway-api-crds,kata-nodepool}`; `gitops/addons/registry/{_defaults,gateway,observability,agentcore,sandbox}.yaml`; `gitops/bootstrap/agent-platform-app.yaml` (the two-source Application); `gitops/addons/configs/bifrost/values.yaml` (the model route) |
 | **`platform-engineering-on-eks`** (internal, GitLab) | Workshop content + IDE/CFN provisioning | Bakes the OAP git coordinates into the CFN, clones OAP on the IDE at runtime, runs `task install` → `agentic:install`. Also carries the **Bedrock model-access pre-activation** CFN custom resource (see §9). |
 
@@ -531,15 +533,44 @@ before a freeze window opened could still be merged.
 
 `aiops-agent` is the reference platform-ops agent. Its **chart lives in this repo**
 at `workshop/aiops-agent/chart` (moved under `workshop/` in
-[#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim** — the
-generic `gitops/addons/` tree stays **agent-free**). It is introduced as a
-**workshop-overlay** addon: the registry entry lives in
-`workshop/overlay/overlays/environments/control-plane/overrides.yaml` (a last-merged
-valueFile of the `cluster-addons` appset-chart, so it adds the app only when the
-fleet-config overlay is wired), gated by `enable_aiops_agent`, **sync-wave 9**,
-`dependsOn` KubeVela + the OAP `agent-platform-addons` bundle — **not** a base
-`gitops/addons/registry/platform.yaml` entry. The chart's Argo CD Application
+[#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**). Its
+**registry entry is upstream**, in `gitops/addons/registry/platform.yaml`, **disabled
+by default**: gated by `enable_aiops_agent` (the label exists only when an overlay
+sets `aiops_agent: true` in `enabled-addons.yaml`), **sync-wave 9**, `dependsOn`
+KubeVela + the OAP `agent-platform-addons` bundle. The chart's Argo CD Application
 renders a single **KubeVela OAM Application**.
+
+> **Design change — the upstream registry describes, the overlay decides.** The
+> entry used to live in the workshop overlay
+> (`workshop/overlay/overlays/environments/control-plane/overrides.yaml`) to keep the
+> base registry "agent-free". That decision is reversed: with the definition in an
+> overlay, every consumer that wants the agent (a GitHub fork, a non-workshop
+> fleet-config) had to **copy** the full entry (chart path, selector, `valuesObject`
+> expressions) into its own `overrides.yaml`, and each copy drifts from the chart.
+> Every other addon is defined upstream and only toggled by the overlay; the agent
+> now follows the same rule. Nothing changes for a hub that does not opt in: without
+> the `enable_aiops_agent` label the ApplicationSet generates no Application. The
+> workshop render is byte-identical (the overlay entry was identical to the new
+> upstream entry, apart from the derived fleet-repo value below, which resolves to
+> the same MR project).
+
+> **This is narrower than it may read against #926.** @shapirov103 scoped
+> `aiops-agent` to the workshop there specifically because of a hard dependency on
+> OAP (external repo, then unpinned on main) and on the personal-registry image
+> default ([#945](https://github.com/aws-samples/appmod-blueprints/issues/945)),
+> suggesting the solution move happen "after release of OAP so that we can
+> properly manage dependencies." Neither has changed: OAP's newest tag is still a
+> pre-release
+> ([`v0.1.0-rc5`](https://github.com/awslabs/open-agentic-platform/releases/tag/v0.1.0-rc5)),
+> and `#945` is still open (`chart/values.yaml` still defaults `imageRegistry` to
+> `public.ecr.aws/seb-demo`). What this PR moves upstream is only the registry
+> *definition* — `aiops-agent` stays exactly as opt-in as it was in the overlay
+> (disabled by default, same `enable_aiops_agent` gate), and a hub that flips
+> `aiops_agent: true` inherits the OAP-prerelease and personal-registry
+> dependencies identically either way. So this does not widen that surface, only
+> stops the definition from drifting between copies — it does not, by itself,
+> resolve #945 or wait for an OAP release, and those remain open items before
+> `aiops-agent` is recommended for a production deployment.
 
 ### 7.0 Purpose & operating modes
 
@@ -619,8 +650,9 @@ trust models** — a distinction that matters for the sections below:
 Images default to the public workshop registry (`public.ecr.aws/seb-demo`), pinned
 by tag. Per-component overrides are supported (`images.<comp>.{registry,tag}`);
 empty ⇒ inherit `imageRegistry`/`imageTag`. **Image coordinates are GitOps single
-source of truth** (chart `values.yaml` + the registry `valuesObject` in the
-workshop overlay `overrides.yaml`, the latter taking precedence per component). Live cluster-secret
+source of truth** in the chart `values.yaml` (the upstream registry entry
+deliberately sets no image value; a per-cluster overlay
+`overlays/clusters/<cluster>/aiops-agent/values.yaml` may override one). Live cluster-secret
 annotation overrides for image tags are **not** read on the current integration
 branch — bump the git default in both places instead. (The `seb-demo` default
 registry is an interim; durable registry tracked in
@@ -730,8 +762,12 @@ AMP alert (e.g. PodOOMKilled)  ──▶ SNS ──▶ SQS (<prefix>-incidents)
 The incident-bridge performs a **deterministic, restart-proof duplicate check**:
 it skips forwarding when an OPEN MR already addresses the failing component
 (machine marker `Incident-Component: <c>` or a component match in title/branch),
-and is **fail-open** (never blocks a real incident). `gitlabMrProject` is derived
-from the overlay repo URL.
+and is **fail-open** (never blocks a real incident). The MR project is derived by
+the chart from `fleetRepoUrl`, itself a **derived** registry value (not a user
+knob): the same resolution `gitops/bootstrap/addons.yaml` uses for `$overlay` —
+`overlay_repo_url` when wired, else the hub's `fleetRepoURL` when it is a separate
+repo from `addonsRepoURL`, else empty (dup-check off). The former `gitlabMrProject`
+value is a deprecated explicit override, honoured for one release.
 
 > **⚠️ The loop does not close, and volume is unbounded (known gap).** The flow
 > ends at "fix applied" and never verifies the outcome. Because dedup suppresses
@@ -879,8 +915,8 @@ reference this document and are consolidated **one PR per repo per feature**
 | Repo | Component / path | Change | Why |
 |---|---|---|---|
 | `appmod-blueprints` | `platform-charts/appset-chart` | Reused (unchanged generator) as the generator for the agentic plane | One generator drives platform **and** agentic addons — no second machinery |
-| `appmod-blueprints` | `workshop/aiops-agent/chart` (+ OAM app; sources `workshop/aiops-agent/src/`) | **New** chart + KubeVela OAM Application (moved under `workshop/` in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**; base tree agent-free) | The reference agent (chat + autonomous RCA→MR) |
-| `appmod-blueprints` | `workshop/overlay/overlays/environments/*/overrides.yaml` | **New** agent registry entry — **workshop overlay**, not base `platform.yaml`; gated `enable_aiops_agent`, sync-wave 9 | Opt-in placement via overlay, wave + `dependsOn` ordering |
+| `appmod-blueprints` | `workshop/aiops-agent/chart` (+ OAM app; sources `workshop/aiops-agent/src/`) | **New** chart + KubeVela OAM Application (moved under `workshop/` in [#926](https://github.com/aws-samples/appmod-blueprints/pull/926), **interim**) | The reference agent (chat + autonomous RCA→MR) |
+| `appmod-blueprints` | `gitops/addons/registry/platform.yaml` | **New** agent registry entry — **upstream, disabled by default**; gated `enable_aiops_agent`, sync-wave 9 | Overlay opts in with `aiops_agent: true` only; wave + `dependsOn` ordering |
 | `appmod-blueprints` | `workshop/overlay/overlays/environments/*/enabled-addons.yaml` | **New** agentic flags (`aiops_agent`, `amp_incident`, …) in the workshop overlay; **remove** legacy `agent_platform` entry from the base ([#955](https://github.com/aws-samples/appmod-blueprints/issues/955)) | Per-env enablement, off by default; free the umbrella key |
 | `open-agentic-platform` | `gitops/bootstrap/agent-platform-app.yaml` | **New** two-source Application | Deploy OAP via the appmod generator (no vendoring) |
 | `open-agentic-platform` | `gitops/addons/registry/*` (`_defaults`, `gateway`, `observability`, `agentcore`, `sandbox`) | Registry files with per-addon selectors + **`dependsOn`** for coupled pairs | Per-addon gating; enforce `otel→langfuse`, `agent→umbrella` ([#53](https://github.com/awslabs/open-agentic-platform/issues/53)) |
@@ -1069,9 +1105,10 @@ V2 and V3 are optional and independent of each other.
 - **Agent naming & location.** `peeks-agent` → `aiops-agent` rename **done in
   [#926](https://github.com/aws-samples/appmod-blueprints/pull/926)**
   ([appmod #954](https://github.com/aws-samples/appmod-blueprints/issues/954)); the
-  agent chart + sources also moved under `workshop/aiops-agent/` (**interim**, base
-  `gitops/addons/` tree agent-free, overlay-introduced). A later cleanup may fold
-  the chart back into the generic `gitops/addons/` tree once stabilized.
+  agent chart + sources also moved under `workshop/aiops-agent/` (**interim**); the
+  registry entry is upstream in `platform.yaml`, disabled by default. A later
+  cleanup may fold the chart itself into the generic `gitops/addons/` tree once
+  stabilized.
 - **Remove the legacy `agent_platform` enabled-addons key** + mark neighbouring
   agent-platform docs (`README.md`, `COMPONENTS.md`, `UPGRADE-APPROACH.md`)
   historical. §6.4/§13 ·
