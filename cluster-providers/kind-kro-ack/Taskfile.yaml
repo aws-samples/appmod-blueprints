@@ -2097,12 +2097,18 @@ tasks:
           fi
       # Record the OIDC issuer ids of the clusters this destroy is about to delete,
       # BEFORE any of them goes. Step 6f only deletes IAM OIDC providers it can tie to
-      # this install: an issuer id recorded here, or an ACK services.k8s.aws/namespace
-      # tag naming one of this install's clusters. Read-only, best-effort.
+      # this install: an issuer id recorded here, or an owner tag (ACK
+      # services.k8s.aws/namespace, or eks:kubernetes-namespace set by the EKS managed
+      # ACK capability) naming one of this install's clusters. Read-only on AWS,
+      # best-effort. The record lives in private/ (gitignored) and is merged, not
+      # truncated, so a destroy re-run after the clusters are gone (or after a reboot)
+      # still knows their issuer ids.
       - cmd: |
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"; HUB="{{.HUB_CLUSTER_NAME}}"
-          OUT="/tmp/${HUB}-destroy-oidc-ids"
-          : > "$OUT"
+          OUT="{{.ROOT_DIR}}/private/${HUB}-destroy-oidc-ids"
+          mkdir -p "$(dirname "$OUT")"
+          touch "$OUT"
+          NEW=$(mktemp)
           CANDS=" $HUB ${PREFIX}-spoke-dev ${PREFIX}-spoke-prod "
           for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
             T=$(aws eks describe-cluster --name "$C" --region "$REGION" \
@@ -2113,8 +2119,10 @@ tasks:
           for C in $CANDS; do
             OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
               --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
-            case "$OI" in https://*) echo "${OI##*/} $C" >> "$OUT" ;; esac
+            case "$OI" in https://*) echo "${OI##*/} $C" >> "$NEW" ;; esac
           done
+          sort -u "$OUT" "$NEW" > "$NEW.merged" && mv "$NEW.merged" "$OUT"
+          rm -f "$NEW"
           printf '{{.C_INFO}}  recorded %s OIDC issuer id(s) of this install in %s{{.C_RESET}}\n' "$(wc -l < "$OUT" | tr -d ' ')" "$OUT"
         ignore_error: true
       - |
@@ -2452,9 +2460,12 @@ tasks:
           #     Only providers whose URL matches ${REGION} are considered, and only those
           #     this install owns are deleted:
           #       - the issuer id was recorded at the start of destroy for one of this
-          #         install's clusters (/tmp/${HUB}-destroy-oidc-ids), or
-          #       - the ACK tag services.k8s.aws/namespace (set by the rg-eks oidcProvider,
-          #         namespace = cluster name) names one of OWNED_CLUSTERS (6ei).
+          #         install's clusters (private/${HUB}-destroy-oidc-ids), or
+          #       - an owner tag names one of OWNED_CLUSTERS (6ei), compared as an exact
+          #         cluster name (never a prefix): the ACK tag services.k8s.aws/namespace
+          #         (set by the rg-eks oidcProvider, namespace = cluster name), or
+          #         eks:kubernetes-namespace (set on spoke providers created by the EKS
+          #         managed ACK capability).
           #     Untagged or foreign providers (other stacks, other tools) are never deleted;
           #     a skip line is printed for each. Active clusters' providers are always kept.
           ACTIVE_OIDCS=""
@@ -2463,16 +2474,18 @@ tasks:
               --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
             if [ -n "$OI" ]; then ACTIVE_OIDCS="$ACTIVE_OIDCS ${OI##*/}"; fi
           done
-          RECORDED_OIDCS="/tmp/${HUB}-destroy-oidc-ids"
-          [ -f "$RECORDED_OIDCS" ] || echo "  ⚠ $RECORDED_OIDCS missing — OIDC ownership falls back to the ACK namespace tag only"
+          RECORDED_OIDCS="{{.ROOT_DIR}}/private/${HUB}-destroy-oidc-ids"
+          [ -f "$RECORDED_OIDCS" ] || echo "  ⚠ $RECORDED_OIDCS missing — OIDC ownership falls back to the owner tags only"
           for ARN in $(aws iam list-open-id-connect-providers \
                 --query 'OpenIDConnectProviderList[].Arn' --output text 2>/dev/null | tr '\t' '\n'); do
             INFO=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$ARN" \
-              --query '[Url, Tags[?Key==`services.k8s.aws/namespace`] | [0].Value]' \
+              --query '[Url, Tags[?Key==`services.k8s.aws/namespace`] | [0].Value, Tags[?Key==`eks:kubernetes-namespace`] | [0].Value]' \
               --output text 2>/dev/null || true)
             URL=$(printf '%s' "$INFO" | cut -f1)
             NS=$(printf '%s' "$INFO" | cut -f2)
+            EKSNS=$(printf '%s' "$INFO" | cut -f3)
             if [ "$NS" = "None" ]; then NS=""; fi
+            if [ "$EKSNS" = "None" ]; then EKSNS=""; fi
             # Only sweep EKS OIDC providers in this region
             echo "$URL" | grep -q "oidc.eks.${REGION}.amazonaws.com" || continue
             OIDC_ID="${URL##*/}"
@@ -2490,8 +2503,11 @@ tasks:
             if [ -z "$OWNER" ] && [ -n "$NS" ]; then
               case "$OWNED_CLUSTERS" in *" $NS "*) OWNER="tag services.k8s.aws/namespace=$NS" ;; esac
             fi
+            if [ -z "$OWNER" ] && [ -n "$EKSNS" ]; then
+              case "$OWNED_CLUSTERS" in *" $EKSNS "*) OWNER="tag eks:kubernetes-namespace=$EKSNS" ;; esac
+            fi
             if [ -z "$OWNER" ]; then
-              echo "  skip OIDC provider $OIDC_ID (not owned by this install; services.k8s.aws/namespace=${NS:-<none>})"
+              echo "  skip OIDC provider $OIDC_ID (not owned by this install; services.k8s.aws/namespace=${NS:-<none>}, eks:kubernetes-namespace=${EKSNS:-<none>})"
               continue
             fi
             if ERR=$(aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>&1); then
