@@ -24,3 +24,18 @@
 # gitops/addons/registry/platform.yaml (disabled by default, gated by enable_aiops_agent).
 # This overlay only DECIDES whether it is deployed, via `aiops_agent: true|false` in
 # enabled-addons.yaml; per-cluster values go to overlays/clusters/<cluster>/aiops-agent/values.yaml.
+
+# aiops-agent-rbac — read-only cluster-wide ClusterRole + ClusterRoleBinding (group
+# aiops-agent-cluster-read) on the hub AND every spoke. The aiops-agent AccessEntries
+# (chart/files/aiops-agent-app.yaml, agent-access) map aiops-agent-role into that group;
+# AmazonEKSViewPolicy alone 403s on nodes and on every CRD (argoproj.io, ACK, kro).
+# Delivery mirrors gitops/addons/charts/eks-capabilities-rbac: this hub appset-chart
+# entry's cluster generator targets every fleet cluster secret, so the ClusterRole lands
+# on spokes without anything running there. Deliberately NOT gated on enable_aiops_agent:
+# that label exists only on the hub, and the binding is inert on any cluster where no
+# AccessEntry maps a principal into the group (no members = no access).
+aiops-agent-rbac:
+  namespace: kube-system
+  path: 'workshop/aiops-agent/rbac-chart'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '9'

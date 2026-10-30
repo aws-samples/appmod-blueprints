@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aiops-agent-rbac
+description: Read-only cluster-wide ClusterRole + ClusterRoleBinding for the aiops-agent identity (hub and spokes)
+type: application
+version: 0.1.0
