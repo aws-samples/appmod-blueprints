@@ -1,4 +1,7 @@
-aws: {}
+aws:
+  # Domain external-dns manages on this cluster (external_dns_domain_filters, else
+  # ingress_domain_name). Scopes its Route 53 write permission; empty = no writes.
+  ingressDomainName: ''
 
 # PreSync gate that blocks this app's Sync phase until the Crossplane provider
 # CRDs (iam.aws.upbound.io / eks.aws.upbound.io) are Established. Prevents the
@@ -340,6 +343,13 @@ identities:
       purpose: external-dns-pod-identity
     policy:
       name: ExternalDNSRoute53Policy
+      # Writes are limited to records at or under the domain external-dns manages
+      # (aws.ingressDomainName, see the registry entry), so
+      # external-dns can never upsert into another zone of the account, e.g. another
+      # hub's. IAM has no way to name a hosted zone by domain and the platform does
+      # not publish zone IDs, so the record-name condition is the zone scope. With
+      # an empty domain the condition matches no record name: writes are denied.
+      # The document is rendered through `tpl` (see templates/policy.yaml).
       document: |
         {
           "Version": "2012-10-17",
@@ -349,7 +359,15 @@ identities:
               "Action": [
                 "route53:ChangeResourceRecordSets"
               ],
-              "Resource": "arn:aws:route53:::hostedzone/*"
+              "Resource": "arn:aws:route53:::hostedzone/*",
+              "Condition": {
+                "ForAllValues:StringLike": {
+                  "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+                    "{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
+                    "*.{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}"
+                  ]
+                }
+              }
             },
             {
               "Effect": "Allow",

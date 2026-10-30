@@ -23,7 +23,7 @@ metadata:
 spec:
   name: {{ $.Values.aws.clusterName }}-{{ $identity.policy.name }}
   policyDocument: |
-{{ $identity.policy.document | indent 4 }}
+{{ tpl $identity.policy.document $ | indent 4 }}
   {{- if $identity.tags }}
   tags:
     {{- range $k, $v := $identity.tags }}
