@@ -98,7 +98,13 @@ spec:
         _roleHash: strings.SliceRunes(hex.Encode(sha256.Sum256(_roleKey)), 0, 8)
         _roleBase: _cluster + "-" + context.name
         _roleHead: [if len(_roleBase) > 50 {strings.SliceRunes(_roleBase, 0, 50)}, _roleBase][0]
-        _roleName: _roleHead + "-" + _roleHash + "-role"
+        // Without a cluster name (a bare render of the chart) the name is today's
+        // "<serviceAccount>-role", byte for byte.
+        _roleName: [if _cluster == "" {context.name + "-role"}, _roleHead + "-" + _roleHash + "-role"][0]
+        // Attachment object names: see the accessFor block. Without a cluster name the role
+        // does not change, so the attachments keep today's names too (a new attachment for
+        // the same role/policy pair, followed by the old one's delete, would detach it).
+        _rpaPrefix: [if _cluster == "" {context.name}, context.namespace + "." + context.name][0]
 
         outputs: {
         	// XPodIdentity claim — the Composition resolves clusterName/region from
@@ -164,7 +170,7 @@ spec:
         			"\(context.name)-\(c)-iam-policy": {
         				apiVersion: "iam.aws.upbound.io/v1beta1"
         				kind:       "RolePolicyAttachment"
-        				metadata: name: "\(context.namespace).\(context.name)-\(c)-role-policy-attachment"
+        				metadata: name: "\(_rpaPrefix)-\(c)-role-policy-attachment"
         				spec: {
         					forProvider: {
         						policyArnRef: name: "\(context.appName)-\(c)-iam-policy"
@@ -177,8 +183,15 @@ spec:
         	}
         }
 
-        // Patch the workload pod: token volume (for app creds), a PodIdentity-readiness
-        // init gate, and creds env on the app container.
+        // Patch the workload pod: the role name (annotation), token volume (for app creds),
+        // PodIdentity-readiness init gates, and creds env on the app container.
+        //
+        // The role name sits in the pod template on purpose: when it changes (an install
+        // moving to these names, or a cluster rename) the template changes, so the workload
+        // rolls by itself. The new pods wait in wait-for-pod-identity-role until the claim
+        // reports that role (status.roleName, set from the observed IAM role), so they never
+        // start, and cache credentials, on the role being replaced.
+        patch: spec: template: metadata: annotations: "platform.gitops.io/aws-role": _roleName
         patch: spec: template: spec: {
         	// +patchKey=name
         	volumes: [{
@@ -200,6 +213,17 @@ spec:
         		image: parameter.waitImage
         		args: [
         			"wait", "--for=condition=Ready",
+        			"podidentities.platform.gitops.io/\(context.name)",
+        			"-n", context.namespace,
+        			"--timeout=300s",
+        		]
+        	}, {
+        		// Role gate: the claim reports the role this pod template names (see the
+        		// annotation above). Ready alone is not enough while a role is being replaced.
+        		name:  "wait-for-pod-identity-role"
+        		image: parameter.waitImage
+        		args: [
+        			"wait", "--for=jsonpath={.status.roleName}=\(_roleName)",
         			"podidentities.platform.gitops.io/\(context.name)",
         			"-n", context.namespace,
         			"--timeout=300s",

@@ -48,4 +48,9 @@ spec:
                 roleArn:
                   type: string
                   description: ARN of the IAM role created for this identity
+                roleName:
+                  type: string
+                  description: >-
+                    Name of the IAM role as observed in AWS. Equals spec.roleName once that
+                    role exists; the aws-service-identity trait's init gate waits for it.
 {{- end }}

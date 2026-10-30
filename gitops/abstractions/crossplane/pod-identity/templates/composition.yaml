@@ -69,6 +69,11 @@ spec:
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.arn
                 toFieldPath: status.roleArn
+              # The observed role name (atProvider.id is the role name for an IAM role),
+              # so status.roleName only moves once the new role exists.
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.roleName
 
           # Bind the role to the ServiceAccount via EKS Pod Identity.
           - name: pod-identity-association

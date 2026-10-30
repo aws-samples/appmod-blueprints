@@ -46,6 +46,13 @@ spec:
         _policyBase: _cluster + "-" + context.appName + "-" + context.name
         _policyHead: [if len(_policyBase) > 100 {strings.SliceRunes(_policyBase, 0, 100)}, _policyBase][0]
         _policyName: _policyHead + "-" + _policyHash + "-iam-policy"
+        // Without a cluster name (a bare render of the chart): no external-name, so the AWS
+        // name stays today's object name, byte for byte.
+        _policyAnnotations: {
+        	if _cluster != "" {
+        		annotations: "crossplane.io/external-name": _policyName
+        	}
+        }
 
         outputs: {
         	if parameter.policy == _|_ {
@@ -54,7 +61,7 @@ spec:
         			kind:       "Policy"
         			metadata: {
         				name: "\(context.appName)-\(context.name)-iam-policy"
-        				annotations: "crossplane.io/external-name": _policyName
+        				_policyAnnotations
         			}
         			spec: {
         				providerConfigRef: name: "default"
@@ -82,7 +89,7 @@ spec:
         			kind:       "Policy"
         			metadata: {
         				name: "\(context.appName)-\(context.name)-iam-policy"
-        				annotations: "crossplane.io/external-name": _policyName
+        				_policyAnnotations
         			}
         			spec: {
         				providerConfigRef: name: "default"
