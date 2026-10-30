@@ -1079,18 +1079,21 @@ tasks:
 
   create-ray-models-bucket:
     desc: Create the Ray model staging S3 bucket for AI/ML modules (idempotent)
+    # Same name as everything that reads or writes it: ray:setup / ray:prestage-models,
+    # the platform-manifests-post chart (HuggingFaceModel s3Bucket), the Backstage Ray
+    # templates and the teardown reapers all use <resource_prefix>-ray-models-<account>.
     status:
-      - aws s3api head-bucket --bucket {{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}} --region {{.AWS_REGION}} 2>/dev/null
+      - aws s3api head-bucket --bucket {{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}} --region {{.AWS_REGION}} 2>/dev/null
     cmds:
       - printf '{{.C_STEP}}▸ Creating Ray model staging bucket...{{.C_RESET}}\n'
       - |
-        BUCKET="{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}}"
+        BUCKET="{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
         aws s3api create-bucket --bucket "$BUCKET" --region {{.AWS_REGION}} \
           {{if ne .AWS_REGION "us-east-1"}}--create-bucket-configuration LocationConstraint={{.AWS_REGION}}{{end}} \
           --no-cli-pager >/dev/null
         aws s3api put-public-access-block --bucket "$BUCKET" --region {{.AWS_REGION}} \
           --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null
-      - printf '{{.C_OK}}✓ s3://{{.HUB_CLUSTER_NAME}}-ray-models-{{.AWS_ACCOUNT_ID}} ready.{{.C_RESET}}\n'
+      - printf '{{.C_OK}}✓ s3://{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}} ready.{{.C_RESET}}\n'
 
   post-install:
     desc: Workshop post-install steps (IDC/Keycloak federation for ArgoCD SSO)
