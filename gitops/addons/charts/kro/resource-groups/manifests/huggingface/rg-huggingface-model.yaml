@@ -157,8 +157,11 @@ spec:
       # instance went ACTIVE/Ready as soon as the Workflow object existed, so a Workflow
       # that failed (e.g. bucket never created) still showed a Ready model. A Failed
       # Workflow now leaves the instance not Ready. This is a leaf node: nothing in the
-      # graph waits on it, and ArgoCD has no health check for kro.run instances, so the
-      # platform-manifests-post app's sync/health is unchanged.
+      # graph waits on it, so sync is unchanged. Health depends on the Argo CD version:
+      # without a built-in kro.run health check (before 3.6) the instance does not affect
+      # the app's health; from 3.6 on (argoproj/argo-cd#28743) a download that is still
+      # running or has failed keeps platform-manifests-post Progressing (Degraded if kro
+      # reports the instance FAILED/ERROR) until the model is staged.
       readyWhen:
         - ${downloadWorkflow.status.?phase.orValue("") == "Succeeded"}
       template:
