@@ -1049,7 +1049,8 @@ tasks:
   #                              spoke-prod first (Argo CD CreateNamespace does not create
   #                              it on the spokes; the content's own step runs later).
   #
-  # Flag: `prewarmPathA` (default true; only null/absent maps to true — never `// true`,
+  # Flag: `prewarmPathA` (create-config.sh writes false until content !888 drops the
+  #       Rust KubeVela tab; an absent key maps to true — never `// true`,
   #       which turns a stored false into true, see pnz1990 review #1136 point 2);
   #       PREWARM_PATH_A overrides both ways. prewarm-pathA-rust-kro also needs
   #       prewarmRustCicd (no pipeline -> no rust-dev-cd -> nothing syncs the manifest).
