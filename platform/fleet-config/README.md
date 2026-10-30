@@ -104,11 +104,10 @@ does all the actual provisioning** by reconciling what you commit here:
 - **`task spokes:enable-kro -- <cluster>`**
   Commits KRO cluster values
   (`gitops/fleet/spoke-values/tenants/<tenant>/kro-clusters/clusters/<cluster>.json` and
-  `.../kro-clusters/values.yaml`) **plus the multi-acct CARM mapping**
-  (`configs/multi-acct/values.yaml`, mapping the spoke's namespace → AWS account).
-  The hub's **KRO + ACK** controllers then provision the spoke, assuming the
-  `<prefix>-cluster-mgmt-<svc>` roles per the CARM mapping. (This is how `spoke-prod` is
-  created. The CARM mapping is KRO-only — Crossplane spokes don't use it.)
+  `.../kro-clusters/values.yaml`). The `kro-clusters` chart renders the spoke's namespace and
+  its ACK CARM IAMRoleSelectors from that same entry, so the hub's **KRO + ACK** controllers
+  provision the spoke assuming the `<prefix>-cluster-mgmt-<svc>` roles. (This is how
+  `spoke-prod` is created. CARM is KRO-only — Crossplane spokes don't use it.)
 
 Both tasks are idempotent (they keep an already-enabled spoke's existing VPC CIDR) and end
 by committing/pushing to this repo. From there it is pure GitOps: the hub detects the new
@@ -126,7 +125,7 @@ You can also do this by hand: add/edit the same files under
 fleet-config/
 ├── configs/
 │   ├── <addon>/values.yaml      # global per-add-on value overrides            (optional)
-│   └── multi-acct/values.yaml   # ACK CARM namespace → AWS account map (KRO spokes)
+│   └── multi-acct/values.yaml   # optional: account override for the HUB's own CARM selectors
 ├── overlays/
 │   ├── environments/<env>/<addon>/values.yaml   # per-environment add-on values (optional)
 │   └── clusters/<cluster>/<addon>/values.yaml   # per-cluster add-on values      (optional)

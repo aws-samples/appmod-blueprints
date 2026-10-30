@@ -44,13 +44,16 @@ echo ""
 echo ">>> Cleaning up dev cluster..."
 kubectl config use-context peeks-spoke-dev
 
-# Delete AppModServices (Kro instances)
+# Delete AppModServices (Kro instances). The Rust dev deploy (Path A kro tab, also
+# pre-run by `task prewarm-pathA-rust-kro` in workshop/) is named rust-microservice-dev;
+# the frontend (pre-run by `task prewarm-pathA-frontend`) is next-js-app.
+kubectl delete appmodservice rust-microservice-dev -n team-rust --ignore-not-found 2>/dev/null || true
 kubectl delete appmodservice rust-microservice -n team-rust --ignore-not-found 2>/dev/null || true
 kubectl delete appmodservice progressive-app -n team-java --ignore-not-found 2>/dev/null || true
 kubectl delete appmodservice next-js-app -n team-nextjs --ignore-not-found 2>/dev/null || true
 
-# Delete services
-kubectl delete svc rust-microservice rust-microservice-preview -n team-rust --ignore-not-found 2>/dev/null || true
+# Delete services (rust-microservice comes from deployment/dev/services.yaml)
+kubectl delete svc rust-microservice rust-microservice-preview rust-microservice-dev rust-microservice-dev-preview -n team-rust --ignore-not-found 2>/dev/null || true
 kubectl delete svc progressive-app progressive-app-preview -n team-java --ignore-not-found 2>/dev/null || true
 kubectl delete svc next-js-app next-js-app-preview -n team-nextjs --ignore-not-found 2>/dev/null || true
 
@@ -172,3 +175,6 @@ echo "Remaining manual checks:"
 echo "  - Verify ArgoCD apps are removed: kubectl get applications -n argocd | grep -E 'rust|java|next'"
 echo "  - Verify namespaces are deleted: kubectl get ns | grep -E 'team-rust|team-java|team-nextjs'"
 echo "  - Verify ECR repos are deleted: aws ecr describe-repositories --region ${AWS_REGION} --query 'repositories[].repositoryName' | grep peeks"
+echo ""
+echo "To restore the install-time prewarmed state afterwards (from ~/environment/platform-on-eks-workshop/workshop):"
+echo "  task prewarm-rust-cicd && task prewarm-pathA-rust-kro && task prewarm-pathA-frontend"

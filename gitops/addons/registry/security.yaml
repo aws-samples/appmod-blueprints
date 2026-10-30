@@ -51,7 +51,9 @@ keycloak:
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       cluster_name: '{{.metadata.annotations.aws_cluster_name}}'
-      grafana_url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
+      # Same rule as grafana-dashboards: empty until aws_grafana_url is seeded, unless the
+      # in-cluster grafana addon serves <ingress>/grafana. Empty skips the SAML client.
+      grafana_url: '{{if index .metadata.annotations "aws_grafana_url"}}{{index .metadata.annotations "aws_grafana_url"}}{{else if eq (index .metadata.labels "enable_grafana" | default "false") "true"}}{{printf "%s/grafana" .metadata.annotations.ingress_domain_name}}{{end}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

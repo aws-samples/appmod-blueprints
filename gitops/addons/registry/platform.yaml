@@ -350,10 +350,9 @@ multi-acct:
     global:
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
-      # Needed so the chart can self-cover the cluster it runs on. .Values.clusters only
-      # ever lists SPOKES (written by the spokes:enable-* task into the fleet-config
-      # overlay), so without this the hub gets no IAMRoleSelector and every hub-side ACK
-      # resource silently never reconciles. See templates/iam-role-selectors.yaml.
+      # Needed so the chart can self-cover the cluster it runs on. multi-acct covers the HUB
+      # only: spoke selectors are rendered by the kro-clusters chart from each spoke's own
+      # entry, so they cannot drift from the spoke set. See templates/_helpers.tpl.
       accountId: '{{.metadata.annotations.aws_account_id}}'
 
 # Self-healing restart of workload pods that raced ahead of their EKS Pod Identity
@@ -477,7 +476,8 @@ devlake:
     devlake:
       grafana:
         external:
-          url: '{{index .metadata.annotations "aws_grafana_url" | default (printf "%s/grafana" .metadata.annotations.ingress_domain_name)}}'
+          # Empty until aws_grafana_url is seeded, unless in-cluster grafana is enabled.
+          url: '{{if index .metadata.annotations "aws_grafana_url"}}{{index .metadata.annotations "aws_grafana_url"}}{{else if eq (index .metadata.labels "enable_grafana" | default "false") "true"}}{{printf "%s/grafana" .metadata.annotations.ingress_domain_name}}{{end}}'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

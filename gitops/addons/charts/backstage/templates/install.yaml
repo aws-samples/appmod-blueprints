@@ -505,6 +505,57 @@ spec:
             - name: backstage-oidc-vars
               mountPath: /var/secrets
               readOnly: true
+        # The keycloak-oidc provider (@backstage/plugin-auth-backend-module-oidc-provider)
+        # runs Issuer.discover(metadataUrl) ONCE when the auth plugin initialises and keeps
+        # the resulting promise for the life of the process. A failed discovery (Keycloak not
+        # reachable yet, or the hub NAT egress IP not yet in the ALB inboundCidrs allowlist) is
+        # therefore cached: every sign-in then returns 500 "outgoing request timed out" until the
+        # pod restarts. Gate the backend on the same request, from the same image and TLS
+        # settings, so it only starts once discovery can succeed. When the URL is reachable
+        # (workshop mode, no allowlist) this exits on the first attempt.
+        - name: wait-for-oidc-discovery
+          image: {{ .Values.backstage_image }}
+          command:
+            - node
+            - -e
+            - |
+              const url = process.env.KEYCLOAK_NAME_METADATA;
+              const lib = url.startsWith('https:') ? require('https') : require('http');
+              const attempt = () => new Promise((resolve) => {
+                const req = lib.get(url, { timeout: 10000 }, (res) => {
+                  let body = '';
+                  res.on('data', (d) => { body += d; });
+                  res.on('end', () => {
+                    try { resolve(res.statusCode === 200 && !!JSON.parse(body).issuer ? true : 'HTTP ' + res.statusCode); }
+                    catch (e) { resolve('invalid discovery document'); }
+                  });
+                });
+                req.on('timeout', () => req.destroy(new Error('timed out after 10000ms')));
+                req.on('error', (e) => resolve(e.message));
+              });
+              (async () => {
+                for (let i = 1; ; i++) {
+                  const r = await attempt();
+                  if (r === true) { console.log('OIDC discovery reachable: ' + url); process.exit(0); }
+                  console.log('waiting for OIDC discovery ' + url + ' (attempt ' + i + ': ' + r + '). ' +
+                    'Behind an ALB allowlist, the hub NAT egress IP must be in inboundCidrs.');
+                  await new Promise((s) => setTimeout(s, 10000));
+                }
+              })();
+          env:
+            - name: NODE_TLS_REJECT_UNAUTHORIZED
+              value: "0"
+            - name: KEYCLOAK_NAME_METADATA
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: KEYCLOAK_NAME_METADATA
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
       containers:
         - command:
             - node
@@ -791,7 +842,8 @@ spec:
       app: backstage
 ---
 {{- /* insecure: HTTP-only ingress, no cert (consumer terminates TLS upstream, e.g. CloudFront). */ -}}
-{{- $insecure := .Values.insecure -}}
+{{- /* .Values.insecure arrives as the STRING "true"/"false" from the cluster-secret metadata; a non-empty string is truthy in Go templates, so compare it explicitly (same idiom as keycloak/kargo/argo-workflows). */ -}}
+{{- $insecure := eq (toString (.Values.insecure | default "false")) "true" -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -805,13 +857,12 @@ metadata:
     alb.ingress.kubernetes.io/transforms.backstage: |
       [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/backstage\\/?(.*)$","replace":"/$1"}]}}]
 {{- else }}
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
-    nginx.ingress.kubernetes.io/affinity: "cookie"
-    nginx.ingress.kubernetes.io/session-cookie-name: "backstage-server"
-    nginx.ingress.kubernetes.io/session-cookie-expires: "86400"
-    nginx.ingress.kubernetes.io/session-cookie-max-age: "86400"
-    nginx.ingress.kubernetes.io/session-cookie-path: "/backstage"
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/healthcheck-path: /backstage/health/v1/readiness
+    alb.ingress.kubernetes.io/transforms.backstage: |
+      [{"type":"url-rewrite","urlRewriteConfig":{"rewrites":[{"regex":"^\\/backstage\\/?(.*)$","replace":"/$1"}]}}]
 {{- end }}
 spec:
 {{- if $insecure }}
@@ -827,7 +878,7 @@ spec:
                 port:
                   name: http
 {{- else }}
-  ingressClassName: "nginx"
+  ingressClassName: "platform"
   rules:
     - host: {{ .Values.ingress_domain_name }}
       http:

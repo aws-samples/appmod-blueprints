@@ -131,6 +131,11 @@ CloudFront prefix list (`com.amazonaws.global.cloudfront.origin-facing`) control
 connect but does not encrypt anything. That trade is not recommended for anything beyond a
 throwaway demo, which is why attach is a documented step rather than an optional one.
 
+Do not put a source‑IP allowlist (`inboundCidrs`) on this internal ALB: it only sees CloudFront
+origin IPs. To filter clients, use an AWS WAF IP set on the distribution, and include in it the
+NAT egress IPs of the hub and of OAP spokes, whose server‑side calls to the public Keycloak issuer
+come back through CloudFront ([ALB allowlist, pitfall 1](alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
+
 ## Teardown
 
 Neither script deletes anything. To remove the CloudFront resources, disable the distribution,

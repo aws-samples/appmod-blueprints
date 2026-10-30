@@ -19,6 +19,7 @@ is applied, ArgoCD takes over and the platform is fully self-managing via GitOps
 - [GitOps Bridge Architecture](gitops-bridge-architecture.md) — how cluster metadata and addon enablement flow into cluster secrets
 - [Spoke Cluster Lifecycle](cluster-lifecycle.md) — creating, enabling, and safely deleting spoke clusters
 - [Hub Networking](HUB_NETWORKING.md)
+- [Restrict the platform ALB by source IP](alb-ip-allowlist.md) — optional `inboundCidrs` allowlist on the shared `platform` ALB (all hub UIs); it must include the NAT egress IPs of the hub and of OAP spokes, or SSO breaks ([pitfall 1](alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes))
 - [ACK Pod Identity Design](ack-pod-identity-design.md)
 - [Multi-Cluster Auth](MULTI_CLUSTER_AUTH.md) — and the [Consumer Guide](MULTI_CLUSTER_AUTH_CONSUMER_GUIDE.md)
 - [EKS Capabilities: ArgoCD Setup](../EKS-Capabilities-ArgoCD-Setup.md) and [KRO/ACK Setup](../EKS-Capabilities-KRO-ACK-Setup.md)

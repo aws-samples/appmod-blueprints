@@ -39,7 +39,19 @@ spec:
               repoURL: '{{ or (index .metadata.annotations "overlay_repo_url") .metadata.annotations.fleetRepoURL }}'
               revision: '{{ or (index .metadata.annotations "overlay_repo_revision") .metadata.annotations.fleetRepoRevision }}'
               files:
-                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json'
+              # Multi-hub scoping (OPT-IN). When the hub cluster-secret carries
+              # fleet_scope_by_prefix: "true", its existing resource_prefix annotation is
+              # inserted as a sub-directory segment, so this hub globs
+              # clusters/<resource_prefix>/*.json and provisions only its own spokes.
+              # Several control-plane hubs can then share ONE fleet repo on ONE branch
+              # without the clusters(control-plane) x git(*.json) matrix making every hub
+              # provision every spoke. Default (annotation absent or not "true"): the path
+              # is clusters/*.json, byte-identical to the single-hub / workshop layout that
+              # `task spokes:enable-kro` and the Backstage EKS template write. Both
+              # annotations are read via `index` (absent -> "", no missingkey=error); the
+              # template adds the trailing slash. The segment sits AFTER clusters/, so the
+              # tenant stays at splitList index 4 in the valueFiles below.
+                - path: '{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/*/kro-clusters/clusters/{{ if eq (index .metadata.annotations "fleet_scope_by_prefix") "true" }}{{ with (index .metadata.annotations "resource_prefix") }}{{ . }}/{{ end }}{{ end }}*.json'
   template:
     metadata:
       name: 'clusters-kro-{{ .clusterName }}'
@@ -79,8 +91,16 @@ spec:
                 # resource-groups-kro/platform-cluster-kro), which already resolves
                 # accountId/managementAccountId via `default $.Values.global.accountId`.
                 accountId: '{{ .metadata.annotations.aws_account_id }}'
+                # Default provisioner for spokes that do not set `provider` themselves:
+                # the hub's own `provider` label ("kro-ack" on kro-ack, absent -> "" on
+                # crossplane). `index` so a hub secret without the label yields "".
+                provider: '{{ index .metadata.labels "provider" }}'
                 defaultRegion: '{{ .metadata.annotations.aws_region }}'
                 targetCluster: '{{ .clusterName }}'
+                # The hub's own name, so kro-clusters fails to render a spoke declared with
+                # the hub's name: the hub's IAMRoleSelectors/Namespace are owned by multi-acct,
+                # and the same <svc>-<name> objects must never have two Argo CD owners.
+                hubClusterName: '{{ .metadata.annotations.aws_cluster_name }}'
                 # Propagate the deploy branch from the control-plane so kro spokes
                 # inherit the same Git revision as the rest of the fleet, instead
                 # of falling back to the EksclusterWithVpc RGD's "main" default.

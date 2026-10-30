@@ -3,25 +3,7 @@ kind: Template
 metadata:
   name: eks-cluster-template
   title: Setup EKS Environment
-  description: |
-    Creates a new Amazon EKS AutoMode cluster using Kro and ACK controllers.
-    
-    This template uses:
-    - **Kro (Kubernetes Resource Orchestrator)**: Declarative resource graph for cluster creation
-    - **ACK (AWS Controllers for Kubernetes)**: Manages AWS resources (VPC, EKS, IAM) from Kubernetes
-    - **GitOps**: Automatically registers the new cluster with ArgoCD hub for continuous deployment
-    
-    The cluster will be fully configured with networking, IAM roles, and ready for workload deployment.
-
-    **Cross-account prerequisite**: If deploying to a different AWS account, run `scripts/create-cross-account-roles.sh` first:
-    1. From the **target account** (first time only): `./scripts/create-cross-account-roles.sh --target-only` to create IAM roles
-    2. From the **hub account**: `./scripts/create-cross-account-roles.sh` to configure hub capability roles
-
-    ```
-    export TARGET_ACCOUNT_ID=<target-account-id>
-    export RESOURCE_PREFIX=peeks
-    export HUB_CLUSTER_NAME=peeks-hub
-    ```
+  description: Creates an Amazon EKS Auto Mode cluster with kro and ACK, and registers it with the Argo CD hub for GitOps deployment.
 spec:
   owner: user:guest
   type: service
@@ -59,7 +41,7 @@ spec:
           title: Account ID
           type: string
           description: AWS Account ID (optional - defaults to system default)
-          ui:help: "Enter your AWS Account ID (12 digits) or leave empty for default"
+          ui:help: "Enter your AWS Account ID (12 digits) or leave empty for default. For a different account, first run scripts/create-cross-account-roles.sh (--target-only from the target account, then without flags from the hub account)."
         managementAccountId:
           title: Management Account ID
           type: string
@@ -197,13 +179,6 @@ spec:
       input:
         url: https://${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}/${{ parameters.repoName }}
         targetPath: ./repo
-    - id: addCluster
-      name: Add new Clusters
-      # if: ${{ (parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id) !== (parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id) }}
-      action: roadiehq:utils:fs:append
-      input:
-        path: ./repo/configs/multi-acct/values.yaml
-        content: "\n  ${{ parameters.clusterName }}: \"${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}\""
     - id: addKroClusterConfig
       name: Update kro Clusters Configuration
       # roadiehq:utils:merge deep-merges into an EXISTING YAML file (preserving
@@ -218,7 +193,13 @@ spec:
       action: roadiehq:utils:merge
       input:
         path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/values.yaml
-        content:
+        # `content` is passed as a YAML STRING, not an object. The scaffolder only
+        # renders `${{ }}` inside VALUES of an object input, never inside mapping
+        # KEYS, so an object here wrote the literal key `${{ parameters.clusterName }}:`
+        # and clusters-kro-<cluster> rendered nothing. A string is rendered as a
+        # whole (key included) and roadiehq:utils:merge YAML.parse()s it before
+        # merging ("supports the case where dynamic keys are required").
+        content: |
           clusters:
             ${{ parameters.clusterName }}:
               managementAccountId: "${{ parameters.managementAccountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}"
@@ -263,6 +244,26 @@ spec:
       input:
         path: ./repo/gitops/fleet/spoke-values/tenants/${{ parameters.tenant }}/kro-clusters/clusters/${{ parameters.clusterName }}.json
         content: '{"clusterName": "${{ parameters.clusterName }}"}'
+    - id: addFleetMember
+      name: Register the cluster as a fleet member (ArgoCD cluster secret + addons)
+      # Same member file `task spokes:enable-kro` writes for a KRO spoke. The
+      # fleet-secrets ApplicationSet discovers fleet/members/*/values.yaml and, in
+      # externalSecret mode, builds the spoke's ArgoCD cluster registration Secret
+      # from the <cluster>/config entry the EksclusterWithVpc RGD writes to Secrets
+      # Manager. `labels` select the tenant/environment enabled-addons overlays.
+      # Without this file the spoke is provisioned but never registered: no
+      # cluster secret, no addons.
+      action: roadiehq:utils:fs:write
+      input:
+        path: ./repo/gitops/fleet/members/${{ parameters.clusterName }}/values.yaml
+        content: |
+          clusterName: ${{ parameters.clusterName }}
+          mode: externalSecret
+          externalSecret:
+            enabled: true
+          labels:
+            environment: ${{ parameters.environment }}
+            tenant: ${{ parameters.tenant }}
     - id: addComponent
       name: Add new component for Cluster
       action: roadiehq:utils:fs:write
@@ -295,9 +296,9 @@ spec:
           Add new EKS cluster ${{ parameters.clusterName }} to the platform
           
           Changes:
-          - Added cluster configuration to multi-acct values
-          - Added kro cluster configuration  
+          - Added kro cluster configuration (also renders its ACK CARM IAMRoleSelectors)
           - Added Backstage component definition
+          - Added fleet member file (ArgoCD cluster registration + addons)
         sourcePath: ./repo
         targetPath: .
         branchName: cluster-${{ parameters.clusterName }}

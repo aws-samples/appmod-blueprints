@@ -40,7 +40,14 @@ identityCenter:
   region: us-east-1  # Region where IDC is deployed
   identityStoreId: d-XXXXXXXXXX  # Optional, auto-detected if omitted
   adminGroupId: ""  # Optional, created by idc:setup if empty
+platformTags:  # Optional AWS tags on the hub and every spoke (EKS, VPC, NAT, EIP)
+  auto-delete: "no"  # e.g. the retention tag of the account's cleanup sweeper, if any
+  # Any other AWS tag works the same way (e.g. owner, cost-center): each key is
+  # propagated to the hub, the spokes and their VPCs.
+  # owner: "<your-team>"
 ```
+
+`platformTags` is optional. Without it nothing is tagged and `task install` prints a warning, because an account cleanup sweeper may then reap the hub or the spokes. Set it before installing: `hub:claim` tags the hub and `hub:seed` passes the tags to every spoke (hub cluster-secret `platform_tags` annotation, then `awsTags` on each `EksclusterWithVpc`).
 
 **IDC prerequisite**: An Identity Center instance must exist in your account/organization. The `idc:setup` task creates groups and users automatically. With `IDC_CONFIGURE_SKIP=true` (for example a second stack in an account whose Identity Center another stack already uses) it prints a notice, creates nothing and makes no Identity Center call. It then also leaves `identityCenter.identityStoreId` and `identityCenter.adminGroupId` unset, and `hub:claim` maps the Argo CD capability's ADMIN SSO group from `adminGroupId`, so set both keys in `config.local.yaml` yourself when you use the knob.
 
@@ -69,6 +76,13 @@ task install
   9. hub:wait-for-sync   Wait for hub ArgoCD apps to converge
 ```
 
+## KUBECONFIG constraints
+
+- **Do not export `KUBECONFIG` before `task install`.** This Taskfile sets `env: KUBECONFIG: <repo>/private/kubeconfig`, but go-task gives a variable already set in your shell priority over a Taskfile `env:` entry ([go-task env precedence](https://taskfile.dev/docs/experiments/env-precedence)). The template value `{{.KUBECONFIG}}` keeps the Taskfile path, so `kind create cluster --kubeconfig {{.KUBECONFIG}}` writes the kind context to `private/kubeconfig`, while the plain `kubectl`/`helm` calls that follow read your exported file. That file has no kind context, so the install fails at the first `kubectl` step after `kind:create`. Run `unset KUBECONFIG` first, or export exactly `$PWD/private/kubeconfig` from the repo root.
+- **The provider install does not touch `~/.kube/config`.** It writes only `private/kubeconfig` (kind) and `private/hub-kubeconfig` (hub, via `aws eks update-kubeconfig --kubeconfig ...`).
+- **`task kubeconfig` (root Taskfile) does.** It runs `aws eks update-kubeconfig --alias <name>` for every EKS cluster named `<resourcePrefix>-*`, writing to your default kubeconfig (`$KUBECONFIG`, else `~/.kube/config`). Each call switches the current context. The task then runs `kubectl config use-context <resourcePrefix>-hub || true`: if your `hub.clusterName` is not `<resourcePrefix>-hub`, that step fails silently and you stay on whichever cluster was written last.
+- **`aws eks update-kubeconfig` with a wrong `--name`** (for example a hub name that differs from your `hub.clusterName`) returns an error and changes nothing. If that error is hidden (`>/dev/null 2>&1 || true`), the previous context stays current and your next `kubectl` runs against another cluster. Check `kubectl config current-context` before trusting a `kubectl` result.
+
 ## Architecture: Crossplane vs KRO+ACK
 
 | Aspect | kind-crossplane | kind-kro-ack |
@@ -86,6 +100,10 @@ task install
 2. **Simpler resource model** — KRO ResourceGraphDefinitions are plain YAML with CEL expressions
 3. **Same RGDs for bootstrap and runtime** — the hub uses identical RGDs to provision spokes
 4. **Pod Identity native** — ACK uses Pod Identity on the hub; on Kind bootstrap, credentials Secret is mounted
+
+## Multi-hub fleet scoping (opt-in)
+
+Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `config.local.yaml`. `hub:seed` then writes `fleet_scope_by_prefix: "true"` into the `<hub>/config` metadata, which ESO copies onto the hub cluster-secret, and the hub discovers only `clusters/<resourcePrefix>/*.json` and `fleet/members/<resourcePrefix>/*/values.yaml`. When the key is absent or `false`, nothing is written and the flat `clusters/*.json` / `fleet/members/*/values.yaml` layout is used, exactly as before. A value set by hand on `<hub>/config` is kept on re-seed; to turn it off, remove the key from `<hub>/config` too.
 
 ## Credentials on Kind
 

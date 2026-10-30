@@ -15,6 +15,20 @@ export BOOTSTRAP_APPS=(
     "fleet-secrets"
 )
 
+# Build an Argo CD `.operation` patch body that carries the app's own
+# spec.syncPolicy.syncOptions. Argo CD reads sync options (CreateNamespace,
+# ServerSideApply, ApplyOutOfSyncOnly, ...) from the operation, not from the app
+# spec (argo-cd controller/sync.go), so a bare `.operation` patch drops them for
+# that sync. With no syncOptions on the app, or on any read/jq error, the base body
+# is printed unchanged.
+# Usage: kubectl patch application APP -n argocd --type merge -p "$(argocd_op_body APP '<base JSON>')"
+argocd_op_body() {
+    local app="$1" base="$2" body
+    body=$(kubectl get application "$app" -n argocd -o json 2>/dev/null \
+        | jq -c --argjson b "$base" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || body=""
+    printf '%s' "${body:-$base}"
+}
+
 # Infrastructure Verification Functions
 
 # Verify cluster infrastructure health
@@ -241,7 +255,7 @@ verify_keycloak_secrets() {
     # Force sync
     kubectl patch application keycloak-peeks-hub -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
     sleep 2
-    kubectl patch application keycloak-peeks-hub -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    kubectl patch application keycloak-peeks-hub -n argocd --type merge -p="$(argocd_op_body keycloak-peeks-hub '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}')" 2>/dev/null || true
     
     # Wait for job
     local timeout=300
@@ -592,7 +606,7 @@ sync_argocd_app_in_background() {
         argocd app sync "$app_name" &
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl approach (background)"
-        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p='{"operation":{"sync":{}}}' &
+        kubectl patch application.argoproj.io "$app_name" -n argocd --type='merge' -p="$(argocd_op_body "$app_name" '{"operation":{"sync":{}}}')" &
     fi
 }
 
@@ -629,7 +643,7 @@ check_keycloak_postsync_hook() {
     sleep 2
     
     # Trigger fresh sync to execute PostSync hooks
-    kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+    kubectl patch application "$app_name" -n argocd --type merge -p "$(argocd_op_body "$app_name" '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}')" 2>/dev/null || true
     
     # Wait for job to complete
     print_info "Waiting for Keycloak config job to complete..."
@@ -709,16 +723,16 @@ sync_argocd_app() {
                 wait_for_operation_cleared "$app_name" 60 || true
                 argocd app sync "$app_name" $force_flag --timeout 200 || {
                     print_warning "ArgoCD CLI sync retry failed, falling back to kubectl"
-                    kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
+                    kubectl patch application "$app_name" -n argocd --type merge -p "$(argocd_op_body "$app_name" '{"operation":{"sync":{}}}')" 2>/dev/null || true
                 }
             else
                 print_warning "ArgoCD CLI sync failed, falling back to kubectl"
-                kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
+                kubectl patch application "$app_name" -n argocd --type merge -p "$(argocd_op_body "$app_name" '{"operation":{"sync":{}}}')" 2>/dev/null || true
             fi
         fi
     else
         print_warning "ArgoCD CLI authentication failed, using kubectl"
-        kubectl patch application "$app_name" -n argocd --type merge -p '{"operation":{"sync":{}}}' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type merge -p "$(argocd_op_body "$app_name" '{"operation":{"sync":{}}}')" 2>/dev/null || true
     fi
     
     # Check Keycloak PostSync hook after sync
@@ -854,7 +868,7 @@ verify_critical_resources() {
         sleep 5
         
         # Trigger sync with force flag
-        kubectl patch application "$app_name" -n argocd --type merge -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{},"apply":{"force":true}},"prune":true}}}' 2>/dev/null || true
+        kubectl patch application "$app_name" -n argocd --type merge -p="$(argocd_op_body "$app_name" '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{},"apply":{"force":true}},"prune":true}}}')" 2>/dev/null || true
         
         return 1  # Signal that we fixed something
     fi
@@ -1186,7 +1200,7 @@ recover_stuck_workflows() {
                     print_info "[$namespace] Syncing application: $app"
                     kubectl patch application "$app" -n argocd --type json -p='[{"op": "remove", "path": "/operation"}]' 2>/dev/null || true
                     sleep 1
-                    kubectl patch application "$app" -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    kubectl patch application "$app" -n argocd --type merge -p "$(argocd_op_body "$app" '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}')" 2>/dev/null || true
                 fi
             done
         fi
@@ -1377,7 +1391,7 @@ show_final_status() {
                 
                 if [ "$revision_conflict" = "true" ]; then
                     # Force revision alignment
-                    kubectl patch application "$app" -n argocd --type='merge' -p='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}' 2>/dev/null || true
+                    kubectl patch application "$app" -n argocd --type='merge' -p="$(argocd_op_body "$app" '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}')" 2>/dev/null || true
                     # Clear operation state
                     kubectl patch application "$app" -n argocd --type='json' -p='[{"op": "remove", "path": "/status/operationState"}]' 2>/dev/null || true
                     # Force refresh
