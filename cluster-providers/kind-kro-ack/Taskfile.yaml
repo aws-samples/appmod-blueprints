@@ -1236,7 +1236,7 @@ tasks:
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null || echo "")
         PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""; PRESERVED_NAT=""
-        PRESERVED_OBS='{}'
+        PRESERVED_OBS='{}'; PRESERVED_EDF=""
         if [ -n "$EXISTING" ]; then
           EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
           PRESERVED_OVERLAY_URL=$(echo "$EMETA"  | jq -r '.overlay_repo_url // ""')
@@ -1251,6 +1251,8 @@ tasks:
             | with_entries(select(.key as $kk | any($k[]; . == $kk)) | select((.value // "" | tostring) != ""))' 2>/dev/null || echo '{}')
           # Keep an opt-in set by hand on <hub>/config across re-seeds (same reason as overlay_repo_*).
           [ -n "$FLEET_SCOPE" ] || FLEET_SCOPE=$(echo "$EMETA" | jq -r 'if .fleet_scope_by_prefix == "true" then "true" else "" end')
+          # Same for the optional external-dns scope widening (docs/install/prerequisites.md).
+          PRESERVED_EDF=$(echo "$EMETA" | jq -r '.external_dns_domain_filters // "" | tostring')
         fi
         # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
         # transient describe-capability miss never blanks a good value.
@@ -1292,7 +1294,7 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$PRESERVED_EDF" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
@@ -1300,6 +1302,7 @@ tasks:
              | (if $ob  != "" then .overlay_repo_basepath = $ob  else . end)
              | (if $pt  != "" and $pt != "{}" then .platform_tags = $pt else . end)
              | (if $fs == "true" then .fleet_scope_by_prefix = "true" else . end)
+             | (if $edf != "" then .external_dns_domain_filters = $edf else . end)
              | (if $nat != "" then .nat_egress_cidrs = $nat else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
