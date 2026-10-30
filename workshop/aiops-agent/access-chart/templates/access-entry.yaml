@@ -1,0 +1,21 @@
+{{- $cluster := required "clusterName is required (set by the aiops-agent spoke-access ApplicationSet)" .Values.clusterName -}}
+{{- $account := required "accountId is required (set by the aiops-agent spoke-access ApplicationSet)" (.Values.accountId | toString) -}}
+# Same shape as the hub entry (agent-access in ../chart/files/aiops-agent-app.yaml):
+# AmazonEKSViewPolicy + the aiops-agent-cluster-read group bound by the aiops-agent-rbac
+# addon (../rbac-chart). ACK CR on the hub, routed to <prefix>-cluster-mgmt-eks by the
+# incident-bridge-eks IAMRoleSelector (namespace aiops-agent).
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: AccessEntry
+metadata:
+  name: aiops-agent-{{ $cluster }}
+  namespace: aiops-agent
+spec:
+  clusterName: {{ $cluster }}
+  principalARN: arn:aws:iam::{{ $account }}:role/aiops-agent-role
+  type: STANDARD
+  kubernetesGroups:
+  - aiops-agent-cluster-read
+  accessPolicies:
+  - accessScope:
+      type: cluster
+    policyARN: arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy

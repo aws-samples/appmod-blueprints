@@ -1,0 +1,5 @@
+# Not a user-facing chart: both values are filled per spoke by the aiops-agent chart's
+# spoke-access ApplicationSet (templates/spoke-access.yaml). clusterName comes from the
+# spoke's ArgoCD cluster secret (aws_cluster_name); accountId from the hub's aws_account_id.
+clusterName: ""
+accountId: ""
