@@ -40,7 +40,10 @@ FIXTURE = {
     "workspaces": [{"alias": f"{PREFIX}-observability-amp", "workspaceId": "ws-ok"},
                    {"alias": f"{PREFIX}-other-amp", "workspaceId": "ws-denied"}],
     "dbs": ["devlake-ok", "devlake-denied"],
-    "oidc": ["OKOKOK", "DENIEDDENIED"],
+    "oidc": ["OKOKOK", "DENIEDDENIED", "FOREIGNUNTAGGED", "FOREIGNOTHERSTACK"],
+    # ACK services.k8s.aws/namespace tag per provider (6f only deletes this stack's own).
+    "oidc_tags": {"OKOKOK": HUB, "DENIEDDENIED": f"{PREFIX}-spoke-dev",
+                  "FOREIGNOTHERSTACK": "other-hub"},
     # AMP scrapers of this stack's hub and dev spoke (6ei): one delete allowed, one denied.
     "scrapers": [{"scraperId": "s-okok", "source": {"eksConfiguration": {
                       "clusterArn": f"arn:aws:eks:{REGION}:{ACCT}:cluster/{PREFIX}-hub"}}},
@@ -59,6 +62,7 @@ DENIED = [FIXTURE["secrets"][1], "ws-denied", "devlake-denied", "DENIEDDENIED", 
           *FIXTURE["log_groups"][:3]]
 ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", "s-okok", FIXTURE["log_groups"][3]]
 UNREACHABLE = FIXTURE["secrets"][2]
+FOREIGN_OIDC = ["FOREIGNUNTAGGED", "FOREIGNOTHERSTACK"]
 
 FAKE_AWS = r'''#!{python} -I
 import json, os, sys
@@ -111,7 +115,12 @@ out = {
     ("ec2", "describe-vpcs"): {"Vpcs": []},
 }.get((svc, op), {})
 if (svc, op) == ("iam", "get-open-id-connect-provider"):
-    out = {"Url": opts["open-id-connect-provider-arn"].split("oidc-provider/", 1)[1]}
+    url = opts["open-id-connect-provider-arn"].split("oidc-provider/", 1)[1]
+    ns = fx.get("oidc_tags", {}).get(url.rsplit("/", 1)[-1])
+    out = {"Url": url}
+    if ns:
+        out["Tags"] = [{"Key": "app.kubernetes.io/managed-by", "Value": "kro"},
+                       {"Key": "services.k8s.aws/namespace", "Value": ns}]
 if (svc, op) == ("logs", "describe-log-groups"):
     out = {"logGroups": [{"logGroupName": g} for g in fx["log_groups"]
                          if g.startswith(opts.get("log-group-name-prefix", ""))]}
@@ -216,3 +225,14 @@ def test_failure_without_an_aws_error_code_says_unknown_error(run):
     warn = [ln.strip() for ln in _lines(res, "⚠", UNREACHABLE)]
     assert done == [], "reported as deleted although the delete failed: " + str(done)
     assert warn == [f"⚠ secret {UNREACHABLE} not deleted (unknown error)"], res.stdout
+
+
+def test_foreign_oidc_providers_are_never_deleted(run):
+    """6f skips regional OIDC providers that are neither recorded for this stack nor
+    tagged with one of its cluster names, and says so."""
+    res, calls = run
+    deleted = [c[2].get("open-id-connect-provider-arn", "") for c in calls
+               if c[1] == "delete-open-id-connect-provider"]
+    assert not [a for a in deleted if any(a.endswith("/" + f) for f in FOREIGN_OIDC)], deleted
+    for f in FOREIGN_OIDC:
+        assert [ln for ln in res.stdout.splitlines() if "skip OIDC provider " + f + " " in ln], res.stdout
