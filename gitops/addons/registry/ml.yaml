@@ -16,6 +16,22 @@ jupyterhub:
       ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
       insecure: '{{default "false" .metadata.annotations.insecure}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+    # Keycloak endpoints for the GenericOAuthenticator (client 'jupyterhub' is seeded
+    # in the platform realm by the keycloak-config job). Without authorize_url the hub
+    # redirects /hub/oauth_login to an empty URL and loops on itself, never reaching
+    # Keycloak. The URLs are built from the same ingress_domain_name annotation as the
+    # other SSO apps (argocd, kargo), so they work for a custom domain and for
+    # CloudFront alike. The callback is pinned to https: in insecure (CloudFront) mode
+    # the ALB forwards plain HTTP, so the hub would otherwise derive an http:// callback
+    # that does not match the redirect URI registered in Keycloak.
+    jupyterhub:
+      hub:
+        config:
+          GenericOAuthenticator:
+            oauth_callback_url: https://{{.metadata.annotations.ingress_domain_name}}/jupyterhub/hub/oauth_callback
+            authorize_url: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/auth
+            token_url: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/token
+            userdata_url: https://{{.metadata.annotations.ingress_domain_name}}/keycloak/realms/platform/protocol/openid-connect/userinfo
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
