@@ -287,6 +287,10 @@ aws-for-fluentbit:
       # (openssl-libs 3.5.7-2.0.1 -> 3.5.8-1, fixes CVE-2026-14456 /
       # ALAS2023-2026-2088 and ALAS2023-2026-2136).
       tag: 3.5.1
+    # The chart defaults every output to us-east-1. Ship logs to the cluster's own
+    # region, from the same aws_region annotation every other AWS addon reads.
+    cloudWatchLogs:
+      region: '{{.metadata.annotations.aws_region}}'
 
 cni-metrics-helper:
   namespace: kube-system
