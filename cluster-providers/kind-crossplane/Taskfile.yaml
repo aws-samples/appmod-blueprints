@@ -1412,6 +1412,9 @@ tasks:
                 "spoke_prod_cluster_arn", "spoke_prod_private_subnet_ids", "spoke_prod_security_group_id" ] as $k
             | with_entries(select(.key as $kk | any($k[]; . == $kk)) | select((.value // "" | tostring) != ""))) // {}' 2>/dev/null)
         [ -n "$PREV_OBS" ] || PREV_OBS='{}'
+        # Keep the optional external-dns scope widening set by hand on <hub>/config
+        # (docs/install/prerequisites.md); without it a re-install narrows domainFilters back.
+        PREV_EDF=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .external_dns_domain_filters) // empty | tostring' 2>/dev/null || true)
         # Build VPC JSON for the aws-resources chart ExternalSecret
         PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n \
@@ -1433,6 +1436,10 @@ tasks:
         if [ "$PREV_OBS" != "{}" ]; then
           METADATA=$(echo "$METADATA" | jq -c --argjson o "$PREV_OBS" '$o + .')
           echo "Preserving existing observability keys: $(echo "$PREV_OBS" | jq -r 'keys | join(",")')"
+        fi
+        if [ -n "$PREV_EDF" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg d "$PREV_EDF" '. + {external_dns_domain_filters:$d}')
+          echo "Preserving existing external_dns_domain_filters=$PREV_EDF"
         fi
         SECRET_VALUE=$(jq -n \
           --arg metadata "$METADATA" \
