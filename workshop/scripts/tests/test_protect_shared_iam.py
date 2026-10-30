@@ -303,6 +303,67 @@ def test_shared_sweep_dry_run_and_fail_closed(tmp_path, capsys):
     assert "would delete shared role" in out and "fail closed" in out
 
 
+class FakeEc2Regions:
+    def __init__(self, regions):
+        self.regions = regions
+
+    def describe_regions(self, AllRegions=False):
+        return {"Regions": [{"RegionName": r} for r in self.regions]}
+
+
+class EksByRegion:
+    """eks_for(region) over per-region cluster maps; a region set to None is unreadable."""
+
+    def __init__(self, by_region):
+        self.by_region = by_region
+        self.seen = []
+
+    def __call__(self, region):
+        self.seen.append(region)
+        c = self.by_region.get(region, {})
+        return BrokenEks() if c is None else FakeEks(c)
+
+
+def test_shared_role_is_kept_while_a_hub_in_another_region_uses_it(tmp_path):
+    """Review #1174 (blocking): IAM is global. A hub in eu-west-1 that uses the same
+    fixed-name role keeps it when the us-west-2 stack is destroyed."""
+    mod = load("sweep-shared-iam.py")
+    iam = FakeIam([SHARED])
+    other = {"hc-hub": {"pia": [arn(SHARED)]}}
+    eks_for = EksByRegion({"us-west-2": {}, "eu-west-1": other})
+    assert mod.main(["us-west-2", "--inventory", record(tmp_path, [SHARED])], iam=iam,
+                    ec2=FakeEc2Regions(["eu-west-1", "us-west-2"]), eks_for=eks_for) == 0
+    assert iam.calls == [] and SHARED in iam.roles
+    assert sorted(set(eks_for.seen)) == ["eu-west-1", "us-west-2"]
+
+
+def test_shared_role_is_kept_when_any_region_is_unreadable(tmp_path, capsys):
+    mod = load("sweep-shared-iam.py")
+    iam = FakeIam([SHARED])
+    eks_for = EksByRegion({"us-west-2": {}, "ap-south-1": None})
+    assert mod.main(["us-west-2", "--inventory", record(tmp_path, [SHARED])], iam=iam,
+                    ec2=FakeEc2Regions(["ap-south-1", "us-west-2"]), eks_for=eks_for) == 0
+    assert iam.calls == [] and "fail closed" in capsys.readouterr().out
+
+
+def test_shared_role_is_deleted_when_no_region_uses_it(tmp_path):
+    mod = load("sweep-shared-iam.py")
+    iam = FakeIam([SHARED])
+    eks_for = EksByRegion({"us-west-2": {}, "eu-west-1": {"hc-hub": {"pia": [arn("other-role")]}}})
+    assert mod.main(["us-west-2", "--inventory", record(tmp_path, [SHARED])], iam=iam,
+                    ec2=FakeEc2Regions(["eu-west-1", "us-west-2"]), eks_for=eks_for) == 0
+    assert ("delete", SHARED) in iam.calls
+
+
+def test_iam_guard_covers_every_enabled_region(capsys):
+    mod = load("sweep-iam-guard.py")
+    eks_for = EksByRegion({"us-west-2": {}, "eu-west-1": {"hc-hub": {"access": [arn("hb-hub-mgmt")]}}})
+    assert mod.main(["us-west-2"], ec2=FakeEc2Regions(["eu-west-1", "us-west-2"]), eks_for=eks_for) == 0
+    assert capsys.readouterr().out.split() == ["hb-hub-mgmt"]
+    assert mod.main(["us-west-2"], ec2=FakeEc2Regions(["eu-west-1", "us-west-2"]),
+                    eks_for=EksByRegion({"eu-west-1": None})) == 1
+
+
 def test_shared_sweep_tolerates_an_already_deleted_role(tmp_path):
     mod = load("sweep-shared-iam.py")
     iam = FakeIam([])

@@ -3,9 +3,10 @@
 sweep-log-groups.py RESOURCE_PREFIX AWS_REGION HUB_CLUSTER_NAME
                     [--inventory FILE] [--dry-run [--assume-deleted CLUSTER ...]]
 Deletes the /aws/eks/<cluster>/... CloudWatch log groups of the clusters this
-destroy removed (task kind-kro-ack:destroy 6g): the hub, every <prefix>-* cluster,
-and any spoke the inventory lists with deletionPolicy=delete (spoke names are
-arbitrary). A group is kept while its cluster still exists and is not DELETING,
+destroy removed (task kind-kro-ack:destroy 6g), by exact cluster name: the hub,
+the spokes the inventory lists (any name), <prefix>-spoke-dev and
+<prefix>-spoke-prod. Never a <prefix>-* wildcard, which would also take the
+groups of a stack whose prefix starts with ours. A group is kept while its cluster still exists and is not DELETING,
 or when the inventory marks the cluster as retained.
 """
 import os

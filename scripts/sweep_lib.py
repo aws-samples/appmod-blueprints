@@ -514,7 +514,17 @@ def _paginate(fn, key, **kw):
             return out
 
 
-def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, delay=20):
+def final_snapshot_id(ident, now=None):
+    """Snapshot name for a database deleted with --keep-data: <id>-final-<UTC stamp>
+    (letters, digits and single hyphens, as RDS requires)."""
+    import time
+    stamp = time.strftime('%Y%m%d%H%M%S', time.gmtime(now))
+    return f'{ident.rstrip("-")}-final-{stamp}'[-255:].lstrip('-')
+
+
+def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, delay=20, keep_data=False):
+    """keep_data: take a final snapshot of each cluster and standalone instance before
+    the delete (the database is still deleted: its ENIs would block the hub VPC sweep)."""
     clusters, instances, subnet_groups = select_rds(rds, prefix)
     if not (clusters or instances or subnet_groups):
         log('  No DevLake RDS resources to clean.')
@@ -525,21 +535,31 @@ def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, de
         elif dry_run:
             log(f'  [dry-run] would delete RDS instance {i["DBInstanceIdentifier"]}')
         elif i.get('DBInstanceStatus') != 'deleting':
-            # Same flags the previous bash step used for devlake-* instances.
-            if _try(lambda: rds.delete_db_instance(
-                    DBInstanceIdentifier=i['DBInstanceIdentifier'], SkipFinalSnapshot=True,
-                    DeleteAutomatedBackups=True), f'RDS instance {i["DBInstanceIdentifier"]}'):
-                log(f'  ✓ initiated RDS deletion: {i["DBInstanceIdentifier"]}')
+            iid = i['DBInstanceIdentifier']
+            # Default: the flags the previous bash step used for devlake-* instances. A
+            # cluster member cannot take its own final snapshot: its cluster does (below).
+            if keep_data and not i.get('DBClusterIdentifier'):
+                snap = final_snapshot_id(iid)
+                kw = dict(SkipFinalSnapshot=False, FinalDBSnapshotIdentifier=snap, DeleteAutomatedBackups=False)
+            else:
+                snap, kw = '', dict(SkipFinalSnapshot=True, DeleteAutomatedBackups=not keep_data)
+            if _try(lambda: rds.delete_db_instance(DBInstanceIdentifier=iid, **kw), f'RDS instance {iid}'):
+                log(f'  ✓ initiated RDS deletion: {iid}' + (f' (final snapshot {snap})' if snap else ''))
     for c in clusters:
         cid = c['DBClusterIdentifier']
         if c.get('DeletionProtection'):
             log(f'  skip RDS cluster {cid}: DeletionProtection is on')
         elif dry_run:
-            log(f'  [dry-run] would delete RDS cluster {cid} (skip final snapshot)')
+            log(f'  [dry-run] would delete RDS cluster {cid} '
+                + ('(final snapshot)' if keep_data else '(skip final snapshot)'))
         elif c.get('Status') != 'deleting':
-            if _try(lambda: rds.delete_db_cluster(DBClusterIdentifier=cid, SkipFinalSnapshot=True),
-                    f'RDS cluster {cid}'):
-                log(f'  ✓ initiated RDS cluster deletion: {cid}')
+            if keep_data:
+                snap = final_snapshot_id(cid)
+                kw = dict(SkipFinalSnapshot=False, FinalDBSnapshotIdentifier=snap)
+            else:
+                snap, kw = '', dict(SkipFinalSnapshot=True)
+            if _try(lambda: rds.delete_db_cluster(DBClusterIdentifier=cid, **kw), f'RDS cluster {cid}'):
+                log(f'  ✓ initiated RDS cluster deletion: {cid}' + (f' (final snapshot {snap})' if snap else ''))
     for g in subnet_groups:
         if dry_run:
             log(f'  [dry-run] would delete DB subnet group {g}')
@@ -564,13 +584,13 @@ def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, de
 def select_log_groups(logs, prefix, hub, clusters, inventory=None, assume_deleted=()):
     """(selected, [(group, reason)]) EKS log groups of clusters this destroy removed.
 
-    A group /aws/eks/<name>/... is ours when <name> is the hub, starts with
-    <prefix>-, or is a cluster the inventory lists with deletionPolicy=delete
-    (spokes can have any name). It is kept when <name> is still a live cluster
-    or a retained one.
+    A group /aws/eks/<name>/... is ours when <name> is exactly one of this stack's
+    clusters (stack_cluster_names: the hub, the inventory's kro cluster instances,
+    the legacy <prefix>-spoke-dev/-prod), never by a <prefix>-* wildcard. It is
+    kept when <name> is still a live cluster or a retained one.
     """
     inventory = inventory or {'clusters': []}
-    ours_extra = deleted_clusters(inventory)
+    ours = stack_cluster_names(prefix, hub, inventory)
     retained = retained_clusters(inventory)
     live = live_clusters(clusters, assume_deleted)
     groups = []
@@ -590,7 +610,7 @@ def select_log_groups(logs, prefix, hub, clusters, inventory=None, assume_delete
         if len(parts) < 4 or not parts[3]:
             continue
         name = parts[3]
-        if not (name == hub or name.startswith(f'{prefix}-') or name in ours_extra):
+        if name not in ours:
             continue
         if name in retained:
             skipped.append((g, f'cluster {name} is kept by deletionPolicy=retain'))
@@ -666,6 +686,35 @@ def protected_roles(eks, clusters, assume_deleted=()):
             if not token:
                 break
     return names
+
+
+def enabled_regions(ec2):
+    """Regions enabled for the account (opt-in regions only once opted in)."""
+    return sorted({r['RegionName'] for r in ec2.describe_regions(AllRegions=False).get('Regions', [])})
+
+
+def protected_roles_all_regions(home, eks_for, regions, assume_deleted=()):
+    """IAM is global: a role is protected when a live cluster in ANY enabled region
+    references it. assume_deleted (dry-run only) names this stack's clusters, which
+    live in the home region. Raises when any region cannot be read: callers keep
+    every role (fail closed)."""
+    names = set()
+    for r in sorted(set(regions) | {home}):
+        eks = eks_for(r)
+        names |= protected_roles(eks, cluster_inventory(eks), assume_deleted if r == home else ())
+    return names
+
+
+def guard_regions(home, ec2=None, eks=None, eks_for=None):
+    """(eks_for, regions) for protected_roles_all_regions. Production: every enabled
+    region. Tests inject eks (one fake for every region) and optionally ec2."""
+    if eks is not None and eks_for is None:
+        eks_for = lambda _r: eks  # noqa: E731
+        regions = enabled_regions(ec2) if ec2 is not None else [home]
+        return eks_for, regions
+    ec2 = ec2 or client('ec2', home)
+    eks_for = eks_for or (lambda r: client('eks', r))
+    return eks_for, enabled_regions(ec2)
 
 
 # ------------------------------------------------- shared IAM managed resources
@@ -817,18 +866,34 @@ def sweep_shared_roles(iam, names, protected, dry_run=False):
 #   * target groups of the load-balancer-controller (step 1 deletes the ALBs only);
 #   * CloudWatch Logs delivery sources/destinations of the EKS capability logs
 #     (step 2 deletes the deliveries only).
-# Each is scoped to a cluster of THIS stack (the hub, or <prefix>-*) that is no
-# longer live, so a live or retained cluster's resources are never touched.
+# Each is scoped to a cluster of THIS stack (stack_cluster_names: exact names, no
+# <prefix>-* wildcard) that is no longer live, so a live or retained cluster's
+# resources, and another stack whose prefix starts with ours, are never touched.
 
-def _stack_cluster(name, prefix, hub):
-    return bool(name) and (name == hub or name.startswith(f'{prefix}-'))
+LEGACY_SPOKES = ('spoke-dev', 'spoke-prod')
+
+
+def stack_cluster_names(prefix, hub, inventory=None):
+    """The clusters of THIS stack, by exact name: the hub, every kro cluster instance
+    the inventory recorded (spokes can have any name), and the legacy
+    <prefix>-spoke-dev/-prod spokes (the same set step 6ei uses for AMP scrapers).
+    Never a <prefix>-* wildcard: destroying prefix "peeks" must not select the
+    resources of a "peeks-a-hub" that shares the account or the hosted zone."""
+    names = {hub} | {c.get('name') for c in (inventory or {}).get('clusters', [])}
+    names |= {f'{prefix}-{s}' for s in LEGACY_SPOKES}
+    return {n for n in names if n}
+
+
+def _stack_cluster(name, prefix, hub, inventory=None):
+    return bool(name) and name in stack_cluster_names(prefix, hub, inventory)
 
 
 def gone_stack_clusters(prefix, hub, clusters, inventory=None, assume_deleted=()):
     """Predicate: cluster name belongs to this stack and is neither live nor retained."""
     live = set(live_clusters(clusters, assume_deleted))
     retained = retained_clusters(inventory or {})
-    return lambda n: _stack_cluster(n, prefix, hub) and n not in live and n not in retained
+    ours = stack_cluster_names(prefix, hub, inventory)
+    return lambda n: bool(n) and n in ours and n not in live and n not in retained
 
 
 EKS_CLUSTER_NAME_TAG = 'eks:eks-cluster-name'
@@ -1011,13 +1076,17 @@ def _paginate_token(fn, key, token_in='NextToken', token_out=None, **kw):
 
 
 def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
-                        dry_run=False, assume_deleted=(), r53=None, domain=''):
+                        dry_run=False, assume_deleted=(), r53=None, domain='', keep_data=False):
     is_gone = gone_stack_clusters(prefix, hub, clusters, inventory, assume_deleted)
     verb = 'would delete' if dry_run else 'delete'
     n = 0
     vols, vkeep = select_ebs_volumes(ec2, is_gone)
     for vid, cl in vkeep:
         log(f'  keep EBS volume {vid}: cluster {cl} is live, retained or not this stack')
+    if keep_data:
+        for vid, cl in vols:
+            log(f'  keep EBS volume {vid} (owned by removed cluster {cl}): DESTROY_KEEP_DATA=true')
+        vols = []
     for vid, cl in vols:
         log(f'  {verb} EBS volume {vid} (available, owned by removed cluster {cl})')
         if not dry_run and _try(lambda: ec2.delete_volume(VolumeId=vid), f'EBS volume {vid}'):
@@ -1051,13 +1120,16 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
 def parse_common(argv, usage):
     """Tiny argv parser shared by the CLIs: positionals + --dry-run, --inventory,
     --assume-deleted NAME (repeatable, --dry-run only)."""
-    pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False, 'domain': ''}
+    pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False, 'domain': '',
+                     'keep_data': False}
     it = iter(argv)
     for a in it:
         if a == '--dry-run':
             opts['dry_run'] = True
         elif a == '--no-wait':
             opts['no_wait'] = True
+        elif a == '--keep-data':
+            opts['keep_data'] = True
         elif a == '--inventory':
             opts['inventory'] = next(it, '')
         elif a == '--domain':

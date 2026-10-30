@@ -178,7 +178,8 @@ def test_dry_run_deletes_nothing(capsys):
 def test_cli_never_fails_and_reports_codes_only(capsys, tmp_path):
     mod = load("sweep-hub-leftovers.py")
     inv = tmp_path / "destroy-inventory.json"
-    inv.write_text('{"clusters": [{"name": "hb-prod", "deletionPolicy": "retain"}]}')
+    inv.write_text('{"clusters": [{"name": "hb-dev", "deletionPolicy": "delete"}, '
+                   '{"name": "hb-prod", "deletionPolicy": "retain"}]}')
 
     class Broken(FakeEks):
         def list_clusters(self, **_):
@@ -191,6 +192,34 @@ def test_cli_never_fails_and_reports_codes_only(capsys, tmp_path):
     assert mod.main(["hb", "us-west-2", "hb-hub", "--inventory", str(inv)],
                     ec2=ec2, elbv2=elbv2, logs=logs, eks=FakeEks()) == 0
     assert "hub leftovers: 7 selected, 7 deleted" in capsys.readouterr().out
+
+
+def test_a_longer_prefix_is_not_ours():
+    """Review #1174: destroying prefix "hb" must not take the leftovers of an
+    "hb-a-hub" stack (its prefix starts with ours) or of an unrecorded hb-* cluster."""
+    ec2 = FakeEc2({
+        "vol-hub": {"cluster": "hb-hub", "status": "available"},
+        "vol-nested-hub": {"cluster": "hb-a-hub", "status": "available"},
+        "vol-unrecorded": {"cluster": "hb-something", "status": "available"},
+        "vol-legacy": {"cluster": "hb-spoke-dev", "status": "available"},
+    })
+    elbv2 = FakeElbv2({"k8s-nested": {"cluster": "hb-a-hub"}, "k8s-own": {"cluster": "hb-hub"}})
+    logs = FakeLogs([], [])
+    sl.sweep_hub_leftovers(ec2, elbv2, logs, "hb", "hb-hub", {}, {"clusters": []})
+    assert sorted(ec2.deleted) == ["vol-hub", "vol-legacy"]
+    assert elbv2.deleted == ["k8s-own"]
+
+
+def test_keep_data_keeps_the_volumes_and_still_sweeps_the_rest():
+    ec2, elbv2, logs, inv = account()
+    r = sl.sweep_hub_leftovers(ec2, elbv2, logs, "hb", "hb-hub", {}, inv, keep_data=True)
+    assert ec2.deleted == [] and r["volumes"] == []
+    assert sorted(elbv2.deleted) == ["k8s-backstag", "k8s-kargo"]
+
+
+def test_final_snapshot_id_is_a_valid_rds_identifier():
+    sid = sl.final_snapshot_id("hb-devlake-db", now=0)
+    assert sid == "hb-devlake-db-final-19700101000000" and "--" not in sid
 
 
 # ------------------------------------------------------------------ Taskfile
