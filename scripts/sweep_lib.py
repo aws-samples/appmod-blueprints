@@ -668,6 +668,35 @@ def protected_roles(eks, clusters, assume_deleted=()):
     return names
 
 
+def enabled_regions(ec2):
+    """Regions enabled for the account (opt-in regions only once opted in)."""
+    return sorted({r['RegionName'] for r in ec2.describe_regions(AllRegions=False).get('Regions', [])})
+
+
+def protected_roles_all_regions(home, eks_for, regions, assume_deleted=()):
+    """IAM is global: a role is protected when a live cluster in ANY enabled region
+    references it. assume_deleted (dry-run only) names this stack's clusters, which
+    live in the home region. Raises when any region cannot be read: callers keep
+    every role (fail closed)."""
+    names = set()
+    for r in sorted(set(regions) | {home}):
+        eks = eks_for(r)
+        names |= protected_roles(eks, cluster_inventory(eks), assume_deleted if r == home else ())
+    return names
+
+
+def guard_regions(home, ec2=None, eks=None, eks_for=None):
+    """(eks_for, regions) for protected_roles_all_regions. Production: every enabled
+    region. Tests inject eks (one fake for every region) and optionally ec2."""
+    if eks is not None and eks_for is None:
+        eks_for = lambda _r: eks  # noqa: E731
+        regions = enabled_regions(ec2) if ec2 is not None else [home]
+        return eks_for, regions
+    ec2 = ec2 or client('ec2', home)
+    eks_for = eks_for or (lambda r: client('eks', r))
+    return eks_for, enabled_regions(ec2)
+
+
 # ------------------------------------------------- shared IAM managed resources
 #
 # A chart can create an IAM role with a FIXED name, not prefixed by the stack
