@@ -27,17 +27,30 @@ spec:
               properties:
                 serviceAccount:
                   type: string
-                  description: Name of the ServiceAccount to bind the IAM role to (also used to derive the IAM role name, "<serviceAccount>-role")
+                  description: Name of the ServiceAccount to bind the IAM role to
                 namespace:
                   type: string
                   description: Namespace of the ServiceAccount
+                roleName:
+                  type: string
+                  maxLength: 64
+                  description: >-
+                    Name of the IAM role to create. Set by the aws-service-identity trait,
+                    unique per region, cluster, namespace and ServiceAccount (IAM names
+                    are account-global).
               required:
                 - serviceAccount
                 - namespace
+                - roleName
             status:
               type: object
               properties:
                 roleArn:
                   type: string
                   description: ARN of the IAM role created for this identity
+                roleName:
+                  type: string
+                  description: >-
+                    Name of the IAM role as observed in AWS. Equals spec.roleName once that
+                    role exists; the aws-service-identity trait's init gate waits for it.
 {{- end }}
