@@ -48,14 +48,18 @@ if svc == "eks" and op == "list-clusters":
         sys.stderr.write("ThrottlingException\n"); sys.exit(254)
     print("\t".join(cl.keys()))
 elif svc == "eks" and op == "describe-cluster":
-    c = cl.get(opts["name"])
+    name = opts["name"]
+    fail = st.get("describe_fail", {}).get(name)
+    if fail:
+        sys.stderr.write(fail + "\n"); sys.exit(254)
+    c = cl.get(name)
     if c is None:
         sys.stderr.write("ResourceNotFoundException\n"); sys.exit(254)
     q = opts["query"]
     if q == "cluster.status":
         print(c["status"])
     elif q.startswith("cluster.[tags"):
-        print("\t".join(c.get("tags", ["None", "None"])))
+        print("\t".join(c.get("tags", ["None", "None"]) + [c.get("status", "ACTIVE")]))
     elif q == "cluster.arn":
         print("arn:aws:eks:%s:111122223333:cluster/%s" % (os.environ["REGION"], opts["name"]))
     elif q == "cluster.resourcesVpcConfig.subnetIds[]":
@@ -85,13 +89,14 @@ def _cluster(prefix=PREFIX, env="dev", status="ACTIVE"):
     return {"status": status, "tags": [prefix or "None", env or "None"]}
 
 
-def _env(tmp_path, clusters, secrets=None, list_fails=False):
+def _env(tmp_path, clusters, secrets=None, list_fails=False, describe_fail=None):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "aws").write_text(FAKE_AWS.replace("{python}", sys.executable))
     (bindir / "aws").chmod(0o755)
     st, log = tmp_path / "state.json", tmp_path / "calls.jsonl"
-    st.write_text(json.dumps({"clusters": clusters, "secrets": secrets or {}, "list_fails": list_fails}))
+    st.write_text(json.dumps({"clusters": clusters, "secrets": secrets or {}, "list_fails": list_fails,
+                              "describe_fail": describe_fail or {}}))
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_STATE=str(st),
                FAKE_LOG=str(log), REGION=REGION)
@@ -146,6 +151,41 @@ def test_several_tag_matches_pick_first_and_warn(tmp_path):
     clusters = {"zz-dev": _cluster(env="dev"), "aa-dev": _cluster(env="dev")}
     out, err = _resolve(tmp_path, clusters, "dev")
     assert out == "aa-dev" and "WARN" in err and "spoke_dev_cluster_name" in err
+
+
+def test_tag_scan_prefers_active_over_a_non_active_match_that_sorts_first(tmp_path):
+    # "aa-dev" sorts before "zz-dev" and would win on name alone, but it is DELETING: the
+    # live (ACTIVE) "zz-dev" must be the one returned, not the one being torn down.
+    clusters = {"aa-dev": _cluster(env="dev", status="DELETING"), "zz-dev": _cluster(env="dev")}
+    out, err = _resolve(tmp_path, clusters, "dev")
+    assert out == "zz-dev", err
+
+
+def test_tag_scan_falls_back_to_non_active_when_none_is_active(tmp_path):
+    # Nothing ACTIVE yet (e.g. mid-create): still return a match rather than nothing.
+    clusters = {"aa-dev": _cluster(env="dev", status="CREATING")}
+    out, _ = _resolve(tmp_path, clusters, "dev")
+    assert out == "aa-dev"
+
+
+def test_ambiguous_preset_error_is_not_treated_as_absent(tmp_path):
+    # A throttled/denied describe-cluster on the PRESET must not fall through to a
+    # different spoke found by tag scan -- the header contract says "any EKS API error:
+    # print nothing", not "treat as absent".
+    clusters = {f"{PREFIX}-spoke-dev": _cluster(env="dev"), "mine": _cluster(env="dev")}
+    out, err = _resolve(tmp_path, clusters, "dev", preset="mine", describe_fail={"mine": "ThrottlingException"})
+    assert out == "", err
+    # Did NOT fall through to the tag-matched "mine" workshop spoke, and the reported cause
+    # is the real one (not a fabricated "absent").
+    assert "ThrottlingException" in err
+
+
+def test_resource_not_found_preset_still_falls_through(tmp_path):
+    # Contrast with the above: a genuinely absent preset (ResourceNotFoundException) is the
+    # one case allowed to fall through to the next step in the resolution order.
+    clusters = {f"{PREFIX}-spoke-dev": _cluster(env="dev")}
+    out, _ = _resolve(tmp_path, clusters, "dev", preset="gone")
+    assert out == f"{PREFIX}-spoke-dev"
 
 
 @pytest.mark.parametrize("case", ["no-spokes", "list-fails"])
@@ -211,6 +251,18 @@ def test_seed_never_overwrites_an_operator_set_name(tmp_path, provider):
     assert res.returncode == 0, res.stdout + res.stderr
     assert meta["spoke_dev_cluster_name"] == "custom-dev"
     assert meta["spoke_dev_cluster_arn"].endswith("cluster/custom-dev"), meta
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_seed_corrects_a_stale_recorded_name_after_spoke_replacement(tmp_path, provider):
+    # The previously-recorded spoke is gone (replaced); the resolver falls through to the
+    # live spoke and the seed must overwrite the dead name, not keep it forever.
+    clusters = {f"{PREFIX}-dev-v2": _cluster(env="dev")}
+    res, meta = _run_block(tmp_path, provider, clusters,
+                           {"aws_grafana_url": "g", "spoke_dev_cluster_name": "old-dev-v1"})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert meta["spoke_dev_cluster_name"] == f"{PREFIX}-dev-v2", meta
+    assert meta["spoke_dev_cluster_arn"].endswith(f"cluster/{PREFIX}-dev-v2"), meta
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
