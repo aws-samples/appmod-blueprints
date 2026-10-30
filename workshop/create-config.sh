@@ -307,6 +307,10 @@ printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 # Kept out of the generic config.yaml/config.schema.json so the platform solution
 # stays consumer-agnostic (shapirov103 review #1136). Task defaults to true when absent.
 printf 'prewarmRustCicd: true\n'                      >> "$OUTPUT_FILE"
+# Workshop-only toggle (read solely by workshop/Taskfile.yaml prewarm-pathA-frontend and
+# prewarm-pathA-rust-kro): pre-run the Module 2 Path A frontend + Rust dev (kro) deploy
+# during install. Same consumer-agnostic placement as prewarmRustCicd; defaults to true.
+printf 'prewarmPathA: true\n'                         >> "$OUTPUT_FILE"
 
 # GitLab/IDE CloudFront domain (separate from the platform CF).
 # Available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,
