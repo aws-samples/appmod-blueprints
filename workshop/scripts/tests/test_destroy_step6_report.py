@@ -40,10 +40,19 @@ FIXTURE = {
     "workspaces": [{"alias": f"{PREFIX}-observability-amp", "workspaceId": "ws-ok"},
                    {"alias": f"{PREFIX}-other-amp", "workspaceId": "ws-denied"}],
     "dbs": ["devlake-ok", "devlake-denied"],
-    "oidc": ["OKOKOK", "DENIEDDENIED", "FOREIGNUNTAGGED", "FOREIGNOTHERSTACK"],
-    # ACK services.k8s.aws/namespace tag per provider (6f only deletes this stack's own).
+    "oidc": ["OKOKOK", "DENIEDDENIED", "CAPSPOKE", "FOREIGNUNTAGGED", "FOREIGNOTHERSTACK",
+             "FOREIGNCAPPREFIX", "FOREIGNCAPSIBLING"],
+    # Owner tag per provider (6f only deletes this stack's own). A plain string is the ACK
+    # services.k8s.aws/namespace tag (rg-eks oidcProvider); a dict gives the tags as is, e.g.
+    # eks:kubernetes-namespace, which the EKS managed ACK capability sets on spoke providers.
+    # The FOREIGNCAP* ones carry that tag with a value that is only a prefix of, or shares a
+    # prefix with, this stack's names: an exact cluster-name match is required.
     "oidc_tags": {"OKOKOK": HUB, "DENIEDDENIED": f"{PREFIX}-spoke-dev",
-                  "FOREIGNOTHERSTACK": "other-hub"},
+                  "CAPSPOKE": {"eks:kubernetes-namespace": f"{PREFIX}-spoke-prod",
+                               "eks:kubernetes-resource-name": f"{PREFIX}-spoke-prod-oidc"},
+                  "FOREIGNOTHERSTACK": "other-hub",
+                  "FOREIGNCAPPREFIX": {"eks:kubernetes-namespace": PREFIX},
+                  "FOREIGNCAPSIBLING": {"eks:kubernetes-namespace": f"{PREFIX}-b-hub"}},
     # AMP scrapers of this stack's hub and dev spoke (6ei): one delete allowed, one denied.
     "scrapers": [{"scraperId": "s-okok", "source": {"eksConfiguration": {
                       "clusterArn": f"arn:aws:eks:{REGION}:{ACCT}:cluster/{PREFIX}-hub"}}},
@@ -60,9 +69,10 @@ FIXTURE = {
 }
 DENIED = [FIXTURE["secrets"][1], "ws-denied", "devlake-denied", "DENIEDDENIED", "s-denied",
           *FIXTURE["log_groups"][:3]]
-ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", "s-okok", FIXTURE["log_groups"][3]]
+ALLOWED = [FIXTURE["secrets"][0], "ws-ok", "devlake-ok", "OKOKOK", "CAPSPOKE", "s-okok",
+           FIXTURE["log_groups"][3]]
 UNREACHABLE = FIXTURE["secrets"][2]
-FOREIGN_OIDC = ["FOREIGNUNTAGGED", "FOREIGNOTHERSTACK"]
+FOREIGN_OIDC = ["FOREIGNUNTAGGED", "FOREIGNOTHERSTACK", "FOREIGNCAPPREFIX", "FOREIGNCAPSIBLING"]
 
 # The RDS (6eii), log-group (6g) and VPC (6h/6h2) sweeps are python helpers using boto3:
 # a fake boto3 on PYTHONPATH answers them from the same fixture and fails the denied
@@ -159,7 +169,7 @@ out = {
     ("amp", "list-scrapers"): {"scrapers": fx.get("scrapers", [])},
     ("rds", "describe-db-instances"): {"DBInstances": [{"DBInstanceIdentifier": d} for d in fx["dbs"]]},
     ("sts", "get-caller-identity"): {"Account": fx["acct"]},
-    ("eks", "list-clusters"): {"clusters": []},
+    ("eks", "list-clusters"): {"clusters": list(fx.get("clusters", {}))},
     ("iam", "list-open-id-connect-providers"): {"OpenIDConnectProviderList": [
         {"Arn": "arn:aws:iam::%s:oidc-provider/%s%s" % (fx["acct"], fx["oidc_url"], o)} for o in fx["oidc"]]},
     ("iam", "list-roles"): {"Roles": []},
@@ -170,9 +180,18 @@ if (svc, op) == ("iam", "get-open-id-connect-provider"):
     url = opts["open-id-connect-provider-arn"].split("oidc-provider/", 1)[1]
     ns = fx.get("oidc_tags", {}).get(url.rsplit("/", 1)[-1])
     out = {"Url": url}
-    if ns:
+    if isinstance(ns, dict):
+        out["Tags"] = [{"Key": k, "Value": v} for k, v in ns.items()]
+    elif ns:
         out["Tags"] = [{"Key": "app.kubernetes.io/managed-by", "Value": "kro"},
                        {"Key": "services.k8s.aws/namespace", "Value": ns}]
+if (svc, op) == ("eks", "describe-cluster"):
+    c = fx.get("clusters", {}).get(opts.get("name", ""))
+    if c is None:
+        sys.stderr.write("\nAn error occurred (ResourceNotFoundException) when calling the "
+                         "DescribeCluster operation: No cluster found\n")
+        sys.exit(254)
+    out = {"cluster": c}
 if (svc, op) == ("elbv2", "describe-load-balancers"):
     out = {"LoadBalancers": [{"LoadBalancerArn": a} for a in fx.get("albs", {})]}
 if (svc, op) == ("elbv2", "describe-tags"):
@@ -205,24 +224,33 @@ def _step6(marker="# 6g."):
     return next(c["cmd"] for c in cmds if isinstance(c, dict) and marker in c.get("cmd", ""))
 
 
-def _run(tmp_path, **overrides):
-    cmd = _step6(overrides.pop("marker", "# 6g.")).replace("{{.ROOT_DIR}}", REPO)
+def _record_step():
+    with open(TASKFILE) as f:
+        cmds = yaml.safe_load(f)["tasks"]["destroy"]["cmds"]
+    return next(c["cmd"] for c in cmds if isinstance(c, dict)
+                and "destroy-oidc-ids" in c.get("cmd", "") and "# 6f." not in c.get("cmd", ""))
+
+
+def _run(tmp_path, cmd=None, fixture_data=None, **overrides):
+    cmd = (cmd or _step6(overrides.pop("marker", "# 6g."))).replace("{{.ROOT_DIR}}", REPO)
     bindir, pylib = tmp_path / "bin", tmp_path / "pylib" / "boto3"
-    bindir.mkdir()
-    pylib.mkdir(parents=True)
-    (pylib / "__init__.py").write_text(FAKE_BOTO3)
-    (bindir / "aws").write_text(FAKE_AWS.replace("{python}", sys.executable))
-    (bindir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
-    for b in ("aws", "python3"):
-        (bindir / b).chmod(0o755)
+    if not bindir.exists():
+        bindir.mkdir()
+        pylib.mkdir(parents=True)
+        (pylib / "__init__.py").write_text(FAKE_BOTO3)
+        (bindir / "aws").write_text(FAKE_AWS.replace("{python}", sys.executable))
+        (bindir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        for b in ("aws", "python3"):
+            (bindir / b).chmod(0o755)
     fixture, log = tmp_path / "fixture.json", tmp_path / "aws.jsonl"
-    fixture.write_text(json.dumps(dict(FIXTURE, acct=ACCT, oidc_url=OIDC, **overrides.pop("fixture", {}))))
+    fixture.write_text(json.dumps(dict(fixture_data or FIXTURE, acct=ACCT, oidc_url=OIDC,
+                                       **overrides.pop("fixture", {}))))
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", PYTHONPATH=str(tmp_path / "pylib"),
                FAKE_AWS_FIXTURE=str(fixture), FAKE_AWS_LOG=str(log),
                SWEEP_FAILURES_FILE=str(tmp_path / "private" / "destroy-sweep-failures"))
     tvars = {"AWS_REGION": REGION, "RESOURCE_PREFIX": PREFIX, "HUB_CLUSTER_NAME": HUB, "HUB_VPC_ID": "",
-             "DESTROY_KEEP_DATA": "false", **overrides.pop("tvars", {})}
+             "DESTROY_KEEP_DATA": "false", "C_INFO": "", "C_RESET": "", **overrides.pop("tvars", {})}
     (tmp_path / "private").mkdir(exist_ok=True)
     cmd = cmd.replace(REPO + "/private/", str(tmp_path / "private") + "/")
     if TASK:
@@ -358,3 +386,26 @@ def test_foreign_oidc_providers_are_never_deleted(run):
     assert not [a for a in deleted if any(a.endswith("/" + f) for f in FOREIGN_OIDC)], deleted
     for f in FOREIGN_OIDC:
         assert [ln for ln in res.stdout.splitlines() if "skip OIDC provider " + f + " " in ln], res.stdout
+
+
+def test_oidc_record_is_kept_in_private_and_survives_a_rerun(tmp_path):
+    """The record step writes this install's issuer ids under private/ (gitignored, not
+    /tmp) and merges on a re-run, so a destroy re-run after the clusters are gone still
+    knows them. Clusters of other stacks are not recorded."""
+    rec = _record_step()
+    assert "/tmp/" not in rec, "the OIDC record must not live in /tmp"
+    issuer = "https://" + OIDC
+    first = dict(FIXTURE, clusters={
+        HUB: {"identity": {"oidc": {"issuer": issuer + "HUBID"}}, "tags": {}},
+        "acme-custom-dev": {"identity": {"oidc": {"issuer": issuer + "TAGGEDSPOKE"}},
+                            "tags": {"platform.gitops.io/prefix": PREFIX}},
+        "other-hub": {"identity": {"oidc": {"issuer": issuer + "OTHERID"}},
+                      "tags": {"platform.gitops.io/prefix": "other"}}})
+    res, _ = _run(tmp_path, cmd=rec, fixture_data=first)
+    assert res.returncode == 0, res.stdout + res.stderr
+    out = tmp_path / "private" / f"{HUB}-destroy-oidc-ids"
+    assert out.read_text().split("\n")[:-1] == ["HUBID " + HUB, "TAGGEDSPOKE acme-custom-dev"]
+    # Re-run once every cluster is gone: the earlier ids are kept, not truncated.
+    res, _ = _run(tmp_path, cmd=rec, fixture_data=dict(FIXTURE, clusters={}))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert out.read_text().split("\n")[:-1] == ["HUBID " + HUB, "TAGGEDSPOKE acme-custom-dev"]
