@@ -350,6 +350,10 @@ ingress-class-alb:
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
     loadBalancerName: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
+    # This cluster's own NAT egress IP(s) (provider-written nat_egress_cidrs). The chart
+    # appends them to inboundCidrs/extraInboundCidrs ONLY when an allowlist is set, so an
+    # open ALB stays open. Empty/absent annotation => no-op.
+    clusterEgressCidrs: '{{default "" (index .metadata.annotations "nat_egress_cidrs")}}'
     # Scheme is internal ONLY when this cluster is fronted by an edge (CloudFront),
     # signalled by a non-empty ingress_domain_name annotation: a CloudFront VPC-origin
     # requires an internal ALB, and the IngressClassParams scheme MUST match the adopted
