@@ -77,6 +77,27 @@ addons ApplicationSet generates the `aiops-agent` Application, and ArgoCD syncs 
 set it back to `false` (or drop the key) — the label disappears and the Application is pruned.
 
 
+## Cluster read access (RBAC)
+
+The agent identity (`aiops-agent-role`, shared by the agent and `eks-read-mcp` via Pod
+Identity) is read-only on every fleet cluster through two layers:
+
+- the `agent-access` AccessEntries (one per cluster) associate `AmazonEKSViewPolicy`
+  (namespaced built-ins) and map the role into the Kubernetes group
+  `aiops-agent-cluster-read`;
+- the `aiops-agent-rbac` addon (`../rbac-chart`, registry entry in the workshop overlay
+  `overrides.yaml`) installs a read-only `ClusterRole`/`ClusterRoleBinding` for that group
+  on the hub **and** every spoke: nodes, namespaces, events, CRDs, `argoproj.io`
+  Applications/ApplicationSets/AppProjects/Rollouts, ACK `*.services.k8s.aws`, `kro.run`,
+  Karpenter/Auto Mode node objects. get/list/watch only — no Secrets, no ConfigMaps, no
+  write verbs.
+
+The IAM policy `eks-read-access` adds `eks:ListInsights`/`eks:DescribeInsight` on top of
+the discovery calls.
+
+> Known limitation: one identity serves both the autonomous RCA path and the interactive
+> chat, so this cluster-wide read also applies to the chat until the two-agent RBAC split.
+
 ## Per-cluster overrides (fleet-config overlay)
 
 The appset auto-adds `overlays/clusters/<cluster>/aiops-agent/values.yaml` (last wins). Example:
