@@ -45,8 +45,8 @@ echo ">>> Cleaning up dev cluster..."
 kubectl config use-context peeks-spoke-dev
 
 # Delete AppModServices (Kro instances). The Rust dev deploy (Path A kro tab, also
-# pre-run by `task workshop:prewarm-pathA-rust-kro`) is named rust-microservice-dev;
-# the frontend (pre-run by `task workshop:prewarm-pathA-frontend`) is next-js-app.
+# pre-run by `task prewarm-pathA-rust-kro` in workshop/) is named rust-microservice-dev;
+# the frontend (pre-run by `task prewarm-pathA-frontend`) is next-js-app.
 kubectl delete appmodservice rust-microservice-dev -n team-rust --ignore-not-found 2>/dev/null || true
 kubectl delete appmodservice rust-microservice -n team-rust --ignore-not-found 2>/dev/null || true
 kubectl delete appmodservice progressive-app -n team-java --ignore-not-found 2>/dev/null || true
