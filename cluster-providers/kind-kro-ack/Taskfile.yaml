@@ -2197,7 +2197,7 @@ tasks:
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json") || OURS=""
           for ARN in $(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null); do
             CL=$(aws elbv2 describe-tags --region "$REGION" --resource-arns "$ARN" --query "TagDescriptions[0].Tags[?Key=='elbv2.k8s.aws/cluster']|[0].Value" --output text 2>/dev/null)
-            # (an if, not `case ... continue`: go-task's shell ignores continue inside a case arm)
+            # (an if: go-task 3.53's shell drops `cmd || continue` inside a case arm)
             if [ -n "$CL" ] && [ "$CL" != None ] && printf '%s\n' "$OURS" | grep -qxF "$CL"; then
               echo "  deleting ALB $ARN (cluster $CL)"; aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" --region "$REGION" 2>/dev/null || true
             fi
