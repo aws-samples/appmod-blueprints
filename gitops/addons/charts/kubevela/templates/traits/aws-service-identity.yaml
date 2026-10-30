@@ -16,6 +16,48 @@ spec:
   schematic:
     cue:
       template: |
+        // aws-service-identity TraitDefinition
+        //
+        // Grants a workload an AWS IAM identity via EKS Pod Identity — secretlessly and
+        // with zero cluster parameters. Emits a platform.gitops.io/PodIdentity claim
+        // (XPodIdentity Composition), which resolves clusterName/region ambiently from
+        // the cluster's env-config EnvironmentConfig and creates the IAM Role (named by
+        // this trait, see _roleName) + PodIdentityAssociation bound to the workload's
+        // ServiceAccount (owned by the component, name == context.name).
+        //
+        // Role name: IAM names are account-global, so "<serviceAccount>-role" was shared
+        // by every cluster of the account that ran the same workload (dev and prod spokes,
+        // or two installs). The name is now
+        //   <first 50 chars of "<cluster>-<serviceAccount>">-<8 hex>-role   (<= 64 chars)
+        // where the 8 hex chars are sha256("<region>/<cluster>/<namespace>/<serviceAccount>").
+        // The cluster is the platform's global.clusterName (aws_cluster_name annotation),
+        // the same name the PodIdentityAssociation targets; for the hub it starts with the
+        // install's resource_prefix. The hash keeps the name one-to-one with the
+        // (region, cluster, namespace, serviceAccount) it serves even when truncated.
+        //
+        // Ordering: EKS injects Pod Identity creds via a mutating webhook at pod
+        // admission, which only fires if the association already exists. To avoid that
+        // race we SELF-INJECT the creds URI + the pods.eks.amazonaws.com projected
+        // token, and add an init container that blocks (via `kubectl wait
+        // --for=condition=Ready`) until the PodIdentity resource is Ready — i.e. the
+        // Composition has created the IAM Role + PodIdentityAssociation.
+        //
+        // NOTE: this gate is CONTROL-PLANE readiness only. The brief AWS IAM data-plane
+        // propagation window (e.g. freshly-attached accessFor policies not yet enforced)
+        // is intentionally NOT handled here — handle it with app-level retry.
+        //
+        // The init container reads the PodIdentity via the pod's ServiceAccount, so the
+        // trait also emits a namespaced Role/RoleBinding granting get/list/watch on it.
+        // The image is distroless (no shell); `kubectl wait` is a single invocation, and
+        // if the PodIdentity isn't created yet the init container fails and the kubelet
+        // retries it (init-container restart) until it exists and is Ready.
+        //
+        // Cloud-agnostic sibling pattern: gcp-service-identity / azure-service-identity.
+        import (
+        	"crypto/sha256"
+        	"encoding/hex"
+        	"strings"
+        )
         parameter: {
         	// +usage=Sibling component names whose IAM policies to attach to this workload's role
         	accessFor?: [...string]
@@ -47,9 +89,20 @@ spec:
         	readOnly:  true
         }
 
+        // IAM role name, unique per (region, cluster, namespace, serviceAccount); see the
+        // header. Computed here (not in the Composition) because the attachments below
+        // need it, and passed to the Composition through the claim's spec.roleName.
+        _cluster:  "{{ .Values.global.clusterName }}"
+        _region:   "{{ .Values.global.awsRegion }}"
+        _roleKey:  _region + "/" + _cluster + "/" + context.namespace + "/" + context.name
+        _roleHash: strings.SliceRunes(hex.Encode(sha256.Sum256(_roleKey)), 0, 8)
+        _roleBase: _cluster + "-" + context.name
+        _roleHead: [if len(_roleBase) > 50 {strings.SliceRunes(_roleBase, 0, 50)}, _roleBase][0]
+        _roleName: _roleHead + "-" + _roleHash + "-role"
+
         outputs: {
         	// XPodIdentity claim — the Composition resolves clusterName/region from
-        	// env-config and creates the IAM Role + PodIdentityAssociation.
+        	// env-config and creates the IAM Role (named spec.roleName) + PodIdentityAssociation.
         	"\(context.name)-identity": {
         		apiVersion: "platform.gitops.io/v1alpha1"
         		kind:       "PodIdentity"
@@ -60,6 +113,7 @@ spec:
         		spec: {
         			serviceAccount: context.name
         			namespace:      context.namespace
+        			roleName:       _roleName
         		}
         	}
 
@@ -98,17 +152,23 @@ spec:
         	}
 
         	// Attach sibling components' IAM policies to the role the Composition
-        	// creates (deterministic name "<serviceAccount>-role").
+        	// creates (name _roleName). The object name carries the namespace ("." cannot
+        	// occur in a namespace or component name, so it is one-to-one): these are
+        	// cluster-scoped objects, and two namespaces running the same component would
+        	// otherwise share one. It also differs from the former
+        	// "<name>-<c>-role-policy-attachment", so an upgraded install gets new
+        	// attachments instead of a role change on the old ones, which the provider
+        	// refuses (role is immutable on an attachment).
         	if parameter.accessFor != _|_ {
         		for _, c in parameter.accessFor {
         			"\(context.name)-\(c)-iam-policy": {
         				apiVersion: "iam.aws.upbound.io/v1beta1"
         				kind:       "RolePolicyAttachment"
-        				metadata: name: "\(context.name)-\(c)-role-policy-attachment"
+        				metadata: name: "\(context.namespace).\(context.name)-\(c)-role-policy-attachment"
         				spec: {
         					forProvider: {
         						policyArnRef: name: "\(context.appName)-\(c)-iam-policy"
-        						role: "\(context.name)-role"
+        						role: _roleName
         					}
         					providerConfigRef: name: "default"
         				}
