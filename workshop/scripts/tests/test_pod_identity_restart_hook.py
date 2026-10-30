@@ -183,3 +183,20 @@ def test_deployment_single_pod_unchanged_behaviour(tmp_path, scripts):
     (tmp_path / "x").mkdir()
     p, restarts = run(tmp_path / "x", s, [[NO_CREDS.format(n="lbc-1")], [OK.format(n="lbc-2")]])
     assert p.returncode == 0 and len(restarts) == 1
+
+
+def test_role_allows_rollout_status_watch():
+    """`kubectl rollout status` watches the workload: the Role must grant `watch`."""
+    if not shutil.which("helm"):
+        pytest.skip("helm not installed")
+    out = subprocess.run(
+        ["helm", "template", "t", CHART, "-f", "/dev/stdin"],
+        input=yaml.safe_dump(TARGETS), capture_output=True, text=True, check=True).stdout
+    roles = {d["metadata"]["name"]: d for d in yaml.safe_load_all(out) if d and d.get("kind") == "Role"}
+    expected = {"lbc-credential-check-role": "deployments",
+                "aws-for-fluentbit-credential-check-role": "daemonsets"}
+    assert set(roles) == set(expected)
+    for name, resource in expected.items():
+        rule = next(r for r in roles[name]["rules"] if r["apiGroups"] == ["apps"])
+        assert rule["resources"] == [resource]
+        assert {"get", "list", "watch", "patch"} <= set(rule["verbs"])

@@ -22,7 +22,8 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["{{ $kind }}s"]
-    verbs: ["get", "list", "patch"]
+    # get/list: resolve -l; patch: rollout restart; watch: rollout status.
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
