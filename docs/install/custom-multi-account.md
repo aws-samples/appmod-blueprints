@@ -73,7 +73,7 @@ describes; its CARM selectors come with it. In **your** fleet repo:
        provider: kro-ack
        fleetMember: spoke
        region: <region>
-       k8sVersion: "1.31"
+       k8sVersion: "1.37"
        enableGeneralPurposeNodePool: true
        cidr:
          vpcCidr: "10.3.0.0/16"          # disjoint from the hub and every other spoke
