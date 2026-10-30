@@ -14,6 +14,7 @@ ArgoCD is not available here, so the generator is emulated end to end:
 
 Run:  python -m pytest workshop/scripts/tests/test_aiops_agent_spoke_access.py -q
 """
+import hashlib
 import json
 import os
 import shutil
@@ -30,6 +31,17 @@ needs_helm = pytest.mark.skipif(HELM is None, reason="helm not on PATH")
 
 ACCOUNT = "111111111111"
 REPO_URL = "https://git.example.com/platform/appmod-blueprints.git"
+
+
+REGION = "us-west-2"  # chart default
+
+
+def _expected_role(prefix, sa="aiops-agent", namespace="aiops-agent"):
+    """The aws-service-identity trait's role name (platform/oam/definitions/traits/
+    aws-service-identity.cue) for <sa> on the hub <prefix>-hub, computed independently."""
+    cluster = f"{prefix}-hub"
+    digest = hashlib.sha256(f"{REGION}/{cluster}/{namespace}/{sa}".encode()).hexdigest()[:8]
+    return f"{cluster}-{sa}"[:50] + f"-{digest}-role"
 
 
 def _helm(*args):
@@ -151,7 +163,41 @@ def test_non_workshop_single_spoke(tmp_path):
     app, spokes = _generate("acme", fleet, tmp_path)
     assert [e["spec"]["clusterName"] for e in _hub_entries(app)] == ["acme-hub"]
     assert [e["spec"]["clusterName"] for e in spokes] == ["acme-dev"]
-    assert spokes[0]["spec"]["principalARN"] == f"arn:aws:iam::{ACCOUNT}:role/aiops-agent-role"
+    role = _expected_role("acme")
+    assert spokes[0]["spec"]["principalARN"] == f"arn:aws:iam::{ACCOUNT}:role/{role}"
+    assert spokes[0]["metadata"]["name"] == f"{role}-acme-dev"
+
+
+@needs_helm
+@pytest.mark.parametrize("prefix", ["peeks", "acme"])
+def test_entries_name_the_trait_role(prefix, tmp_path):
+    """Hub and spoke entries name the role the aws-service-identity trait creates for the
+    agent ServiceAccount on <prefix>-hub, and their object names carry it."""
+    fleet = [_secret(f"{prefix}-hub", "control-plane"), _secret(f"{prefix}-dev", "spoke")]
+    app, spokes = _generate(prefix, fleet, tmp_path)
+    role = _expected_role(prefix)
+    arn = f"arn:aws:iam::{ACCOUNT}:role/{role}"
+    (hub,) = _hub_entries(app)
+    assert hub["metadata"]["name"] == f"{role}-hub" and hub["spec"]["principalARN"] == arn
+    assert [(e["metadata"]["name"], e["spec"]["principalARN"]) for e in spokes] == \
+           [(f"{role}-{prefix}-dev", arn)]
+
+
+@needs_helm
+def test_two_installs_share_no_role():
+    assert _expected_role("peeks") != _expected_role("acme")
+    for p in ("peeks", "acme"):
+        (app,) = _by_kind(_render_chart(p), "Application")
+        assert "role/aiops-agent-role" not in yaml.safe_dump(app)
+
+
+@needs_helm
+def test_access_chart_requires_role_name():
+    res = subprocess.run([HELM, "template", "x", os.path.join(REPO, "workshop", "aiops-agent",
+                                                             "access-chart"),
+                          "--set", f"accountId={ACCOUNT}", "--set", "clusterName=acme-dev"],
+                         capture_output=True, text=True)
+    assert res.returncode != 0 and "roleName is required" in res.stderr
 
 
 @needs_helm

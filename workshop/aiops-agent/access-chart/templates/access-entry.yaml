@@ -1,17 +1,21 @@
 {{- $cluster := required "clusterName is required (set by the aiops-agent spoke-access ApplicationSet)" .Values.clusterName -}}
 {{- $account := required "accountId is required (set by the aiops-agent spoke-access ApplicationSet)" (.Values.accountId | toString) -}}
+{{- $role := required "roleName is required (set by the aiops-agent spoke-access ApplicationSet)" .Values.roleName -}}
 # Same shape as the hub entry (agent-access in ../chart/files/aiops-agent-app.yaml):
 # AmazonEKSViewPolicy + the aiops-agent-cluster-read group bound by the aiops-agent-rbac
 # addon (../rbac-chart). ACK CR on the hub, routed to <prefix>-cluster-mgmt-eks by the
 # incident-bridge-eks IAMRoleSelector (namespace aiops-agent).
+# The object name carries the role name, like the hub entry (<role>-hub): EKS cannot
+# change an entry's principal, so a role change gives a new entry (and ArgoCD prunes the
+# old one) instead of an entry stuck on a deleted role.
 apiVersion: eks.services.k8s.aws/v1alpha1
 kind: AccessEntry
 metadata:
-  name: aiops-agent-{{ $cluster }}
+  name: {{ $role }}-{{ $cluster }}
   namespace: aiops-agent
 spec:
   clusterName: {{ $cluster }}
-  principalARN: arn:aws:iam::{{ $account }}:role/aiops-agent-role
+  principalARN: arn:aws:iam::{{ $account }}:role/{{ $role }}
   type: STANDARD
   kubernetesGroups:
   - aiops-agent-cluster-read
