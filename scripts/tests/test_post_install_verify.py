@@ -97,6 +97,15 @@ def test_parse_drops_data_and_splits_hub_spokes():
     assert [(s.cluster_name, s.region) for s in spokes] == [("s1-eks", "r2")]
 
 
+def test_parse_drops_only_kubectl_prefixed_annotations():
+    ann = {"kubectl.kubernetes.io/last-applied-configuration": "{}",
+           "x.kubectl.kubernetes.io/keep": "1",
+           "kubectl.kubernetes.io": "keep-unprefixed",
+           "aws_cluster_name": "h"}
+    sec = piv.parse_cluster_secrets({"items": [secret_item("h", {}, ann)]})[0]
+    assert sorted(sec.annotations) == ["aws_cluster_name", "kubectl.kubernetes.io", "x.kubectl.kubernetes.io/keep"]
+
+
 def test_secret_values_clean_hub_passes():
     inp = piv.Inputs("h", "r1", None, "d.test", "p", False)
     r = piv.check_secret_values(hub_secret(), True, inp)

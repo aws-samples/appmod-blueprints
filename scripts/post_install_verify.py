@@ -176,14 +176,25 @@ class ClusterSecret:
         return str(self.labels.get(f"enable_{feature}", "")).lower() == "true"
 
 
+KUBECTL_ANNOTATION_PREFIX = "kubectl.kubernetes.io"
+
+
+def _annotation_prefix(key: str) -> str:
+    """Return the DNS prefix of a Kubernetes annotation key ("" when unprefixed)."""
+    prefix, sep, _ = key.partition("/")
+    return prefix if sep else ""
+
+
 def parse_cluster_secrets(doc: dict) -> List[ClusterSecret]:
     out = []
     for item in doc.get("items", []):
         item.pop("data", None)
         item.pop("stringData", None)
         md = item.get("metadata", {})
+        # Drop kubectl-managed annotations (e.g. last-applied-configuration) by
+        # comparing the annotation-key prefix exactly rather than by substring.
         ann = {k: v for k, v in (md.get("annotations") or {}).items()
-               if not k.startswith("kubectl.kubernetes.io/")}
+               if _annotation_prefix(k) != KUBECTL_ANNOTATION_PREFIX}
         out.append(ClusterSecret(md.get("name", ""), dict(md.get("labels") or {}), ann))
     return out
 
