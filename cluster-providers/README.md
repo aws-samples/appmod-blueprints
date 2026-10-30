@@ -176,7 +176,43 @@ Authorization and teardown therefore key on something other than the name:
   `task destroy` (`scripts/sweep-spoke-vpcs.py`, step 6h) finds VPCs by the prefix tag (plus
   the two legacy names for pre-tag installs) and keeps only those that also carry the cluster
   tag (or a legacy name), so a spoke named anything else is cleaned up too. It never selects the hub's VPC or a CloudFormation-owned one (the self-paced
-  template's IDE/hub VPC).
+  template's IDE/hub VPC), a VPC whose prefix tag is another prefix, a VPC that still hosts a
+  live EKS cluster (for example a spoke kept with `deletionPolicy: retain`), or the VPC of a
+  cluster the teardown inventory lists as retained. On kind-kro-ack the hub's own kro-made VPC
+  is removed by `scripts/sweep-hub-vpc.py` (step 6h2) once the hub cluster is gone; a
+  CloudFormation-owned hub VPC (workshop) is left to the stack, and step 6h2 is skipped when
+  `hub.network.vpcId` names a pre-existing VPC. The IAM role sweep skips any role a live
+  cluster in any enabled region still references (`scripts/sweep-iam-guard.py`; IAM is
+  global). Before any addon is
+  removed, `scripts/protect-shared-iam.py` (`hub:destroy-addons` step 0) marks retain/Orphan
+  the hub's Crossplane/ACK IAM resources this teardown must not delete: a fixed-name role
+  outside `<prefix>-` that a chart creates on every hub (each hub holds a managed resource for
+  the same role), or a role a live cluster outside the stack still references. Such a shared
+  role is deleted later (`scripts/sweep-shared-iam.py`, step 6b2) only when no live cluster in
+  any enabled region references it any more (kept when a region cannot be read). A role that a live cluster's access entry still lists (for example
+  a hub's Argo CD capability role left in a retained spoke's access entries) is kept by
+  `scripts/sweep-iam-guard.py` on purpose: remove the stale access entry, or delete the role
+  once that cluster is gone. After the hub is deleted, `scripts/sweep-hub-leftovers.py`
+  (step 2b) removes, for this stack's removed clusters only (by exact name: the hub, the
+  spokes the teardown inventory lists, `<prefix>-spoke-dev`/`-prod`; never a `<prefix>-*`
+  wildcard, so a `peeks-a-hub` stack survives destroying prefix `peeks`), the available EBS volumes they
+  owned (Retain StorageClass PVCs, tagged `kubernetes.io/cluster/<name>=owned` or, with the
+  EKS Auto Mode CSI driver, `eks:eks-cluster-name=<name>`), their target groups with no load
+  balancer, the hub's unused CloudWatch Logs delivery sources/destinations and, when `domain`
+  is in a Route53 hosted zone, the A/AAAA/CNAME records external-dns made for them (identified
+  by its owner TXT record, owner = cluster name; never the zone, NS/SOA, ACM validation or
+  hand-made records); `DeleteCluster` is retried while EKS
+  answers `ResourceInUseException`, and the secret sweep includes secrets already scheduled
+  for deletion. `DESTROY_KEEP_DATA=true task destroy` keeps those EBS volumes and takes a
+  final snapshot of the DevLake databases before deleting them (default: deleted without a
+  snapshot).
+- The python helpers use the same AWS profile as the `aws` CLI calls of the task
+  (`AWS_PROFILE` wins over `AWS_DEFAULT_PROFILE`, as for the CLI; boto3 alone reads them the
+  other way round). `destroy` checks before starting that both resolve to the same account,
+  and a helper that has no credentials exits 3, is recorded in
+  `private/destroy-sweep-failures` and makes `destroy` fail instead of reporting success. A
+  failing `aws iam list-roles`/`list-policies` in steps 3, 4, 6b or 6c is recorded the same
+  way instead of aborting the rest of the sweep.
 
 Two limits are real and are enforced at declaration time by a Helm `fail` in the chart that
 renders the cluster, so an invalid name creates nothing at all:
