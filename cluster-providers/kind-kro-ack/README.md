@@ -76,6 +76,13 @@ task install
   9. hub:wait-for-sync   Wait for hub ArgoCD apps to converge
 ```
 
+## KUBECONFIG constraints
+
+- **Do not export `KUBECONFIG` before `task install`.** This Taskfile sets `env: KUBECONFIG: <repo>/private/kubeconfig`, but go-task gives a variable already set in your shell priority over a Taskfile `env:` entry ([go-task env precedence](https://taskfile.dev/docs/experiments/env-precedence)). The template value `{{.KUBECONFIG}}` keeps the Taskfile path, so `kind create cluster --kubeconfig {{.KUBECONFIG}}` writes the kind context to `private/kubeconfig`, while the plain `kubectl`/`helm` calls that follow read your exported file. That file has no kind context, so the install fails at the first `kubectl` step after `kind:create`. Run `unset KUBECONFIG` first, or export exactly `$PWD/private/kubeconfig` from the repo root.
+- **The provider install does not touch `~/.kube/config`.** It writes only `private/kubeconfig` (kind) and `private/hub-kubeconfig` (hub, via `aws eks update-kubeconfig --kubeconfig ...`).
+- **`task kubeconfig` (root Taskfile) does.** It runs `aws eks update-kubeconfig --alias <name>` for every EKS cluster named `<resourcePrefix>-*`, writing to your default kubeconfig (`$KUBECONFIG`, else `~/.kube/config`). Each call switches the current context. The task then runs `kubectl config use-context <resourcePrefix>-hub || true`: if your `hub.clusterName` is not `<resourcePrefix>-hub`, that step fails silently and you stay on whichever cluster was written last.
+- **`aws eks update-kubeconfig` with a wrong `--name`** (for example a hub name that differs from your `hub.clusterName`) returns an error and changes nothing. If that error is hidden (`>/dev/null 2>&1 || true`), the previous context stays current and your next `kubectl` runs against another cluster. Check `kubectl config current-context` before trusting a `kubectl` result.
+
 ## Architecture: Crossplane vs KRO+ACK
 
 | Aspect | kind-crossplane | kind-kro-ack |
