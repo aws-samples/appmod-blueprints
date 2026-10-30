@@ -218,8 +218,10 @@ spec:
   # iam.aws.upbound.io Policy named <appName>-<component>-iam-policy so the agent's
   # aws-service-identity trait (accessFor: eks-read-access) attaches it to the role.
   # Cluster/k8s object reads are still gated by the per-cluster EKS AccessEntries
-  # (agent-access component, AmazonEKSViewPolicy) — this only grants the AWS control-plane
-  # calls (ListClusters/DescribeCluster) + the AccessKubernetesApi entry point.
+  # (agent-access component, AmazonEKSViewPolicy + the aiops-agent-cluster-read group) —
+  # this only grants the AWS control-plane calls (ListClusters/DescribeCluster), the
+  # AccessKubernetesApi entry point, and the read-only EKS Insights calls
+  # (ListInsights/DescribeInsight, used by the upgrade-readiness checks).
   - name: eks-read-access
     type: k8s-objects
     properties:
@@ -232,7 +234,7 @@ spec:
           forProvider:
             name: aiops-agent-hub-eks-read-access-iam-policy
             policy: |
-              {"Version":"2012-10-17","Statement":[{"Sid":"EksReadDiscover","Effect":"Allow","Action":["eks:ListClusters","eks:DescribeCluster","eks:AccessKubernetesApi"],"Resource":"*"}]}
+              {"Version":"2012-10-17","Statement":[{"Sid":"EksReadDiscover","Effect":"Allow","Action":["eks:ListClusters","eks:DescribeCluster","eks:AccessKubernetesApi"],"Resource":"*"},{"Sid":"EksReadInsights","Effect":"Allow","Action":["eks:ListInsights","eks:DescribeInsight"],"Resource":"*"}]}
           providerConfigRef:
             name: default
   - name: eks-read-mcp
@@ -649,6 +651,12 @@ spec:
           clusterName: REPLACE_CLUSTER_PREFIX-hub
           principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
           type: STANDARD
+          # ▶CLUSTER-READ: also map the role into the aiops-agent-cluster-read group, bound
+          # to a read-only ClusterRole (nodes, CRDs: argoproj.io/ACK/kro/Karpenter — NO
+          # secrets/configmaps, NO writes) shipped to hub + spokes by the aiops-agent-rbac
+          # addon (workshop/aiops-agent/rbac-chart). AmazonEKSViewPolicy alone 403s on those.
+          kubernetesGroups:
+          - aiops-agent-cluster-read
           accessPolicies:
           - accessScope:
               type: cluster
@@ -662,6 +670,12 @@ spec:
           clusterName: REPLACE_CLUSTER_PREFIX-spoke-dev
           principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
           type: STANDARD
+          # ▶CLUSTER-READ: also map the role into the aiops-agent-cluster-read group, bound
+          # to a read-only ClusterRole (nodes, CRDs: argoproj.io/ACK/kro/Karpenter — NO
+          # secrets/configmaps, NO writes) shipped to hub + spokes by the aiops-agent-rbac
+          # addon (workshop/aiops-agent/rbac-chart). AmazonEKSViewPolicy alone 403s on those.
+          kubernetesGroups:
+          - aiops-agent-cluster-read
           accessPolicies:
           - accessScope:
               type: cluster
@@ -675,6 +689,12 @@ spec:
           clusterName: REPLACE_CLUSTER_PREFIX-spoke-prod
           principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
           type: STANDARD
+          # ▶CLUSTER-READ: also map the role into the aiops-agent-cluster-read group, bound
+          # to a read-only ClusterRole (nodes, CRDs: argoproj.io/ACK/kro/Karpenter — NO
+          # secrets/configmaps, NO writes) shipped to hub + spokes by the aiops-agent-rbac
+          # addon (workshop/aiops-agent/rbac-chart). AmazonEKSViewPolicy alone 403s on those.
+          kubernetesGroups:
+          - aiops-agent-cluster-read
           accessPolicies:
           - accessScope:
               type: cluster

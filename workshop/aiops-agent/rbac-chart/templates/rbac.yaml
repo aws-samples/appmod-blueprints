@@ -1,0 +1,100 @@
+{{- /*
+  aiops-agent cluster-wide READ-ONLY RBAC (hub + every spoke).
+
+  Why: the agent's identity (IAM role aiops-agent-role, shared by the agent and
+  eks-read-mcp via Pod Identity) gets AmazonEKSViewPolicy on each cluster through an
+  EKS AccessEntry (chart/files/aiops-agent-app.yaml, component agent-access). That
+  managed policy does NOT cover cluster-scoped core objects (nodes) nor any CRD
+  (argoproj.io, ACK *.services.k8s.aws, kro.run, Karpenter/Auto Mode), so the
+  autonomous RCA path got 403 on `list nodes` (hub + spokes) and on
+  `applications.argoproj.io` (hub).
+
+  How it is wired: the AccessEntries also map the role into the Kubernetes group
+  below (spec.kubernetesGroups). This ClusterRoleBinding grants that group the
+  ClusterRole. A group with no AccessEntry mapping has no members, so this chart is
+  inert on a cluster where the agent is not deployed.
+
+  How it reaches the spokes: this chart is an addon of the hub's cluster-addons
+  appset-chart (registry entry `aiops-agent-rbac` in the workshop overlay
+  overrides.yaml), whose ApplicationSet cluster generator targets every fleet
+  cluster secret — the same delivery path as gitops/addons/charts/eks-capabilities-rbac.
+
+  Strictly read-only: get/list/watch only. NO secrets, NO configmaps, NO write
+  verbs, NO impersonate/escalate/bind. Namespaced built-ins (pods, deployments,
+  services, ...) are already covered by AmazonEKSViewPolicy and are not repeated.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aiops-agent-cluster-read
+  labels:
+    app.kubernetes.io/name: aiops-agent-rbac
+rules:
+# Cluster-scoped core objects not in AmazonEKSViewPolicy (nodes was the observed 403).
+# NOTE: "secrets" and "configmaps" are deliberately absent.
+- apiGroups: [""]
+  resources: ["nodes", "namespaces", "persistentvolumes", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses", "csinodes", "volumeattachments"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+# CRD discovery (schemas only, no instance data).
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list", "watch"]
+# Argo CD (observed 403 on applications.argoproj.io on the hub) + Argo Rollouts.
+- apiGroups: ["argoproj.io"]
+  resources: ["applications", "applicationsets", "appprojects", "rollouts", "analysisruns", "analysistemplates", "clusteranalysistemplates", "experiments"]
+  verbs: ["get", "list", "watch"]
+# ACK CRs (status of the AWS resources the platform provisions). RBAC has no
+# "*.services.k8s.aws" wildcard, so each ACK group in use on PEEKS is listed — same
+# list as gitops/addons/charts/eks-capabilities-rbac, but read-only.
+- apiGroups:
+  - services.k8s.aws
+  - ec2.services.k8s.aws
+  - eks.services.k8s.aws
+  - iam.services.k8s.aws
+  - ecr.services.k8s.aws
+  - rds.services.k8s.aws
+  - s3.services.k8s.aws
+  - sns.services.k8s.aws
+  - sqs.services.k8s.aws
+  - prometheusservice.services.k8s.aws
+  - secretsmanager.services.k8s.aws
+  - dynamodb.services.k8s.aws
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+# kro: ResourceGraphDefinitions + their (dynamically generated) instance kinds.
+- apiGroups: ["kro.run"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+# Node provisioning (EKS Auto Mode / Karpenter) for unschedulable-pod RCA.
+- apiGroups: ["karpenter.sh"]
+  resources: ["nodepools", "nodeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["eks.amazonaws.com"]
+  resources: ["nodeclasses"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aiops-agent-cluster-read
+  labels:
+    app.kubernetes.io/name: aiops-agent-rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aiops-agent-cluster-read
+subjects:
+# Populated by the aiops-agent AccessEntries (spec.kubernetesGroups). Must match
+# chart/files/aiops-agent-app.yaml, component agent-access.
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: aiops-agent-cluster-read
