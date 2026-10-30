@@ -57,7 +57,8 @@ AWS credentials for the target account must resolve in your shell
    (see [open-agentic-platform#116](https://github.com/awslabs/open-agentic-platform/issues/116)).
    To widen it, add `external_dns_domain_filters: <parent-zone>` to the `metadata` of the
    `<cluster>/config` secret in Secrets Manager. It becomes a cluster-secret annotation.
-   An empty or missing value keeps the default. The wildcard certificate must also
+   On kind-kro-ack and kind-crossplane hubs, `secrets-manager:seed` keeps that key when it
+   rebuilds `<hub>/config` on a re-install. An empty or missing value keeps the default. The wildcard certificate must also
    cover that sibling, for example `*.<parent-zone>`.
 
 ---
