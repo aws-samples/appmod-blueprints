@@ -307,6 +307,15 @@ printf 'ingressSecurityGroups: ""\n'                   >> "$OUTPUT_FILE"
 # Kept out of the generic config.yaml/config.schema.json so the platform solution
 # stays consumer-agnostic (shapirov103 review #1136). Task defaults to true when absent.
 printf 'prewarmRustCicd: true\n'                      >> "$OUTPUT_FILE"
+# Workshop-only toggle (read solely by workshop/Taskfile.yaml prewarm-pathA-frontend and
+# prewarm-pathA-rust-kro): pre-run the Module 2 Path A frontend + Rust dev (kro) deploy
+# during install. Same consumer-agnostic placement as prewarmRustCicd.
+# Shipped OFF until the companion content MR (platform-engineering-on-eks !888)
+# removes the Rust KubeVela tab: the prewarmed kro deployment/dev/services.yaml and
+# the KubeVela service-rollout both render `Service rust-microservice`, so a
+# participant on that tab would get two owners for one Service. Flip to true (or
+# export PREWARM_PATH_A=true) once !888 has merged.
+printf 'prewarmPathA: false\n'                        >> "$OUTPUT_FILE"
 
 # GitLab/IDE CloudFront domain (separate from the platform CF).
 # Available as $CLOUDFRONT_DOMAIN / $IDE_DOMAIN env vars,

@@ -14,19 +14,22 @@ allowlist on that shared ALB, from your fleet repo, through GitOps.
 
 ## What the setting does
 
-The `ingress-class-alb` chart accepts two optional values:
+The `ingress-class-alb` chart accepts two optional values that you set:
 
 | Key | Role |
 |-----|------|
 | `inboundCidrs` | Base allowlist (the stable list you keep) |
 | `extraInboundCidrs` | Extra entries **appended** after the base (ad‑hoc additions without touching the base) |
 
+A third value, `clusterEgressCidrs`, is filled automatically and only matters once an allowlist
+is set: see [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes).
+
 Each key accepts a **YAML list** *or* a **comma‑separated string**; blank entries are dropped. The
 two lists are concatenated and rendered into `IngressClassParams.spec.inboundCIDRs` of the
 `platform` IngressClassParams:
 
 ```text
-inboundCidrs + extraInboundCidrs
+inboundCidrs + extraInboundCidrs (+ clusterEgressCidrs, only when the first two are non-empty)
   └─> IngressClassParams "platform" .spec.inboundCIDRs
         └─> load balancer controller rewrites the inbound rules of the ALB's managed security group
               └─> applies to EVERY ingress of the "platform" group at once
@@ -74,10 +77,13 @@ set). Create:
 # overlays/clusters/<hub-name>/ingress-class-alb/values.yaml
 #
 # Source-IP allowlist for the shared "platform" ALB (all hub UIs).
-# IPv4 CIDRs. Keep the hub's own NAT egress IP(s) in the base list (see pitfall 1).
+# IPv4 CIDRs. The hub's own NAT egress IP(s) are added automatically on kind-kro-ack and
+# kind-crossplane installs; elsewhere, list them here. The NAT egress IP(s) of every OAP spoke
+# always go here, and must be updated after each reinstall (see pitfall 1).
 inboundCidrs:
   - 203.0.113.0/25        # corporate / VPN egress range
-  - 203.0.113.200/32      # hub NAT gateway egress IP -- REQUIRED for in-cluster SSO
+  # - 203.0.113.200/32    # hub NAT egress IP -- only outside kind-kro-ack / kind-crossplane
+  # - 203.0.113.201/32    # NAT egress IP of a spoke running OAP addons, if any
 # Optional ad-hoc additions, appended after the base (list or comma-separated string):
 extraInboundCidrs: "203.0.113.10/32,203.0.113.11/32"
 ```
@@ -88,9 +94,9 @@ same list to every cluster of an environment instead, use
 environment file.
 
 > **Why a values file and not the registry `valuesObject`.** The addon registry already sets
-> `controllerMode`, `loadBalancerName` and `scheme` through `valuesObject`, and in ArgoCD
-> `valuesObject` takes precedence over value files — so those three keys cannot be overridden
-> here. `inboundCidrs` / `extraInboundCidrs` are **not** set by the registry, so the values file is
+> `controllerMode`, `loadBalancerName`, `scheme` and `clusterEgressCidrs` through `valuesObject`,
+> and in ArgoCD `valuesObject` takes precedence over value files — so those keys cannot be
+> overridden here. `inboundCidrs` / `extraInboundCidrs` are **not** set by the registry, so the values file is
 > authoritative for them. (Equivalent alternative: add
 > `ingress-class-alb: { valuesObject: { inboundCidrs: [...] } }` to
 > `overlays/clusters/<hub-name>/overrides.yaml`, which merges into the registry entry.)
@@ -156,18 +162,90 @@ with the same two commands: `inboundCIDRs` no longer appears, and the security g
 
 ## Pitfalls
 
-### 1. Include the hub's own NAT egress IP
+### 1. Include the NAT egress IPs of the hub (and of OAP spokes)
 
-Several platform apps validate their OIDC tokens by calling **Keycloak through its public URL**,
-i.e. through this same ALB, from inside the cluster — Langfuse, Argo Workflows, Kargo among them.
-That traffic leaves via the hub VPC's NAT gateway(s). If the NAT egress IP is not in the allowlist,
-those calls are rejected and **SSO breaks for these apps** while the UIs still load from your
-browser. Add every NAT gateway Elastic IP of the hub VPC as a `/32`:
+The Keycloak issuer is the **public** URL `https://<domain>/keycloak/realms/platform`. Every app
+that signs users in or validates a token calls it **server‑side** (OIDC discovery, token endpoint,
+JWKS), through this same ALB, from inside the cluster: Backstage, Argo Workflows, Kargo, Langfuse,
+Agent Gateway, GitLab omniauth, and ArgoCD OSS when `enable_argocd` is set (the EKS ArgoCD
+capability signs in through IAM Identity Center and is not affected). That traffic leaves via the
+VPC's NAT gateway(s), so the ALB sees the **NAT Elastic IP** as source. If it is not in the
+allowlist, the ALB security group drops the connection (a TCP timeout, not a 403).
+
+**Symptoms.** The UIs load from your browser, but SSO fails on a timeout: Langfuse returns
+`/api/auth/error?error=OAuthSignin`, Argo Workflows answers 500 on `/oauth2/redirect`, Backstage
+and Kargo SSO fail on OIDC discovery, the Agent Gateway JWT policy cannot fetch its JWKS (MCP calls
+get 401). The app logs show timeouts to `https://<domain>/keycloak/...`.
+
+The allowlist must contain, as `/32`s (for example `<nat-eip>/32`):
+
+- every NAT gateway Elastic IP of the **hub** VPC;
+- every NAT gateway Elastic IP of **each spoke that runs agentic platform (OAP) addons**: those
+  spokes also call the hub's public ALB (OTel export to `https://<hub-domain>/api/public/otel`,
+  Agent Gateway JWKS from the hub's Keycloak).
+
+#### Hub NAT: added automatically on kind-kro-ack and kind-crossplane
+
+At install, `secrets-manager:seed` looks up the public IP of every available NAT gateway of the
+hub VPC and writes them as `/32`s to the `nat_egress_cidrs` metadata key of `<hub>/config`. ESO
+turns it into an annotation of the hub cluster secret, and the registry passes it to the chart as
+`clusterEgressCidrs`. The chart appends it to `inboundCidrs` + `extraInboundCidrs` (no duplicate if
+you already listed it) **only when that allowlist is non-empty**: without an allowlist the ALB
+stays open and the value is ignored. Nothing to commit in your fleet repo for the hub, and the
+allowlist is complete from the ALB's creation.
+
+- A re-seed whose NAT lookup **fails** (API or IAM error) keeps the value already stored, so an
+  active allowlist never loses the NAT on a transient error. A lookup that **succeeds** writes what
+  it finds: a new EIP replaces the stored one, and no NAT removes the key, so a released EIP never
+  stays in the allowlist.
+- A hub reinstall recreates the VPC and re-runs the seed, so the hub value follows the new EIP on
+  its own.
+- If the NAT gateway or its EIP is replaced on a **live** hub, refresh only that key (do not
+  re-run the full `secrets-manager:seed`, which would drop keys other tasks merged in since):
+
+  ```bash
+  task kind-kro-ack:secrets-manager:seed-nat-egress     # or kind-crossplane:secrets-manager:seed-nat-egress
+  ```
+
+  It uses the same lookup as the seed, merges only `nat_egress_cidrs` into `<hub>/config` (failed
+  lookup: nothing written, the task fails; no NAT: key removed), then forces an ESO refresh so
+  ArgoCD re-renders `ingress-class-alb`. Without the task runner, the manual equivalent is to set
+  or delete `nat_egress_cidrs` in the JSON string of `<hub>/config`'s `metadata` field, then
+  annotate the hub cluster-secret `ExternalSecret` in `argocd` with `force-sync=$(date +%s)`.
+- Check it: `kubectl -n argocd get secret -l argocd.argoproj.io/secret-type=cluster
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.nat_egress_cidrs}{"\n"}{end}'`
+- The install role needs `ec2:DescribeNatGateways`.
+- To opt out on one hub, set the registry entry in `overlays/clusters/<hub-name>/overrides.yaml`:
+  `ingress-class-alb: { valuesObject: { clusterEgressCidrs: "" } }`.
+- **A NAT gateway that other workloads share** (bring-your-own VPC) is added the same way, so the
+  ALB is also open to everything else that egresses through it, exactly as if you had listed it by
+  hand. Opt out as above if that is not acceptable.
+- **Only the hub VPC's own NAT gateways are looked up.** A hub that egresses through something
+  else (a Transit Gateway to a central egress VPC, a proxy, a firewall) gets nothing added: list
+  that egress IP yourself in `inboundCidrs` or `extraInboundCidrs`.
+
+#### Still manual
+
+- the hub NAT on other providers (`byoc`, `terraform`);
+- the NAT egress IPs of **spokes running OAP**, on every provider: add them to the hub list in
+  `inboundCidrs` or `extraInboundCidrs`.
+
+To list the NAT gateway Elastic IPs of a VPC:
 
 ```bash
-aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<hub-vpc-id> \
+aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<hub-or-spoke-vpc-id> \
   --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text
 ```
+
+> **Re-check after every reinstall.** A NAT Elastic IP is stable while the NAT gateway exists,
+> but it changes whenever the VPC is recreated — each hub (or spoke) reinstall. For every IP you
+> listed by hand (spokes, and the hub outside kind-kro-ack / kind-crossplane), replace the old
+> `/32` with the new one, or SSO breaks again.
+
+Nothing to do when `inboundCidrs` / `extraInboundCidrs` are unset. In CloudFront mode the ALB
+carries no allowlist ([pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)), but the
+same NAT IPs must be in the WAF IP set if you filter clients at the edge. The automatic hub value
+only reaches the ALB allowlist, never a WAF IP set: list the hub NAT there yourself.
 
 ### 2. The IP the ALB sees may not be the one a "what is my IP" service shows
 
@@ -191,12 +269,15 @@ With `insecure: true` and CloudFront ([CloudFront exposure](cloudfront-exposure.
 reached through a CloudFront **VPC origin**: it sees the private IPs of the CloudFront origin
 interfaces, never the client's IP. A corporate allowlist there **cuts CloudFront off** and every
 URL fails. Filter clients at the edge instead — AWS WAF on the distribution (IP set rule), or
-CloudFront functions — and leave `inboundCidrs` unset on that ALB.
+CloudFront functions — and leave `inboundCidrs` unset on that ALB. If you use a WAF IP set, add
+the hub's and OAP spokes' NAT egress IPs to it too: their server‑side calls to Keycloak go out
+through the NAT and come back through CloudFront ([pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
 
 ### 5. Do not lock yourself out
 
 The change applies to **every** UI at once, ArgoCD included. Add the IP you are working from (and
-the NAT egress IPs) **before** enabling the list, and keep `kubectl` access to the hub (the EKS API
+the NAT egress IPs you must list by hand, see [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes))
+**before** enabling the list, and keep `kubectl` access to the hub (the EKS API
 endpoint is not behind this ALB) so you can revert from the cluster if needed: removing the keys in
 Git and syncing, or as a last resort editing the IngressClassParams directly (ArgoCD will reconcile
 it back to Git on the next sync).
