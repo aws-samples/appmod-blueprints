@@ -74,10 +74,12 @@ set). Create:
 # overlays/clusters/<hub-name>/ingress-class-alb/values.yaml
 #
 # Source-IP allowlist for the shared "platform" ALB (all hub UIs).
-# IPv4 CIDRs. Keep the hub's own NAT egress IP(s) in the base list (see pitfall 1).
+# IPv4 CIDRs. Keep the NAT egress IP(s) of the hub and of every OAP spoke in the base
+# list, and update them after each reinstall (see pitfall 1).
 inboundCidrs:
   - 203.0.113.0/25        # corporate / VPN egress range
   - 203.0.113.200/32      # hub NAT gateway egress IP -- REQUIRED for in-cluster SSO
+  # - 203.0.113.201/32    # NAT egress IP of a spoke running OAP addons, if any
 # Optional ad-hoc additions, appended after the base (list or comma-separated string):
 extraInboundCidrs: "203.0.113.10/32,203.0.113.11/32"
 ```
@@ -156,18 +158,40 @@ with the same two commands: `inboundCIDRs` no longer appears, and the security g
 
 ## Pitfalls
 
-### 1. Include the hub's own NAT egress IP
+### 1. Include the NAT egress IPs of the hub (and of OAP spokes)
 
-Several platform apps validate their OIDC tokens by calling **Keycloak through its public URL**,
-i.e. through this same ALB, from inside the cluster — Langfuse, Argo Workflows, Kargo among them.
-That traffic leaves via the hub VPC's NAT gateway(s). If the NAT egress IP is not in the allowlist,
-those calls are rejected and **SSO breaks for these apps** while the UIs still load from your
-browser. Add every NAT gateway Elastic IP of the hub VPC as a `/32`:
+The Keycloak issuer is the **public** URL `https://<domain>/keycloak/realms/platform`. Every app
+that signs users in or validates a token calls it **server‑side** (OIDC discovery, token endpoint,
+JWKS), through this same ALB, from inside the cluster: Backstage, Argo Workflows, Kargo, Langfuse,
+Agent Gateway, GitLab omniauth, and ArgoCD OSS when `enable_argocd` is set (the EKS ArgoCD
+capability signs in through IAM Identity Center and is not affected). That traffic leaves via the
+VPC's NAT gateway(s), so the ALB sees the **NAT Elastic IP** as source. If it is not in the
+allowlist, the ALB security group drops the connection (a TCP timeout, not a 403).
+
+**Symptoms.** The UIs load from your browser, but SSO fails on a timeout: Langfuse returns
+`/api/auth/error?error=OAuthSignin`, Argo Workflows answers 500 on `/oauth2/redirect`, Backstage
+and Kargo SSO fail on OIDC discovery, the Agent Gateway JWT policy cannot fetch its JWKS (MCP calls
+get 401). The app logs show timeouts to `https://<domain>/keycloak/...`.
+
+Add as a `/32` (for example `<nat-eip>/32`):
+
+- every NAT gateway Elastic IP of the **hub** VPC;
+- every NAT gateway Elastic IP of **each spoke that runs agentic platform (OAP) addons**: those
+  spokes also call the hub's public ALB (OTel export to `https://<hub-domain>/api/public/otel`,
+  Agent Gateway JWKS from the hub's Keycloak).
 
 ```bash
-aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<hub-vpc-id> \
+aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<hub-or-spoke-vpc-id> \
   --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text
 ```
+
+> **Re-check after every reinstall.** A NAT Elastic IP is stable while the NAT gateway exists,
+> but it changes whenever the VPC is recreated — each hub (or spoke) reinstall. Replace the old
+> `/32` with the new one, or SSO breaks again.
+
+Nothing to do when `inboundCidrs` / `extraInboundCidrs` are unset. In CloudFront mode the ALB
+carries no allowlist ([pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)), but the
+same NAT IPs must be in the WAF IP set if you filter clients at the edge.
 
 ### 2. The IP the ALB sees may not be the one a "what is my IP" service shows
 
@@ -191,12 +215,15 @@ With `insecure: true` and CloudFront ([CloudFront exposure](cloudfront-exposure.
 reached through a CloudFront **VPC origin**: it sees the private IPs of the CloudFront origin
 interfaces, never the client's IP. A corporate allowlist there **cuts CloudFront off** and every
 URL fails. Filter clients at the edge instead — AWS WAF on the distribution (IP set rule), or
-CloudFront functions — and leave `inboundCidrs` unset on that ALB.
+CloudFront functions — and leave `inboundCidrs` unset on that ALB. If you use a WAF IP set, add
+the hub's and OAP spokes' NAT egress IPs to it too: their server‑side calls to Keycloak go out
+through the NAT and come back through CloudFront ([pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
 
 ### 5. Do not lock yourself out
 
 The change applies to **every** UI at once, ArgoCD included. Add the IP you are working from (and
-the NAT egress IPs) **before** enabling the list, and keep `kubectl` access to the hub (the EKS API
+the NAT egress IPs, see [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes))
+**before** enabling the list, and keep `kubectl` access to the hub (the EKS API
 endpoint is not behind this ALB) so you can revert from the cluster if needed: removing the keys in
 Git and syncing, or as a last resort editing the IngressClassParams directly (ArgoCD will reconcile
 it back to Git on the next sync).
