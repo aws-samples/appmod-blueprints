@@ -8,10 +8,12 @@ ingress-class-alb registry entry passes `nat_egress_cidrs` as the chart value
 
 Contract:
   - the NAT_EGRESS_CIDRS var turns the VPC's available NAT gateways' public IPs into a sorted,
-    deduplicated, comma-separated list of /32s; no NAT or a failed call -> "";
+    deduplicated, comma-separated list of /32s; no NAT -> ""; a failed call -> the
+    NAT_LOOKUP_FAILED marker (never written to the secret);
   - a resolved value is written as nat_egress_cidrs;
-  - empty value + no stored value -> key absent (metadata otherwise unchanged);
-  - empty value + stored value (transient describe miss on a re-seed) -> stored value kept;
+  - empty value (no NAT) -> key absent, even if a value was stored (it may be a released EIP);
+  - failed lookup + stored value (transient describe error on a re-seed) -> stored value kept;
+  - failed lookup + no stored value -> key absent;
   - a resolved value replaces a stored one (new EIP after a re-install).
 
 The task's vars/cmds are read verbatim from the provider Taskfiles and run under go-task with
@@ -43,6 +45,7 @@ TASK_NAME = "secrets-manager:seed"
 HUB, REGION = "acme-hub", "us-west-2"
 COLORS = ("C_ERR", "C_RESET", "C_OK", "C_INFO", "C_STEP", "C_WARN")
 NAT_A, NAT_B = "203.0.113.200", "203.0.113.201"
+FAILED = "NAT_LOOKUP_FAILED"
 
 FAKE_AWS = r'''#!{python} -I
 import json, os, sys
@@ -190,9 +193,9 @@ class TestNatVar:
         out, _ = _resolve_nat(tmp_path, provider, nat_ips=["None"])
         assert out == ""
 
-    def test_failed_call_is_empty_not_fatal(self, tmp_path, provider):
+    def test_failed_call_is_the_marker_not_fatal(self, tmp_path, provider):
         out, _ = _resolve_nat(tmp_path, provider, nat_fails=True)
-        assert out == ""
+        assert out == FAILED
 
 
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
@@ -207,10 +210,20 @@ class TestSeed:
         assert "nat_egress_cidrs" not in _meta(none)
         assert dict(_meta(none), nat_egress_cidrs=f"{NAT_A}/32") == _meta(some)
 
-    def test_reseed_keeps_the_stored_value_on_a_describe_miss(self, tmp_path, provider):
+    def test_reseed_keeps_the_stored_value_when_the_lookup_fails(self, tmp_path, provider):
+        first, _ = _seed(_sub(tmp_path, "a"), provider, f"{NAT_A}/32")
+        again, _ = _seed(_sub(tmp_path, "b"), provider, FAILED, existing=first)
+        assert _meta(again)["nat_egress_cidrs"] == f"{NAT_A}/32"
+
+    def test_reseed_that_finds_no_nat_drops_the_stored_value(self, tmp_path, provider):
         first, _ = _seed(_sub(tmp_path, "a"), provider, f"{NAT_A}/32")
         again, _ = _seed(_sub(tmp_path, "b"), provider, "", existing=first)
-        assert _meta(again)["nat_egress_cidrs"] == f"{NAT_A}/32"
+        assert "nat_egress_cidrs" not in _meta(again)
+
+    def test_failed_lookup_without_a_stored_value_writes_no_key(self, tmp_path, provider):
+        secret, _ = _seed(tmp_path, provider, FAILED)
+        assert "nat_egress_cidrs" not in _meta(secret)
+        assert FAILED not in secret
 
     def test_a_new_value_replaces_the_stored_one(self, tmp_path, provider):
         first, _ = _seed(_sub(tmp_path, "a"), provider, f"{NAT_A}/32")

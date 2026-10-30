@@ -1150,13 +1150,19 @@ tasks:
       # and rg-vpc gates natGateway1 on state=available (BYO VPC: its existing NATs). Written
       # as nat_egress_cidrs below, so the ingress-class-alb chart can keep in-cluster SSO
       # working behind an allowlist (docs/platform/alb-ip-allowlist.md pitfall 1). Empty when
-      # the VPC has no NAT or the call fails (the cmd below then keeps the stored value).
+      # the VPC has no NAT; NAT_LOOKUP_FAILED when the call fails (the cmd then keeps the
+      # stored value).
       NAT_EGRESS_CIDRS:
         sh: |
-          aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
-            --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
-            --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null \
-          | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, - || true
+          # A failed call prints NAT_LOOKUP_FAILED (never written to the secret) so the cmd can
+          # tell it apart from a successful lookup that found no NAT ("").
+          if NAT_RAW=$(aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
+              --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
+              --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null); then
+            printf '%s\n' "$NAT_RAW" | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, -
+          else
+            echo NAT_LOOKUP_FAILED
+          fi
       # Private subnets + cluster SG for the devlake RDS `vpc` object (see cmds). Mirrors the
       # kind-crossplane seed so the aws-resources ExternalSecret / init-env-config Job can
       # populate a non-empty vpc-config EnvironmentConfig.
@@ -1250,10 +1256,15 @@ tasks:
         # transient describe-capability miss never blanks a good value.
         ARGOCD_FINAL="{{.ARGOCD_URL}}"
         [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PRESERVED_ARGOCD"
-        # Same rule for the NAT egress list: a transient describe miss must not drop the hub
-        # NAT from an allowlist that is already live (that would break in-cluster SSO).
+        # NAT egress list: keep the stored value ONLY when the describe call failed, so a
+        # transient error never drops the hub NAT from a live allowlist (that would break
+        # in-cluster SSO). A lookup that succeeds and finds no NAT drops the key: a stored /32
+        # may be a released EIP that AWS can hand to another account.
         NAT_FINAL="{{.NAT_EGRESS_CIDRS}}"
-        [ -z "$NAT_FINAL" ] && NAT_FINAL="${PRESERVED_NAT:-}"
+        if [ "$NAT_FINAL" = "NAT_LOOKUP_FAILED" ]; then
+          echo "[hub:seed] NAT gateway lookup failed; keeping the stored nat_egress_cidrs"
+          NAT_FINAL="${PRESERVED_NAT:-}"
+        fi
         echo "[hub:seed] nat_egress_cidrs=${NAT_FINAL:-<none>}"
         # The aws-resources ExternalSecret reads <hub>/config property `vpc` into
         # peeks-hub-vpc-secret.vpc_data; the init-env-config Job then parses .id / .subnet_ids /

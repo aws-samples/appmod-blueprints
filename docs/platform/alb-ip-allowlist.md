@@ -175,13 +175,45 @@ it to `inboundCidrs` + `extraInboundCidrs` (no duplicate if you already listed i
 allowlist is non-empty**: without an allowlist the ALB stays open and the value is ignored. Nothing
 to commit in your fleet repo, and the allowlist is complete from the ALB's creation.
 
-- A re-seed that cannot read the NAT gateways keeps the value already stored, so an active
-  allowlist never loses the NAT. A re-install that gets a new EIP writes the new one.
+- A re-seed whose NAT lookup **fails** (API or IAM error) keeps the value already stored, so an
+  active allowlist never loses the NAT on a transient error. A lookup that **succeeds** writes what
+  it finds: a new EIP replaces the stored one, and no NAT removes the key, so a released EIP never
+  stays in the allowlist.
+- The value is refreshed only at install. If the NAT gateway or its EIP is replaced on a live hub,
+  the allowlist keeps the old `/32` until you update the key yourself. Do not re-run the full
+  `secrets-manager:seed` for this: merge only `nat_egress_cidrs` into `<hub>/config`, then let ESO
+  and ArgoCD pick it up.
+
+  ```bash
+  HUB=<hub-cluster-name>; REGION=<region>
+  VPC=$(aws eks describe-cluster --name "$HUB" --region "$REGION" \
+    --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+  NAT=$(aws ec2 describe-nat-gateways --region "$REGION" \
+    --filter Name=vpc-id,Values="$VPC" Name=state,Values=available \
+    --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text \
+    | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, -)
+  CUR=$(aws secretsmanager get-secret-value --secret-id "$HUB/config" --region "$REGION" \
+    --query SecretString --output text)
+  NEW=$(echo "$CUR" | jq --arg nat "$NAT" '.metadata |= (fromjson
+    | if $nat == "" then del(.nat_egress_cidrs) else .nat_egress_cidrs = $nat end | tojson)')
+  aws secretsmanager put-secret-value --secret-id "$HUB/config" --region "$REGION" \
+    --secret-string "$NEW"
+  ```
+
+  ESO picks the change up on its next refresh (or annotate the hub cluster-secret
+  `ExternalSecret` in `argocd` with `force-sync=$(date +%s)`), and ArgoCD then re-renders
+  `ingress-class-alb`.
 - Check it: `kubectl -n argocd get secret -l argocd.argoproj.io/secret-type=cluster
   -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.nat_egress_cidrs}{"\n"}{end}'`
 - The install role needs `ec2:DescribeNatGateways`.
 - To opt out on one hub, set the registry entry in `overlays/clusters/<hub-name>/overrides.yaml`:
   `ingress-class-alb: { valuesObject: { clusterEgressCidrs: "" } }`.
+- **A NAT gateway that other workloads share** (bring-your-own VPC) is added the same way, so the
+  ALB is also open to everything else that egresses through it, exactly as if you had listed it by
+  hand. Opt out as above if that is not acceptable.
+- **Only the hub VPC's own NAT gateways are looked up.** A hub that egresses through something
+  else (a Transit Gateway to a central egress VPC, a proxy, a firewall) gets nothing added: list
+  that egress IP yourself in `inboundCidrs` or `extraInboundCidrs`.
 
 **Still manual:**
 

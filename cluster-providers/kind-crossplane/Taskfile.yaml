@@ -1358,14 +1358,20 @@ tasks:
       # Public egress address(es) of the hub VPC's NAT gateway(s), as comma-separated /32s.
       # Written as nat_egress_cidrs below, so the ingress-class-alb chart can keep in-cluster
       # SSO working behind an allowlist (docs/platform/alb-ip-allowlist.md pitfall 1). Empty
-      # when the VPC has no NAT or the call fails (the cmd below then keeps the stored value).
+      # when the VPC has no NAT; NAT_LOOKUP_FAILED when the call fails (the cmd below then
+      # keeps the stored value).
       # Same lookup as kind-kro-ack secrets-manager:seed.
       NAT_EGRESS_CIDRS:
         sh: |
-          aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
-            --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
-            --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null \
-          | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, - || true
+          # A failed call prints NAT_LOOKUP_FAILED (never written to the secret) so the cmd can
+          # tell it apart from a successful lookup that found no NAT ("").
+          if NAT_RAW=$(aws ec2 describe-nat-gateways --region {{.AWS_REGION}} \
+              --filter Name=vpc-id,Values={{.VPC_ID}} Name=state,Values=available \
+              --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text 2>/dev/null); then
+            printf '%s\n' "$NAT_RAW" | tr '\t' '\n' | awk 'NF && $1 != "None" {print $1 "/32"}' | sort -u | paste -sd, -
+          else
+            echo NAT_LOOKUP_FAILED
+          fi
       INGRESS_DOMAIN: '{{.DOMAIN}}'
       ADMIN_ROLE_NAME:
         sh: yq '.adminRoleName // ""' {{.CONFIG_FILE}}
@@ -1396,11 +1402,16 @@ tasks:
         PREV_ARGOCD=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .aws_argocd_url) // empty' 2>/dev/null)
         ARGOCD_FINAL="{{.ARGOCD_URL}}"
         [ -z "$ARGOCD_FINAL" ] && ARGOCD_FINAL="$PREV_ARGOCD"
-        # Same rule for the NAT egress list: a transient describe miss must not drop the hub
-        # NAT from an allowlist that is already live (that would break in-cluster SSO).
+        # NAT egress list: keep the stored value ONLY when the describe call failed, so a
+        # transient error never drops the hub NAT from a live allowlist (that would break
+        # in-cluster SSO). A lookup that succeeds and finds no NAT drops the key: a stored /32
+        # may be a released EIP that AWS can hand to another account.
         PREV_NAT=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .nat_egress_cidrs) // empty' 2>/dev/null)
         NAT_FINAL="{{.NAT_EGRESS_CIDRS}}"
-        [ -z "$NAT_FINAL" ] && NAT_FINAL="${PREV_NAT:-}"
+        if [ "$NAT_FINAL" = "NAT_LOOKUP_FAILED" ]; then
+          echo "[hub:seed] NAT gateway lookup failed; keeping the stored nat_egress_cidrs"
+          NAT_FINAL="${PREV_NAT:-}"
+        fi
         echo "[hub:seed] nat_egress_cidrs=${NAT_FINAL:-<none>}"
         # Also keep the observability keys seed-observability writes into this metadata
         # (aws_grafana_url + spoke_* AMP scraper wiring). Dropping them makes
