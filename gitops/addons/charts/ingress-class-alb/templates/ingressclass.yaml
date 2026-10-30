@@ -21,6 +21,11 @@ spec:
     extraInboundCidrs  - extra entries appended after the base
   Each accepts a YAML list OR a comma-separated string. All empty/unset => field omitted
   => ALB open (unchanged behaviour). IPv4/IPv6 may be mixed (the LBC splits them).
+  When set, include the NAT gateway EIP(s) of every spoke running OAP addons and, on
+  providers that do not fill clusterEgressCidrs (below), of the hub VPC (<nat-eip>/32):
+  in-cluster apps reach the public Keycloak issuer through this ALB, so SSO times out
+  without them. The EIP changes when the VPC is recreated (reinstall).
+  See docs/platform/alb-ip-allowlist.md, pitfall 1.
   Do not set on an internal ALB fronted by a CloudFront VPC origin: the ALB then sees
   private origin ENI IPs, not client IPs.
 */}}
@@ -37,6 +42,25 @@ spec:
 {{- $t := . | toString | trim }}
 {{- if $t }}
 {{- $cidrs = append $cidrs $t }}
+{{- end }}
+{{- end }}
+{{- /*
+  clusterEgressCidrs: this cluster's OWN NAT egress address(es), written by the provider
+  into <cluster>/config (metadata nat_egress_cidrs -> cluster-secret annotation) and passed
+  by the registry. Appended ONLY when an allowlist is already configured above: with no
+  allowlist the ALB stays open and this list is ignored, so it can never turn an open ALB
+  into a NAT-only one. Needed because in-cluster apps reach the public Keycloak issuer
+  through this same ALB from the NAT EIP (see docs/platform/alb-ip-allowlist.md pitfall 1).
+*/}}
+{{- if $cidrs }}
+{{- $egress := .Values.clusterEgressCidrs }}
+{{- $eraw := list }}
+{{- if kindIs "string" $egress }}{{- $eraw = splitList "," $egress }}{{- else if $egress }}{{- $eraw = $egress }}{{- end }}
+{{- range $eraw }}
+{{- $t := . | toString | trim }}
+{{- if and $t (not (has $t $cidrs)) }}
+{{- $cidrs = append $cidrs $t }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- with $cidrs }}
