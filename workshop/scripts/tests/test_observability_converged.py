@@ -87,6 +87,14 @@ elif svc == "amp" and op == "list-tags-for-resource":
     if tag is None:
         sys.stderr.write("AccessDeniedException\n"); sys.exit(254)
     print(tag)
+elif svc == "eks" and op == "list-clusters":
+    print("\t".join(st.get("eks", {}).keys()))
+elif svc == "eks" and op == "describe-cluster" and "tags" in opts.get("query", ""):
+    # st["eks_tags"]: cluster name -> [prefix tag, environment tag]; absent = no tags.
+    t = st.get("eks_tags", {}).get(opts["name"])
+    if t is None:
+        sys.stderr.write("ResourceNotFoundException\n"); sys.exit(254)
+    print("\t".join(t))
 elif svc == "eks" and op == "describe-cluster":
     # st["eks"]: cluster name -> status ("ACTIVE", "CREATING", ...) or "error"; absent = not found.
     v = st.get("eks", {}).get(opts["name"])
@@ -176,6 +184,9 @@ def _run(tmp_path, provider, name, state, env_extra=None, tvars_extra=None, task
     task = {"cmds": t["cmds"]}
     if "vars" in t and task_vars:
         task["vars"] = t["vars"]
+    # The spoke-name resolver is called as $ROOT_DIR/scripts/resolve-spoke-cluster.sh.
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    shutil.copy(os.path.join(REPO, "scripts", "resolve-spoke-cluster.sh"), tmp_path / "scripts")
     tf = tmp_path / "Taskfile.yaml"   # phase1-observability-bg checks $ROOT_DIR/Taskfile.yaml
     tf.write_text(yaml.safe_dump({"version": "3", "set": ["errexit", "nounset", "pipefail"],
                                   "vars": tvars, "tasks": {"run": task}}, sort_keys=False))
@@ -472,7 +483,7 @@ def test_spoke_check_skips_unless_the_spoke_is_active(tmp_path, provider, case):
     assert res.returncode == 0, res.stdout + res.stderr
     assert "spoke keys missing" not in res.stdout, res.stdout
     eks_calls = [c for c in calls if c[1:3] == ["eks", "describe-cluster"]]
-    assert sorted(c[3]["name"] for c in eks_calls) == [f"{PREFIX}-spoke-dev", f"{PREFIX}-spoke-prod"], eks_calls
+    assert sorted({c[3]["name"] for c in eks_calls}) == [f"{PREFIX}-spoke-dev", f"{PREFIX}-spoke-prod"], eks_calls
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -492,3 +503,31 @@ def test_hub_reseed_then_late_spoke_is_detected(tmp_path, provider):
     res, _ = _run(_fresh(tmp_path), provider, "observability:converged", st)
     assert res.returncode != 0, res.stdout                 # prod ACTIVE, unwired: re-seed
     assert "spoke_prod_cluster_arn" in res.stdout, res.stdout
+
+
+# ── spokes with non-workshop names (found by tags) ──
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_hub_reseed_keeps_spoke_cluster_name_keys(tmp_path, provider):
+    names = {"spoke_dev_cluster_name": f"{PREFIX}-dev", "spoke_prod_cluster_name": "custom-prod"}
+    meta = _hub_seed(tmp_path, provider, dict(OBS_KEYS, **names))
+    for k, v in names.items():
+        assert meta.get(k) == v, (k, meta)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_tag_discovered_spoke_without_keys_is_not_converged(tmp_path, provider):
+    # peeks-a style: spoke <prefix>-dev, no workshop-named cluster, no spoke_* keys yet.
+    st = _with_meta({}, eks={f"{PREFIX}-dev": "ACTIVE"}, eks_tags={f"{PREFIX}-dev": [PREFIX, "dev"]})
+    res, _ = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode != 0, res.stdout
+    assert "spoke_dev_cluster_name" in res.stdout and "spoke_dev_cluster_arn" in res.stdout, res.stdout
+    assert "spoke_prod_" not in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_tag_discovered_spoke_with_keys_is_converged(tmp_path, provider):
+    meta = {k: v for k, v in SPOKE_KEYS.items() if k.startswith("spoke_dev_")}
+    meta["spoke_dev_cluster_name"] = f"{PREFIX}-dev"
+    st = _with_meta(meta, eks={f"{PREFIX}-dev": "ACTIVE"}, eks_tags={f"{PREFIX}-dev": [PREFIX, "dev"]})
+    res, _ = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode == 0, res.stdout + res.stderr
