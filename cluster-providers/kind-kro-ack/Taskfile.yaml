@@ -1676,7 +1676,8 @@ tasks:
       #    resources (Crossplane/ACK roles, policies, attachments) that this teardown must
       #    not delete in AWS: a fixed-name role outside <prefix>- that a chart creates on
       #    every hub (each hub holds a CR for the SAME role, deletion policy Delete), or a
-      #    role a live cluster outside this stack still references. Removing the addons
+      #    role a live cluster outside this stack, in any enabled region (IAM is global),
+      #    still references; fail closed when a region can't be read. Removing the addons
       #    then only makes the controller forget them. Read-only on AWS; no-op when the
       #    hub is unreachable. See scripts/protect-shared-iam.py.
       - cmd: |
@@ -2089,9 +2090,10 @@ tasks:
             --kubeconfig "$HUBKC" >/dev/null 2>&1 || true
           CLUSTERS=$(KUBECONFIG="$HUBKC" kubectl get ekscluster.kro.run,eksclusterwithvpc.kro.run -A -o json 2>/dev/null \
             | jq -c --arg hub "{{.HUB_CLUSTER_NAME}}" '[.items[]
-                | {name: (.spec.name // .metadata.name), deletionPolicy: (.spec.deletionPolicy // "delete")}
+                | {name: (.spec.name // .metadata.name), deletionPolicy: (.spec.deletionPolicy // "delete"),
+                   region: (.spec.region // "")}
                 | select(.name != $hub)]
-              | group_by(.name) | map({name: .[0].name,
+              | group_by(.name) | map({name: .[0].name, region: .[0].region,
                   deletionPolicy: (if any(.[]; .deletionPolicy == "retain") then "retain" else "delete" end)})' \
             2>/dev/null || true)
           if [ -z "$CLUSTERS" ] || [ "$CLUSTERS" = "[]" ]; then

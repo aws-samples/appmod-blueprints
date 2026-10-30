@@ -364,6 +364,62 @@ def test_iam_guard_covers_every_enabled_region(capsys):
                     eks_for=EksByRegion({"eu-west-1": None})) == 1
 
 
+def test_protect_cli_retains_a_role_a_live_cluster_in_another_region_uses(tmp_path):
+    """Review #1174 (re-review, blocking): step 0 must read every enabled region, not
+    only AWS_REGION. A live hub in eu-west-1 whose access entry holds an hb- role keeps
+    it: the CR is retained so the hub's controller does not delete the AWS role."""
+    mod = load("protect-shared-iam.py")
+    kc = FakeKubectl({"roles.iam.aws.upbound.io": [xp_role("hb-hub-argocd-capability-role"),
+                                                   xp_role("hb-team-role")]})
+    eks_for = EksByRegion({"us-west-2": {"hb-hub": {"pia": [arn("hb-team-role")]}},
+                           "eu-west-1": {"hc-hub": {"access": [arn("hb-hub-argocd-capability-role")]}}})
+    rc = mod.main(["hb", "us-west-2", "hb-hub", "--inventory", inventory(tmp_path, [])], kubectl=kc,
+                  ec2=FakeEc2Regions(["eu-west-1", "us-west-2"]), eks_for=eks_for)
+    assert rc == 0
+    assert [c[2] for c in kc.calls] == ["hb-hub-argocd-capability-role"]
+    assert sorted(set(eks_for.seen)) == ["eu-west-1", "us-west-2"]
+
+
+def test_protect_cli_fails_closed_when_any_region_is_unreadable(tmp_path, capsys):
+    mod = load("protect-shared-iam.py")
+    kc = FakeKubectl({"roles.iam.aws.upbound.io": [xp_role("hb-team-role")]})
+    eks_for = EksByRegion({"us-west-2": {}, "ap-south-1": None})
+    assert mod.main(["hb", "us-west-2", "hb-hub", "--inventory", inventory(tmp_path, [])], kubectl=kc,
+                    ec2=FakeEc2Regions(["ap-south-1", "us-west-2"]), eks_for=eks_for) == 0
+    assert [c[2] for c in kc.calls] == ["hb-team-role"]
+    assert "fail closed" in capsys.readouterr().out
+
+
+def test_protect_cli_counts_a_spoke_in_its_own_region_as_own(tmp_path):
+    """A spoke of this stack recorded in eu-west-1 is being deleted: its roles are
+    left to the controller. A cluster with the SAME name in another region is not
+    this stack's and still protects the role it uses."""
+    mod = load("protect-shared-iam.py")
+    kc = FakeKubectl({"roles.iam.aws.upbound.io": [xp_role("hb-dev-ebs"), xp_role("hb-dev-mgmt")]})
+    inv = inventory(tmp_path, [{"name": "hb-dev", "deletionPolicy": "delete", "region": "eu-west-1"}])
+    eks_for = EksByRegion({"us-west-2": {"hb-hub": {}},
+                           "eu-west-1": {"hb-dev": {"pia": [arn("hb-dev-ebs")]}},
+                           "ap-south-1": {"hb-dev": {"access": [arn("hb-dev-mgmt")]}}})
+    mod.main(["hb", "us-west-2", "hb-hub", "--inventory", inv], kubectl=kc,
+             ec2=FakeEc2Regions(["ap-south-1", "eu-west-1", "us-west-2"]), eks_for=eks_for)
+    assert [c[2] for c in kc.calls] == ["hb-dev-mgmt"]
+
+
+def test_deleted_clusters_by_region_defaults_to_home_and_skips_retained():
+    inv = {"clusters": [{"name": "a", "deletionPolicy": "delete"},
+                        {"name": "b", "deletionPolicy": "delete", "region": "eu-west-1"},
+                        {"name": "c", "deletionPolicy": "retain", "region": "eu-west-1"}]}
+    assert sl.deleted_clusters_by_region(inv, "us-west-2", "hub") == {
+        "us-west-2": {"hub", "a"}, "eu-west-1": {"b"}}
+
+
+def test_inventory_records_each_spokes_region():
+    text = open(TASKFILE).read()
+    destroy = text[text.index("\n  destroy:\n"):]
+    block = destroy[destroy.index("destroy-inventory.json"):destroy.index("recorded teardown inventory")]
+    assert "region: (.spec.region" in block and "region: .[0].region" in block
+
+
 def test_shared_sweep_tolerates_an_already_deleted_role(tmp_path):
     mod = load("sweep-shared-iam.py")
     iam = FakeIam([])

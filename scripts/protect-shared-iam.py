@@ -11,10 +11,12 @@ this teardown must not delete in AWS:
   * its AWS name is outside PREFIX- (a fixed-name role a chart creates on every
     hub, shared by all of them), or
   * the role is still referenced by a live EKS cluster that is not part of this
-    stack (cluster role, access entry, capability, pod identity association).
-    "This stack" is HUB plus the spokes the inventory records with
-    deletionPolicy=delete; a retained spoke counts as outside.
-If the EKS reference check fails, every role CR is retained (fail closed); the
+    stack (cluster role, access entry, capability, pod identity association), in
+    ANY enabled region: IAM is global, so a cluster in another region can use a
+    role this hub manages. "This stack" is HUB (in AWS_REGION) plus the spokes the
+    inventory records with deletionPolicy=delete, each in its own region; a
+    retained spoke counts as outside.
+If the EKS reference check fails in any region, every role CR is retained (fail closed); the
 prefix-scoped role sweep of steps 3/6b still deletes this stack's own roles,
 behind its own reference guard.
 
@@ -52,7 +54,7 @@ def list_iam_crs(kubectl):
     return out
 
 
-def main(argv, eks=None, kubectl=None, out=sys.stdout):
+def main(argv, eks=None, kubectl=None, out=sys.stdout, ec2=None, eks_for=None):
     pos, o = sl.parse_common(argv, __doc__)
     if len(pos) < 3 or not all(pos[:3]):
         print(__doc__, file=sys.stderr)
@@ -64,12 +66,11 @@ def main(argv, eks=None, kubectl=None, out=sys.stdout):
         print('  no IAM managed resources on the hub (or hub unreachable): nothing to protect', file=out)
         return 0
     inv = sl.load_inventory(o['inventory'])
-    own = {hub} | sl.deleted_clusters(inv)
+    own = sl.deleted_clusters_by_region(inv, region, hub)
     guard_ok, protected, cred_failed = True, set(), False
     try:
-        if eks is None:
-            eks = sl.client('eks', region)
-        protected = sl.protected_roles(eks, sl.cluster_inventory(eks), assume_deleted=own)
+        eks_for, regions = sl.guard_regions(region, ec2=ec2, eks=eks, eks_for=eks_for)
+        protected = sl.protected_roles_all_regions(region, eks_for, regions, assume_deleted=own)
     except Exception as e:
         # A missing credential must NOT stop this step: it would let the hub's
         # controllers delete every role once the addons go. Retain everything

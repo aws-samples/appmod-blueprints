@@ -693,15 +693,34 @@ def enabled_regions(ec2):
     return sorted({r['RegionName'] for r in ec2.describe_regions(AllRegions=False).get('Regions', [])})
 
 
+def deleted_clusters_by_region(inventory, home, hub=None):
+    """{region: names} of this stack's clusters that destroy removes: the hub (home
+    region) and every inventory spoke with deletionPolicy=delete, in the region its
+    kro instance recorded (home when it recorded none). A spoke kept with
+    deletionPolicy=retain is never listed."""
+    out = {}
+    if hub:
+        out.setdefault(home, set()).add(hub)
+    for c in (inventory or {}).get('clusters', []):
+        if c.get('name') and (c.get('deletionPolicy') or 'delete').lower() != 'retain':
+            out.setdefault(c.get('region') or home, set()).add(c['name'])
+    return out
+
+
 def protected_roles_all_regions(home, eks_for, regions, assume_deleted=()):
     """IAM is global: a role is protected when a live cluster in ANY enabled region
-    references it. assume_deleted (dry-run only) names this stack's clusters, which
-    live in the home region. Raises when any region cannot be read: callers keep
-    every role (fail closed)."""
+    references it. assume_deleted names this stack's clusters, either as names (all
+    in the home region) or as {region: names} (deleted_clusters_by_region), so a
+    same-named cluster in another region is never assumed gone. Raises when any
+    region cannot be read: callers keep every role (fail closed)."""
+    if isinstance(assume_deleted, dict):
+        by_region = {r: set(n) for r, n in assume_deleted.items()}
+    else:
+        by_region = {home: set(assume_deleted or ())}
     names = set()
-    for r in sorted(set(regions) | {home}):
+    for r in sorted(set(regions) | {home} | set(by_region)):
         eks = eks_for(r)
-        names |= protected_roles(eks, cluster_inventory(eks), assume_deleted if r == home else ())
+        names |= protected_roles(eks, cluster_inventory(eks), by_region.get(r, ()))
     return names
 
 

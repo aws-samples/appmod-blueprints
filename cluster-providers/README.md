@@ -187,7 +187,8 @@ Authorization and teardown therefore key on something other than the name:
   removed, `scripts/protect-shared-iam.py` (`hub:destroy-addons` step 0) marks retain/Orphan
   the hub's Crossplane/ACK IAM resources this teardown must not delete: a fixed-name role
   outside `<prefix>-` that a chart creates on every hub (each hub holds a managed resource for
-  the same role), or a role a live cluster outside the stack still references. Such a shared
+  the same role), or a role a live cluster outside the stack, in any enabled region, still
+  references (every role is retained when a region cannot be read). Such a shared
   role is deleted later (`scripts/sweep-shared-iam.py`, step 6b2) only when no live cluster in
   any enabled region references it any more (kept when a region cannot be read). A role that a live cluster's access entry still lists (for example
   a hub's Argo CD capability role left in a retained spoke's access entries) is kept by
