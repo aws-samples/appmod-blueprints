@@ -75,6 +75,10 @@ pod_identities:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+      # Scopes the external-dns identity's Route 53 writes. Same domain external-dns
+      # itself is pointed at: external_dns_domain_filters when set (kro clusters set
+      # it to their domainName), else ingress_domain_name. Empty = no writes.
+      ingressDomainName: '{{default (default "" (index .metadata.annotations "ingress_domain_name")) (index .metadata.annotations "external_dns_domain_filters")}}'
     identities:
       # Pod identity enablement derived from cluster labels.
       # eso identity is intentionally omitted here: the hub (control-plane)
@@ -84,6 +88,8 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      aws-for-fluentbit:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_for_fluentbit")}}'
       keycloak:
         enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:
@@ -181,6 +187,10 @@ ack_pod_identities:
       # oidcIssuer is used to build IRSA trust policies for identities with skipPIA=true.
       # Written to the cluster secret by the EksCluster RGD at cluster-creation time.
       oidcIssuer: '{{.metadata.annotations.eks_oidc_issuer}}'
+      # Scopes the external-dns identity's Route 53 writes. Same domain external-dns
+      # itself is pointed at: external_dns_domain_filters when set (kro clusters set
+      # it to their domainName), else ingress_domain_name. Empty = no writes.
+      ingressDomainName: '{{default (default "" (index .metadata.annotations "ingress_domain_name")) (index .metadata.annotations "external_dns_domain_filters")}}'
     identities:
       # SCOPE BOUNDARY: eso is deliberately NOT managed here -- the EksCluster RGD keeps
       # ownership of external-secrets/external-secrets-sa. This is not just caution, the
@@ -198,6 +208,8 @@ ack_pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      aws-for-fluentbit:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_for_fluentbit")}}'
       keycloak:
         enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:
@@ -496,6 +508,17 @@ external-dns:
       - key: enable_external_dns
         operator: In
         values: ['true']
+  # Only deploy where the cluster has an ingress domain. An empty domainFilters
+  # entry renders --domain-filter= (no filter), which made external-dns manage every
+  # public zone of the account. The cluster generator's label selector cannot see
+  # annotations, so this is an ArgoCD post-selector on the generated params.
+  postSelector:
+    matchExpressions:
+      - key: metadata.annotations.ingress_domain_name
+        operator: Exists
+      - key: metadata.annotations.ingress_domain_name
+        operator: NotIn
+        values: ['']
   valuesObject:
     # Scope of the names external-dns may manage. Defaults to the cluster's own
     # ingress_domain_name. Set the optional `external_dns_domain_filters`

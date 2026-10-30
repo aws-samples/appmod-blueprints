@@ -16,7 +16,7 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     policy: |
-{{ $identity.policy.document | indent 6 }}
+{{ tpl $identity.policy.document $ | indent 6 }}
     {{- if $identity.tags }}
     tags:
       {{- toYaml $identity.tags | nindent 6 }}

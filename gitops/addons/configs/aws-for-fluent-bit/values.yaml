@@ -1,2 +1,4 @@
-image:
-  tag: '3.4.3'
+# Per-addon value overrides for aws-for-fluent-bit.
+#
+# The image tag is pinned in addons/registry/observability.yaml (valuesObject),
+# which ArgoCD applies over this file, so it is not repeated here.
