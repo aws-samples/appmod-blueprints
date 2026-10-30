@@ -2136,6 +2136,28 @@ tasks:
             printf '{{.C_INFO}}  Set one profile for both: export AWS_PROFILE=<p> AWS_DEFAULT_PROFILE=<p>, or unset the other.{{.C_RESET}}\n'
             exit 1
           fi
+      # Record the OIDC issuer ids of the clusters this destroy is about to delete,
+      # BEFORE any of them goes. Step 6f only deletes IAM OIDC providers it can tie to
+      # this install: an issuer id recorded here, or an ACK services.k8s.aws/namespace
+      # tag naming one of this install's clusters. Read-only, best-effort.
+      - cmd: |
+          REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"; HUB="{{.HUB_CLUSTER_NAME}}"
+          OUT="/tmp/${HUB}-destroy-oidc-ids"
+          : > "$OUT"
+          CANDS=" $HUB ${PREFIX}-spoke-dev ${PREFIX}-spoke-prod "
+          for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
+            T=$(aws eks describe-cluster --name "$C" --region "$REGION" \
+              --query 'cluster.tags."platform.gitops.io/prefix"' --output text 2>/dev/null || true)
+            case "$CANDS" in *" $C "*) continue ;; esac
+            if [ "$T" = "$PREFIX" ]; then CANDS="$CANDS$C "; fi
+          done
+          for C in $CANDS; do
+            OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
+              --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
+            case "$OI" in https://*) echo "${OI##*/} $C" >> "$OUT" ;; esac
+          done
+          printf '{{.C_INFO}}  recorded %s OIDC issuer id(s) of this install in %s{{.C_RESET}}\n' "$(wc -l < "$OUT" | tr -d ' ')" "$OUT"
+        ignore_error: true
       - |
         # [#1033] Pivot-aware kubeconfig. After a hub self-adoption pivot kind is stopped
         # (detach=stop) or gone (detach=delete), so `kind get kubeconfig` fails and the kind
@@ -2570,22 +2592,32 @@ tasks:
           #       (the databases are still deleted: their ENIs would block the VPC sweep).
           KEEP_DATA_ARGS=""; [ "{{.DESTROY_KEEP_DATA}}" = true ] && KEEP_DATA_ARGS="--keep-data"
           python3 "{{.ROOT_DIR}}/scripts/sweep-rds.py" "$PREFIX" "$REGION" $KEEP_DATA_ARGS 2>&1 || true
-          # 6f. EKS OIDC providers for peeks clusters. IRSA uses cluster-specific OIDC
+          # 6f. EKS OIDC providers of THIS install. IRSA uses cluster-specific OIDC
           #     providers that accumulate across re-deploys (one per EKS cluster per run).
-          #     Only delete providers whose URL matches ${REGION} — never delete providers
-          #     for other regions (agent-sandbox, us-east-1 deployments, etc.).
-          ACCT=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null)
-          # Build the list of known active clusters to preserve their OIDC providers
+          #     Only providers whose URL matches ${REGION} are considered, and only those
+          #     this install owns are deleted:
+          #       - the issuer id was recorded at the start of destroy for one of this
+          #         install's clusters (/tmp/${HUB}-destroy-oidc-ids), or
+          #       - the ACK tag services.k8s.aws/namespace (set by the rg-eks oidcProvider,
+          #         namespace = cluster name) names one of OWNED_CLUSTERS (6ei).
+          #     Untagged or foreign providers (other stacks, other tools) are never deleted;
+          #     a skip line is printed for each. Active clusters' providers are always kept.
           ACTIVE_OIDCS=""
           for C in $(aws eks list-clusters --region "$REGION" --query 'clusters[]' --output text 2>/dev/null | tr '\t' '\n'); do
             OI=$(aws eks describe-cluster --name "$C" --region "$REGION" \
               --query 'cluster.identity.oidc.issuer' --output text 2>/dev/null || true)
             if [ -n "$OI" ]; then ACTIVE_OIDCS="$ACTIVE_OIDCS ${OI##*/}"; fi
           done
+          RECORDED_OIDCS="/tmp/${HUB}-destroy-oidc-ids"
+          [ -f "$RECORDED_OIDCS" ] || echo "  ⚠ $RECORDED_OIDCS missing — OIDC ownership falls back to the ACK namespace tag only"
           for ARN in $(aws iam list-open-id-connect-providers \
                 --query 'OpenIDConnectProviderList[].Arn' --output text 2>/dev/null | tr '\t' '\n'); do
-            URL=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$ARN" \
-              --query 'Url' --output text 2>/dev/null || true)
+            INFO=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$ARN" \
+              --query '[Url, Tags[?Key==`services.k8s.aws/namespace`] | [0].Value]' \
+              --output text 2>/dev/null || true)
+            URL=$(printf '%s' "$INFO" | cut -f1)
+            NS=$(printf '%s' "$INFO" | cut -f2)
+            if [ "$NS" = "None" ]; then NS=""; fi
             # Only sweep EKS OIDC providers in this region
             echo "$URL" | grep -q "oidc.eks.${REGION}.amazonaws.com" || continue
             OIDC_ID="${URL##*/}"
@@ -2595,8 +2627,20 @@ tasks:
               if [ "$AO" = "$OIDC_ID" ]; then KEEP=true; break; fi
             done
             $KEEP && { echo "  skip active cluster OIDC $OIDC_ID"; continue; }
+            OWNER=""
+            if [ -f "$RECORDED_OIDCS" ]; then
+              OWNER=$(awk -v id="$OIDC_ID" '$1 == id { print $2; exit }' "$RECORDED_OIDCS")
+              if [ -n "$OWNER" ]; then OWNER="issuer of $OWNER"; fi
+            fi
+            if [ -z "$OWNER" ] && [ -n "$NS" ]; then
+              case "$OWNED_CLUSTERS" in *" $NS "*) OWNER="tag services.k8s.aws/namespace=$NS" ;; esac
+            fi
+            if [ -z "$OWNER" ]; then
+              echo "  skip OIDC provider $OIDC_ID (not owned by this install; services.k8s.aws/namespace=${NS:-<none>})"
+              continue
+            fi
             if ERR=$(aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$ARN" 2>&1); then
-              echo "  ✓ deleted OIDC provider $OIDC_ID"
+              echo "  ✓ deleted OIDC provider $OIDC_ID ($OWNER)"
             else
               echo "  ⚠ OIDC provider $OIDC_ID not deleted ($(awserr "$ERR"))"
             fi
@@ -2711,10 +2755,6 @@ tasks:
           else
             echo "{{.DOMAIN}}"
           fi
-      KC_ADMIN_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.keycloak_admin_password // empty'
-      USER_PASSWORD:
-        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password // "workshop-user-2026"'
       ARGOCD_URL:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
     cmds:
@@ -2728,8 +2768,12 @@ tasks:
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
         printf '\n'
         printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
-        printf '  User:       user1 / {{.USER_PASSWORD}}\n'
-        printf '  Keycloak:   admin / {{.KC_ADMIN_PASSWORD}}\n'
+        # Never print the password values: this output is tee'd into install logs
+        # (task install, workshop urls step). Point to the secret and the command instead.
+        printf '  User:       user1   (password: key user_password)\n'
+        printf '  Keycloak:   admin   (password: key keycloak_admin_password)\n'
+        printf '  Stored in Secrets Manager secret {{.HUB_CLUSTER_NAME}}/keycloak ({{.AWS_REGION}}). Retrieve with:\n'
+        printf "    aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --region {{.AWS_REGION}} --query SecretString --output text | jq -r .user_password\n"
         # Log discoverability (review #1053): point to the background settle log + its
         # status marker so the hub-settle outcome is findable from the final summary.
         if [ -f /tmp/hub-full-sync-settle.log ]; then
