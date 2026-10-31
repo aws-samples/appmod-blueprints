@@ -26,11 +26,9 @@ hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
   policy: <first 100 of "<cluster>-<app>-<component>">-<sha256("<region>/<cluster>/<ns>/<app>/<component>")[:8]>-iam-policy
 */ -}}
 {{- $hub := printf "%s-hub" .Values.clusterPrefix -}}
-{{- $roleKey := printf "%s/%s/aiops-agent/aiops-agent" .Values.region $hub -}}
-{{- $agentRole := printf "%s-%s-role" (printf "%s-aiops-agent" $hub | trunc 50) (sha256sum $roleKey | trunc 8) -}}
-{{- /* eks-read-mcp has its own SA (and so its own trait-named role): it is the principal of the EKS AccessEntries. */ -}}
-{{- $mcpRoleKey := printf "%s/%s/aiops-agent/eks-read-mcp" .Values.region $hub -}}
-{{- $eksMcpRole := printf "%s-%s-role" (printf "%s-eks-read-mcp" $hub | trunc 50) (sha256sum $mcpRoleKey | trunc 8) -}}
+{{- $agentRole := include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "aiops-agent") -}}
+{{- /* eks-read-mcp has its own SA (and so its own trait-named role): it is the principal of the EKS AccessEntries (hub here, spokes in templates/spoke-access.yaml). */ -}}
+{{- $eksMcpRole := include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "eks-read-mcp") -}}
 {{- $polKey := printf "%s/%s/aiops-agent/aiops-agent-hub/eks-read-access" .Values.region $hub -}}
 {{- $eksReadPolicy := printf "%s-%s-iam-policy" (printf "%s-aiops-agent-hub-eks-read-access" $hub | trunc 100) (sha256sum $polKey | trunc 8) -}}
 {{- .Files.Get "files/aiops-agent-app.yaml"

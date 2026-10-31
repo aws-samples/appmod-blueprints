@@ -103,8 +103,21 @@ def test_access_entries_use_the_mcp_role(components):
     role = _platform_role_name("us-west-2", "peeks-x-hub", "aiops-agent", "eks-read-mcp")
     assert role != _platform_role_name("us-west-2", "peeks-x-hub", "aiops-agent", "aiops-agent")
     entries = _objects(components["agent-access"], "AccessEntry")
-    assert sorted(e["metadata"]["name"] for e in entries) == [
-        f"{role}-hub", f"{role}-spoke-dev", f"{role}-spoke-prod"]
+    # Hub only: spoke entries come from the spoke-access ApplicationSet (#1208).
+    assert [e["metadata"]["name"] for e in entries] == [f"{role}-hub"]
     for e in entries:
         assert e["spec"]["principalARN"] == f"arn:aws:iam::111122223333:role/{role}"
         assert e["spec"]["kubernetesGroups"] == ["aiops-agent-cluster-read"]
+
+
+def test_spoke_access_appset_names_the_mcp_role():
+    if not shutil.which("helm"):
+        pytest.skip("helm not available")
+    out = subprocess.run(
+        ["helm", "template", "t", CHART, "--set-string", "accountId=111122223333",
+         "--set", "clusterPrefix=peeks-x"],
+        check=True, capture_output=True, text=True).stdout
+    [appset] = [d for d in yaml.safe_load_all(out) if d and d.get("kind") == "ApplicationSet"]
+    vals = appset["spec"]["template"]["spec"]["source"]["helm"]["valuesObject"]
+    assert vals["roleName"] == _platform_role_name("us-west-2", "peeks-x-hub", "aiops-agent",
+                                                   "eks-read-mcp")

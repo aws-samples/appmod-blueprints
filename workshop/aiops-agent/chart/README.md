@@ -82,13 +82,16 @@ set it back to `false` (or drop the key) — the label disappears and the Applic
 Cluster reads go through `eks-read-mcp` only. It has its **own** ServiceAccount
 (`eks-read-mcp`) and Pod Identity role (`<hub>-eks-read-mcp-<hash>-role`, from the
 `aws-service-identity` trait and the platform's per-cluster naming rule, recomputed in
-`templates/application.yaml`), which carries only the `eks-read-access` policy. The
+`templates/_helpers.tpl`), which carries only the `eks-read-access` policy. The
 agent's role (`<hub>-aiops-agent-<hash>-role`) keeps only the AgentCore memory policy and
 has no EKS access entry. The read identity is read-only on every fleet cluster through two layers:
 
-- the `agent-access` AccessEntries (one per cluster) associate `AmazonEKSViewPolicy`
-  (namespaced built-ins) and map the role into the Kubernetes group
-  `aiops-agent-cluster-read`;
+- the AccessEntries associate `AmazonEKSViewPolicy` (namespaced built-ins) and map the
+  role into the Kubernetes group `aiops-agent-cluster-read`. The hub entry is the
+  `agent-access` component; the spoke entries come from the `aiops-agent-spoke-access`
+  ApplicationSet (`templates/spoke-access.yaml`), one per spoke cluster secret on this hub
+  with its real `aws_cluster_name`, rendered from `../access-chart`. Nothing to configure;
+  a hub without spokes gets none;
 - the `aiops-agent-rbac` addon (`../rbac-chart`, registry entry in the workshop overlay
   `overrides.yaml`) installs a read-only `ClusterRole`/`ClusterRoleBinding` for that group
   on the hub **and** every spoke: nodes, namespaces, events, CRDs, `argoproj.io`
