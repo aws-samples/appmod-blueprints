@@ -8,7 +8,9 @@ Usage:
 What it does
 ------------
 Every check prints one line ``PASS|FAIL|SKIP <check> <scope>: <reason>``; the script
-exits 1 when at least one check FAILs, 0 otherwise, 2 on a usage/config error.
+exits 1 when at least one check FAILs, 0 otherwise, 2 on a usage/config error. go-task
+wraps a failing command's code (201), so use ``task -x verify`` to get the 0/1/2 codes
+through; plain ``task verify`` is still non-zero on any FAIL or config error.
 
 Inputs are read only from:
   * the config file (``hub.clusterName``, ``aws.region``, ``aws.profile``, ``domain``,
@@ -137,7 +139,12 @@ def inputs_from_config(cfg: dict, profile_override: Optional[str] = None,
     if not hub or not region:
         raise ValueError("config must set hub.clusterName and aws.region")
     # Precedence: --profile > AWS_PROFILE already in the environment > aws.profile.
-    profile = profile_override or (None if env.get("AWS_PROFILE") else (aws.get("profile") or None))
+    # The config template ships aws.profile: "default"; like the install tasks, treat it as
+    # "unset" so env/IMDS credentials keep working (--profile default would not resolve).
+    cfg_profile = aws.get("profile")
+    if isinstance(cfg_profile, str) and cfg_profile.strip() in ("", "default"):
+        cfg_profile = None
+    profile = profile_override or (None if env.get("AWS_PROFILE") else (cfg_profile or None))
     return Inputs(
         hub=hub,
         region=region,
@@ -348,6 +355,9 @@ def _parse_ts(ts: Optional[str]) -> Optional[float]:
         return None
 
 
+LONG_RUNNING_OWNERS = frozenset({"ReplicaSet", "StatefulSet", "DaemonSet"})
+
+
 def failing_pods(doc: dict, now: Optional[float] = None, pending_grace: int = 900) -> List[Tuple[str, str, str, str]]:
     """Return (namespace, pod, container, reason) for every failing pod/container."""
     now = time.time() if now is None else now
@@ -368,10 +378,14 @@ def failing_pods(doc: dict, now: Optional[float] = None, pending_grace: int = 90
         if hit:
             continue
         if phase == "Failed":
-            # A Job's failed attempts are judged by the Job (and by workloads/apps), and
-            # pods a node shutdown/eviction left behind are replaced by their controller.
+            # A Failed pod only counts when nothing re-creates it as a managed workload
+            # would: bare pods, or pods of a ReplicaSet/StatefulSet/DaemonSet. Pods owned
+            # by a Job, an Argo Workflow, Spark or any other batch controller are judged by
+            # that owner (and by workloads/apps), and pods a node shutdown/eviction left
+            # behind are replaced by their controller.
             owners = {o.get("kind") for o in md.get("ownerReferences") or []}
-            if "Job" not in owners and st.get("reason") not in ("Evicted", "Shutdown", "Terminated", "NodeShutdown"):
+            long_running = not owners or bool(owners & LONG_RUNNING_OWNERS)
+            if long_running and st.get("reason") not in ("Evicted", "Shutdown", "Terminated", "NodeShutdown"):
                 out.append((ns, name, "-", f"phase=Failed ({st.get('reason') or 'no reason'})"))
             continue
         if phase == "Pending":
@@ -632,7 +646,8 @@ def _wrap(check: str, scope: str, fn: Callable[[], Result]) -> Result:
         return Result(check, scope, FAIL, f"kubectl error: {e}")
 
 
-def cluster_checks(c: Cluster, pending_grace: int = 900, max_log_probes: int = 10) -> List[Result]:
+def cluster_checks(c: Cluster, pending_grace: int = 900, max_log_probes: int = 10,
+                   expect_crossplane: bool = False, expect_kro: bool = False) -> List[Result]:
     res: List[Result] = []
 
     def pods() -> Result:
@@ -664,6 +679,9 @@ def cluster_checks(c: Cluster, pending_grace: int = 900, max_log_probes: int = 1
         prov = c.get_json("providers.pkg.crossplane.io")
         fn = c.get_json("functions.pkg.crossplane.io")
         if prov is None and fn is None:
+            if expect_crossplane:
+                return Result("crossplane.packages", c.name, FAIL,
+                              "Crossplane is enabled (enable_crossplane) but its CRDs are not installed")
             return Result("crossplane.packages", c.name, SKIP, "Crossplane not installed")
         bad = unhealthy_packages(prov or {}, "provider") + unhealthy_packages(fn or {}, "function")
         n = len((prov or {}).get("items", [])) + len((fn or {}).get("items", []))
@@ -675,6 +693,9 @@ def cluster_checks(c: Cluster, pending_grace: int = 900, max_log_probes: int = 1
 
     def kro() -> Result:
         doc = c.get_json("resourcegraphdefinitions.kro.run")
+        if doc is None and expect_kro:
+            return Result("kro.rgds", c.name, FAIL,
+                          "kro is enabled (enable_kro) but the ResourceGraphDefinition CRD is not installed")
         if doc is None or not doc.get("items"):
             return Result("kro.rgds", c.name, SKIP, "no kro ResourceGraphDefinitions")
         bad = inactive_rgds(doc)
@@ -787,6 +808,10 @@ def keycloak_check(hub_secret: Optional[ClusterSecret], secrets: List[ClusterSec
                    domain: str, realm: str, fetch: Fetcher) -> Result:
     enabled = hub_secret.enabled("keycloak") if hub_secret else False
     issuer = expected_issuer(secrets, paths, domain, realm)
+    # When the hub secret is known, enable_keycloak decides: spoke secrets carry an
+    # oidc_issuer_url too, which must not turn the check on for a hub without Keycloak.
+    if hub_secret is not None and not enabled:
+        return Result("keycloak.oidc-discovery", "hub", SKIP, "Keycloak not enabled")
     if not enabled and issuer is None:
         return Result("keycloak.oidc-discovery", "hub", SKIP, "Keycloak not enabled")
     if issuer is None:
@@ -940,6 +965,15 @@ def verify(inp: Inputs, run: Runner, fetch: Fetcher, resolver: Resolver, workdir
     if not skip_spokes:
         for s in spokes:
             region = s.region or inp.region
+            # describe-cluster/update-kubeconfig use the caller's credentials: a spoke living in
+            # another AWS account cannot be reached with them, so it is skipped, not failed.
+            hub_acct = (hub_secret.annotations.get("aws_account_id") or "").strip() if hub_secret else ""
+            spoke_acct = (s.annotations.get("aws_account_id") or "").strip()
+            if hub_acct and spoke_acct and hub_acct != spoke_acct:
+                results.append(Result("eks.cluster-active", s.cluster_name, SKIP,
+                                      "spoke is in a different AWS account than the hub; "
+                                      "checks need credentials for that account"))
+                continue
             er = check_eks_active(inp, s.cluster_name, region, run)
             results.append(er)
             if er.status != PASS:
@@ -956,7 +990,11 @@ def verify(inp: Inputs, run: Runner, fetch: Fetcher, resolver: Resolver, workdir
     for s in spokes:
         results.append(check_secret_values(s, False, None))
     for c in clusters:
-        results += cluster_checks(c, pending_grace=pending_grace)
+        # Crossplane / kro run on the hub: a missing CRD is only a SKIP when the hub does not enable them.
+        is_hub = c is hub and hub_secret is not None
+        results += cluster_checks(c, pending_grace=pending_grace,
+                                  expect_crossplane=is_hub and hub_secret.enabled("crossplane"),
+                                  expect_kro=is_hub and hub_secret.enabled("kro"))
 
     domain = inp.domain
     hub_domain = (hub_secret.annotations.get("ingress_domain_name", "") if hub_secret else "").strip()

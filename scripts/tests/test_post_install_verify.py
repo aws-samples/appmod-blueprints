@@ -212,6 +212,10 @@ def test_failing_pods_classification():
         pod("young-pending", phase="Pending", age=60),
         pod("old-pending", phase="Pending", age=3600, sched="False"),
         pod("job-failed", phase="Failed", owner="Job"),
+        pod("wf-failed", phase="Failed", owner="Workflow"),
+        pod("spark-failed", phase="Failed", owner="SparkApplication"),
+        pod("rs-failed", phase="Failed", owner="ReplicaSet"),
+        pod("sts-failed", phase="Failed", owner="StatefulSet"),
         pod("evicted", phase="Failed", owner="ReplicaSet", reason="Evicted"),
         pod("bare-failed", phase="Failed"),
         pod("done", phase="Succeeded"),
@@ -219,7 +223,8 @@ def test_failing_pods_classification():
     ]}
     got = {(p, why) for _, p, _, why in piv.failing_pods(doc, now=NOW, pending_grace=900)}
     assert got == {("crash", "CrashLoopBackOff"), ("pull", "ImagePullBackOff"), ("initpull", "ErrImagePull"),
-                   ("old-pending", "Pending > 15m (unschedulable)"), ("bare-failed", "phase=Failed (no reason)")}
+                   ("old-pending", "Pending > 15m (unschedulable)"), ("bare-failed", "phase=Failed (no reason)"),
+                   ("rs-failed", "phase=Failed (no reason)"), ("sts-failed", "phase=Failed (no reason)")}
 
 
 def test_unready_workloads():
@@ -559,3 +564,100 @@ def test_root_taskfile_exposes_verify():
         tf = yaml.safe_load(fh)
     cmd = " ".join(tf["tasks"]["verify"]["cmds"])
     assert "scripts/post_install_verify.py" in cmd and "--config {{.CONFIG_FILE}}" in cmd
+
+
+# ---------------------------------------------------------------------------------------
+# review fixes (#1207): Workflow pods, cross-account spokes, Keycloak gating, profile, CRDs
+# ---------------------------------------------------------------------------------------
+
+
+def _env_with_pods(pods, spoke_ann=None, hub_labels=None, kinds_ok=()):
+    """fake_env variant: custom pods on every cluster, optional spoke annotations / hub labels."""
+    run0, fetch, calls = fake_env()
+
+    def run(argv):
+        if argv[0] == "kubectl" and "get" in argv:
+            res = argv[argv.index("get") + 1]
+            if res == "pods":
+                return 0, json.dumps({"items": pods}), ""
+            if res == "secrets":
+                _, out, _ = run0(argv)
+                doc = json.loads(out)
+                if spoke_ann is not None:
+                    doc["items"][1]["metadata"]["annotations"].update(spoke_ann)
+                if hub_labels is not None:
+                    doc["items"][0]["metadata"]["labels"].update(hub_labels)
+                return 0, json.dumps(doc), ""
+            if res in kinds_ok:
+                return 0, json.dumps({"items": []}), ""
+        return run0(argv)
+    return run, fetch, calls
+
+
+def test_healthy_hub_with_failed_workflow_pods_passes(tmp_path):
+    pods = [pod(f"mysql-setup-{i}", phase="Failed", owner="Workflow") for i in range(5)]
+    run, fetch, _ = _env_with_pods(pods)
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    assert piv.exit_code(results) == 0, piv.render(results)
+    assert all(r.status == piv.PASS for r in results if r.check == "pods.failing")
+
+
+@pytest.mark.parametrize("bad", [pod("bare", phase="Failed"),
+                                 pod("rs", phase="Failed", owner="ReplicaSet"),
+                                 pod("crash", waiting="CrashLoopBackOff", owner="Workflow")])
+def test_real_failing_pod_still_fails(tmp_path, bad):
+    run, fetch, _ = _env_with_pods([pod("mysql-setup-1", phase="Failed", owner="Workflow"), bad])
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    assert piv.exit_code(results) == 1
+    fails = [r for r in results if r.status == piv.FAIL]
+    assert [r.check for r in fails] == ["pods.failing", "pods.failing"]
+    assert all(bad["metadata"]["name"] in " ".join(r.details) for r in fails)
+    assert all("mysql-setup-1" not in " ".join(r.details) for r in fails)
+
+
+def test_cross_account_spoke_is_skipped_not_failed(tmp_path):
+    run, fetch, calls = _env_with_pods([], spoke_ann={"aws_account_id": "111111111111"})
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    by = {(r.check, r.scope): r for r in results}
+    assert by[("eks.cluster-active", "s1")].status == piv.SKIP
+    assert ("pods.failing", "s1") not in by
+    assert not any("s1" in a for argv in calls if argv[0] == "aws" for a in argv)
+    assert piv.exit_code(results) == 0
+
+
+def test_same_account_spoke_is_still_checked(tmp_path):
+    run, fetch, _ = _env_with_pods([], spoke_ann={"aws_account_id": "000000000000"})
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    assert {(r.check, r.scope): r.status for r in results}[("eks.cluster-active", "s1")] == piv.PASS
+
+
+def test_keycloak_off_ignores_spoke_oidc_issuer():
+    hub = hub_secret()
+    spoke = piv.parse_cluster_secrets({"items": [secret_item("s", {"fleet_member": "spoke"},
+                                                             {"oidc_issuer_url": "https://x.test/kc/realms/r"})]})[0]
+    r = piv.keycloak_check(hub, [hub, spoke], piv.ingress_paths(INGRESSES), "d.test", "platform", fake_fetch({}))
+    assert r.status == piv.SKIP
+
+
+@pytest.mark.parametrize("cfg_profile,expected", [("default", None), ("", None), (None, None), ("real", "real")])
+def test_config_profile_default_is_unset(cfg_profile, expected):
+    cfg = {"hub": {"clusterName": "h"}, "aws": {"region": "r1", "profile": cfg_profile}}
+    assert piv.inputs_from_config(cfg, env={}).profile == expected
+    assert piv.inputs_from_config(cfg, "default", env={}).profile == "default"   # explicit --profile is honoured
+
+
+def test_missing_crossplane_kro_crd_fails_only_when_enabled():
+    def run(argv):
+        return 1, "", "error: the server doesn't have a resource type \"x\""
+    c = piv.Cluster("c1", "r", "/tmp/kc", None, run)
+    off = {r.check: r.status for r in piv.cluster_checks(c)}
+    assert off["crossplane.packages"] == piv.SKIP and off["kro.rgds"] == piv.SKIP
+    on = {r.check: r.status for r in piv.cluster_checks(c, expect_crossplane=True, expect_kro=True)}
+    assert on["crossplane.packages"] == piv.FAIL and on["kro.rgds"] == piv.FAIL
+
+
+def test_verify_fails_when_hub_enables_crossplane_without_crd(tmp_path):
+    run, fetch, _ = _env_with_pods([], hub_labels={"enable_crossplane": "true", "enable_kro": "true"})
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    fails = {(r.check, r.scope) for r in results if r.status == piv.FAIL}
+    assert fails == {("crossplane.packages", "h"), ("kro.rgds", "h")}
