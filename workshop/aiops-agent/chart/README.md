@@ -102,6 +102,14 @@ Identity) is read-only on every fleet cluster through two layers:
 The IAM policy `eks-read-access` adds `eks:ListInsights`/`eks:DescribeInsight` on top of
 the discovery calls.
 
+> Upgrade note: an install that ran the per-cluster role names with the former inline
+> spoke entries (`<role>-spoke-dev`/`-prod` in `agent-access`) and then moves to these
+> ApplicationSet entries (`<role>-<cluster>`) has two CRs for the same (cluster,
+> principal), which is one AWS entry for ACK. When KubeVela deletes the old CR, ACK
+> deletes that AWS entry and the new CR only recreates it at its next drift resync. Ship
+> both changes together; an install caught in between gets its spoke access back by
+> deleting the new AccessEntry CRs (ArgoCD recreates them at once).
+
 > Known limitation: one identity serves both the autonomous RCA path and the interactive
 > chat, so this cluster-wide read also applies to the chat until the two-agent RBAC split.
 
