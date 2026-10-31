@@ -1,0 +1,1 @@
+\n- No git/forge MCP is configured here: give every change as a file path plus a minimal unified diff, never as a claim that it was committed.

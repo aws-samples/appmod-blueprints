@@ -78,19 +78,26 @@ def mr_project(out):
     return yaml.safe_load(lines[i + 1].strip().split(":", 1)[1])
 
 
+# The dup-check project only exists in the GitLab forge variant (incident-bridge is not
+# rendered without a forge, see test_aiops_agent_forge_variants.py), so these renders carry
+# the GitLab domain of the fleet repo, as the workshop does.
+GL = "gitlab.example.invalid"
+
+
 @needs_helm
 @pytest.mark.parametrize("url,expected", [
-    ("https://gitlab.example.invalid/user1/fleet-config.git", "user1/fleet-config"),
-    ("https://github.com/example-org/fleet-config", "example-org/fleet-config"),
+    (f"https://{GL}/user1/fleet-config.git", "user1/fleet-config"),
+    (f"https://{GL}/example-org/fleet-config", "example-org/fleet-config"),
     ("", ""),
 ])
 def test_chart_derives_mr_project(tmp_path, url, expected):
-    assert mr_project(render_chart(tmp_path, {"fleetRepoUrl": url})) == expected
+    out = render_chart(tmp_path, {"fleetRepoUrl": url, "gitlabDomain": GL})
+    assert mr_project(out) == expected
 
 
 @needs_helm
 def test_deprecated_override_wins(tmp_path):
-    out = render_chart(tmp_path, {"fleetRepoUrl": "https://github.com/a/b.git",
+    out = render_chart(tmp_path, {"fleetRepoUrl": f"https://{GL}/a/b.git", "gitlabDomain": GL,
                                   "gitlabMrProject": "group/explicit"})
     assert mr_project(out) == "group/explicit"
 
