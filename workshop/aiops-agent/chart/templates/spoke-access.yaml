@@ -41,8 +41,8 @@ spec:
           valuesObject:
             clusterName: '{{`{{ default .name (index .metadata.annotations "aws_cluster_name") }}`}}'
             accountId: {{ .Values.accountId | toString | quote }}
-            # The agent's Pod Identity role, as the hub entry names it (templates/_helpers.tpl).
-            roleName: {{ include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "aiops-agent") | quote }}
+            # The eks-read-mcp Pod Identity role (own SA), as the hub entry names it (templates/_helpers.tpl).
+            roleName: {{ include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "eks-read-mcp") | quote }}
       destination:
         name: {{ printf "%s-hub" .Values.clusterPrefix | quote }}
         namespace: aiops-agent
