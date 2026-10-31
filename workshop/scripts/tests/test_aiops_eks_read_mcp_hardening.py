@@ -103,8 +103,9 @@ def test_access_entries_use_the_mcp_role(components):
     role = _platform_role_name("us-west-2", "peeks-x-hub", "aiops-agent", "eks-read-mcp")
     assert role != _platform_role_name("us-west-2", "peeks-x-hub", "aiops-agent", "aiops-agent")
     entries = _objects(components["agent-access"], "AccessEntry")
-    assert sorted(e["metadata"]["name"] for e in entries) == [
-        f"{role}-hub", f"{role}-spoke-dev", f"{role}-spoke-prod"]
+    # Spoke entries are generated per spoke by templates/spoke-access.yaml (#1208), which
+    # also names this role (see test_aiops_agent_spoke_access.py); only the hub is inline.
+    assert sorted(e["metadata"]["name"] for e in entries) == [f"{role}-hub"]
     for e in entries:
         assert e["spec"]["principalARN"] == f"arn:aws:iam::111122223333:role/{role}"
         assert e["spec"]["kubernetesGroups"] == ["aiops-agent-cluster-read"]

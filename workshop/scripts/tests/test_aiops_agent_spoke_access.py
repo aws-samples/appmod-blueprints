@@ -36,7 +36,7 @@ REPO_URL = "https://git.example.com/platform/appmod-blueprints.git"
 REGION = "us-west-2"  # chart default
 
 
-def _expected_role(prefix, sa="aiops-agent", namespace="aiops-agent"):
+def _expected_role(prefix, sa="eks-read-mcp", namespace="aiops-agent"):
     """The aws-service-identity trait's role name (platform/oam/definitions/traits/
     aws-service-identity.cue) for <sa> on the hub <prefix>-hub, computed independently."""
     cluster = f"{prefix}-hub"
