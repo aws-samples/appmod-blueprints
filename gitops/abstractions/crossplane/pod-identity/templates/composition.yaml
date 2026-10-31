@@ -5,9 +5,9 @@
 # clusterName and region are pulled from the `env-config` EnvironmentConfig
 # via function-environment-configs, so callers never supply them.
 #
-# accessFor policy attachments are handled by the OAP aws-service-identity
-# trait (they reference OAM-app-scoped sibling policies), attaching to the IAM
-# role by its deterministic name "<serviceAccount>-role".
+# accessFor policy attachments are handled by the aws-service-identity trait
+# (they reference OAM-app-scoped sibling policies), attaching to the IAM role by
+# the name the trait chose and passed in spec.roleName.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -39,9 +39,9 @@ spec:
         apiVersion: pt.fn.crossplane.io/v1beta1
         kind: Resources
         resources:
-          # IAM role trusted by EKS Pod Identity. Deterministic name
-          # "<serviceAccount>-role" so the aws-service-identity trait can attach
-          # accessFor policies to it without a managed-resource cross-reference.
+          # IAM role trusted by EKS Pod Identity, named spec.roleName (chosen by the
+          # aws-service-identity trait, unique per region/cluster/namespace/SA) so the
+          # trait can attach accessFor policies to it without a cross-reference.
           - name: iam-role
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
@@ -64,16 +64,16 @@ spec:
                   name: default
             patches:
               - type: FromCompositeFieldPath
-                fromFieldPath: spec.serviceAccount
+                fromFieldPath: spec.roleName
                 toFieldPath: metadata.annotations[crossplane.io/external-name]
-                transforms:
-                  - type: string
-                    string:
-                      type: Format
-                      fmt: "%s-role"
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.arn
                 toFieldPath: status.roleArn
+              # The observed role name (atProvider.id is the role name for an IAM role),
+              # so status.roleName only moves once the new role exists.
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.roleName
 
           # Bind the role to the ServiceAccount via EKS Pod Identity.
           - name: pod-identity-association
