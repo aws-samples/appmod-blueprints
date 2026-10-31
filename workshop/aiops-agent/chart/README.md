@@ -87,8 +87,11 @@ Identity) is read-only on every fleet cluster through two layers:
   role into the Kubernetes group `aiops-agent-cluster-read`. The hub entry is the
   `agent-access` component; the spoke entries come from the `aiops-agent-spoke-access`
   ApplicationSet (`templates/spoke-access.yaml`), one per spoke cluster secret on this hub
-  with its real `aws_cluster_name`, rendered from `../access-chart`. Nothing to configure;
-  a hub without spokes gets none;
+  with its real `aws_cluster_name` and region (`aws_region`, else the hub's), rendered
+  from `../access-chart`. Nothing to configure; a hub without spokes gets none. These
+  AccessEntry objects (namespace `aiops-agent` on the hub) are also how the agent learns
+  the spoke names: eks-mcp-server has no tool that lists EKS clusters, so the prompt tells
+  it to list them with `list_k8s_resources` and read `spec.clusterName`;
 - the `aiops-agent-rbac` addon (`../rbac-chart`, registry entry in the workshop overlay
   `overrides.yaml`) installs a read-only `ClusterRole`/`ClusterRoleBinding` for that group
   on the hub **and** every spoke: nodes, namespaces, events, CRDs, `argoproj.io`

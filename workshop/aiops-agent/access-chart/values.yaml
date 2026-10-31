@@ -1,7 +1,9 @@
 # Not a user-facing chart: all values are filled per spoke by the aiops-agent chart's
 # spoke-access ApplicationSet (templates/spoke-access.yaml). clusterName comes from the
 # spoke's ArgoCD cluster secret (aws_cluster_name); accountId from the hub's aws_account_id;
-# roleName is the agent's Pod Identity role as the platform names it (chart _helpers.tpl).
+# roleName is the agent's Pod Identity role as the platform names it (chart _helpers.tpl);
+# region is the spoke's aws_region (the hub's region when the secret has none).
 clusterName: ""
 accountId: ""
 roleName: ""
+region: ""
