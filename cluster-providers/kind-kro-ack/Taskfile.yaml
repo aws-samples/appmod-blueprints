@@ -4032,8 +4032,12 @@ tasks:
         #       hub kro graph and churn the fleet_member label — the exact cause of spoke deletion.
         #       "false" keeps it on the ESO path, so the pivot never re-materialises it. This is
         #       the RGD's documented default, not a workaround.
+        # Carry the LIVE public endpoint CIDRs (ACK late-copied them into the kind Cluster spec at
+        # create) into the instance, so the hub-side ACK sees desired == live and syncs.
+        PUB_CIDRS=$(kind_k -n "$NS" get cluster.eks.services.k8s.aws "$HUB" -o json 2>/dev/null \
+          | jq -c '.spec.resourcesVPCConfig.publicAccessCIDRs // ["0.0.0.0/0"]' 2>/dev/null || echo '["0.0.0.0/0"]')
         kind_k -n "$NS" get {{.HUB_KIND}}.kro.run "$HUB" -o json \
-          | jq '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, annotations: {"argocd.argoproj.io/compare-options": "IgnoreExtraneous", "argocd.argoproj.io/sync-options": "Prune=false"}}, spec} | .spec.fleetMember = "control-plane" | .spec.deletionPolicy = "retain" | .spec.createArgocdClusterSecret = "false"' \
+          | jq --argjson pub "$PUB_CIDRS" '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, annotations: {"argocd.argoproj.io/compare-options": "IgnoreExtraneous", "argocd.argoproj.io/sync-options": "Prune=false"}}, spec} | .spec.fleetMember = "control-plane" | .spec.deletionPolicy = "retain" | .spec.createArgocdClusterSecret = "false" | .spec.publicAccessCIDRs = $pub' \
           > "$WORK/hub-instance.json"
         printf '{{.C_OK}}✓ serialized kind %s/%s spec -> hub-side manifest{{.C_RESET}}\n' '{{.HUB_KIND}}' "$HUB"
 
