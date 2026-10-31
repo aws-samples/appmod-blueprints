@@ -79,9 +79,12 @@ set it back to `false` (or drop the key) — the label disappears and the Applic
 
 ## Cluster read access (RBAC)
 
-The agent identity (`<hub>-aiops-agent-<hash>-role`, named by the platform's
-`aws-service-identity` rule and computed in `templates/application.yaml`; shared by the agent and `eks-read-mcp` via Pod
-Identity) is read-only on every fleet cluster through two layers:
+Cluster reads go through `eks-read-mcp` only. It has its **own** ServiceAccount
+(`eks-read-mcp`) and Pod Identity role (`<hub>-eks-read-mcp-<hash>-role`, from the
+`aws-service-identity` trait and the platform's per-cluster naming rule, recomputed in
+`templates/_helpers.tpl`), which carries only the `eks-read-access` policy. The
+agent's role (`<hub>-aiops-agent-<hash>-role`) keeps only the AgentCore memory policy and
+has no EKS access entry. The read identity is read-only on every fleet cluster through two layers:
 
 - the AccessEntries associate `AmazonEKSViewPolicy` (namespaced built-ins) and map the
   role into the Kubernetes group `aiops-agent-cluster-read`. The hub entry is the
@@ -98,6 +101,18 @@ Identity) is read-only on every fleet cluster through two layers:
 
 The IAM policy `eks-read-access` adds `eks:ListInsights`/`eks:DescribeInsight` on top of
 the discovery calls.
+
+`eks-read-mcp` hardening, in the manifest:
+
+- the server is started with an explicit `--no-allow-write` (container `command`, which
+  repeats the image ENTRYPOINT);
+- the image is pinned by digest (`images.eksMcp.tag: v1@sha256:…`). If you override
+  `imageRegistry` (or `images.eksMcp.registry`), also set `images.eksMcp.tag`: the default
+  digest only exists in the default registry;
+- the `eks-read-mcp-tool-access` AgentgatewayPolicy (`backend.mcp.authorization`,
+  `Require`) is a tool allow-list: `tools/list` and `tools/call` see only the read tools
+  plus `manage_k8s_resource` (its `read` operation; the others stay refused by the server
+  flag and by `AmazonEKSViewPolicy`). Add a tool there if a new server version adds one.
 
 > Known limitation: one identity serves both the autonomous RCA path and the interactive
 > chat, so this cluster-wide read also applies to the chat until the two-agent RBAC split.
