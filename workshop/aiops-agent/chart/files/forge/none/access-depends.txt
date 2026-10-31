@@ -1,0 +1,5 @@
+    # ▶NO-FORGE: the AccessEntries are routed by the eks IAMRoleSelector below, which
+    # must exist before their first reconcile (the managed ACK capability caches
+    # "no role selected").
+    dependsOn:
+    - eks-access-selector

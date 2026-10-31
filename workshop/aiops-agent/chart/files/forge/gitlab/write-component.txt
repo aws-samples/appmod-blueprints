@@ -1,0 +1,163 @@
+  # ▶GITLAB: gitlab-mcp — the agent's write path (create branches / MRs on the
+  # fleet-config + app repos). supergateway wrapping the upstream @zereight/gitlab-mcp
+  # server (stateful, port 8000, path /mcp), exposed to the agent via AgentGateway
+  # exactly like eks-read-mcp. The GitLab PAT is NEVER baked into the image — it is
+  # pulled from Secrets Manager (<prefix>-hub/secrets:aiops_agent_git_token) by an
+  # ExternalSecret and injected as an env var. This is the DEDICATED aiops-agent bot
+  # PAT (a Developer member on fleet-config, NOT the shared Owner git_token): with
+  # fleet-config main protected it can open MRs but cannot merge them (human merge-gate).
+  - name: gitlab-mcp
+    type: k8s-objects
+    properties:
+      objects:
+      # PAT -> k8s Secret via ESO (self-heals on rotation). aws-secrets-manager is the
+      # cluster-wide ClusterSecretStore already used by fleet-config-repo / app creds.
+      - apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: gitlab-mcp-token
+          namespace: aiops-agent
+        spec:
+          secretStoreRef:
+            name: aws-secrets-manager
+            kind: ClusterSecretStore
+          refreshInterval: "5m"
+          target:
+            name: gitlab-mcp-token
+            creationPolicy: Owner
+            deletionPolicy: Retain
+          data:
+            - secretKey: GITLAB_PERSONAL_ACCESS_TOKEN
+              remoteRef:
+                key: REPLACE_CLUSTER_PREFIX-hub/secrets
+                property: aiops_agent_git_token
+                conversionStrategy: Default
+                decodingStrategy: None
+                metadataPolicy: None
+                nullBytePolicy: Ignore
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp
+          namespace: aiops-agent
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: gitlab-mcp
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: gitlab-mcp
+            spec:
+              containers:
+              - image: REPLACE_REG_GITLAB_MCP/gitlab-mcp:REPLACE_TAG_GITLAB_MCP
+                imagePullPolicy: Always
+                name: gitlab-mcp
+                env:
+                - name: GITLAB_API_URL
+                  value: https://REPLACE_GITLAB_DOMAIN/api/v4
+                # Write path (branches/MRs) — read-only would block the agent's fix flow.
+                - name: GITLAB_READ_ONLY_MODE
+                  value: "false"
+                # Curate the tool surface: @zereight/mcp-gitlab 2.1.69 exposes 118 tools by
+                # default, bloating every LLM call (token cost + tool-selection noise). This
+                # DENY regex (<=200 chars, no lookahead allowed — see denied-regex.js) drops the
+                # pipeline/issue/label/wiki/group/emoji/etc. clusters, keeping ~35 repo+MR+commit
+                # +project tools (create_branch/create_or_update_file/push_files/create_merge_request
+                # /get_file_contents/get_repository_tree/list_merge_requests/... all retained).
+                # Baked as the image default too (gitlab-mcp:v2); this env is the tunable override.
+                - name: GITLAB_DENIED_TOOLS_REGEX
+                  value: "issue|emoji|draft|group|label|protect|discussion|thread|todo|namespace|commit_status|catalog|ci_lint|approv|fork|_user|member|_event|whoami|health|download|upload|pipeline|create_note|create_repo"
+                - name: GITLAB_PERSONAL_ACCESS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: gitlab-mcp-token
+                      key: GITLAB_PERSONAL_ACCESS_TOKEN
+                ports:
+                - containerPort: 8000
+                  name: mcp
+                  protocol: TCP
+                resources:
+                  limits:
+                    memory: 512Mi
+                  requests:
+                    cpu: 100m
+                    memory: 256Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+              restartPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: aiops-agent
+              terminationGracePeriodSeconds: 30
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            agentgateway.dev/target: gitlab-mcp
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp-stable
+          namespace: aiops-agent
+        spec:
+          ports:
+          - appProtocol: agentgateway.dev/mcp
+            name: mcp
+            port: 80
+            protocol: TCP
+            targetPort: 8000
+          selector:
+            app.kubernetes.io/name: gitlab-mcp
+          type: ClusterIP
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          labels:
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp
+          namespace: aiops-agent
+        spec:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: agentgateway-proxy
+            namespace: agentgateway-system
+          rules:
+          - backendRefs:
+            - group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: gitlab-mcp-backend
+              weight: 1
+            matches:
+            - path:
+                type: PathPrefix
+                value: /mcp/gitlab-mcp
+      - apiVersion: agentgateway.dev/v1alpha1
+        kind: AgentgatewayBackend
+        metadata:
+          labels:
+            app.kubernetes.io/name: gitlab-mcp
+          name: gitlab-mcp-backend
+          namespace: aiops-agent
+        spec:
+          mcp:
+            # Stateful: supergateway keeps one warm upstream process per session; a
+            # stateless config would re-spawn per request and break tools/list.
+            sessionRouting: Stateful
+            targets:
+            - name: gitlab-mcp-target
+              selector:
+                services:
+                  matchLabels:
+                    agentgateway.dev/target: gitlab-mcp

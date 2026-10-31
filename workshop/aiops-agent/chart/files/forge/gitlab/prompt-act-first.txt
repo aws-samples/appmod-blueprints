@@ -1,0 +1,1 @@
+CALL THE TOOL that performs it (the gitlab create_branch / create_merge_request tools) BEFORE writing any long narrative -- act first, then give a brief summary.
