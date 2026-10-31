@@ -61,12 +61,23 @@ struct CSVOptions {
 pub async fn setup(config: SdkConfig, table_name: String) {
     let client = Client::new(&config);
 
-    let scan_output = client
-        .scan()
-        .table_name(&table_name)
-        .send()
-        .await
-        .expect("Failed to scan table");
+    // Retry the first DynamoDB call. On a fresh deploy the pod can start in the
+    // same second its EKS Pod Identity association is created; the credential
+    // agent then answers 400 for a few seconds. Panicking here made the
+    // container exit (status `Error`) and restart once. Retrying with a short
+    // backoff lets the pod come up cleanly on the first start.
+    let mut attempt = 0u32;
+    let scan_output = loop {
+        attempt += 1;
+        match client.scan().table_name(&table_name).send().await {
+            Ok(output) => break output,
+            Err(err) if attempt < 12 => {
+                eprintln!("Failed to scan table (attempt {attempt}/12), retrying in 5s: {err:?}");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+            Err(err) => panic!("Failed to scan table after {attempt} attempts: {err:?}"),
+        }
+    };
     if !scan_output.items().is_empty() {
         println!("Table already has items, skipping setup");
         return;
