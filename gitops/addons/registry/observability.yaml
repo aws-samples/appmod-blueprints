@@ -28,10 +28,14 @@ observability-aws:
       clusterSecurityGroupIds: '{{default "" (index .metadata.annotations "aws_cluster_security_group_id")}}'
     spokeScrapers:
       spoke-dev:
+        # real spoke cluster name: the annotation seed-observability records when it is not
+        # <prefix>-spoke-dev. Names the scraper alias and the `cluster` label of its metrics.
+        clusterName: '{{ or (index .metadata.annotations "spoke_dev_cluster_name") (printf "%s-spoke-dev" .metadata.annotations.resource_prefix) }}'
         clusterArn: '{{default "" (index .metadata.annotations "spoke_dev_cluster_arn")}}'
         subnetIds: '{{default "" (index .metadata.annotations "spoke_dev_private_subnet_ids")}}'
         securityGroupIds: '{{default "" (index .metadata.annotations "spoke_dev_security_group_id")}}'
       spoke-prod:
+        clusterName: '{{ or (index .metadata.annotations "spoke_prod_cluster_name") (printf "%s-spoke-prod" .metadata.annotations.resource_prefix) }}'
         clusterArn: '{{default "" (index .metadata.annotations "spoke_prod_cluster_arn")}}'
         subnetIds: '{{default "" (index .metadata.annotations "spoke_prod_private_subnet_ids")}}'
         securityGroupIds: '{{default "" (index .metadata.annotations "spoke_prod_security_group_id")}}'

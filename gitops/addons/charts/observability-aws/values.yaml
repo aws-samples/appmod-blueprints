@@ -60,5 +60,5 @@ scraper:
   clusterSecurityGroupIds: []
 
 # Spoke cluster scrapers — add entries here for each spoke cluster
-# Format: clusterName: {clusterArn, subnetIds (comma-separated), securityGroupIds (comma-separated)}
+# Format: <key>: {clusterName (real cluster name, default <resourcePrefix>-<key>), clusterArn, subnetIds (comma-separated), securityGroupIds (comma-separated)}
 spokeScrapers: {}
