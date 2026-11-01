@@ -30,6 +30,13 @@ hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
 {{- $agentRole := printf "%s-%s-role" (printf "%s-aiops-agent" $hub | trunc 50) (sha256sum $roleKey | trunc 8) -}}
 {{- $polKey := printf "%s/%s/aiops-agent/aiops-agent-hub/eks-read-access" .Values.region $hub -}}
 {{- $eksReadPolicy := printf "%s-%s-iam-policy" (printf "%s-aiops-agent-hub-eks-read-access" $hub | trunc 100) (sha256sum $polKey | trunc 8) -}}
+{{- /*
+MR project (path) the agent and the incident-bridge dup-check target = the fleet repo,
+DERIVED from .Values.fleetRepoUrl (scheme+host and .git stripped). "" when there is no
+fleet repo (dup-check disabled, fail-open). .Values.gitlabMrProject, when set, still wins
+(deprecated explicit override kept for one release).
+*/ -}}
+{{- $mrProject := .Values.gitlabMrProject | default (trimSuffix ".git" (regexReplaceAll "^https?://[^/]+/" (.Values.fleetRepoUrl | default "") "")) -}}
 {{- .Files.Get "files/aiops-agent-app.yaml"
       | replace "REPLACE_REG_SKILLS_MCP"      (default $reg (index $skills "registry"))
       | replace "REPLACE_TAG_SKILLS_MCP"      (default $tag (index $skills "tag" | toString))
@@ -50,4 +57,4 @@ hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
       | replace "REPLACE_REGION"         .Values.region
       | replace "REPLACE_CLOUDFRONT_DOMAIN" .Values.cloudfrontDomain
       | replace "REPLACE_GITLAB_DOMAIN"  .Values.gitlabDomain
-      | replace "REPLACE_GITLAB_MR_PROJECT" (.Values.gitlabMrProject | default "") }}
+      | replace "REPLACE_GITLAB_MR_PROJECT" $mrProject }}

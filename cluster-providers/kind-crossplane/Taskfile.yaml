@@ -1437,7 +1437,8 @@ tasks:
         PREV_OBS=$(echo "$PREV_SECRET" | jq -c 'try (.metadata | fromjson
             | [ "aws_grafana_url",
                 "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
-                "spoke_prod_cluster_arn", "spoke_prod_private_subnet_ids", "spoke_prod_security_group_id" ] as $k
+                "spoke_prod_cluster_arn", "spoke_prod_private_subnet_ids", "spoke_prod_security_group_id",
+              "spoke_dev_cluster_name", "spoke_prod_cluster_name" ] as $k
             | with_entries(select(.key as $kk | any($k[]; . == $kk)) | select((.value // "" | tostring) != ""))) // {}' 2>/dev/null)
         [ -n "$PREV_OBS" ] || PREV_OBS='{}'
         # Keep the optional external-dns scope widening set by hand on <hub>/config
@@ -1872,7 +1873,19 @@ tasks:
         SPOKE_PROD_ARN=""
         SPOKE_PROD_SUBNETS=""
         SPOKE_PROD_SG=""
-        for CLUSTER in {{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod; do
+        SPOKE_DEV_NAME=""
+        SPOKE_PROD_NAME=""
+        # Spoke cluster names are NOT assumed to be <prefix>-spoke-dev/-prod (the workshop's
+        # naming only): scripts/resolve-spoke-cluster.sh finds the spoke from an operator-set
+        # spoke_<env>_cluster_name, else the workshop name, else the tags kro stamps on every
+        # spoke (platform.gitops.io/prefix + environment).
+        for SPOKE_ENV in dev prod; do
+          PRESET_NAME=$(echo "$CONFIG_EXISTING" | jq -r --arg k "spoke_${SPOKE_ENV}_cluster_name" '(.metadata // "{}") | fromjson | (.[$k] // "")' 2>/dev/null || echo "")
+          CLUSTER=$(bash "{{.ROOT_DIR}}/scripts/resolve-spoke-cluster.sh" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "$SPOKE_ENV" "$PRESET_NAME" || echo "")
+          if [ -z "$CLUSTER" ]; then
+            echo "WARN: No $SPOKE_ENV spoke found for prefix {{.RESOURCE_PREFIX}} in {{.AWS_REGION}}. Scraper skipped."
+            continue
+          fi
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
@@ -1882,14 +1895,28 @@ tasks:
             fi
             SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
-            if [ "$CLUSTER" = "{{.RESOURCE_PREFIX}}-spoke-dev" ]; then
+            # Record the name only when there is something new to remember: on a first run
+            # (no PRESET_NAME yet), only when it is not the workshop convention name, which
+            # is re-derived for free every time. Once a name IS recorded (operator-set or
+            # self-recorded), it is kept as-is as long as it still resolves (CLUSTER stays
+            # equal to it); if that cluster is gone, the resolver already fell through to a
+            # different one, so CLUSTER != PRESET_NAME and the stale name is corrected.
+            RECORD_NAME=""
+            if [ -n "$PRESET_NAME" ]; then
+              if [ "$CLUSTER" != "$PRESET_NAME" ]; then RECORD_NAME="$CLUSTER"; fi
+            elif [ "$CLUSTER" != "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" ]; then
+              RECORD_NAME="$CLUSTER"
+            fi
+            if [ "$SPOKE_ENV" = "dev" ]; then
               SPOKE_DEV_ARN="$SPOKE_ARN"
               SPOKE_DEV_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
               SPOKE_DEV_SG="$SPOKE_SG"
+              SPOKE_DEV_NAME="$RECORD_NAME"
             else
               SPOKE_PROD_ARN="$SPOKE_ARN"
               SPOKE_PROD_SUBNETS="$SPOKE_PRIVATE_SUBNETS"
               SPOKE_PROD_SG="$SPOKE_SG"
+              SPOKE_PROD_NAME="$RECORD_NAME"
             fi
           else
             echo "WARN: Cluster $CLUSTER not found in {{.AWS_REGION}}. Scraper skipped."
@@ -1903,7 +1930,11 @@ tasks:
             --arg spa "$SPOKE_PROD_ARN" \
             --arg sps "$SPOKE_PROD_SUBNETS" \
             --arg spsg "$SPOKE_PROD_SG" \
-            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg, spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg} | tojson)')
+            --arg sdn "$SPOKE_DEV_NAME" \
+            --arg spn "$SPOKE_PROD_NAME" \
+            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg, spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg}
+              + (if $sdn != "" then {spoke_dev_cluster_name: $sdn} else {} end)
+              + (if $spn != "" then {spoke_prod_cluster_name: $spn} else {} end) | tojson)')
           aws secretsmanager put-secret-value \
             --secret-id "$CONFIG_KEY" \
             --secret-string "$CONFIG_UPDATED" \
@@ -2045,8 +2076,16 @@ tasks:
         # re-seed (each re-seed mints a new AMG service account).
         SPOKE_MISSING=""
         for SPOKE_ENV in dev prod; do
-          SPOKE_STATUS=$(aws eks describe-cluster --name "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")
+          # Same discovery as seed-observability (operator-set name, workshop name, then the
+          # prefix + environment tags). No spoke found or an API error: skip, never re-seed.
+          PRESET_NAME=$(printf '%s' "$C" | jq -r --arg k "spoke_${SPOKE_ENV}_cluster_name" '(.metadata // "{}") | fromjson | (.[$k] // "")' 2>/dev/null || echo "")
+          SPOKE_NAME=$(bash "{{.ROOT_DIR}}/scripts/resolve-spoke-cluster.sh" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "$SPOKE_ENV" "$PRESET_NAME" 2>/dev/null || echo "")
+          if [ -z "$SPOKE_NAME" ]; then continue; fi
+          SPOKE_STATUS=$(aws eks describe-cluster --name "$SPOKE_NAME" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")
           if [ "$SPOKE_STATUS" != "ACTIVE" ]; then continue; fi
+          if [ -z "$PRESET_NAME" ] && [ "$SPOKE_NAME" != "{{.RESOURCE_PREFIX}}-spoke-$SPOKE_ENV" ]; then
+            SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_cluster_name"
+          fi
           for k in cluster_arn private_subnet_ids security_group_id; do
             if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") != ""' >/dev/null 2>&1; then
               SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_$k"

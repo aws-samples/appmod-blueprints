@@ -1,4 +1,6 @@
 {{- range $target := .Values.targets }}
+{{- /* workloadKind: deployment (default, unchanged behaviour) or daemonset. */}}
+{{- $kind := $target.workloadKind | default "deployment" }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -19,8 +21,9 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "patch"]
+    resources: ["{{ $kind }}s"]
+    # get/list: resolve -l; patch: rollout restart; watch: rollout status.
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
@@ -62,20 +65,68 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              # Check EVERY pod of the workload, not just the first one: on a
+              # DaemonSet (or a multi-replica Deployment) some pods can start
+              # before the pod identity association exists and never get the
+              # credentials, while the first pod listed is fine.
+              set -f
               SA="{{ $target.serviceAccount }}"
               NS="{{ $target.namespace }}"
               LABEL="{{ $target.deploymentLabel }}"
-              POD=$(kubectl get pods -n $NS -l $LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-              if [ -z "$POD" ]; then
-                echo "No pod found with label $LABEL in $NS, skipping"
-                exit 0
-              fi
-              if kubectl get pod $POD -n $NS -o jsonpath='{.spec.containers[0].env[*].name}' | grep -q AWS_CONTAINER_CREDENTIALS_FULL_URI; then
-                echo "Pod identity credentials already injected, no restart needed"
-              else
-                echo "Missing pod identity credentials, restarting deployment"
-                kubectl rollout restart deployment -n $NS -l $LABEL
-                kubectl rollout status deployment -n $NS -l $LABEL --timeout=120s
-              fi
+              KIND="{{ $kind }}"
+              # Bounded retries: if the association does not exist yet, pods
+              # restarted right away still come up without credentials.
+              MAX_RESTARTS=3
+              RETRY_DELAY="${RETRY_DELAY:-30}"
+              NL='
+              '
+              scan() {
+                TOTAL=0
+                MISSING=""
+                STATE=$(kubectl get pods -n "$NS" -l "$LABEL" -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.metadata.deletionTimestamp}{"|"}{.spec.containers[*].env[*].name}{" "}{.spec.volumes[*].name}{"\n"}{end}' 2>/dev/null) || STATE=""
+                OLDIFS=$IFS
+                IFS=$NL
+                for LINE in $STATE; do
+                  IFS=$OLDIFS
+                  NAME=${LINE%%|*}
+                  REST=${LINE#*|}
+                  DELETING=${REST%%|*}
+                  CREDS=" ${REST#*|} "
+                  # Skip blank lines and pods already terminating.
+                  [ -z "$NAME" ] && continue
+                  [ -n "$DELETING" ] && continue
+                  TOTAL=$((TOTAL + 1))
+                  case "$CREDS" in
+                    *" AWS_CONTAINER_CREDENTIALS_FULL_URI "*|*" eks-pod-identity-token "*) ;;
+                    *) MISSING="$MISSING $NAME" ;;
+                  esac
+                done
+                IFS=$OLDIFS
+              }
+              RESTARTS=0
+              while :; do
+                scan
+                if [ "$TOTAL" -eq 0 ]; then
+                  echo "No pod found with label $LABEL in $NS, skipping"
+                  exit 0
+                fi
+                if [ -z "$MISSING" ]; then
+                  echo "Pod identity credentials injected in all $TOTAL pod(s), no restart needed"
+                  exit 0
+                fi
+                if [ "$RESTARTS" -ge "$MAX_RESTARTS" ]; then
+                  echo "WARNING: pod(s) still without pod identity credentials after $RESTARTS restart(s):$MISSING"
+                  echo "Check that the pod identity association for service account $SA exists"
+                  exit 0
+                fi
+                if [ "$RESTARTS" -gt 0 ]; then
+                  echo "Waiting ${RETRY_DELAY}s for the pod identity association before retrying"
+                  sleep "$RETRY_DELAY"
+                fi
+                RESTARTS=$((RESTARTS + 1))
+                echo "Missing pod identity credentials in pod(s):$MISSING, restarting $KIND (attempt $RESTARTS/$MAX_RESTARTS)"
+                kubectl rollout restart "$KIND" -n "$NS" -l "$LABEL"
+                kubectl rollout status "$KIND" -n "$NS" -l "$LABEL" --timeout=120s || exit 1
+              done
       restartPolicy: Never
 {{- end }}

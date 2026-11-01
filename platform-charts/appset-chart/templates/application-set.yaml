@@ -91,6 +91,16 @@ spec:
           chart: {{ $chartConfig.chartName | default $nameNormalize | quote }}
           {{- end }}
         {{- end }}
+      {{- /*
+      Optional ArgoCD post-selector, matched against the generated params (flattened,
+      e.g. metadata.annotations.<key>) instead of the cluster Secret labels. Lets an
+      entry gate on an existing cluster annotation. Absent = render unchanged. Not
+      applied on the `environments` merge path.
+      */}}
+      {{- if and $chartConfig.postSelector (not $chartConfig.environments) }}
+      selector:
+        {{- toYaml $chartConfig.postSelector | nindent 8 }}
+      {{- end }}
     {{- if $chartConfig.environments }}
     {{- range $chartConfig.environments }}
     - clusters:

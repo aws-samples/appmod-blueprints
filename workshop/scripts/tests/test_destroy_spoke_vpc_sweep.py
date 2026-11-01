@@ -41,7 +41,8 @@ _KEYS = {"describe_vpcs": ("vpcs", "Vpcs"), "describe_nat_gateways": ("nats", "N
          "describe_internet_gateways": ("igws", "InternetGateways"),
          "describe_subnets": ("subnets", "Subnets"), "describe_route_tables": ("rts", "RouteTables"),
          "describe_security_groups": ("sgs", "SecurityGroups"),
-         "describe_network_interfaces": ("enis", "NetworkInterfaces")}
+         "describe_network_interfaces": ("enis", "NetworkInterfaces"),
+         "describe_vpc_endpoints": ("endpoints", "VpcEndpoints")}
 def _tags(o):
     return {t["Key"]: t["Value"] for t in o.get("Tags") or []}
 def _match(o, filters):
@@ -69,7 +70,7 @@ class _Client:
                 if self._svc != "ec2":
                     return {}
                 key, out = _KEYS[op]
-                items = [o for o in _FX[key] if _match(o, kw.get("Filters") or kw.get("Filter"))]
+                items = [o for o in _FX.get(key, []) if _match(o, kw.get("Filters") or kw.get("Filter"))]
                 if "VpcIds" in kw:
                     items = [o for o in items if o["VpcId"] in kw["VpcIds"]]
                 return {out: items}
@@ -79,6 +80,13 @@ class _Client:
         return call
 def client(svc, **kw):
     return _Client(svc)
+class Session:  # sweep_lib.session(): same profile as the CLI, credentials checked
+    def __init__(self, **kw):
+        pass
+    def get_credentials(self):
+        return object()
+    def client(self, svc, **kw):
+        return _Client(svc)
 '''
 
 FAKE_AWS = r'''#!{python} -I
@@ -296,8 +304,9 @@ def test_step6_runs_to_the_end_and_6i_still_clears_the_ide_vpc_sgs(the_run):
 
 
 def test_selection_rules(tmp_path):
-    """Legacy-named spoke VPCs (pre-tag installs) are still swept; a kro-made hub VPC, a
-    prefix-tagged VPC without a cluster tag, and any CloudFormation-owned VPC are not."""
+    """Legacy-named spoke VPCs (pre-tag installs) are still swept; a prefix-tagged VPC
+    without a cluster tag and any CloudFormation-owned VPC are not. The kro-made hub VPC
+    is left to 6h by the spoke sweep and deleted by 6h2 once no live cluster runs in it."""
     fx = _fixture()
     _network(fx, "vpc-legacy", {"Name": "acme-spoke-dev-vpc", "eks:kubernetes-resource-name": "acme-spoke-dev-vpc"})
     _network(fx, "vpc-team-a", {"platform.gitops.io/prefix": "acme", "platform.gitops.io/cluster": "acme-team-a"})
@@ -309,4 +318,5 @@ def test_selection_rules(tmp_path):
     res, calls = _run_step6(tmp_path, fx, "acme", "acme-hub")
     assert res.returncode == 0, res.stdout + res.stderr
     deleted = sorted(c[3]["VpcId"] for c in _writes(calls) if c[0] == "boto3" and c[2] == "delete_vpc")
-    assert deleted == ["vpc-legacy", "vpc-team-a"], res.stdout
+    assert deleted == ["vpc-hub", "vpc-legacy", "vpc-team-a"], res.stdout
+    assert "skip spoke VPC vpc-hub" in res.stdout, res.stdout

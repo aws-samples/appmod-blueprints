@@ -28,10 +28,14 @@ observability-aws:
       clusterSecurityGroupIds: '{{default "" (index .metadata.annotations "aws_cluster_security_group_id")}}'
     spokeScrapers:
       spoke-dev:
+        # real spoke cluster name: the annotation seed-observability records when it is not
+        # <prefix>-spoke-dev. Names the scraper alias and the `cluster` label of its metrics.
+        clusterName: '{{ or (index .metadata.annotations "spoke_dev_cluster_name") (printf "%s-spoke-dev" .metadata.annotations.resource_prefix) }}'
         clusterArn: '{{default "" (index .metadata.annotations "spoke_dev_cluster_arn")}}'
         subnetIds: '{{default "" (index .metadata.annotations "spoke_dev_private_subnet_ids")}}'
         securityGroupIds: '{{default "" (index .metadata.annotations "spoke_dev_security_group_id")}}'
       spoke-prod:
+        clusterName: '{{ or (index .metadata.annotations "spoke_prod_cluster_name") (printf "%s-spoke-prod" .metadata.annotations.resource_prefix) }}'
         clusterArn: '{{default "" (index .metadata.annotations "spoke_prod_cluster_arn")}}'
         subnetIds: '{{default "" (index .metadata.annotations "spoke_prod_private_subnet_ids")}}'
         securityGroupIds: '{{default "" (index .metadata.annotations "spoke_prod_security_group_id")}}'
@@ -272,7 +276,10 @@ aws-for-fluentbit:
   chartRepository: https://aws.github.io/eks-charts
   defaultVersion: "0.2.0"
   annotationsAppSet:
-    argocd.argoproj.io/sync-wave: "3"
+    # Wave 5, with the other pod-identity consumers (lbc / external-dns): after
+    # pod_identities (wave 4) and ack_pod_identities (wave -4) have created the
+    # aws-for-fluentbit association, so the DaemonSet pods start with credentials.
+    argocd.argoproj.io/sync-wave: "5"
   selector:
     matchExpressions:
       - key: enable_aws_for_fluentbit
@@ -287,6 +294,35 @@ aws-for-fluentbit:
       # (openssl-libs 3.5.7-2.0.1 -> 3.5.8-1, fixes CVE-2026-14456 /
       # ALAS2023-2026-2088 and ALAS2023-2026-2136).
       tag: 3.5.1
+    # The chart defaults every output to us-east-1. Ship logs to the cluster's own
+    # region, from the same aws_region annotation every other AWS addon reads.
+    cloudWatchLogs:
+      region: '{{.metadata.annotations.aws_region}}'
+      # One log group per cluster, so the spokes of an account and region do not
+      # all write into the chart default /aws/eks/fluentbit-cloudwatch/logs. It
+      # stays under /aws/eks/fluentbit-cloudwatch/, the prefix the aws-for-fluentbit
+      # pod identity policy is scoped to (crossplane-pod-identity / ack-pod-identity),
+      # which also allows logs:PutRetentionPolicy for the retention below.
+      logGroupName: '/aws/eks/fluentbit-cloudwatch/{{.metadata.annotations.aws_cluster_name}}/logs'
+      # The chart default sets no retention, so the logs never expire.
+      logRetentionDays: 7
+    # Pinned to the chart's default name so the aws-for-fluentbit pod identity
+    # (crossplane-pod-identity / ack-pod-identity) always targets this SA.
+    serviceAccount:
+      name: aws-for-fluent-bit
+  additionalResources:
+    # Restart the DaemonSet once if its pods started before the pod identity
+    # association existed (same mechanism as lbc / external-dns).
+    - path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/pod-identity-restart-hook'
+      helm:
+        releaseName: aws-for-fluentbit-credential-check
+        valuesObject:
+          targets:
+            - name: aws-for-fluentbit
+              namespace: kube-system
+              serviceAccount: aws-for-fluent-bit
+              workloadKind: daemonset
+              deploymentLabel: app.kubernetes.io/name=aws-for-fluent-bit
 
 cni-metrics-helper:
   namespace: kube-system

@@ -1,5 +1,5 @@
 apiVersion: v2
 name: pod-identity-restart-hook
-description: PostSync hook that checks for AWS Pod Identity credentials and restarts deployments if missing
+description: PostSync hook that checks for AWS Pod Identity credentials and restarts the deployment or daemonset if missing
 type: application
 version: 0.1.0

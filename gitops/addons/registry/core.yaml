@@ -75,6 +75,10 @@ pod_identities:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
       accountId: '{{.metadata.annotations.aws_account_id}}'
+      # Scopes the external-dns identity's Route 53 writes. Same domain external-dns
+      # itself is pointed at: external_dns_domain_filters when set (kro clusters set
+      # it to their domainName), else ingress_domain_name. Empty = no writes.
+      ingressDomainName: '{{default (default "" (index .metadata.annotations "ingress_domain_name")) (index .metadata.annotations "external_dns_domain_filters")}}'
     identities:
       # Pod identity enablement derived from cluster labels.
       # eso identity is intentionally omitted here: the hub (control-plane)
@@ -84,6 +88,8 @@ pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      aws-for-fluentbit:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_for_fluentbit")}}'
       keycloak:
         enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:
@@ -181,6 +187,10 @@ ack_pod_identities:
       # oidcIssuer is used to build IRSA trust policies for identities with skipPIA=true.
       # Written to the cluster secret by the EksCluster RGD at cluster-creation time.
       oidcIssuer: '{{.metadata.annotations.eks_oidc_issuer}}'
+      # Scopes the external-dns identity's Route 53 writes. Same domain external-dns
+      # itself is pointed at: external_dns_domain_filters when set (kro clusters set
+      # it to their domainName), else ingress_domain_name. Empty = no writes.
+      ingressDomainName: '{{default (default "" (index .metadata.annotations "ingress_domain_name")) (index .metadata.annotations "external_dns_domain_filters")}}'
     identities:
       # SCOPE BOUNDARY: eso is deliberately NOT managed here -- the EksCluster RGD keeps
       # ownership of external-secrets/external-secrets-sa. This is not just caution, the
@@ -198,6 +208,8 @@ ack_pod_identities:
         enabled: '{{default "false" (index .metadata.labels "enable_aws_load_balancer_controller")}}'
       external-dns:
         enabled: '{{default "false" (index .metadata.labels "enable_external_dns")}}'
+      aws-for-fluentbit:
+        enabled: '{{default "false" (index .metadata.labels "enable_aws_for_fluentbit")}}'
       keycloak:
         enabled: '{{default "false" (index .metadata.labels "enable_keycloak")}}'
   ignoreDifferences:
@@ -347,6 +359,30 @@ ingress-class-alb:
       - key: enable_ingress_class_alb
         operator: In
         values: ['true']
+  # Inherited default syncPolicy, with the retry backoff capped at 1m instead of 10m.
+  # With controllerMode oss this app renders elbv2.k8s.aws/IngressClassParams, whose CRD
+  # is installed by the aws-load-balancer-controller app. The sync-wave above orders the
+  # ApplicationSets, not the syncs of the Applications they generate, so on a fresh
+  # cluster every attempt fails ("no matches for kind IngressClassParams") until that CRD
+  # exists. With a 10m cap the doubling backoff can sleep up to 10 minutes past the moment
+  # the CRD lands, and no IngressClassParams means no platform ALB, which is what
+  # cloudfront-attach-origin.sh waits for (rc7b: CRD 11:40:27, ICP 11:49:04 after 9
+  # retries). A 1m cap makes the ICP follow the CRD within a minute. Only the retry
+  # cadence of a failing sync changes; a healthy app is never retried. NOTE: a per-addon
+  # syncPolicy fully overrides the default, so the default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
   valuesObject:
     controllerMode: '{{default "auto" .metadata.annotations.alb_controller_mode}}'
     loadBalancerName: '{{if eq (default "false" .metadata.annotations.insecure) "true"}}{{.metadata.annotations.aws_cluster_name}}-platform{{end}}'
@@ -386,6 +422,30 @@ aws-load-balancer-controller:
         values: ['true']
   goTemplateOptions:
     - "missingkey=zero"
+  # Inherited default syncPolicy, with the retry backoff capped at 1m instead of 10m.
+  # enableCertManager:true makes this app render cert-manager Certificate/Issuer objects,
+  # so on a fresh cluster every attempt fails until the cert-manager app (a separate
+  # Application; the sync-wave orders ApplicationSets, not Application syncs) has
+  # installed its CRDs and webhook. With a 10m cap the doubling backoff can sleep up to
+  # 10 minutes past that point, and the LBC CRDs (elbv2 IngressClassParams, needed by
+  # ingress-class-alb) and the controller itself (which creates the platform ALB) wait
+  # with it (rc7b: cert-manager CRDs 11:19:14, LBC CRDs 11:40:27 after 9 retries). A 1m
+  # cap makes the LBC follow cert-manager within a minute. Only the retry cadence of a
+  # failing sync changes. NOTE: a per-addon syncPolicy fully overrides the default, so
+  # the default values are replicated below.
+  syncPolicy:
+    automated:
+      selfHeal: true
+      allowEmpty: true
+      prune: false
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
   valuesObject:
     clusterName: '{{.metadata.annotations.aws_cluster_name}}'
     vpcId: '{{.metadata.annotations.aws_vpc_id}}'
@@ -496,6 +556,17 @@ external-dns:
       - key: enable_external_dns
         operator: In
         values: ['true']
+  # Only deploy where the cluster has an ingress domain. An empty domainFilters
+  # entry renders --domain-filter= (no filter), which made external-dns manage every
+  # public zone of the account. The cluster generator's label selector cannot see
+  # annotations, so this is an ArgoCD post-selector on the generated params.
+  postSelector:
+    matchExpressions:
+      - key: metadata.annotations.ingress_domain_name
+        operator: Exists
+      - key: metadata.annotations.ingress_domain_name
+        operator: NotIn
+        values: ['']
   valuesObject:
     # Scope of the names external-dns may manage. Defaults to the cluster's own
     # ingress_domain_name. Set the optional `external_dns_domain_filters`

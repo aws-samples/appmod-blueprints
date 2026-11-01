@@ -62,8 +62,9 @@ ArgoCD cluster secret by the on-cluster ExternalSecret (`creationPolicy: Merge`)
 `backstage`/`keycloak`/`devlake`. So aiops-agent is toggled the same way as every other
 platform addon: via `enabled-addons.yaml`, not via the RGD or a manual `kubectl label`.
 
-Default is **OFF** — `aiops_agent: false` in the base
-`gitops/overlays/environments/control-plane/enabled-addons.yaml`. To enable on the hub for a
+Default is **OFF** — the base solution sets no `aiops_agent` flag (so no label), and the
+workshop overlay ships `aiops_agent: false`. The registry entry itself is upstream in
+`gitops/addons/registry/platform.yaml`; an overlay never copies it. To enable on the hub for a
 deployment, flip it to `true` in the **fleet-config overlay** (no platform-repo edit):
 
 ```yaml
@@ -76,6 +77,15 @@ The fleet-secret ESO re-projects `enable_aiops_agent: 'true'` onto the hub clust
 addons ApplicationSet generates the `aiops-agent` Application, and ArgoCD syncs it. To remove:
 set it back to `false` (or drop the key) — the label disappears and the Application is pruned.
 
+> **Non-workshop fleet-config:** flipping `aiops_agent: true` alone deploys the agent and its
+> `agent-access` AccessEntries (mapping `aiops-agent-role` into the `aiops-agent-cluster-read`
+> group), but the group itself still needs the `aiops-agent-rbac` registry entry (see
+> [Cluster read access](#cluster-read-access-rbac) below) — AmazonEKSViewPolicy alone 403s on
+> nodes and on every CRD. The workshop's own fleet-config
+> (`workshop/overlay/overlays/environments/control-plane/overrides.yaml`) already carries that
+> entry, so the workshop path works with `aiops_agent: true` alone. A consumer running the
+> solution directly (not through the workshop fleet-config) must copy that same
+> `aiops-agent-rbac` block — unchanged — into its own `overlays/environments/<env>/overrides.yaml`.
 
 ## Cluster read access (RBAC)
 
@@ -148,3 +158,5 @@ RGD compiles to `Active`/`GraphAccepted`.
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
 | `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO) |
+| `fleetRepoUrl` | `overlay_repo_url`, else `fleetRepoURL` if ≠ `addonsRepoURL` | **derived** by the registry entry (same resolution as `gitops/bootstrap/addons.yaml` `$overlay`); the chart strips scheme+host and `.git` to get the MR project. Empty ⇒ bridge dup-check off (fail-open) |
+| `gitlabMrProject` | — | **deprecated** explicit MR-project override; wins over `fleetRepoUrl` when set |

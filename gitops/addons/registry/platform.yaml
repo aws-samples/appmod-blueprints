@@ -302,6 +302,48 @@ kro-amp-incident-rgd-hub:
         operator: In
         values: ['true']
 
+# aiops-agent — the reference platform-engineering agent (OAP Strands agent + skills-mcp +
+# eks-read-mcp + gitlab-mcp + chat-ui + AgentCore memory + incident bridge) as ONE KubeVela
+# Application. DISABLED BY DEFAULT: the selector requires the enable_aiops_agent label, which
+# exists only when an overlay sets `aiops_agent: true` in its enabled-addons.yaml (base default
+# is false). The upstream registry DESCRIBES the addon; the overlay only DECIDES (true/false) —
+# a consumer overlay never needs to copy this entry. Depends on KubeVela + the OAP
+# agent-platform-addons (bifrost/agentgateway/oam-components) and on the AmpIncident RGD above
+# (set enable_amp_incident together with aiops_agent), hence sync-wave 9.
+# NOTE: path is LITERAL from repo root (the chart lives under workshop/, not under
+# addonsRepoBasepath, so a {{basepath}} prefix would wrongly yield gitops/workshop/...).
+# Per-cluster values: <overlay>/overlays/clusters/<cluster>/aiops-agent/values.yaml.
+aiops-agent:
+  namespace: aiops-agent
+  path: 'workshop/aiops-agent/chart'
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: '9'
+  selector:
+    matchExpressions:
+      - key: enable_aiops_agent
+        operator: In
+        values: ['true']
+  valuesObject:
+    # Image coordinates are deliberately NOT set here: the chart values.yaml
+    # (workshop/aiops-agent/chart/values.yaml) is the single source of truth for image pins.
+    accountId: '{{ index .metadata.annotations "aws_account_id" }}'
+    clusterPrefix: '{{ default "peeks" (index .metadata.annotations "resource_prefix") }}'
+    region: '{{default "us-west-2" (index .metadata.annotations "aws_region")}}'
+    cloudfrontDomain: '{{ default "" (index .metadata.annotations "ingress_domain_name") }}'
+    # gitlab-mcp GITLAB_API_URL host (PAT itself comes from Secrets Manager via ESO).
+    gitlabDomain: '{{default "" (index .metadata.annotations "gitlab_domain_name")}}'
+    # Fleet repo the agent opens remediation MRs on. DERIVED, not a new parameter: the exact
+    # resolution gitops/bootstrap/addons.yaml uses for the $overlay source / overlayRepoURLGit —
+    # overlay_repo_url when wired, else the hub's fleetRepoURL when it is a SEPARATE repo from
+    # addonsRepoURL, else "" (no fleet repo: the bridge dup-check is disabled, fail-open).
+    # The chart derives the MR project path from it. Keep in sync with addons.yaml.
+    fleetRepoUrl: '{{ if (index .metadata.annotations "overlay_repo_url") }}{{ index .metadata.annotations "overlay_repo_url" }}{{ else if (and (index .metadata.annotations "fleetRepoURL") (ne (trimSuffix ".git" (index .metadata.annotations "fleetRepoURL")) (trimSuffix ".git" .metadata.annotations.addonsRepoURL))) }}{{ index .metadata.annotations "fleetRepoURL" }}{{ end }}'
+  ignoreDifferences:
+    - group: core.oam.dev
+      kind: Application
+      jsonPointers:
+        - /status
+
 eks-capabilities-rbac:
   namespace: kro
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/eks-capabilities-rbac'
