@@ -572,6 +572,46 @@ spec:
             app.kubernetes.io/component: ray-head
             app.kubernetes.io/name: ${schema.spec.name}
           type: ClusterIP
+    # Dedicated Service for the Ray Dashboard. The AWS Load Balancer Controller
+    # only applies alb.ingress.kubernetes.io/transforms.<name> to Ingress paths
+    # whose backend service name equals <name>, so the dashboard path needs its
+    # own backend service named <name>-ray-dashboard for the prefix-strip rewrite
+    # below to be attached. The serve path keeps using <name>-ray-serve-svc.
+    - id: dashboardservice
+      readyWhen:
+        - ${dashboardservice.metadata.name != ""}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            backstage.io/created-by: ${schema.spec.createdBy}
+            backstage.io/template-version: 1.0.0
+          labels:
+            app.kubernetes.io/component: ray-service
+            app.kubernetes.io/managed-by: kro
+            app.kubernetes.io/name: ${schema.spec.name}
+            backstage.io/template-name: ray-service-kro
+          name: ${schema.spec.name}-ray-dashboard
+          namespace: ${schema.metadata.namespace}
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              blockOwnerDeletion: true
+              controller: false
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+        spec:
+          ports:
+            - name: dashboard
+              port: 8265
+              protocol: TCP
+              targetPort: 8265
+          selector:
+            app.kubernetes.io/component: ray-head
+            app.kubernetes.io/name: ${schema.spec.name}
+          type: ClusterIP
     - id: rayingress
       readyWhen:
         - ${rayingress.metadata.name != ""}
@@ -610,7 +650,7 @@ spec:
                     pathType: Prefix
                   - backend:
                       service:
-                        name: ${schema.spec.name}-ray-serve-svc
+                        name: ${schema.spec.name}-ray-dashboard
                         port:
                           number: 8265
                     path: /ray-dashboard/${schema.spec.name}
