@@ -1,9 +1,9 @@
 {{- /*
   aiops-agent cluster-wide READ-ONLY RBAC (hub + every spoke).
 
-  Why: the agent's identity (IAM role <hub>-aiops-agent-<hash>-role, shared by the agent and
-  eks-read-mcp via Pod Identity) gets AmazonEKSViewPolicy on each cluster through an
-  EKS AccessEntry (chart/files/aiops-agent-app.yaml, component agent-access). That
+  Why: the read identity of the aiops-agent app (IAM role <hub>-eks-read-mcp-<hash>-role,
+  the Pod Identity role of the eks-read-mcp ServiceAccount) gets AmazonEKSViewPolicy on each
+  cluster through an EKS AccessEntry (chart/files/aiops-agent-app.yaml, component agent-access). That
   managed policy does NOT cover cluster-scoped core objects (nodes) nor any CRD
   (argoproj.io, ACK *.services.k8s.aws, kro.run, Karpenter/Auto Mode), so the
   autonomous RCA path got 403 on `list nodes` (hub + spokes) and on

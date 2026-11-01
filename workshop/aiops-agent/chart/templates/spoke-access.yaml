@@ -1,5 +1,5 @@
 {{- /*
-Spoke read access for the agent identity: ONE AccessEntry per spoke cluster registered
+Spoke read access for the eks-read-mcp identity: ONE AccessEntry per spoke cluster registered
 on this hub, named from the spoke's real aws_cluster_name. No list of spokes is kept in
 this chart and no value has to be set: the cluster generator reads the ArgoCD cluster
 secrets that the fleet already creates for every spoke (kro/ACK, Crossplane or
@@ -43,8 +43,9 @@ spec:
             accountId: {{ .Values.accountId | toString | quote }}
             # The spoke's region, from its secret; the hub's when the secret has none.
             region: '{{`{{ default "`}}{{ .Values.region }}{{`" (index .metadata.annotations "aws_region") }}`}}'
-            # The agent's Pod Identity role, as the hub entry names it (templates/_helpers.tpl).
-            roleName: {{ include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "aiops-agent") | quote }}
+            # eks-read-mcp's own Pod Identity role (the only identity of this app that calls the
+            # fleet clusters' Kubernetes API), as the hub entry names it (templates/_helpers.tpl).
+            roleName: {{ include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "eks-read-mcp") | quote }}
       destination:
         name: {{ printf "%s-hub" .Values.clusterPrefix | quote }}
         namespace: aiops-agent
