@@ -51,6 +51,11 @@ tasks:
     cmds:
       - python3 {{.ROOT_DIR}}/platform/validation/pod-identity/test_chart_drift.py
 
+  verify:
+    desc: "Read-only post-install verification (clusters, ArgoCD, Crossplane/kro, pods, endpoints, SSO discovery, gateway auth, DNS). Non-zero on any FAIL (run `task -x verify` to get the script's own 0=ok/1=FAIL/2=config-error codes). Extra flags: task verify -- --json-out out.json"
+    cmds:
+      - python3 {{.ROOT_DIR}}/scripts/post_install_verify.py --config {{.CONFIG_FILE}} {{.CLI_ARGS}}
+
   install:
     desc: Bootstrap the platform using the configured cluster provider
     vars:
