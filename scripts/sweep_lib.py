@@ -380,6 +380,27 @@ def _try(fn, what):
         return False
 
 
+def _try_retry(fn, what, retry_codes, attempts, delay, sleep=None):
+    """_try, retried (bounded) while AWS answers one of retry_codes.
+
+    For a delete that AWS refuses only for a moment: a target group stays
+    ResourceInUse while the load balancer that step 1 just deleted is still
+    being torn down (its listeners and rules still reference the group)."""
+    sleep = sleep or time.sleep
+    for i in range(attempts):
+        try:
+            fn()
+            return True
+        except Exception as e:
+            reraise_credentials(e)
+            code = err_code(e)
+            if code not in retry_codes or i == attempts - 1:
+                log(f'    ⚠ {what} not deleted ({code})')
+                return False
+            sleep(delay)
+    return False
+
+
 def _wait(pred, attempts, delay, sleep=None):
     sleep = sleep or time.sleep
     for _ in range(attempts):
@@ -581,6 +602,9 @@ def sweep_rds(rds, prefix, dry_run=False, wait=True, sleep=None, attempts=60, de
 
 # ---------------------------------------------------------------- log groups
 
+FLUENTBIT_LOG_ROOT = 'fluentbit-cloudwatch'
+
+
 def select_log_groups(logs, prefix, hub, clusters, inventory=None, assume_deleted=()):
     """(selected, [(group, reason)]) EKS log groups of clusters this destroy removed.
 
@@ -610,6 +634,15 @@ def select_log_groups(logs, prefix, hub, clusters, inventory=None, assume_delete
         if len(parts) < 4 or not parts[3]:
             continue
         name = parts[3]
+        # Fluent Bit (aws-for-fluentbit, registry observability.yaml) writes to
+        # /aws/eks/fluentbit-cloudwatch/<cluster>/logs and creates the group itself
+        # (auto_create_group), so no controller deletes it. Same exact-name rule on
+        # <cluster>. The shared chart default /aws/eks/fluentbit-cloudwatch/logs names
+        # no cluster ("logs" is never one of ours) and stays.
+        if name == FLUENTBIT_LOG_ROOT:
+            if len(parts) < 6 or not parts[4]:
+                continue
+            name = parts[4]
         if name not in ours:
             continue
         if name in retained:
@@ -831,12 +864,64 @@ def shared_roles_record_path(inventory_path):
     return os.path.join(os.path.dirname(inventory_path) or '.', 'shared-iam-retained.json')
 
 
-def load_shared_roles(path):
+def load_shared_roles(path, key='roles'):
     try:
         with open(path) as f:
-            return sorted({r for r in json.load(f).get('roles', []) if r})
+            return sorted({r for r in json.load(f).get(key, []) if r})
     except (OSError, ValueError, AttributeError):
         return []
+
+
+def load_shared_policies(path):
+    """The fixed-name customer policies protect-shared-iam.py retained (same record)."""
+    return load_shared_roles(path, 'policies')
+
+
+def sweep_shared_policies(iam, names, dry_run=False):
+    """Delete the recorded shared customer policies that nothing uses any more.
+
+    A policy protect-shared-iam.py retained (AWS name outside <prefix>-, e.g. the
+    legacy <appName>-<component>-iam-policy of an OAP agent) is only forgotten by the
+    hub's controller. Once the hub is gone and its role was swept (6b/6b2), the
+    policy is attached to nothing: AttachmentCount 0 means this stack was its last
+    user. A policy still attached to a role, user or group (another hub's agent role)
+    is kept. Only recorded names are looked at, never a pattern.
+    Returns (deleted, kept) name lists."""
+    deleted, kept = [], []
+    if not names:
+        return deleted, kept
+    want = set(names)
+    found = {p['PolicyName']: p for p in _paginate(iam.list_policies, 'Policies', Scope='Local')
+             if p.get('PolicyName') in want}
+    for name in names:
+        p = found.get(name)
+        if not p:
+            log(f'  shared policy {name} already gone')
+            continue
+        if p.get('AttachmentCount', 0):
+            log(f'  keep shared policy {name}: still attached ({p["AttachmentCount"]})')
+            kept.append(name)
+            continue
+        if dry_run:
+            log(f'  would delete shared policy {name} (attached to nothing)')
+            deleted.append(name)
+            continue
+        arn = p['Arn']
+        try:
+            for v in _paginate(iam.list_policy_versions, 'Versions', PolicyArn=arn):
+                if not v.get('IsDefaultVersion'):
+                    iam.delete_policy_version(PolicyArn=arn, VersionId=v['VersionId'])
+            iam.delete_policy(PolicyArn=arn)
+            log(f'  deleted shared policy {name} (attached to nothing)')
+            deleted.append(name)
+        except Exception as e:
+            reraise_credentials(e)
+            if err_code(e) == 'NoSuchEntity':
+                log(f'  shared policy {name} already gone')
+                continue
+            log(f'    ⚠ shared policy {name} not deleted ({err_code(e)})')
+            kept.append(name)
+    return deleted, kept
 
 
 def delete_role(iam, name):
@@ -1095,7 +1180,8 @@ def _paginate_token(fn, key, token_in='NextToken', token_out=None, **kw):
 
 
 def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
-                        dry_run=False, assume_deleted=(), r53=None, domain='', keep_data=False):
+                        dry_run=False, assume_deleted=(), r53=None, domain='', keep_data=False,
+                        sleep=None, tg_attempts=18, tg_delay=10):
     is_gone = gone_stack_clusters(prefix, hub, clusters, inventory, assume_deleted)
     verb = 'would delete' if dry_run else 'delete'
     n = 0
@@ -1114,7 +1200,12 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
     for arn, cl in tgs:
         name = arn.rsplit('/', 2)[-2] if arn.count('/') >= 2 else arn
         log(f'  {verb} target group {name} (no load balancer, cluster {cl} removed)')
-        if not dry_run and _try(lambda: elbv2.delete_target_group(TargetGroupArn=arn), f'target group {name}'):
+        # ResourceInUse right after step 1 deleted the ALB: its listeners still
+        # reference the group for a minute or two. Retry (bounded) instead of
+        # leaving the group behind.
+        if not dry_run and _try_retry(lambda: elbv2.delete_target_group(TargetGroupArn=arn),
+                                      f'target group {name}', ('ResourceInUse',),
+                                      tg_attempts, tg_delay, sleep):
             n += 1
     srcs, dsts = select_log_deliveries(logs, hub, is_gone(hub))
     for s in srcs:
@@ -1134,6 +1225,177 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
         n += sweep_dns_records(r53, plans, dry_run)
     return {'volumes': [v for v, _ in vols], 'target_groups': [a for a, _ in tgs],
             'delivery_sources': srcs, 'delivery_destinations': dsts, 'dns_records': dns, 'deleted': n}
+
+
+# ------------------------------------- app resources (AgentCore memory, SNS, SQS)
+#
+# Found by the demo5 teardowns: an app the hub runs through KubeVela (the OAP
+# aiops-agent) owns AWS resources through CRs the hub's controllers delete only while
+# they are all alive and in the right order: a Crossplane bedrockagentcore Memory
+# (the provider is the crossplane-agentcore addon), and the ACK SNS topic and SQS
+# queues of the kro AmpIncident instance (they need the kro RGD, and ACK needs the
+# app's own IAMRoleSelector and provisioning role, all deleted by the same KubeVela
+# garbage collection). When one goes first, the CR is stuck and the hub delete
+# leaves the AWS resource behind. record-app-resources.py writes their AWS ids
+# while the hub is readable; sweep-app-resources.py deletes those, and only those,
+# once the hub is gone.
+
+APP_RECORD = 'destroy-app-resources.json'
+APP_KINDS = {
+    # resource: (family, kind key in the record)
+    'memories.bedrockagentcore.aws.upbound.io': ('xp1', 'agentcore_memories'),
+    'memories.bedrockagentcore.aws.m.upbound.io': ('xp2', 'agentcore_memories'),
+    'topics.sns.services.k8s.aws': ('ack', 'sns_topics'),
+    'queues.sqs.services.k8s.aws': ('ack', 'sqs_queues'),
+}
+APP_KEYS = ('agentcore_memories', 'sns_topics', 'sqs_queues')
+
+
+def app_record_path(inventory_path):
+    import os
+    return os.path.join(os.path.dirname(inventory_path) or '.', APP_RECORD)
+
+
+def arn_region(arn):
+    parts = (arn or '').split(':')
+    return parts[3] if len(parts) > 5 else ''
+
+
+def app_resource_ids(resource, item, default_region):
+    """(key, record) for one CR, or None when the CR keeps its AWS object
+    (retain / Orphan / no Delete) or has no AWS id yet (nothing was created)."""
+    family, key = APP_KINDS[resource]
+    if already_retained(family, item):
+        return None
+    meta = item.get('metadata') or {}
+    spec = item.get('spec') or {}
+    status = item.get('status') or {}
+    if key == 'agentcore_memories':
+        mid = (status.get('atProvider') or {}).get('id') or \
+            (meta.get('annotations') or {}).get('crossplane.io/external-name') or ''
+        if not mid or mid == meta.get('name'):
+            return None  # external name defaults to the object name before create
+        region = (spec.get('forProvider') or {}).get('region') or default_region
+        return key, {'id': mid, 'region': region}
+    arn = (status.get('ackResourceMetadata') or {}).get('arn') or ''
+    if not arn:
+        return None
+    rec = {'arn': arn, 'region': arn_region(arn) or default_region,
+           'name': arn.rsplit(':', 1)[-1]}
+    if key == 'sqs_queues':
+        rec['url'] = status.get('queueURL') or ''
+    return key, rec
+
+
+def collect_app_resources(items_by_kind, default_region):
+    out = {k: [] for k in APP_KEYS}
+    for resource, items in items_by_kind.items():
+        for it in items:
+            r = app_resource_ids(resource, it, default_region)
+            if r:
+                out[r[0]].append(r[1])
+    return out
+
+
+def merge_app_record(old, new):
+    """Union by AWS id: a re-run after the hub is gone keeps what an earlier run saw."""
+    out = {}
+    for k in APP_KEYS:
+        seen, rows = set(), []
+        for r in (old or {}).get(k, []) + (new or {}).get(k, []):
+            ident = r.get('id') or r.get('arn')
+            if ident and ident not in seen:
+                seen.add(ident)
+                rows.append(r)
+        out[k] = rows
+    return out
+
+
+def load_app_record(path, hub):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {k: [] for k in APP_KEYS}
+    rec = (data or {}).get(hub) or {}
+    return {k: list(rec.get(k, [])) for k in APP_KEYS}
+
+
+def _gone(fn, codes):
+    """True when fn raises one of the not-found codes."""
+    try:
+        fn()
+        return False
+    except Exception as e:
+        reraise_credentials(e)
+        if err_code(e) in codes:
+            return True
+        raise
+
+
+def select_app_resources(record, prefix):
+    """What the sweep acts on. Memories: every recorded id (it comes from this hub's own
+    Memory CR, and AgentCore refuses to create a second memory with the same name, so the
+    id cannot be another install's). SNS/SQS: CreateTopic/CreateQueue on an existing
+    name returns that resource, so a CR can bind another stack's topic: only names
+    starting with <prefix>- are kept. Returns (selected, skipped [(what, reason)])."""
+    sel = {k: [] for k in APP_KEYS}
+    skipped = []
+    sel['agentcore_memories'] = list(record.get('agentcore_memories', []))
+    for k in ('sns_topics', 'sqs_queues'):
+        for r in record.get(k, []):
+            if prefix and r.get('name', '').startswith(f'{prefix}-'):
+                sel[k].append(r)
+            else:
+                skipped.append((r.get('name') or r.get('arn'), f'name outside {prefix}-*'))
+    return sel, skipped
+
+
+def sweep_app_resources(selected, client_for, dry_run=False):
+    """Delete the selected resources. client_for(service, region) -> boto3 client.
+    Returns the number deleted (dry-run: would delete)."""
+    n = 0
+    verb = 'would delete' if dry_run else 'delete'
+    for r in selected.get('agentcore_memories', []):
+        ac = client_for('bedrock-agentcore-control', r['region'])
+        if _gone(lambda: ac.get_memory(memoryId=r['id']), ('ResourceNotFoundException',)):
+            log(f'  AgentCore memory {r["id"]} already gone')
+            continue
+        log(f'  {verb} AgentCore memory {r["id"]} (recorded from this hub\'s Memory CR)')
+        if dry_run:
+            n += 1
+        elif _try(lambda: ac.delete_memory(memoryId=r['id']), f'AgentCore memory {r["id"]}'):
+            n += 1
+    # Queues before topics: SNS deletes a topic's subscriptions with it, and nothing
+    # else depends on the order; the DLQ goes like any other recorded queue.
+    for r in selected.get('sqs_queues', []):
+        sqs = client_for('sqs', r['region'])
+        url = r.get('url') or ''
+        try:
+            url = sqs.get_queue_url(QueueName=r['name'])['QueueUrl']
+        except Exception as e:
+            reraise_credentials(e)
+            if err_code(e) in ('AWS.SimpleQueueService.NonExistentQueue', 'QueueDoesNotExist'):
+                log(f'  SQS queue {r["name"]} already gone')
+                continue
+            log(f'    ⚠ SQS queue {r["name"]} not read ({err_code(e)})')
+            continue
+        log(f'  {verb} SQS queue {r["name"]}')
+        if dry_run:
+            n += 1
+        elif _try(lambda: sqs.delete_queue(QueueUrl=url), f'SQS queue {r["name"]}'):
+            n += 1
+    for r in selected.get('sns_topics', []):
+        sns = client_for('sns', r['region'])
+        if _gone(lambda: sns.get_topic_attributes(TopicArn=r['arn']), ('NotFound', 'NotFoundException')):
+            log(f'  SNS topic {r["name"]} already gone')
+            continue
+        log(f'  {verb} SNS topic {r["name"]} (and its subscriptions)')
+        if dry_run:
+            n += 1
+        elif _try(lambda: sns.delete_topic(TopicArn=r['arn']), f'SNS topic {r["name"]}'):
+            n += 1
+    return n
 
 
 def parse_common(argv, usage):
