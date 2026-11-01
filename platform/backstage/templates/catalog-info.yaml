@@ -20,24 +20,7 @@ spec:
     - ./platform-entities.yaml
     # Uncomment the line below to register the custom DynamoDB template (Module 1 - GenAI section)
     # - ../customtemplates/ddb-table/template.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: System
-metadata:
-  name: system-info
-  description: Holds system information i.e, hostname, IP, OS, etc
-spec:
-  owner: guest
-  # values dynamically populated at bootstrap via `task backstage-catalog`
-  # (the cluster provider's hub:backstage-catalog step updates the backstage-dynamic-catalog ConfigMap)
-  ingress_hostname: '{{ values.ingressDomain }}'
-  gitlab_hostname: '{{ values.gitlabDomain }}'
-  argocd_hostname: '{{ values.argocdDomain }}'
-  gituser: '{{ values.gitUsername }}'
-  aws_region: '{{ values.awsRegion }}'
-  aws_account_id: '{{ values.awsAccountId }}'
-  admin_role_name: '{{ values.adminRoleName }}'
-  resource_prefix: '{{ values.resourcePrefix }}'
-  hub_cluster_name: '{{ values.hubClusterName }}'
-  model_s3_bucket: '{{ values.modelS3Bucket }}'
-  workshop_git_branch: '{{ values.workshopGitBranch }}'
+# The `system-info` System is NOT declared here. It is provided only by the
+# backstage-dynamic-catalog ConfigMap (gitops/addons/charts/backstage/templates/install.yaml),
+# which carries the real values. A second declaration here would register the same
+# entity ref with unrendered placeholders.
