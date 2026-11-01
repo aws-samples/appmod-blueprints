@@ -213,10 +213,12 @@ spec:
         - aiops-agent-memory
         - eks-read-access
     type: agent
-  # ▶EKS-READ: least-privilege AWS policy so the agent's Pod Identity role (aiops-agent-role,
+  # ▶EKS-READ: least-privilege AWS policy so the agent's Pod Identity role (REPLACE_AGENT_ROLE_NAME,
   # shared by eks-read-mcp) can DISCOVER and read the fleet clusters. Emitted as a Crossplane
-  # iam.aws.upbound.io Policy named <appName>-<component>-iam-policy so the agent's
-  # aws-service-identity trait (accessFor: eks-read-access) attaches it to the role.
+  # iam.aws.upbound.io Policy object named <appName>-<component>-iam-policy so the agent's
+  # aws-service-identity trait (accessFor: eks-read-access) attaches it to the role. Its AWS
+  # name (external-name) follows the component-iam-policy rule: cluster + hash, so two
+  # installs in one account never share it (see templates/application.yaml).
   # Cluster/k8s object reads are still gated by the per-cluster EKS AccessEntries
   # (agent-access component, AmazonEKSViewPolicy + the aiops-agent-cluster-read group) —
   # this only grants the AWS control-plane calls (ListClusters/DescribeCluster), the
@@ -230,9 +232,10 @@ spec:
         kind: Policy
         metadata:
           name: aiops-agent-hub-eks-read-access-iam-policy
+          annotations:
+            crossplane.io/external-name: REPLACE_EKS_READ_POLICY_NAME
         spec:
           forProvider:
-            name: aiops-agent-hub-eks-read-access-iam-policy
             policy: |
               {"Version":"2012-10-17","Statement":[{"Sid":"EksReadDiscover","Effect":"Allow","Action":["eks:ListClusters","eks:DescribeCluster","eks:AccessKubernetesApi"],"Resource":"*"},{"Sid":"EksReadInsights","Effect":"Allow","Action":["eks:ListInsights","eks:DescribeInsight"],"Resource":"*"}]}
           providerConfigRef:
@@ -638,6 +641,10 @@ spec:
                       name: http
                 path: /aiops-agent-chat
                 pathType: Prefix
+  # The AccessEntry object names carry the role name: EKS cannot change an access
+  # entry's principal in place, so when the role name changes (e.g. an install moving
+  # from the old aiops-agent-role) KubeVela creates new entries and deletes the old ones
+  # instead of leaving entries that point at a deleted role.
   - name: agent-access
     type: k8s-objects
     properties:
@@ -645,11 +652,11 @@ spec:
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: AccessEntry
         metadata:
-          name: aiops-agent-hub
+          name: REPLACE_AGENT_ROLE_NAME-hub
           namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-hub
-          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_AGENT_ROLE_NAME
           type: STANDARD
           # ▶CLUSTER-READ: also map the role into the aiops-agent-cluster-read group, bound
           # to a read-only ClusterRole (nodes, CRDs: argoproj.io/ACK/kro/Karpenter — NO
@@ -664,11 +671,11 @@ spec:
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: AccessEntry
         metadata:
-          name: aiops-agent-spoke-dev
+          name: REPLACE_AGENT_ROLE_NAME-spoke-dev
           namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-spoke-dev
-          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_AGENT_ROLE_NAME
           type: STANDARD
           # ▶CLUSTER-READ: also map the role into the aiops-agent-cluster-read group, bound
           # to a read-only ClusterRole (nodes, CRDs: argoproj.io/ACK/kro/Karpenter — NO
@@ -683,11 +690,11 @@ spec:
       - apiVersion: eks.services.k8s.aws/v1alpha1
         kind: AccessEntry
         metadata:
-          name: aiops-agent-spoke-prod
+          name: REPLACE_AGENT_ROLE_NAME-spoke-prod
           namespace: aiops-agent
         spec:
           clusterName: REPLACE_CLUSTER_PREFIX-spoke-prod
-          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/aiops-agent-role
+          principalARN: arn:aws:iam::REPLACE_ACCOUNT_ID:role/REPLACE_AGENT_ROLE_NAME
           type: STANDARD
           # ▶CLUSTER-READ: also map the role into the aiops-agent-cluster-read group, bound
           # to a read-only ClusterRole (nodes, CRDs: argoproj.io/ACK/kro/Karpenter — NO
