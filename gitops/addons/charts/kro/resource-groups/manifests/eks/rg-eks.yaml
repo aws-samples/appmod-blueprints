@@ -26,6 +26,12 @@ spec:
       # Default "spoke" so every spoke is correct with no change; hub:claim sets
       # "control-plane".
       fleetMember: string | default="spoke"
+      # CIDRs allowed on the PUBLIC EKS API endpoint. Declared explicitly (EKS default
+      # 0.0.0.0/0) because ACK only compares fields present in the spec: an ADOPTED cluster
+      # (hub:pivot) with no publicAccessCIDRs sees desired=[] vs live=[0.0.0.0/0], calls
+      # UpdateClusterConfig with no CIDRs, EKS answers InvalidParameterException "already at
+      # the desired configuration" and ACK.ResourceSynced never turns True (#1033).
+      publicAccessCIDRs: '[]string | default=["0.0.0.0/0"]'
       # ACK deletion-policy for this cluster's IAM roles + OIDC provider.
       # "delete" (default) = torn down with the cluster (test/workshop events,
       # even for environment=prod). "retain" = keep the AWS resources on delete
@@ -443,6 +449,7 @@ spec:
           resourcesVPCConfig:
             endpointPrivateAccess: true
             endpointPublicAccess: true
+            publicAccessCIDRs: ${schema.spec.publicAccessCIDRs}
             subnetIDs:
               - ${schema.spec.network.subnets.controlplane.subnet1ID}
               - ${schema.spec.network.subnets.controlplane.subnet2ID}
