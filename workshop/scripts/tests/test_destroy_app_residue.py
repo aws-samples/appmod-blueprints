@@ -491,6 +491,12 @@ class DrainKubectl:
         self.steps = steps_to_finish
         self.vela = vela
         self.argo_fails = argo_fails
+        self.timeouts = []
+        self.selectors = {
+            "incident-bridge-aws": {"metadata": {"name": "incident-bridge-aws", "labels": {"app.oam.dev/name": "aiops-agent-hub"}}},
+            "other-install-sel": {"metadata": {"name": "other-install-sel", "labels": {"app.oam.dev/name": "another-app"}}},
+            "unlabelled": {"metadata": {"name": "unlabelled"}},
+        }
         self.argo = [
             self._app("aiops-agent-hb-hub", "aiops-agent", "hb-hub", oam=True),
             self._app("aiops-agent-spoke-access-hb-dev", "aiops-agent-spoke-access", "hb-dev", oam=True),
@@ -511,9 +517,28 @@ class DrainKubectl:
     def deleting(self):
         return self.left is not None and self.left > 0
 
-    def __call__(self, args):
+    def __call__(self, args, timeout=None):
         self.calls.append(args)
+        self.timeouts.append(timeout)
         verb, what = args[0], args[1]
+        if verb == "get" and what == "customresourcedefinitions.apiextensions.k8s.io":
+            return 0, json.dumps({"items": [
+                {"spec": {"group": "sqs.services.k8s.aws", "scope": "Namespaced", "names": {"plural": "queues"}}},
+                {"spec": {"group": "services.k8s.aws", "scope": "Cluster", "names": {"plural": "iamroleselectors"}}},
+                {"spec": {"group": "apps", "scope": "Namespaced", "names": {"plural": "deployments"}}}]})
+        if verb == "get" and what == "queues.sqs.services.k8s.aws":
+            md = {"name": "hb-amp-incidents-dlq", "labels": {"app.oam.dev/name": "aiops-agent-hub"}}
+            if self.deleting():
+                md["deletionTimestamp"] = "now"
+            return 0, json.dumps({"items": [{"kind": "Queue", "metadata": md}]})
+        if verb == "get" and what == SELECTORS:
+            if len(args) > 2 and args[2] != "-o":
+                sel = self.selectors.get(args[2])
+                return (0, json.dumps(sel)) if sel else (1, "")
+            return 0, json.dumps({"items": list(self.selectors.values())})
+        if verb == "patch" and what == SELECTORS:
+            self.selectors[args[2]]["metadata"]["finalizers"] = json.loads(args[6])["metadata"]["finalizers"]
+            return 0, ""
         if verb == "get" and what == "applications.argoproj.io":
             if self.argo_fails:
                 return 1, ""
@@ -545,14 +570,37 @@ class DrainKubectl:
         return 0, ""
 
 
+SELECTORS = "iamroleselectors.services.k8s.aws"
+HOLD = "appmod-blueprints.aws/drain-hold"
+
+
+class FakeClock:
+    """Virtual monotonic clock: only sleeping (and slow kubectl calls) advance it."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+
 def _mutations(kc):
-    return [c[:3] for c in kc.calls if c[0] in ("patch", "delete")]
+    return [c[:3] for c in kc.calls
+            if c[0] == "delete" or (c[0] == "patch" and c[1] != SELECTORS)]
 
 
 def test_drain_deletes_the_oam_appset_and_waits_for_its_aws_resources(capsys):
     mod = load("drain-oam-apps.py")
     kc = DrainKubectl(steps_to_finish=3)
-    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=kc.tick) == 0
+    clk = FakeClock()
+
+    def tick(s):
+        kc.tick(s)
+        clk.sleep(s)
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=tick, clock=clk) == 0
     assert _mutations(kc) == [["patch", "applicationset", "aiops-agent"], ["delete", "applicationset", "aiops-agent"]]
     out = capsys.readouterr().out
     assert "waiting for the OAM apps" in out and "memory/aiops-agent.aiops-agent-memory" in out
@@ -563,39 +611,281 @@ def test_drain_deletes_the_oam_appset_and_waits_for_its_aws_resources(capsys):
 def test_drain_ignores_apps_on_spokes_and_non_oam_apps():
     mod = load("drain-oam-apps.py")
     kc = DrainKubectl(steps_to_finish=0)
-    mod.main(["hb-hub", "1200"], kubectl=kc, sleep=kc.tick)
-    touched = {c[2] for c in kc.calls if c[0] in ("patch", "delete")}
+    mod.main(["hb-hub", "1200"], kubectl=kc, sleep=kc.tick, clock=FakeClock())
+    touched = {c[2] for c in kc.calls if c[0] in ("patch", "delete") and c[1] != SELECTORS}
     assert touched == {"aiops-agent"}
 
 
 def test_drain_is_bounded(capsys):
     mod = load("drain-oam-apps.py")
     kc = DrainKubectl(steps_to_finish=10 ** 6)
+    clk = FakeClock()
     sleeps = []
 
     def tick(s):
         sleeps.append(s)
-        kc.tick(s)
-    assert mod.main(["hb-hub", "60"], kubectl=kc, sleep=tick) == 0
+        clk.sleep(s)
+    assert mod.main(["hb-hub", "60"], kubectl=kc, sleep=tick, clock=clk) == 0
     assert sum(sleeps) == 60 and "still deleting after 60s, going on" in capsys.readouterr().out
+
+
+def test_drain_bound_is_wall_clock_not_the_sum_of_sleeps(capsys):
+    """Every kubectl call takes 40 s of the virtual clock: the 200 s bound is reached
+    after a few polls, not after 200 s of sleeping."""
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=10 ** 6)
+    clk = FakeClock()
+    sleeps = []
+
+    def slow(args, timeout=None):
+        clk.now += 40
+        return kc(args, timeout=timeout)
+
+    def tick(s):
+        sleeps.append(s)
+        clk.sleep(s)
+    assert mod.main(["hb-hub", "200"], kubectl=slow, sleep=tick, clock=clk) == 0
+    assert "still deleting after" in capsys.readouterr().out
+    assert sum(sleeps) < 100, "the loop stopped on the clock, not on the sum of the sleeps"
+
+
+def test_every_kubectl_call_has_a_timeout_within_the_remaining_time():
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=10 ** 6)
+    clk = FakeClock()
+    mod.main(["hb-hub", "100"], kubectl=kc, sleep=clk.sleep, clock=clk)
+    assert kc.timeouts and all(t is not None and 1 <= t <= 200 for t in kc.timeouts)
+    polls = [t for c, t in zip(kc.calls, kc.timeouts) if c[0] == "get"]
+    assert polls and max(polls) <= 60
+
+
+def test_run_kubectl_turns_a_timeout_into_a_failed_call(monkeypatch):
+    import subprocess
+    mod = load("drain-oam-apps.py")
+
+    def boom(*a, **k):
+        assert k["timeout"] == 5
+        raise subprocess.TimeoutExpired("kubectl", 5)
+    monkeypatch.setattr(mod.subprocess, "run", boom)
+    assert mod.run_kubectl(["get", "x"], timeout=5) == (124, "")
+
+
+def test_drain_output_is_flushed_line_by_line():
+    mod = load("drain-oam-apps.py")
+
+    class Out:
+        def __init__(self):
+            self.lines, self.flushes = 0, 0
+
+        def write(self, t):
+            self.lines += t.count("\n")
+
+        def flush(self):
+            self.flushes += 1
+    o = Out()
+    kc = DrainKubectl(steps_to_finish=2)
+    clk = FakeClock()
+    mod.main(["hb-hub", "1200"], kubectl=kc, sleep=clk.sleep, clock=clk, out=o)
+    assert o.lines > 3 and o.flushes >= o.lines
+
+
+# --- the app's IAMRoleSelectors outlive the ACK resources that need them
+
+def _selector_events(kc):
+    return [(i, c[2], json.loads(c[6])["metadata"]["finalizers"]) for i, c in enumerate(kc.calls)
+            if c[:2] == ["patch", SELECTORS]]
+
+
+def test_selectors_are_held_before_the_appset_goes_and_released_after_the_wait():
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=3)
+    clk = FakeClock()
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=clk.sleep, clock=clk) == 0
+    ev = _selector_events(kc)
+    assert [e[1] for e in ev] == ["incident-bridge-aws", "incident-bridge-aws"], \
+        "only the selector of this hub's OAM app is touched (not another app's, not unlabelled ones)"
+    assert ev[0][2] == [HOLD] and ev[1][2] == []
+    delete_appset = next(i for i, c in enumerate(kc.calls) if c[:2] == ["delete", "applicationset"])
+    assert ev[0][0] < delete_appset < ev[1][0]
+    last_wait = max(i for i, c in enumerate(kc.calls) if c[:2] == ["get", "applications.core.oam.dev"])
+    assert ev[1][0] > last_wait, "released only when the wait is over"
+
+
+def test_selectors_are_released_on_timeout_without_kubevela_and_on_crash():
+    mod = load("drain-oam-apps.py")
+    for kw in (dict(steps_to_finish=10 ** 6), dict(steps_to_finish=5, vela=False)):
+        kc = DrainKubectl(**kw)
+        clk = FakeClock()
+        mod.main(["hb-hub", "30"], kubectl=kc, sleep=clk.sleep, clock=clk)
+        assert kc.selectors["incident-bridge-aws"]["metadata"]["finalizers"] == []
+    kc = DrainKubectl(steps_to_finish=5)
+
+    def bad_sleep(_):
+        raise RuntimeError("interrupted")
+    with pytest.raises(RuntimeError):
+        mod.main(["hb-hub", "1200"], kubectl=kc, sleep=bad_sleep, clock=FakeClock())
+    assert kc.selectors["incident-bridge-aws"]["metadata"]["finalizers"] == []
+
+
+def test_foreign_finalizers_are_kept_and_dry_run_holds_nothing():
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=1)
+    kc.selectors["incident-bridge-aws"]["metadata"]["finalizers"] = ["x.io/keep"]
+    clk = FakeClock()
+    mod.main(["hb-hub", "1200"], kubectl=kc, sleep=clk.sleep, clock=clk)
+    assert _selector_events(kc)[0][2] == ["x.io/keep", HOLD]
+    assert kc.selectors["incident-bridge-aws"]["metadata"]["finalizers"] == ["x.io/keep"]
+    kc = DrainKubectl()
+    mod.main(["hb-hub", "1200", "--dry-run"], kubectl=kc, sleep=pytest.fail, clock=FakeClock())
+    assert _selector_events(kc) == []
+
+
+def test_ack_resources_of_the_app_being_deleted_are_waited_for(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=2)
+    clk = FakeClock()
+    mod.main(["hb-hub", "1200"], kubectl=kc, sleep=clk.sleep, clock=clk)
+    assert "queue/hb-amp-incidents-dlq" in capsys.readouterr().out
 
 
 def test_drain_does_not_wait_without_kubevela(capsys):
     mod = load("drain-oam-apps.py")
     kc = DrainKubectl(steps_to_finish=5, vela=False)
-    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=pytest.fail) == 0
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=pytest.fail, clock=FakeClock()) == 0
     assert "no KubeVela controller running" in capsys.readouterr().out
 
 
 def test_drain_dry_run_and_unreachable_hub(capsys):
     mod = load("drain-oam-apps.py")
     kc = DrainKubectl()
-    assert mod.main(["hb-hub", "1200", "--dry-run"], kubectl=kc, sleep=pytest.fail) == 0
+    assert mod.main(["hb-hub", "1200", "--dry-run"], kubectl=kc, sleep=pytest.fail, clock=FakeClock()) == 0
     assert _mutations(kc) == []
     assert "would delete ApplicationSet aiops-agent" in capsys.readouterr().out
     kc = DrainKubectl(argo_fails=True)
-    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=pytest.fail) == 0
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=pytest.fail, clock=FakeClock()) == 0
     assert _mutations(kc) == [] and "nothing to drain" in capsys.readouterr().out
+
+
+# --- the observed deadlock: the app waits for its IAMRoleSelectors, held until the app is gone
+
+class DeadlockKubectl(DrainKubectl):
+    """Sequence seen on a real hub. After the ApplicationSet is deleted, KubeVela marks the
+    selectors for deletion (our finalizer keeps them) and the ACK resources go one poll at
+    a time. The OAM/Argo CD app only disappears once its selectors are gone, and the
+    selectors only go once the hold is released. ack_polls=None: the ACK resources stay."""
+
+    def __init__(self, ack_polls=2):
+        super().__init__(steps_to_finish=10 ** 6)
+        self.ack_left = ack_polls
+        self.started = False
+
+    def tick(self, _):
+        if self.started and self.ack_left is not None and self.ack_left > 0:
+            self.ack_left -= 1
+
+    def _sync(self):
+        if self.started:
+            mine = [n for n, x in self.selectors.items() if x['metadata'].get('labels', {}).get('app.oam.dev/name') == 'aiops-agent-hub']
+            self.left = 0 if (not mine and self.ack_left == 0) else 1
+
+    def _ack_present(self):
+        return self.ack_left is None or self.ack_left > 0
+
+    def __call__(self, args, timeout=None):
+        self._sync()
+        verb, what = args[0], args[1]
+        if verb == "delete" and what == "applicationset":
+            self.started = True
+            for sel in self.selectors.values():
+                if sel["metadata"].get("labels", {}).get("app.oam.dev/name") == "aiops-agent-hub":
+                    sel["metadata"]["deletionTimestamp"] = "now"
+        if verb == "get" and what == "queues.sqs.services.k8s.aws":
+            self.calls.append(args)
+            self.timeouts.append(timeout)
+            md = {"name": "hb-amp-incidents-dlq", "labels": {"app.oam.dev/name": "aiops-agent-hub"}}
+            if self.started:
+                md["deletionTimestamp"] = "now"
+            return 0, json.dumps({"items": [{"kind": "Queue", "metadata": md}] if self._ack_present() else []})
+        if verb == "get" and what == "ampincident.kro.run":
+            self.calls.append(args)
+            self.timeouts.append(timeout)
+            md = {"name": "hb-amp-incidents", "labels": {"app.oam.dev/name": "aiops-agent-hub"}, "deletionTimestamp": "now"}
+            return 0, json.dumps({"items": [{"kind": "AmpIncident", "metadata": md}] if self._ack_present() else []})
+        rc, out = super().__call__(args, timeout=timeout)
+        if verb == "patch" and what == SELECTORS:
+            sel = self.selectors[args[2]]
+            if sel["metadata"].get("deletionTimestamp") and not sel["metadata"].get("finalizers"):
+                del self.selectors[args[2]]
+        self._sync()
+        return rc, out
+
+
+def test_hold_is_released_as_soon_as_the_ack_resources_are_gone_and_the_drain_finishes_early(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DeadlockKubectl(ack_polls=2)
+    clk = FakeClock()
+
+    def tick(s):
+        kc.tick(s)
+        clk.sleep(s)
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=tick, clock=clk) == 0
+    out = capsys.readouterr().out
+    assert "OAM apps drained" in out and "still deleting" not in out
+    assert clk.now < 120, "finished well before the 1200 s bound (no deadlock)"
+    assert "no ACK resource left" in out and "released IAMRoleSelector incident-bridge-aws" in out
+    assert out.count("released IAMRoleSelector") == 1, "released once, not again in the finally"
+    # the release happens while the app is still there, after the last ACK resource went
+    assert out.index("released IAMRoleSelector") < out.index("OAM apps drained")
+    # the selector of another app and the unlabelled one were never touched
+    assert set(kc.selectors) == {"other-install-sel", "unlabelled"}
+
+
+def test_hold_is_kept_while_an_ack_resource_remains(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DeadlockKubectl(ack_polls=None)
+    clk = FakeClock()
+    assert mod.main(["hb-hub", "90"], kubectl=kc, sleep=clk.sleep, clock=clk) == 0
+    out = capsys.readouterr().out
+    assert "no ACK resource left" not in out
+    # still held through the whole wait, released only by the final clean-up
+    patches = [(i, json.loads(c[6])["metadata"]["finalizers"]) for i, c in enumerate(kc.calls)
+               if c[:2] == ["patch", SELECTORS]]
+    assert [p[1] for p in patches] == [[HOLD], []]
+    assert patches[1][0] > max(i for i, c in enumerate(kc.calls) if c[:2] == ["get", "applications.core.oam.dev"])
+    assert "still deleting after 90s" in out and "released IAMRoleSelector" in out
+
+
+def test_hold_is_kept_when_the_ack_resources_cannot_be_listed():
+    mod = load("drain-oam-apps.py")
+    kc = DeadlockKubectl(ack_polls=0)
+    real = kc.__call__
+
+    def flaky(args, timeout=None):
+        if args[:2] == ["get", "customresourcedefinitions.apiextensions.k8s.io"]:
+            return 1, ""
+        return real(args, timeout=timeout)
+    clk = FakeClock()
+    mod.main(["hb-hub", "45"], kubectl=flaky, sleep=clk.sleep, clock=clk)
+    patches = [json.loads(c[6])["metadata"]["finalizers"] for c in kc.calls if c[:2] == ["patch", SELECTORS]]
+    assert patches == [[HOLD], []]
+
+
+def test_ack_dependents_turns_empty_on_the_first_list_without_ack_resource():
+    """ACK resources present, then gone while the app was still there: the release
+    condition fires on the first empty listing."""
+    present = {"items": [{"kind": "Queue", "metadata": {"name": "q"}}]}
+    mod = load("drain-oam-apps.py")
+    seq = [present, present, {"items": []}]
+
+    def kubectl(args, timeout=None):
+        if args[1] == "customresourcedefinitions.apiextensions.k8s.io":
+            return 0, json.dumps({"items": [{"spec": {"group": "sqs.services.k8s.aws", "scope": "Namespaced",
+                                                      "names": {"plural": "queues"}}}]})
+        if args[1] == "resourcegraphdefinitions.kro.run":
+            return 0, json.dumps({"items": []})
+        return 0, json.dumps(seq.pop(0))
+    got = [mod.ack_dependents(kubectl, {"aiops-agent"}) for _ in range(3)]
+    assert got == [["queue/q"], ["queue/q"], []]
 
 
 # ------------------------------------------------------------- Taskfile wiring
@@ -617,6 +907,7 @@ def test_drain_runs_after_the_spokes_and_before_the_per_addon_pass():
     drain = _index(cmds, "drain-oam-apps.py")
     assert _index(cmds, "clusters-kro clusters") < drain < _index(cmds, 'SKIP="{{.INFRA_STACK}}')
     assert '"{{.XP_DELETE_WAIT}}"' in cmds[drain], "bounded by the existing wait, no new parameter"
+    assert "python3 -u " in cmds[drain], "unbuffered: the log shows the wait while it happens"
 
 
 def test_destroy_records_app_resources_before_the_hub_goes_and_sweeps_after():
