@@ -6,10 +6,14 @@ DERIVED (templates/_helpers.tpl "aiops-agent.forge") from values the registry en
 injects from cluster annotations: gitlabDomain (gitlab_domain_name) and fleetRepoUrl
 (overlay_repo_url, else a separate fleetRepoURL). No new parameter.
 
-- gitlab: the workshop. gitlab-mcp, its token ExternalSecret and the incident path stay.
-- none:   no GitLab forge for the fleet repo. No gitlab-mcp, no token ExternalSecret, no
-          incident path; the agent lists skills-mcp + eks-read-mcp only (OAP /ready requires
-          every configured mcpServers entry), and its prompt says it is read-only.
+- gitlab: the workshop. gitlab-mcp, its token ExternalSecret and the bridge's GitLab
+          open-MR dup-check env stay.
+- none:   no GitLab forge for the fleet repo. No gitlab-mcp, no token ExternalSecret; the
+          agent lists skills-mcp + eks-read-mcp only (OAP /ready requires every configured
+          mcpServers entry), and its prompt says it is read-only.
+- both:   the incident path (selectors, ACK IAM/SNS/SQS, AmpIncident, incident-bridge) is in
+          the core. A GitLab <-> none switch therefore GCs no AWS-backed CR (ACK/kro): removing
+          them with their IAMRoleSelectors in one GC pass left them stuck in deletion.
 
 Run:  python -m pytest workshop/scripts/tests/test_aiops_agent_forge_variants.py -q
 """
@@ -35,12 +39,14 @@ WORKSHOP = {"accountId": "111111111111", "clusterPrefix": "peeks", "gitlabDomain
 NO_FORGE = {"accountId": "111111111111", "clusterPrefix": "example-b", "gitlabDomain": "",
             "fleetRepoUrl": "https://github.com/example-org/fleet-config.git"}
 
-LINE_SLOTS = ["AGENT_DEPENDS", "MCP_SERVERS", "WRITE_COMPONENT", "ACCESS_DEPENDS",
-              "INCIDENT_PATH"]
+LINE_SLOTS = ["AGENT_DEPENDS", "MCP_SERVERS", "WRITE_COMPONENT", "BRIDGE_ENV"]
 PROMPT_SLOTS = ["PROMPT_INCIDENT_FIX", "PROMPT_WRITE_RULE", "PROMPT_TOOL_NOTES",
                 "PROMPT_IDEMPOTENCY", "PROMPT_ACT_FIRST"]
 BRIDGE_COMPONENTS = {"incident-bridge-selectors", "incident-bridge-aws", "amp-incident",
                      "incident-bridge"}
+GITLAB_OBJECTS = {("ExternalSecret", "gitlab-mcp-token"), ("Deployment", "gitlab-mcp"),
+                  ("Service", "gitlab-mcp-stable"), ("HTTPRoute", "gitlab-mcp"),
+                  ("AgentgatewayBackend", "gitlab-mcp-backend")}
 
 
 def render(tmp_path, values):
@@ -86,7 +92,7 @@ def test_forge_is_derived_from_existing_values(tmp_path, domain, url, forge):
     comps = components(render(tmp_path, {**NO_FORGE, "gitlabDomain": domain,
                                          "fleetRepoUrl": url}))
     assert ("gitlab-mcp" in comps) == (forge == "gitlab")
-    assert (BRIDGE_COMPONENTS <= set(comps)) == (forge == "gitlab")
+    assert BRIDGE_COMPONENTS <= set(comps)  # incident path in both variants
 
 
 # ---------------------------------------------------------------- core + fragments
@@ -108,8 +114,18 @@ def test_core_has_no_gitlab_component_or_server():
     core = open(CORE, encoding="utf-8").read()
     assert "- name: gitlab-mcp" not in core
     assert "kind: ExternalSecret" not in core
-    assert "name: incident-bridge" not in core
-    assert "kind: AmpIncident" not in core
+    assert not [l for l in core.splitlines()
+                if "GITLAB_" in l and not l.lstrip().startswith("#")]
+
+
+def test_core_holds_the_incident_path_for_both_variants():
+    core = open(CORE, encoding="utf-8").read()
+    for name in ("incident-bridge-selectors", "incident-bridge-aws", "amp-incident",
+                 "incident-bridge"):
+        assert f"  - name: {name}\n" in core, name
+    assert "kind: AmpIncident" in core
+    for sel in ("incident-bridge-iam", "incident-bridge-aws", "incident-bridge-eks"):
+        assert f"name: {sel}\n" in core, sel
 
 
 def test_prompt_fragments_are_safe_inside_the_double_quoted_scalar():
@@ -124,19 +140,20 @@ def test_prompt_fragments_are_safe_inside_the_double_quoted_scalar():
 
 # ---------------------------------------------------------------- no-forge render
 @needs_helm
-def test_no_forge_renders_no_gitlab_mcp_token_or_incident_path(tmp_path):
+def test_no_forge_renders_no_gitlab_mcp_or_token_but_keeps_incident_path(tmp_path):
     out = render(tmp_path, NO_FORGE)
     comps = components(out)
     assert set(comps) == {"skills-mcp", "aiops-agent-memory", "aiops-agent", "eks-read-access",
-                          "eks-read-mcp", "chat-ui", "agent-access", "eks-access-selector"}
+                          "eks-read-mcp", "chat-ui", "agent-access"} | BRIDGE_COMPONENTS
     kinds = {(o["kind"], o["metadata"]["name"]) for _, o in objects(comps)}
     assert not [k for k in kinds if k[0] == "ExternalSecret"]
-    assert not [k for k in kinds if "gitlab" in k[1] or k[1].startswith("incident-bridge-")
-                and k != ("IAMRoleSelector", "incident-bridge-eks")]
-    groups = {o["apiVersion"].split("/")[0] for _, o in objects(comps)}
-    assert not groups & {"sns.services.k8s.aws", "sqs.services.k8s.aws",
-                         "prometheusservice.services.k8s.aws", "kro.run"}
-    assert "REPLACE_" not in out
+    assert not [k for k in kinds if "gitlab" in k[1]]
+    bridge = components(out)["incident-bridge"]["properties"]["objects"][0]
+    env = bridge["spec"]["template"]["spec"]["containers"][0]["env"]
+    assert [e["name"] for e in env] == ["AWS_REGION", "SQS_QUEUE_URL", "AGENT_A2A_URL",
+                                        "DEDUP_TTL"]
+    # Every token is substituted (YAML comments, which still name the token scheme, dropped).
+    assert "REPLACE_" not in yaml.safe_dump(oam_app(out))
     # Parsed content (YAML comments dropped) never names the GitLab MCP or its secret.
     dumped = yaml.safe_dump(oam_app(out))
     assert "gitlab-mcp" not in dumped and "GITLAB_" not in dumped
@@ -163,14 +180,52 @@ def test_no_forge_prompt_is_read_only_text_remediation(tmp_path):
 
 
 @needs_helm
-def test_no_forge_keeps_eks_routing_for_access_entries(tmp_path):
+def test_no_forge_keeps_all_iam_role_selectors(tmp_path):
     comps = components(render(tmp_path, NO_FORGE))
-    sel = comps["eks-access-selector"]["properties"]["objects"]
-    assert [o["metadata"]["name"] for o in sel] == ["incident-bridge-eks"]
-    assert sel[0]["spec"]["arn"] == "arn:aws:iam::111111111111:role/example-b-cluster-mgmt-eks"
-    assert sel[0]["spec"]["resourceTypeSelector"] == [
+    sel = {o["metadata"]["name"]: o for o in
+           comps["incident-bridge-selectors"]["properties"]["objects"]}
+    assert set(sel) == {"incident-bridge-iam", "incident-bridge-aws", "incident-bridge-eks"}
+    eks = sel["incident-bridge-eks"]
+    assert eks["spec"]["arn"] == "arn:aws:iam::111111111111:role/example-b-cluster-mgmt-eks"
+    assert eks["spec"]["resourceTypeSelector"] == [
         {"group": "eks.services.k8s.aws", "kind": "", "version": ""}]
-    assert comps["agent-access"]["dependsOn"] == ["eks-access-selector"]
+    assert "dependsOn" not in comps["agent-access"]  # same as the GitLab variant
+
+
+def _obj_keys(comps):
+    return {(o["apiVersion"].split("/")[0], o["kind"], o["metadata"].get("namespace", ""),
+             o["metadata"]["name"]): c for c, o in objects(comps)}
+
+
+@needs_helm
+@pytest.mark.parametrize("src,dst", [("gitlab", "none"), ("none", "gitlab")])
+def test_variant_switch_gcs_only_gitlab_mcp_and_no_aws_backed_cr(tmp_path, src, dst):
+    # Same hub, only the forge differs: what KubeVela would GC / add on the switch.
+    gl = {**NO_FORGE, "gitlabDomain": GL, "fleetRepoUrl": f"https://{GL}/user1/fleet-config.git"}
+    v = {"gitlab": gl, "none": NO_FORGE}
+    a = _obj_keys(components(render(tmp_path, v[src])))
+    b = _obj_keys(components(render(tmp_path, v[dst])))
+    gone, added = set(a) - set(b), set(b) - set(a)
+    switched = gone if src == "gitlab" else added
+    assert not (added if src == "gitlab" else gone)
+    assert {(k[1], k[3]) for k in switched} == GITLAB_OBJECTS
+    assert {a.get(k) or b.get(k) for k in switched} == {"gitlab-mcp"}
+    assert not [k for k in switched if k[0].endswith("services.k8s.aws") or k[0] == "kro.run"]
+    # Objects present in both keep their component (no move = no delete/recreate).
+    assert all(a[k] == b[k] for k in set(a) & set(b))
+
+
+@needs_helm
+def test_incident_path_is_identical_across_variants_except_gitlab_env(tmp_path):
+    gl = {**NO_FORGE, "gitlabDomain": GL, "fleetRepoUrl": f"https://{GL}/user1/fleet-config.git"}
+    g, n = components(render(tmp_path, gl)), components(render(tmp_path, NO_FORGE))
+    for name in ("incident-bridge-selectors", "incident-bridge-aws", "amp-incident"):
+        assert g[name] == n[name], name
+    ge = g["incident-bridge"]["properties"]["objects"][0]["spec"]["template"]["spec"]
+    ne = n["incident-bridge"]["properties"]["objects"][0]["spec"]["template"]["spec"]
+    ge["containers"][0]["env"] = [e for e in ge["containers"][0]["env"]
+                                  if not e["name"].startswith("GITLAB_")]
+    assert ge == ne
 
 
 # ---------------------------------------------------------------- both variants
@@ -186,6 +241,9 @@ def test_depends_on_only_names_rendered_components(tmp_path, values):
 def test_gitlab_variant_keeps_the_full_toolset(tmp_path):
     comps = components(render(tmp_path, WORKSHOP))
     assert {"gitlab-mcp"} | BRIDGE_COMPONENTS <= set(comps)
+    bridge = comps["incident-bridge"]["properties"]["objects"][0]
+    env = {e["name"] for e in bridge["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert {"GITLAB_API_URL", "GITLAB_MR_PROJECT", "GITLAB_PERSONAL_ACCESS_TOKEN"} <= env
     agent = comps["aiops-agent"]
     assert [m["name"] for m in agent["properties"]["mcpServers"]] == [
         "skills-mcp", "eks-read-mcp", "gitlab-mcp"]

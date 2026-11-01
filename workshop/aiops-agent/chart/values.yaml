@@ -35,7 +35,8 @@ cloudfrontDomain: ""          # ingress_domain_name  (chat-ui ingress host, inje
 gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL host, injected)
 # The forge variant is DERIVED from gitlabDomain + fleetRepoUrl (templates/_helpers.tpl
 # "aiops-agent.forge"; no parameter): GitLab when gitlabDomain is set and the fleet repo is on
-# that host (or not wired), else none (no gitlab-mcp, no incident path, read-only agent).
+# that host (or not wired), else none (no gitlab-mcp, read-only agent; the incident path
+# stays, without its GitLab dup-check).
 # With these defaults (gitlabDomain "") a standalone `helm template` renders the none variant.
 # Fleet repo URL the agent opens remediation MRs on. Injected by the registry entry
 # (gitops/addons/registry/platform.yaml) as a DERIVED value — overlay_repo_url, else the

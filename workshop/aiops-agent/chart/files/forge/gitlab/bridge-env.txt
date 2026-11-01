@@ -1,0 +1,15 @@
+                # ▶GITLAB dup-check (read-only): lets the bridge suppress a
+                # duplicate incident when an OPEN MR already addresses the failing
+                # component. Fail-open — if GITLAB_MR_PROJECT is empty or GitLab is
+                # unreachable, the bridge still forwards. Token reused (read-only
+                # use) from the gitlab-mcp secret; project is set per-setup.
+                - name: GITLAB_API_URL
+                  value: https://REPLACE_GITLAB_DOMAIN/api/v4
+                - name: GITLAB_MR_PROJECT
+                  value: "REPLACE_GITLAB_MR_PROJECT"
+                - name: GITLAB_PERSONAL_ACCESS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: gitlab-mcp-token
+                      key: GITLAB_PERSONAL_ACCESS_TOKEN
+                      optional: true

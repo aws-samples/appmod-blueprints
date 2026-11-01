@@ -9,7 +9,8 @@ Result:
             is https://<GIT_DOMAIN>/<user>/fleet-config.git and gitlab_domain_name = GIT_DOMAIN.
   "none"    anything else: no GitLab domain, or a fleet repo on another host (github.com,
             GHES, a self-managed GitLab that is not gitlab_domain_name). Fail-safe: the agent
-            is rendered read-only, without a forge MCP or the incident path.
+            is rendered read-only, without a forge MCP (the incident path stays, without its
+            GitLab dup-check).
 The host is the URL authority without scheme, user info or port (https://h/x, git@h:x).
 Usage: include "aiops-agent.forge" $
 */ -}}
