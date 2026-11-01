@@ -75,7 +75,7 @@ aiops-agent:
 
 # aiops-agent-rbac — read-only cluster-wide ClusterRole + ClusterRoleBinding (group
 # aiops-agent-cluster-read) on the hub AND every spoke. The aiops-agent AccessEntries
-# (chart/files/aiops-agent-app.yaml, agent-access) map the agent's role into that group;
+# (chart/files/aiops-agent-app.yaml, agent-access) map the eks-read-mcp role into that group;
 # AmazonEKSViewPolicy alone 403s on nodes and on every CRD (argoproj.io, ACK, kro).
 # Delivery mirrors gitops/addons/charts/eks-capabilities-rbac: this hub appset-chart
 # entry's cluster generator targets every fleet cluster secret, so the ClusterRole lands

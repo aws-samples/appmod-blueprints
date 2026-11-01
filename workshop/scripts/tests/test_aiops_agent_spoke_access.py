@@ -36,7 +36,7 @@ REPO_URL = "https://git.example.com/platform/appmod-blueprints.git"
 REGION = "us-west-2"  # chart default
 
 
-def _expected_role(prefix, sa="aiops-agent", namespace="aiops-agent"):
+def _expected_role(prefix, sa="eks-read-mcp", namespace="aiops-agent"):
     """The aws-service-identity trait's role name (platform/oam/definitions/traits/
     aws-service-identity.cue) for <sa> on the hub <prefix>-hub, computed independently."""
     cluster = f"{prefix}-hub"
@@ -175,7 +175,7 @@ def test_non_workshop_single_spoke(tmp_path):
 @pytest.mark.parametrize("prefix", ["peeks", "acme"])
 def test_entries_name_the_trait_role(prefix, tmp_path):
     """Hub and spoke entries name the role the aws-service-identity trait creates for the
-    agent ServiceAccount on <prefix>-hub, and their object names carry it."""
+    eks-read-mcp ServiceAccount on <prefix>-hub (#1210), and their object names carry it."""
     fleet = [_secret(f"{prefix}-hub", "control-plane"), _secret(f"{prefix}-dev", "spoke")]
     app, spokes = _generate(prefix, fleet, tmp_path)
     role = _expected_role(prefix)
