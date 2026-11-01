@@ -151,17 +151,22 @@ forge is **derived**, there is no parameter for it (`templates/_helpers.tpl`
 | empty | any | `none` |
 
 - **`gitlab`** (the workshop): `files/forge/gitlab/` holds the original text byte for byte, so
-  the render is unchanged: `gitlab-mcp` + its `gitlab-mcp-token` ExternalSecret, the incident
-  path (IAMRoleSelectors, ACK SNS/SQS/IAM, `AmpIncident`, `incident-bridge`), and the prompt
-  rules for opening MRs.
+  the render is unchanged: `gitlab-mcp` + its `gitlab-mcp-token` ExternalSecret, the
+  incident-bridge open-MR dup-check env (`GITLAB_*`), and the prompt rules for opening MRs.
 - **`none`** (e.g. an appmod install whose fleet repo is on GitHub, or no fleet repo): no
-  `gitlab-mcp`, no token ExternalSecret, no incident path. The agent's `mcpServers` are
+  `gitlab-mcp`, no token ExternalSecret. The agent's `mcpServers` are
   `skills-mcp` + `eks-read-mcp` only. That list is what decides readiness (the OAP agent's
   `/ready` requires every configured server; `MCP_REQUIRED_SERVERS` is not read), so the agent
   becomes Ready without a forge. Its prompt says it has no write tool and must give each fix
-  as a file path plus a minimal unified diff for a human to apply. The eks `IAMRoleSelector`
-  (`incident-bridge-eks`, same name as in the GitLab variant) is kept as component
-  `eks-access-selector`, because the hub and spoke AccessEntries are routed by it.
+  as a file path plus a minimal unified diff for a human to apply.
+- **Both variants** render the incident path from the core (IAMRoleSelectors incl. the eks
+  one the AccessEntries need, ACK IAM/SNS/SQS, `AmpIncident`, `incident-bridge`). It does not
+  need GitLab: the bridge's open-MR dup-check and ceiling are fail-open when `GITLAB_*` is
+  unset (slot `BRIDGE_ENV`), and the agent answers an incident with a text diff in the none
+  variant. Keeping it in both variants is also what makes a variant switch safe: a GitLab ->
+  none switch only GCs the `gitlab-mcp` objects (no finalizer-bearing ACK/kro CR). Removing the
+  incident path in the same GC pass as its IAMRoleSelectors left the ACK CRs stuck in deletion,
+  with their AWS resources still present.
 
 A GitLab install without the bot token (`aiops_agent_git_token`) still renders the GitLab
 variant; making that case fail-soft is a separate change.
