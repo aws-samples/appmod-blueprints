@@ -33,6 +33,11 @@ clusterPrefix: "peeks"        # resource_prefix      (platform default "peeks"; 
 region: "us-west-2"           # aws_region           (platform default; injected/overridable per env)
 cloudfrontDomain: ""          # ingress_domain_name  (chat-ui ingress host, injected)
 gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL host, injected)
+# The forge variant is DERIVED from gitlabDomain + fleetRepoUrl (templates/_helpers.tpl
+# "aiops-agent.forge"; no parameter): GitLab when gitlabDomain is set and the fleet repo is on
+# that host (or not wired), else none (no gitlab-mcp, read-only agent; the incident path
+# stays, without its GitLab dup-check).
+# With these defaults (gitlabDomain "") a standalone `helm template` renders the none variant.
 # Fleet repo URL the agent opens remediation MRs on. Injected by the registry entry
 # (gitops/addons/registry/platform.yaml) as a DERIVED value — overlay_repo_url, else the
 # hub's fleetRepoURL when it is a separate repo from addonsRepoURL — not a user knob.

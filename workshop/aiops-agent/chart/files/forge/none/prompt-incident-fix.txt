@@ -1,0 +1,1 @@
+and give that fix as text: the repo/path that OWNS the resource (read its ArgoCD Application source if unsure) and a minimal unified diff. **Never mutate the cluster directly.** End with the proposed diff and an explicit \"awaiting human approval\" note.
