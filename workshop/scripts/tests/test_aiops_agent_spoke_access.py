@@ -63,14 +63,17 @@ def _by_kind(docs, kind):
     return [d for d in docs if d.get("kind") == kind]
 
 
-def _secret(name, fleet_member):
+def _secret(name, fleet_member, region=None):
     """An ArgoCD cluster secret as the fleet-secret chart / rg-eks writes it."""
+    annotations = {"aws_cluster_name": name, "addonsRepoURL": REPO_URL,
+                   "addonsRepoRevision": "main"}
+    if region:
+        annotations["aws_region"] = region
     return {
         "name": name,
         "labels": {"argocd.argoproj.io/secret-type": "cluster", "fleet_member": fleet_member,
                    "aws_cluster_name": name},
-        "annotations": {"aws_cluster_name": name, "addonsRepoURL": REPO_URL,
-                        "addonsRepoRevision": "main"},
+        "annotations": annotations,
     }
 
 
@@ -216,8 +219,46 @@ def test_no_hardcoded_spoke_names():
     p = _prompt(app)
     env = p[p.index("# THIS ENVIRONMENT"):p.index("# GitOps remediation")]
     assert "`acme-hub`" in env
-    assert "Discover them with eks-read" in env
     assert "spoke-prod" not in env
+
+
+@needs_helm
+def test_prompt_names_a_discovery_path_eks_read_can_run():
+    """eks-mcp-server has no tool that lists EKS clusters (review on #1208): the prompt
+    must point at the hub's AccessEntry objects, read with the k8s tools it does have."""
+    (app,) = _by_kind(_render_chart("acme"), "Application")
+    p = _prompt(app)
+    env = p[p.index("# THIS ENVIRONMENT"):p.index("# GitOps remediation")]
+    assert "list the EKS clusters" not in env
+    for needle in ("`list_k8s_resources`", "cluster_name `acme-hub`", "kind `AccessEntry`",
+                   "api_version `eks.services.k8s.aws/v1alpha1`", "namespace `aiops-agent`",
+                   "`manage_k8s_resource`", "`spec.clusterName`"):
+        assert needle in env, needle
+    # The objects it points at exist where it says: hub entry inline, spokes from the appset.
+    (hub,) = _hub_entries(app)
+    assert hub["apiVersion"] == "eks.services.k8s.aws/v1alpha1" and hub["kind"] == "AccessEntry"
+    assert hub["metadata"]["namespace"] == "aiops-agent"
+
+
+@needs_helm
+def test_spoke_entry_carries_the_spoke_region(tmp_path):
+    """A spoke's AccessEntry is reconciled in the spoke's own region (aws_region of its
+    secret), else the hub's; ACK otherwise uses the hub's region for every entry."""
+    fleet = [_secret("acme-hub", "control-plane", REGION),
+             _secret("acme-eu", "spoke", "eu-west-1"), _secret("acme-dev", "spoke")]
+    _, spokes = _generate("acme", fleet, tmp_path)
+    regions = {e["spec"]["clusterName"]: e["metadata"]["annotations"]["services.k8s.aws/region"]
+               for e in spokes}
+    assert regions == {"acme-eu": "eu-west-1", "acme-dev": REGION}
+
+
+@needs_helm
+def test_access_chart_without_region_sets_no_annotation():
+    out = _docs(_helm("template", "x", os.path.join(REPO, "workshop", "aiops-agent", "access-chart"),
+                      "--set", f"accountId={ACCOUNT}", "--set", "clusterName=acme-dev",
+                      "--set", "roleName=r"))
+    (entry,) = _by_kind(out, "AccessEntry")
+    assert "annotations" not in entry["metadata"]
 
 
 @needs_helm

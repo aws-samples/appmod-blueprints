@@ -1,6 +1,7 @@
 {{- $cluster := required "clusterName is required (set by the aiops-agent spoke-access ApplicationSet)" .Values.clusterName -}}
 {{- $account := required "accountId is required (set by the aiops-agent spoke-access ApplicationSet)" (.Values.accountId | toString) -}}
 {{- $role := required "roleName is required (set by the aiops-agent spoke-access ApplicationSet)" .Values.roleName -}}
+{{- $region := .Values.region | default "" -}}
 # Same shape as the hub entry (agent-access in ../chart/files/aiops-agent-app.yaml):
 # AmazonEKSViewPolicy + the aiops-agent-cluster-read group bound by the aiops-agent-rbac
 # addon (../rbac-chart). ACK CR on the hub, routed to <prefix>-cluster-mgmt-eks by the
@@ -8,11 +9,18 @@
 # The object name carries the role name, like the hub entry (<role>-hub): EKS cannot
 # change an entry's principal, so a role change gives a new entry (and ArgoCD prunes the
 # old one) instead of an entry stuck on a deleted role.
+# The region is the spoke's own (aws_region of its cluster secret), set on the CR the way
+# the EksCluster RGD sets it on its AccessEntries: without it ACK uses the hub's region,
+# and a spoke in another region gets an entry that never syncs.
 apiVersion: eks.services.k8s.aws/v1alpha1
 kind: AccessEntry
 metadata:
   name: {{ $role }}-{{ $cluster }}
   namespace: aiops-agent
+  {{- with $region }}
+  annotations:
+    services.k8s.aws/region: {{ . }}
+  {{- end }}
 spec:
   clusterName: {{ $cluster }}
   principalARN: arn:aws:iam::{{ $account }}:role/{{ $role }}

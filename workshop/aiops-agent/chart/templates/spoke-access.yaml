@@ -41,6 +41,8 @@ spec:
           valuesObject:
             clusterName: '{{`{{ default .name (index .metadata.annotations "aws_cluster_name") }}`}}'
             accountId: {{ .Values.accountId | toString | quote }}
+            # The spoke's region, from its secret; the hub's when the secret has none.
+            region: '{{`{{ default "`}}{{ .Values.region }}{{`" (index .metadata.annotations "aws_region") }}`}}'
             # eks-read-mcp's own Pod Identity role (the only identity of this app that calls the
             # fleet clusters' Kubernetes API), as the hub entry names it (templates/_helpers.tpl).
             roleName: {{ include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "eks-read-mcp") | quote }}

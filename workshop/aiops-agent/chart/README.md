@@ -90,8 +90,11 @@ has no EKS access entry. The read identity is read-only on every fleet cluster t
   role into the Kubernetes group `aiops-agent-cluster-read`. The hub entry is the
   `agent-access` component; the spoke entries come from the `aiops-agent-spoke-access`
   ApplicationSet (`templates/spoke-access.yaml`), one per spoke cluster secret on this hub
-  with its real `aws_cluster_name`, rendered from `../access-chart`. Nothing to configure;
-  a hub without spokes gets none;
+  with its real `aws_cluster_name` and region (`aws_region`, else the hub's), rendered
+  from `../access-chart`. Nothing to configure; a hub without spokes gets none. These
+  AccessEntry objects (namespace `aiops-agent` on the hub) are also how the agent learns
+  the spoke names: eks-mcp-server has no tool that lists EKS clusters, so the prompt tells
+  it to list them with `list_k8s_resources` and read `spec.clusterName`;
 - the `aiops-agent-rbac` addon (`../rbac-chart`, registry entry in the workshop overlay
   `overrides.yaml`) installs a read-only `ClusterRole`/`ClusterRoleBinding` for that group
   on the hub **and** every spoke: nodes, namespaces, events, CRDs, `argoproj.io`
@@ -113,6 +116,16 @@ the discovery calls.
   `Require`) is a tool allow-list: `tools/list` and `tools/call` see only the read tools
   plus `manage_k8s_resource` (its `read` operation; the others stay refused by the server
   flag and by `AmazonEKSViewPolicy`). Add a tool there if a new server version adds one.
+
+> Upgrade note: an install that ran the per-cluster role names with the former inline
+> spoke entries (`<role>-spoke-dev`/`-prod` in `agent-access`) and then moves to these
+> ApplicationSet entries (`<role>-<cluster>`) has two CRs for the same (cluster,
+> principal), which is one AWS entry for ACK. When KubeVela deletes the old CR, ACK
+> deletes that AWS entry and the new CR only recreates it at its next drift resync. Ship
+> both changes together; an install caught in between gets its spoke access back by
+> deleting the new AccessEntry CRs (ArgoCD recreates them at once). With eks-read-mcp as
+> the principal (above) the old and new entries name different roles, so an install that
+> moves straight to this version is not affected.
 
 > Known limitation: one identity serves both the autonomous RCA path and the interactive
 > chat, so this cluster-wide read also applies to the chat until the two-agent RBAC split.

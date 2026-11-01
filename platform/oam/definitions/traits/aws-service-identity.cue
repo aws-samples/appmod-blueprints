@@ -187,8 +187,9 @@ template: {
 	// The role name sits in the pod template on purpose: when it changes (an install
 	// moving to these names, or a cluster rename) the template changes, so the workload
 	// rolls by itself. The new pods wait in wait-for-pod-identity-role until the claim
-	// reports that role (status.roleName, set from the observed IAM role), so they never
-	// start, and cache credentials, on the role being replaced.
+	// reports that role (status.roleName, the role the PodIdentityAssociation serves, read
+	// from its observed roleArn), so they never start, and cache credentials, on the role
+	// being replaced.
 	patch: spec: template: metadata: annotations: "platform.gitops.io/aws-role": _roleName
 	patch: spec: template: spec: {
 		// +patchKey=name
