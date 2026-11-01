@@ -8,6 +8,10 @@ the spokes the inventory lists (any name), <prefix>-spoke-dev and
 <prefix>-spoke-prod. Never a <prefix>-* wildcard, which would also take the
 groups of a stack whose prefix starts with ours. A group is kept while its cluster still exists and is not DELETING,
 or when the inventory marks the cluster as retained.
+Also the Fluent Bit groups /aws/eks/fluentbit-cloudwatch/<cluster>/... of the same
+clusters (aws-for-fluentbit creates them itself, so no controller deletes them), by
+the same exact-name rule; never the shared chart default
+/aws/eks/fluentbit-cloudwatch/logs, which names no cluster.
 """
 import os
 import sys
