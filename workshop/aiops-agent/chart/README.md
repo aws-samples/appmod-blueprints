@@ -150,6 +150,35 @@ imageTag: "prod-2026-09"
 gitlabDomain: "gitlab.mycorp.internal"   # gitlab-mcp GITLAB_API_URL host
 ```
 
+## Forge variants (GitLab / no forge)
+
+`files/aiops-agent-app.yaml` is a **forge-neutral core**: each `REPLACE_FORGE_<SLOT>` token in
+it is filled from `files/forge/<forge>/<slot>.txt` before the other `REPLACE_*` tokens. The
+forge is **derived**, there is no parameter for it (`templates/_helpers.tpl`
+`aiops-agent.forge`), from two values the registry entry already injects:
+
+| `gitlabDomain` (`gitlab_domain_name`) | host of `fleetRepoUrl` | forge |
+|---|---|---|
+| set | equal to `gitlabDomain` (case-insensitive, port ignored), or no `fleetRepoUrl` | `gitlab` |
+| set | another host (e.g. `github.com`) | `none` |
+| empty | any | `none` |
+
+- **`gitlab`** (the workshop): `files/forge/gitlab/` holds the original text byte for byte, so
+  the render is unchanged: `gitlab-mcp` + its `gitlab-mcp-token` ExternalSecret, the incident
+  path (IAMRoleSelectors, ACK SNS/SQS/IAM, `AmpIncident`, `incident-bridge`), and the prompt
+  rules for opening MRs.
+- **`none`** (e.g. an appmod install whose fleet repo is on GitHub, or no fleet repo): no
+  `gitlab-mcp`, no token ExternalSecret, no incident path. The agent's `mcpServers` are
+  `skills-mcp` + `eks-read-mcp` only. That list is what decides readiness (the OAP agent's
+  `/ready` requires every configured server; `MCP_REQUIRED_SERVERS` is not read), so the agent
+  becomes Ready without a forge. Its prompt says it has no write tool and must give each fix
+  as a file path plus a minimal unified diff for a human to apply. The eks `IAMRoleSelector`
+  (`incident-bridge-eks`, same name as in the GitLab variant) is kept as component
+  `eks-access-selector`, because the hub and spoke AccessEntries are routed by it.
+
+A GitLab install without the bot token (`aiops_agent_git_token`) still renders the GitLab
+variant; making that case fail-soft is a separate change.
+
 ## gitlab-mcp (agent write path)
 
 The `gitlab-mcp` component (supergateway wrapping upstream `@zereight/gitlab-mcp`,
@@ -188,6 +217,6 @@ RGD compiles to `Active`/`GraphAccepted`.
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
-| `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO) |
+| `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO); with `fleetRepoUrl` it selects the forge variant (see Forge variants) |
 | `fleetRepoUrl` | `overlay_repo_url`, else `fleetRepoURL` if ≠ `addonsRepoURL` | **derived** by the registry entry (same resolution as `gitops/bootstrap/addons.yaml` `$overlay`); the chart strips scheme+host and `.git` to get the MR project. Empty ⇒ bridge dup-check off (fail-open) |
 | `gitlabMrProject` | — | **deprecated** explicit MR-project override; wins over `fleetRepoUrl` when set |
