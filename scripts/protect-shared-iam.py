@@ -82,12 +82,19 @@ def main(argv, eks=None, kubectl=None, out=sys.stdout, ec2=None, eks_for=None):
     retain, delete = sl.select_shared_iam_crs(items, prefix, protected, guard_ok)
     shared = sorted({aws for resource, _, _, aws, why, _ in retain
                      if resource.startswith('roles.') and why.startswith('not owned') and aws})
-    if shared and o['inventory'] and not o['dry_run']:
+    # Fixed-name customer policies too (e.g. the legacy <appName>-<component>-iam-policy
+    # an OAP agent creates): retained here, so nothing deleted them once the hub was
+    # gone. sweep-shared-iam.py deletes each one that is attached to nothing by then.
+    shared_pols = sorted({aws for resource, _, _, aws, why, _ in retain
+                          if resource.startswith('policies.') and why.startswith('not owned') and aws})
+    if (shared or shared_pols) and o['inventory'] and not o['dry_run']:
         path = sl.shared_roles_record_path(o['inventory'])
         known = set(sl.load_shared_roles(path))
+        known_pols = set(sl.load_shared_policies(path))
         try:
             with open(path, 'w') as f:
-                json.dump({'roles': sorted(known | set(shared))}, f)
+                json.dump({'roles': sorted(known | set(shared)),
+                           'policies': sorted(known_pols | set(shared_pols))}, f)
         except OSError as e:
             print(f'  WARN could not record shared roles in {path} ({e})', file=out)
     failed = 0

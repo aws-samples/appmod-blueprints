@@ -199,7 +199,7 @@ def test_protect_cli_orphans_the_shared_role_and_keeps_own_roles(tmp_path, capsy
     assert kc.calls == [["patch", "roles.iam.aws.upbound.io", SHARED, "--type", "merge", "-p",
                          json.dumps({"spec": {"deletionPolicy": "Orphan"}})]]
     rec = json.loads((tmp_path / "shared-iam-retained.json").read_text())
-    assert rec == {"roles": [SHARED]}
+    assert rec == {"roles": [SHARED], "policies": []}
     out = capsys.readouterr().out
     assert "1 IAM managed resource(s) retained, 2 left to their controller" in out
 

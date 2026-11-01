@@ -1948,6 +1948,18 @@ tasks:
             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null || true
           done
         ignore_error: true
+      # 6c. Drain the hub's KubeVela (OAM) apps BEFORE step 7, while every controller
+      #     they need to delete their AWS resources is alive: KubeVela, the kro RGD of
+      #     their kro instances (AmpIncident -> ACK SNS/SQS), the Crossplane providers of
+      #     their managed resources (crossplane-agentcore -> AgentCore Memory). Step 7
+      #     gives each addon 120 s and then removes the next one, so those controllers
+      #     went while the aiops-agent app was still being deleted and its memory, topic
+      #     and queues stayed in AWS. Bounded by XP_DELETE_WAIT; best-effort.
+      #     See scripts/drain-oam-apps.py.
+      - cmd: |
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 "{{.ROOT_DIR}}/scripts/drain-oam-apps.py" \
+            "{{.HUB_CLUSTER_NAME}}" "{{.XP_DELETE_WAIT}}" 2>&1 || true
+        ignore_error: true
       # 7. Delete HUB ADDONS in reverse sync-wave order, SKIPPING the infra stack.
       #    Addons are discovered LIVE from the cluster (kubectl), not from the static
       #    registry files, so addons enabled outside the registry are still cleaned up.
@@ -2276,6 +2288,11 @@ tasks:
           jq -n --arg vpc "$HUB_VPC" --argjson c "${CLUSTERS:-[]}" '{hub_vpc_id: $vpc, clusters: $c}' > "$INV"
           printf '{{.C_INFO}}  recorded teardown inventory: hub VPC %s, %s kro cluster instance(s).{{.C_RESET}}\n' \
             "${HUB_VPC:-unknown}" "$(jq '.clusters | length' "$INV")"
+          # The AWS ids of the app resources a teardown can strand (AgentCore memories,
+          # ACK SNS topics and SQS queues of this hub's CRs), for step 2c once the hub
+          # is gone. Merged, never truncated (private/destroy-app-resources.json).
+          KUBECONFIG="$HUBKC" python3 "{{.ROOT_DIR}}/scripts/record-app-resources.py" \
+            "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" --inventory "$INV" 2>&1 || true
         ignore_error: true
       # Kill the Kind cluster FIRST — before hub:destroy-addons.
       # This stops KRO from reconciling the hub eksclusterwithvpc resource.
@@ -2384,7 +2401,8 @@ tasks:
           #     clusters only (exact names: the hub, the inventory's spokes and
           #     ${PREFIX}-spoke-dev/-prod; never ${PREFIX}-*; not live, not retained): available EBS
           #     volumes owned by them (Retain StorageClass PVCs), their target groups with
-          #     no load balancer (step 1 deletes ALBs only), and the hub's CloudWatch Logs
+          #     no load balancer (step 1 deletes ALBs only; ResourceInUse while that ALB is
+          #     still going is retried, bounded), and the hub's CloudWatch Logs
           #     delivery sources/destinations no delivery uses (step 2 deletes deliveries).
           #     With a Route53 domain: the A/AAAA/CNAME records external-dns made for them
           #     (owner TXT = cluster name), never the hosted zone or a record it does not own.
@@ -2392,6 +2410,13 @@ tasks:
           KEEP_DATA_ARGS=""; [ "{{.DESTROY_KEEP_DATA}}" = true ] && KEEP_DATA_ARGS="--keep-data"
           python3 "{{.ROOT_DIR}}/scripts/sweep-hub-leftovers.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" --domain "{{.DOMAIN}}" $KEEP_DATA_ARGS 2>&1 || true
+          # 2c. App resources recorded from this hub's CRs at the start of destroy and
+          #     still in AWS: AgentCore memories (by id), and the SQS queues and SNS
+          #     topics named ${PREFIX}-* (the aiops-agent <prefix>-amp-incidents topic,
+          #     queue and DLQ). Only recorded ids, never a pattern; nothing while the hub
+          #     is live. See scripts/sweep-app-resources.py.
+          python3 "{{.ROOT_DIR}}/scripts/sweep-app-resources.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
           #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
           #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
@@ -2527,6 +2552,8 @@ tasks:
           #      retained instead of letting the hub's controller delete them: delete each
           #      one only when no live EKS cluster references it any more (this stack was
           #      its last user). Kept while another hub's pod identity still uses it.
+          #      Then the fixed-name customer policies step 0 retained (e.g. a legacy
+          #      <app>-<component>-iam-policy): deleted once attached to nothing.
           python3 "{{.ROOT_DIR}}/scripts/sweep-shared-iam.py" "$REGION" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
           # 6c. ALL remaining peeks-* IAM policies (not just ACK-tagged).
@@ -2675,6 +2702,8 @@ tasks:
           # 6g. CloudWatch Log Groups of the EKS clusters this destroy removed, by exact
           #     name: the hub, the spokes the inventory lists (any name) and
           #     ${PREFIX}-spoke-dev/-prod. Never a ${PREFIX}-* wildcard.
+          #     Also their Fluent Bit groups /aws/eks/fluentbit-cloudwatch/<cluster>/...
+          #     (created by Fluent Bit itself); never the shared .../fluentbit-cloudwatch/logs.
           #     Kept while the cluster is still live or retained.
           python3 "{{.ROOT_DIR}}/scripts/sweep-log-groups.py" "$PREFIX" "$REGION" "$HUB" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
