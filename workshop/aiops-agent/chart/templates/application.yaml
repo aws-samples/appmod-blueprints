@@ -26,8 +26,7 @@ hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
   policy: <first 100 of "<cluster>-<app>-<component>">-<sha256("<region>/<cluster>/<ns>/<app>/<component>")[:8]>-iam-policy
 */ -}}
 {{- $hub := printf "%s-hub" .Values.clusterPrefix -}}
-{{- $roleKey := printf "%s/%s/aiops-agent/aiops-agent" .Values.region $hub -}}
-{{- $agentRole := printf "%s-%s-role" (printf "%s-aiops-agent" $hub | trunc 50) (sha256sum $roleKey | trunc 8) -}}
+{{- $agentRole := include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "aiops-agent") -}}
 {{- $polKey := printf "%s/%s/aiops-agent/aiops-agent-hub/eks-read-access" .Values.region $hub -}}
 {{- $eksReadPolicy := printf "%s-%s-iam-policy" (printf "%s-aiops-agent-hub-eks-read-access" $hub | trunc 100) (sha256sum $polKey | trunc 8) -}}
 {{- .Files.Get "files/aiops-agent-app.yaml"

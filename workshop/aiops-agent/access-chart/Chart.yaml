@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aiops-agent-access
+description: One EKS AccessEntry (ACK, created on the hub) granting the aiops-agent identity read-only access to one spoke cluster. Instantiated per spoke by the aiops-agent chart's spoke-access ApplicationSet.
+type: application
+version: 0.1.0
