@@ -41,7 +41,7 @@ spec:
           enumNames:
             - "TinyLlama-1.1B-Chat (2GB, CPU optimized)"
             - "GPT-2 (500MB, fast, CPU optimized)"
-          ui:help: "CPU-optimized models (up to ~7B parameters). For GPU models, use the GPU template. Models are pre-staged in S3. By default, they are mounted from S3 with the S3 CSI driver at /mnt/models/models/{model-name}. See gitops/workloads/ray/MODEL-MANAGEMENT.md for other model-loading options."
+          ui:help: "CPU-optimized models (up to ~7B parameters). For GPU models, use the GPU template. Models are pre-staged in S3. Outside the workshop, stage them first with ray:setup and ray:prestage-models. By default, they are mounted from S3 with the S3 CSI driver at /mnt/models/models/{model-name}. See gitops/workloads/ray/MODEL-MANAGEMENT.md for other model-loading options."
         maxLength:
           title: Max Tokens
           type: string

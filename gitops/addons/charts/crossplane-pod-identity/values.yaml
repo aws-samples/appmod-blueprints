@@ -1,4 +1,7 @@
-aws: {}
+aws:
+  # Domain external-dns manages on this cluster (external_dns_domain_filters, else
+  # ingress_domain_name). Scopes its Route 53 write permission; empty = no writes.
+  ingressDomainName: ''
 
 # PreSync gate that blocks this app's Sync phase until the Crossplane provider
 # CRDs (iam.aws.upbound.io / eks.aws.upbound.io) are Established. Prevents the
@@ -340,6 +343,23 @@ identities:
       purpose: external-dns-pod-identity
     policy:
       name: ExternalDNSRoute53Policy
+      # Writes are limited to records at or under the domain external-dns manages
+      # (aws.ingressDomainName, see the registry entry), so
+      # external-dns can never upsert into another zone of the account, e.g. another
+      # hub's. IAM has no way to name a hosted zone by domain and the platform does
+      # not publish zone IDs, so the record-name condition is the zone scope. With
+      # an empty domain the condition matches no record name: writes are denied.
+      # external-dns's TXT registry (registry: txt, no txtPrefix/txtSuffix) names the
+      # ownership record of a host <type>-<first label>.<rest>. For a host under the
+      # domain that stays under *.<domain>, but for the domain itself it is
+      # a-<domain> / aaaa-<domain> / cname-<domain>, which is not a subdomain. The
+      # record and its TXT go in one change batch, so ForAllValues would deny both.
+      # Those three names (the types an Ingress/Service source produces) are allowed
+      # explicitly, only when a domain is set: the if/end sit INSIDE the JSON strings
+      # so the raw document stays valid JSON for test_chart_drift.py, and with an
+      # empty domain the block renders away. Setting a txtPrefix/txtSuffix on
+      # external-dns needs this list updated too.
+      # The document is rendered through `tpl` (see templates/policy.yaml).
       document: |
         {
           "Version": "2012-10-17",
@@ -349,7 +369,18 @@ identities:
               "Action": [
                 "route53:ChangeResourceRecordSets"
               ],
-              "Resource": "arn:aws:route53:::hostedzone/*"
+              "Resource": "arn:aws:route53:::hostedzone/*",
+              "Condition": {
+                "ForAllValues:StringLike": {
+                  "route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+                    "{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
+                    "*.{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}{{ if .Values.aws.ingressDomainName }}",
+                    "a-{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
+                    "aaaa-{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}",
+                    "cname-{{ .Values.aws.ingressDomainName | lower | trimSuffix `.` }}{{ end }}"
+                  ]
+                }
+              }
             },
             {
               "Effect": "Allow",
@@ -395,6 +426,45 @@ identities:
                 "aps:GetSeries",
                 "aps:GetLabels",
                 "aps:GetMetricMetadata"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  aws-for-fluentbit:
+    enabled: false
+    roleName: FluentBitPodIdentityRole
+    namespace: kube-system
+    serviceAccount: aws-for-fluent-bit
+    tags:
+      managed-by: crossplane
+      purpose: aws-for-fluentbit-pod-identity
+    policy:
+      name: FluentBitCloudWatchLogsPolicy
+      # Scoped to the chart's log group prefix (the registry sets cloudWatchLogs.
+      # logGroupName to /aws/eks/fluentbit-cloudwatch/<cluster>/logs; the chart
+      # default is /aws/eks/fluentbit-cloudwatch/logs). The trailing * also covers the
+      # :log-stream:* ARNs PutLogEvents is authorised against.
+      document: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents",
+                "logs:PutRetentionPolicy"
+              ],
+              "Resource": "arn:aws:logs:*:*:log-group:/aws/eks/fluentbit-cloudwatch/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:DescribeLogGroups"
               ],
               "Resource": "*"
             }

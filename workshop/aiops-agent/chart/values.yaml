@@ -33,10 +33,16 @@ clusterPrefix: "peeks"        # resource_prefix      (platform default "peeks"; 
 region: "us-west-2"           # aws_region           (platform default; injected/overridable per env)
 cloudfrontDomain: ""          # ingress_domain_name  (chat-ui ingress host, injected)
 gitlabDomain: ""              # gitlab_domain_name   (gitlab-mcp GITLAB_API_URL host, injected)
-# Project (path or numeric id) the agent opens remediation MRs on — the overlay/
-# fleet-config repo. When set, the incident-bridge does a deterministic, restart-
-# proof duplicate check (skip forwarding if an OPEN MR already addresses the failing
-# component). Leave "" to disable the check (bridge still forwards; fail-open).
+# Fleet repo URL the agent opens remediation MRs on. Injected by the registry entry
+# (gitops/addons/registry/platform.yaml) as a DERIVED value — overlay_repo_url, else the
+# hub's fleetRepoURL when it is a separate repo from addonsRepoURL — not a user knob.
+# The chart derives the MR project path from it (scheme+host and .git stripped). When
+# non-empty the incident-bridge does a deterministic, restart-proof duplicate check
+# (skip forwarding if an OPEN MR already addresses the failing component); "" disables
+# the check (bridge still forwards; fail-open).
+fleetRepoUrl: ""
+# DEPRECATED explicit override of the derived MR project (path or numeric id). Wins over
+# fleetRepoUrl when set; kept for one release for backward compatibility. Leave "".
 gitlabMrProject: ""
 
 # NOTE: no ampWorkspaceId. The AMP incident path (AlertManagerDefinition + SNS/SQS) is

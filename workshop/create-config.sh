@@ -381,8 +381,6 @@ else
   # mirrors it into the cluster secret on the SAME path as the gate.
   printf '  fallbackNodepoolInstanceSizeFloor: "%s"\n' "$FALLBACK_FLOOR" >> "$OUTPUT_FILE"
 fi
-printf 'modelS3Bucket:\n'                              >> "$OUTPUT_FILE"
-printf '  enabled: false\n'                            >> "$OUTPUT_FILE"
 
 
 # ── OAP (Open Agentic Platform) — agentic addon coordinates ───────────────────
