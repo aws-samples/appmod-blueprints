@@ -1,5 +1,6 @@
 {{- if .Values.spokeScrapers }}
 {{- range $clusterName, $cluster := .Values.spokeScrapers }}
+{{- $realName := default (printf "%s-%s" $.Values.resourcePrefix $clusterName) $cluster.clusterName }}
 {{- if and $cluster.clusterArn (ne (default "" $cluster.securityGroupIds) "") (ne $cluster.securityGroupIds "None") }}
 ---
 apiVersion: amp.aws.upbound.io/v1beta1
@@ -12,7 +13,7 @@ metadata:
 spec:
   forProvider:
     region: {{ $.Values.aws.region }}
-    alias: {{ $.Values.resourcePrefix }}-{{ $clusterName }}
+    alias: {{ $realName }}
     source:
       - eks:
           - clusterArn: {{ $cluster.clusterArn }}
@@ -28,7 +29,7 @@ spec:
       - amp:
           - workspaceArnRef:
               name: {{ $.Values.resourcePrefix }}-amp
-    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" (printf "%s-%s" $.Values.resourcePrefix $clusterName) | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
+    scrapeConfiguration: {{ $.Files.Get "files/scraper-config.yaml" | replace "{scrape_interval}" $.Values.scraper.scrapeInterval | replace "{scrape_timeout}" $.Values.scraper.scrapeTimeout | replace "{cluster}" $realName | replace "{region}" $.Values.aws.region | replace "{account_id}" ($.Values.aws.accountId | toString) | quote }}
   providerConfigRef:
     name: default
 {{- end }}
