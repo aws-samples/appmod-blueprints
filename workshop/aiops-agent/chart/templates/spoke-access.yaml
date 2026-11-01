@@ -1,0 +1,61 @@
+{{- /*
+Spoke read access for the eks-read-mcp identity: ONE AccessEntry per spoke cluster registered
+on this hub, named from the spoke's real aws_cluster_name. No list of spokes is kept in
+this chart and no value has to be set: the cluster generator reads the ArgoCD cluster
+secrets that the fleet already creates for every spoke (kro/ACK, Crossplane or
+Terraform), with the same selector as the spoke branch of gitops/bootstrap/abstractions.yaml
+(every cluster secret that is not the control plane). A hub without spokes generates
+nothing. The hub entry stays in files/aiops-agent-app.yaml (agent-access).
+
+Each generated Application renders ../access-chart on the hub (the AccessEntry is an ACK
+CR reconciled there), sourced from the spoke secret's addonsRepoURL/addonsRepoRevision as
+the abstractions spoke generator does. Its finalizer removes the AccessEntries when this
+chart (enable_aiops_agent) or a spoke goes away, as KubeVela GC did for the inline ones.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: aiops-agent-spoke-access
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - clusters:
+      selector:
+        matchExpressions:
+        - {key: fleet_member, operator: NotIn, values: [control-plane]}
+  template:
+    metadata:
+      name: 'aiops-agent-access-{{`{{ .name }}`}}'
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: '{{`{{ index .metadata.annotations "addonsRepoURL" }}`}}'
+        targetRevision: '{{`{{ index .metadata.annotations "addonsRepoRevision" }}`}}'
+        path: workshop/aiops-agent/access-chart
+        helm:
+          releaseName: aiops-agent-access
+          valuesObject:
+            clusterName: '{{`{{ default .name (index .metadata.annotations "aws_cluster_name") }}`}}'
+            accountId: {{ .Values.accountId | toString | quote }}
+            # The spoke's region, from its secret; the hub's when the secret has none.
+            region: '{{`{{ default "`}}{{ .Values.region }}{{`" (index .metadata.annotations "aws_region") }}`}}'
+            # eks-read-mcp's own Pod Identity role (the only identity of this app that calls the
+            # fleet clusters' Kubernetes API), as the hub entry names it (templates/_helpers.tpl).
+            roleName: {{ include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "eks-read-mcp") | quote }}
+      destination:
+        name: {{ printf "%s-hub" .Values.clusterPrefix | quote }}
+        namespace: aiops-agent
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: -1
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 5m
