@@ -1957,7 +1957,7 @@ tasks:
       #     and queues stayed in AWS. Bounded by XP_DELETE_WAIT; best-effort.
       #     See scripts/drain-oam-apps.py.
       - cmd: |
-          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 "{{.ROOT_DIR}}/scripts/drain-oam-apps.py" \
+          KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 -u "{{.ROOT_DIR}}/scripts/drain-oam-apps.py" \
             "{{.HUB_CLUSTER_NAME}}" "{{.XP_DELETE_WAIT}}" 2>&1 || true
         ignore_error: true
       # 7. Delete HUB ADDONS in reverse sync-wave order, SKIPPING the infra stack.
