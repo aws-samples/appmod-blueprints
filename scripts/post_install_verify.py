@@ -695,7 +695,7 @@ def cluster_checks(c: Cluster, pending_grace: int = 900, max_log_probes: int = 1
         doc = c.get_json("resourcegraphdefinitions.kro.run")
         if doc is None and expect_kro:
             return Result("kro.rgds", c.name, FAIL,
-                          "kro is enabled (enable_kro) but the ResourceGraphDefinition CRD is not installed")
+                          "kro is enabled (enable_kro or enable_kro_manifests_hub) but the ResourceGraphDefinition CRD is not installed")
         if doc is None or not doc.get("items"):
             return Result("kro.rgds", c.name, SKIP, "no kro ResourceGraphDefinitions")
         bad = inactive_rgds(doc)
@@ -991,10 +991,13 @@ def verify(inp: Inputs, run: Runner, fetch: Fetcher, resolver: Resolver, workdir
         results.append(check_secret_values(s, False, None))
     for c in clusters:
         # Crossplane / kro run on the hub: a missing CRD is only a SKIP when the hub does not enable them.
+        # Shipped hubs keep enable_kro off (kro comes from the EKS capability) and ship their RGDs
+        # through enable_kro_manifests_hub, so either label means the RGD CRD must be there.
         is_hub = c is hub and hub_secret is not None
         results += cluster_checks(c, pending_grace=pending_grace,
                                   expect_crossplane=is_hub and hub_secret.enabled("crossplane"),
-                                  expect_kro=is_hub and hub_secret.enabled("kro"))
+                                  expect_kro=is_hub and (hub_secret.enabled("kro")
+                                                         or hub_secret.enabled("kro_manifests_hub")))
 
     domain = inp.domain
     hub_domain = (hub_secret.annotations.get("ingress_domain_name", "") if hub_secret else "").strip()

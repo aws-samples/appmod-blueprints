@@ -661,3 +661,18 @@ def test_verify_fails_when_hub_enables_crossplane_without_crd(tmp_path):
     results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
     fails = {(r.check, r.scope) for r in results if r.status == piv.FAIL}
     assert fails == {("crossplane.packages", "h"), ("kro.rgds", "h")}
+
+
+def test_verify_fails_when_shipped_hub_ships_rgds_without_kro_crd(tmp_path):
+    # Shipped hubs: kro: false (EKS capability), kro_manifests_hub: true (control-plane enabled-addons).
+    run, fetch, _ = _env_with_pods([], hub_labels={"enable_kro_manifests_hub": "true"})
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    fails = {(r.check, r.scope) for r in results if r.status == piv.FAIL}
+    assert fails == {("kro.rgds", "h")}
+
+
+def test_kro_crd_missing_skips_when_hub_enables_no_kro_label(tmp_path):
+    run, fetch, _ = _env_with_pods([], hub_labels={})
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    kro = [r for r in results if r.check == "kro.rgds"]
+    assert kro and all(r.status == piv.SKIP for r in kro)
