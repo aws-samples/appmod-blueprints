@@ -143,8 +143,14 @@ the discovery calls.
 > the principal (above) the old and new entries name different roles, so an install that
 > moves straight to this version is not affected.
 
-> Known limitation: one identity serves both the autonomous RCA path and the interactive
-> chat, so this cluster-wide read also applies to the chat until the two-agent RBAC split.
+> Known limitations:
+>
+> - one identity serves both the autonomous RCA path and the interactive chat, so this
+>   cluster-wide read also applies to the chat until the two-agent RBAC split;
+> - eks-read-mcp runs in the hub's region, so a spoke in another region gets its entry
+>   (with its own `services.k8s.aws/region`) and shows up in discovery, but isn't readable
+>   through eks-read yet: the server only calls `DescribeCluster` in its own region. The
+>   prompt tells the agent so.
 
 ## Per-cluster overrides (fleet-config overlay)
 
