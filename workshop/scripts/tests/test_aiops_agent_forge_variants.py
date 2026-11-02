@@ -229,7 +229,9 @@ def test_no_forge_keeps_all_iam_role_selectors(tmp_path):
     assert eks["spec"]["arn"] == "arn:aws:iam::111111111111:role/example-b-cluster-mgmt-eks"
     assert eks["spec"]["resourceTypeSelector"] == [
         {"group": "eks.services.k8s.aws", "kind": "", "version": ""}]
-    assert "dependsOn" not in comps["agent-access"]  # same as the GitLab variant
+    # The hub AccessEntry waits for the incident-bridge-eks selector (#1221). That selector
+    # stays in the no-forge variant (above), so the dependency is never left dangling.
+    assert comps["agent-access"]["dependsOn"] == ["incident-bridge-selectors"]  # as GitLab
 
 
 def _obj_keys(comps):
@@ -288,7 +290,7 @@ def test_gitlab_variant_keeps_the_full_toolset(tmp_path):
     assert [m["name"] for m in agent["properties"]["mcpServers"]] == [
         "skills-mcp", "eks-read-mcp", "gitlab-mcp"]
     assert "gitlab-mcp" in agent["dependsOn"]
-    assert "dependsOn" not in comps["agent-access"]
+    assert comps["agent-access"]["dependsOn"] == ["incident-bridge-selectors"]
     es = [o for _, o in objects(comps) if o["kind"] == "ExternalSecret"]
     assert [o["metadata"]["name"] for o in es] == ["gitlab-mcp-token"]
     assert "`gitlab` tool" in agent["properties"]["systemMessage"]
