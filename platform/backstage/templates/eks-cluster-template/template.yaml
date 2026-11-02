@@ -211,11 +211,17 @@ spec:
               resourcePrefix: "${{ parameters.resourcePrefix }}"
               adminRoleName: "${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}"
               domainName: "${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}"
+              # Git URLs: an empty field is written as "" on purpose. The workshop GitLab only
+              # hosts fleet-config; the addons/platform code lives on the hub's own repos. The
+              # kro-clusters chart treats "" as "not set" and inherits the SAME repo URL and
+              # revision as the hub (addons/fleet from the hub cluster-secret annotations,
+              # platform/workload from the EksclusterWithVpc RGD defaults, as the dev/prod
+              # spokes do). Only a URL typed in the form overrides that.
               gitops:
-                addonsRepoUrl: "${{ parameters.addonsRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
-                fleetRepoUrl: "${{ parameters.fleetRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
-                platformRepoUrl: "${{ parameters.platformRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
-                workloadRepoUrl: "${{ parameters.workloadRepoUrl or 'https://' + steps['fetchSystem'].output.entity.spec.gitlab_hostname + '/' + steps['fetchSystem'].output.entity.spec.gituser + '/platform-on-eks-workshop.git' }}"
+                addonsRepoUrl: "${{ parameters.addonsRepoUrl or '' }}"
+                fleetRepoUrl: "${{ parameters.fleetRepoUrl or '' }}"
+                platformRepoUrl: "${{ parameters.platformRepoUrl or '' }}"
+                workloadRepoUrl: "${{ parameters.workloadRepoUrl or '' }}"
               addons:
                 enable_argo_rollouts: "true"
                 enable_cert_manager: "true"
