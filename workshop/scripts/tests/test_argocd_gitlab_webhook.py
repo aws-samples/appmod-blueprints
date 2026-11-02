@@ -212,6 +212,29 @@ def test_every_failure_only_warns_and_exits_zero(env, extra):
         assert tok not in out
 
 
+@pytest.mark.parametrize("bad", ["fail", "notjson"])
+def test_secret_read_failure_never_overwrites_the_key(env, bad):
+    # A failed or unparseable read (API timeout, RBAC, TLS handshake timeout) is NOT an
+    # empty key: the script must warn and stop, never generate a token, never patch the
+    # capability's webhook.gitlab.secret and never touch the GitLab hooks.
+    e, mock = env
+    extra = {}
+    if bad == "fail":
+        extra["FAIL_GET"] = "1"
+    else:
+        (mock / "secret.json").write_text("not json")
+    p = run(e, **extra)
+    assert p.returncode == 0
+    calls = (mock / "calls.log").read_text()
+    assert "patch secret" not in calls
+    assert not (mock / "patch.json").exists()
+    assert writes(mock) == []
+    assert "curl" not in calls
+    out = p.stdout + p.stderr
+    assert "⚠ argocd webhook: cannot read argocd-webhook-creds-secret" in out
+    assert "was empty" not in out
+
+
 def test_patch_failure_skips_gitlab_hooks(env):
     e, mock = env
     (mock / "secret.json").write_text(json.dumps({"data": {}}))

@@ -60,9 +60,18 @@ main() {
   server=${server%/}
 
   # 2. token: reuse the capability's existing value, patch only if empty/absent.
-  local tok key='webhook.gitlab.secret'
-  tok=$(kubectl -n argocd get secret "$secret" -o json 2>/dev/null | jq -r --arg k "$key" '.data[$k] // empty' 2>/dev/null | base64 -d 2>/dev/null) \
-    || tok=""
+  # A failed or unparseable read is NOT an empty key: overwriting the capability's value
+  # on a transient error (API/TLS timeout, RBAC) is the unrecoverable case described above,
+  # so warn and stop. Generate only when the read succeeded and the key is empty/absent.
+  local sj b64 tok="" key='webhook.gitlab.secret'
+  sj=$(kubectl -n argocd get secret "$secret" -o json 2>/dev/null) \
+    || { warn "cannot read $secret"; return 0; }
+  b64=$(printf '%s' "$sj" | jq -er --arg k "$key" '.data // {} | .[$k] // ""' 2>/dev/null) \
+    || { warn "cannot read $secret (unexpected JSON)"; return 0; }
+  if [ -n "$b64" ]; then
+    tok=$(printf '%s' "$b64" | base64 -d 2>/dev/null) \
+      || { warn "cannot decode ${key} in $secret"; return 0; }
+  fi
   if [ -n "$tok" ] && [ "$(printf %s "$tok" | wc -l)" -eq 0 ]; then
     ok "reusing the capability's existing ${key} (Secret not modified)"
   else
