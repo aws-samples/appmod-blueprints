@@ -809,12 +809,16 @@ def iam_cr_aws_role(resource, item):
 
 
 def already_retained(family, item):
+    """True when deleting the CR leaves its AWS object in place: ACK
+    deletion-policy=retain; Crossplane v1 deletionPolicy=Orphan; any Crossplane
+    (v1 or v2) whose managementPolicies has neither Delete nor '*' (e.g. [Observe],
+    an object this hub only reads: Crossplane itself never deletes it)."""
     meta = item.get('metadata') or {}
     spec = item.get('spec') or {}
     if family == 'ack':
         return (meta.get('annotations') or {}).get('services.k8s.aws/deletion-policy') == 'retain'
-    if family == 'xp1':
-        return spec.get('deletionPolicy') == 'Orphan'
+    if family == 'xp1' and spec.get('deletionPolicy') == 'Orphan':
+        return True
     mp = spec.get('managementPolicies')
     return bool(mp) and 'Delete' not in mp and '*' not in mp
 
@@ -1321,81 +1325,107 @@ def load_app_record(path, hub):
     return {k: list(rec.get(k, [])) for k in APP_KEYS}
 
 
-def _gone(fn, codes):
-    """True when fn raises one of the not-found codes."""
+def _read(fn, codes):
+    """'present', 'gone' (fn raised one of the not-found codes) or the AWS error code
+    of any other failure (the caller records it and goes on with the next resource).
+    A credential failure still stops the helper."""
     try:
         fn()
-        return False
+        return 'present'
     except Exception as e:
         reraise_credentials(e)
-        if err_code(e) in codes:
-            return True
-        raise
+        code = err_code(e)
+        return 'gone' if code in codes else code
 
 
-def select_app_resources(record, prefix):
+# The exact SNS/SQS names the app renders for a prefix (workshop/aiops-agent:
+# AmpIncident topicName <prefix>-amp-incidents; the kro RGD names the topic and
+# queue after it and the DLQ <topicName>-dlq). Exact names, not a <prefix>- match:
+# a longer prefix (<prefix>-a) renders <prefix>-a-amp-incidents, which is not ours.
+APP_NAMES = {
+    'sns_topics': ('{p}-amp-incidents',),
+    'sqs_queues': ('{p}-amp-incidents', '{p}-amp-incidents-dlq'),
+}
+
+
+def select_app_resources(record, prefix, keep_data=False):
     """What the sweep acts on. Memories: every recorded id (it comes from this hub's own
     Memory CR, and AgentCore refuses to create a second memory with the same name, so the
-    id cannot be another install's). SNS/SQS: CreateTopic/CreateQueue on an existing
-    name returns that resource, so a CR can bind another stack's topic: only names
-    starting with <prefix>- are kept. Returns (selected, skipped [(what, reason)])."""
+    id cannot be another install's), unless keep_data: DeleteMemory cannot be undone and
+    a memory holds the agent's session and long-term memory, so --keep-data keeps it.
+    SNS/SQS: CreateTopic/CreateQueue on an existing name returns that resource, so a CR
+    can bind another stack's topic: only the exact names the app renders for this
+    prefix (APP_NAMES) are kept. Returns (selected, skipped [(what, reason)])."""
     sel = {k: [] for k in APP_KEYS}
     skipped = []
-    sel['agentcore_memories'] = list(record.get('agentcore_memories', []))
+    if keep_data:
+        skipped += [(r.get('id'), 'AgentCore memory kept: DESTROY_KEEP_DATA=true')
+                    for r in record.get('agentcore_memories', [])]
+    else:
+        sel['agentcore_memories'] = list(record.get('agentcore_memories', []))
     for k in ('sns_topics', 'sqs_queues'):
+        ours = {t.format(p=prefix) for t in APP_NAMES[k]} if prefix else set()
         for r in record.get(k, []):
-            if prefix and r.get('name', '').startswith(f'{prefix}-'):
+            if r.get('name', '') in ours:
                 sel[k].append(r)
             else:
-                skipped.append((r.get('name') or r.get('arn'), f'name outside {prefix}-*'))
+                skipped.append((r.get('name') or r.get('arn'),
+                                f'not a name the app renders for {prefix} ({", ".join(sorted(ours))})'))
     return sel, skipped
 
 
 def sweep_app_resources(selected, client_for, dry_run=False):
-    """Delete the selected resources. client_for(service, region) -> boto3 client.
-    Returns the number deleted (dry-run: would delete)."""
+    """Delete the selected resources, one at a time: a failure on one (client, read or
+    delete) is logged and the sweep goes on with the next. client_for(service, region)
+    -> boto3 client. Returns (n deleted (dry-run: would delete), failures): one
+    '<kind>:<id>' tag (no spaces) per resource that may still be in AWS, for the
+    caller to record."""
     n = 0
+    failed = []
     verb = 'would delete' if dry_run else 'delete'
-    for r in selected.get('agentcore_memories', []):
-        ac = client_for('bedrock-agentcore-control', r['region'])
-        if _gone(lambda: ac.get_memory(memoryId=r['id']), ('ResourceNotFoundException',)):
-            log(f'  AgentCore memory {r["id"]} already gone')
-            continue
-        log(f'  {verb} AgentCore memory {r["id"]} (recorded from this hub\'s Memory CR)')
+
+    def one(service, region, what, tag, read, read_codes, delete):
+        nonlocal n
+        try:
+            c = client_for(service, region)
+        except Exception as e:
+            reraise_credentials(e)
+            log(f'    ⚠ {what} not read: no {service} client ({err_code(e)})')
+            failed.append(tag)
+            return
+        state = _read(lambda: read(c), read_codes)
+        if state == 'gone':
+            log(f'  {what} already gone')
+            return
+        if state != 'present':
+            log(f'    ⚠ {what} not read ({state})')
+            failed.append(tag)
+            return
+        log(f'  {verb} {what}')
         if dry_run:
             n += 1
-        elif _try(lambda: ac.delete_memory(memoryId=r['id']), f'AgentCore memory {r["id"]}'):
+        elif _try(lambda: delete(c), what):
             n += 1
+        else:
+            failed.append(tag)
+
+    for r in selected.get('agentcore_memories', []):
+        one('bedrock-agentcore-control', r['region'], f'AgentCore memory {r["id"]}',
+            f'agentcore-memory:{r["id"]}', lambda c: c.get_memory(memoryId=r['id']), ('ResourceNotFoundException',),
+            lambda c: c.delete_memory(memoryId=r['id']))
     # Queues before topics: SNS deletes a topic's subscriptions with it, and nothing
     # else depends on the order; the DLQ goes like any other recorded queue.
     for r in selected.get('sqs_queues', []):
-        sqs = client_for('sqs', r['region'])
-        url = r.get('url') or ''
-        try:
-            url = sqs.get_queue_url(QueueName=r['name'])['QueueUrl']
-        except Exception as e:
-            reraise_credentials(e)
-            if err_code(e) in ('AWS.SimpleQueueService.NonExistentQueue', 'QueueDoesNotExist'):
-                log(f'  SQS queue {r["name"]} already gone')
-                continue
-            log(f'    ⚠ SQS queue {r["name"]} not read ({err_code(e)})')
-            continue
-        log(f'  {verb} SQS queue {r["name"]}')
-        if dry_run:
-            n += 1
-        elif _try(lambda: sqs.delete_queue(QueueUrl=url), f'SQS queue {r["name"]}'):
-            n += 1
+        url = {}
+        one('sqs', r['region'], f'SQS queue {r["name"]}', f'sqs-queue:{r["name"]}',
+            lambda c: url.setdefault('u', c.get_queue_url(QueueName=r['name'])['QueueUrl']),
+            ('AWS.SimpleQueueService.NonExistentQueue', 'QueueDoesNotExist'),
+            lambda c: c.delete_queue(QueueUrl=url['u']))
     for r in selected.get('sns_topics', []):
-        sns = client_for('sns', r['region'])
-        if _gone(lambda: sns.get_topic_attributes(TopicArn=r['arn']), ('NotFound', 'NotFoundException')):
-            log(f'  SNS topic {r["name"]} already gone')
-            continue
-        log(f'  {verb} SNS topic {r["name"]} (and its subscriptions)')
-        if dry_run:
-            n += 1
-        elif _try(lambda: sns.delete_topic(TopicArn=r['arn']), f'SNS topic {r["name"]}'):
-            n += 1
-    return n
+        one('sns', r['region'], f'SNS topic {r["name"]}', f'sns-topic:{r["name"]}',
+            lambda c: c.get_topic_attributes(TopicArn=r['arn']), ('NotFound', 'NotFoundException'),
+            lambda c: c.delete_topic(TopicArn=r['arn']))
+    return n, failed
 
 
 def parse_common(argv, usage):

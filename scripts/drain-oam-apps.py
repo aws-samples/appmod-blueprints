@@ -113,7 +113,7 @@ def pending(kubectl, names, namespaces):
         oam = _json(kubectl, ['get', 'applications.core.oam.dev', '-n', ns])
         if oam is not None:
             left += [f'oam/{ns}/{(i.get("metadata") or {}).get("name", "")}' for i in oam.get('items', [])]
-    mr = _json(kubectl, ['get', 'managed'])
+    mr = _json(kubectl, ['get', 'managed', '-A'])  # -A: namespaced Crossplane v2 MRs too
     if mr is not None:
         left += _deleting_by_vela(mr.get('items', []))
     crds = _json(kubectl, ['get', 'customresourcedefinitions.apiextensions.k8s.io'])
@@ -150,16 +150,21 @@ def _set_finalizers(kubectl, name, fins, timeout):
 
 
 def hold_selectors(kubectl, oam, timeout):
-    """Add the hold finalizer to the app's IAMRoleSelectors; returns their names."""
+    """Add the hold finalizer to the app's IAMRoleSelectors; returns their names.
+    A selector that already carries the hold (an earlier run that stopped before its
+    release) is returned too, even when it is already terminating, so this run
+    releases it; a terminating selector without the hold is left alone."""
     sel = _json(lambda a: kubectl(a, timeout=timeout), ['get', SELECTORS])
     held = []
     for i in (sel or {}).get('items', []):
         md = i.get('metadata') or {}
-        if (md.get('labels') or {}).get(APP_LABEL) not in oam or md.get('deletionTimestamp'):
+        if (md.get('labels') or {}).get(APP_LABEL) not in oam:
             continue
         fins = list(md.get('finalizers') or [])
         if HOLD in fins:
             held.append(md['name'])
+            continue
+        if md.get('deletionTimestamp'):
             continue
         if _set_finalizers(kubectl, md['name'], fins + [HOLD], timeout)[0] == 0:
             held.append(md['name'])
@@ -167,20 +172,29 @@ def hold_selectors(kubectl, oam, timeout):
 
 
 def release_selectors(kubectl, names):
-    """Remove the hold finalizer again (the selectors go if they were being deleted)."""
-    released = []
+    """Remove the hold finalizer again (the selectors go if they were being deleted).
+    Returns (released, still_held): a selector whose read or patch failed is still
+    held, so the caller keeps it and retries (the drain's finally does). A selector
+    that no longer exists is released."""
+    released, still = [], []
     for n in names:
-        rc, txt = kubectl(['get', SELECTORS, n, '-o', 'json'], timeout=RELEASE_TIMEOUT)
+        rc, txt = kubectl(['get', SELECTORS, n, '--ignore-not-found', '-o', 'json'], timeout=RELEASE_TIMEOUT)
         if rc != 0:
+            still.append(n)
+            continue
+        if not (txt or '').strip():
+            released.append(n)  # already gone
             continue
         try:
-            fins = ((json.loads(txt or '{}').get('metadata') or {}).get('finalizers')) or []
+            fins = ((json.loads(txt).get('metadata') or {}).get('finalizers')) or []
         except ValueError:
+            still.append(n)
             continue
-        if HOLD in fins:
-            _set_finalizers(kubectl, n, [f for f in fins if f != HOLD], RELEASE_TIMEOUT)
+        if HOLD in fins and _set_finalizers(kubectl, n, [f for f in fins if f != HOLD], RELEASE_TIMEOUT)[0] != 0:
+            still.append(n)
+            continue
         released.append(n)
-    return released
+    return released, still
 
 
 def ack_dependents(kubectl, namespaces):
@@ -290,9 +304,10 @@ def main(argv, kubectl=None, sleep=None, out=sys.stdout, clock=None):
                 # of the app would never finish.
                 deps = ack_dependents(kc, namespaces)
                 if deps == []:
+                    done, held = release_selectors(raw, held)
                     say(f'  6c: no ACK resource left in {", ".join(sorted(namespaces))}: '
-                        f'released IAMRoleSelector {" ".join(release_selectors(raw, held))} ({elapsed()}s)')
-                    held = []
+                        f'released IAMRoleSelector {" ".join(done) or "-"} ({elapsed()}s)'
+                        + (f'; release failed, retrying: {" ".join(held)}' if held else ''))
             left = pending(kc, names, namespaces)
             if not left:
                 say(f'  6c: OAM apps drained ({elapsed()}s)')
@@ -308,7 +323,10 @@ def main(argv, kubectl=None, sleep=None, out=sys.stdout, clock=None):
             sleep(max(0, min(POLL, remaining())))
     finally:
         if held:  # not released yet (timeout, no KubeVela, error): never leave the hold behind
-            say(f'  6c: released IAMRoleSelector {" ".join(release_selectors(raw, held))}')
+            done, still = release_selectors(raw, held)
+            say(f'  6c: released IAMRoleSelector {" ".join(done) or "-"}'
+                + (f'; could not release {" ".join(still)} (finalizer {HOLD}: a re-run of '
+                   f'destroy releases it)' if still else ''))
 
 
 if __name__ == '__main__':

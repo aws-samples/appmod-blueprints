@@ -468,8 +468,26 @@ def test_names_outside_the_prefix_and_other_hubs_records_are_left_alone(tmp_path
 
 
 def test_longer_prefix_is_not_ours(tmp_path):
-    sel, skipped = sl.select_app_resources(residue_record("hb-a"), "hb-x")
+    # The real case: with prefix hb, the names another install with the longer prefix
+    # hb-a renders (hb-a-amp-incidents, -dlq) start with hb- but are not ours.
+    rec = residue_record("hb-a")
+    sel, skipped = sl.select_app_resources(rec, "hb")
     assert sel["sns_topics"] == [] and sel["sqs_queues"] == [] and len(skipped) == 3
+    # ...while the exact names hb renders are, in the same record.
+    for k, v in residue_record("hb").items():
+        if k != "agentcore_memories":
+            rec[k] += v
+    sel, _ = sl.select_app_resources(rec, "hb")
+    assert [t["name"] for t in sel["sns_topics"]] == ["hb-amp-incidents"]
+    assert [q["name"] for q in sel["sqs_queues"]] == ["hb-amp-incidents", "hb-amp-incidents-dlq"]
+
+
+def test_other_names_under_the_prefix_are_not_swept():
+    rec = {k: [] for k in sl.APP_KEYS}
+    rec["sns_topics"] = [{"arn": sns_arn("hb-other"), "name": "hb-other", "region": REGION}]
+    rec["sqs_queues"] = [{"arn": sqs_arn("hb-amp-incidents-x"), "name": "hb-amp-incidents-x", "region": REGION}]
+    sel, skipped = sl.select_app_resources(rec, "hb")
+    assert sel["sns_topics"] == [] and sel["sqs_queues"] == [] and len(skipped) == 2
 
 
 def test_no_record_is_a_no_op(tmp_path, capsys):
@@ -485,7 +503,8 @@ class DrainKubectl:
     """Hub model: Argo CD apps, OAM apps, Crossplane MRs and kro instances. Deleting the
     owner ApplicationSet starts the Argo CD app's deletion; each poll (sleep) advances it."""
 
-    def __init__(self, steps_to_finish=3, vela=True, argo_fails=False):
+    def __init__(self, steps_to_finish=3, vela=True, argo_fails=False, release_fails=0):
+        self.release_fails = release_fails  # the next N patches removing the hold fail
         self.calls = []
         self.left = None
         self.steps = steps_to_finish
@@ -534,10 +553,16 @@ class DrainKubectl:
         if verb == "get" and what == SELECTORS:
             if len(args) > 2 and args[2] != "-o":
                 sel = self.selectors.get(args[2])
-                return (0, json.dumps(sel)) if sel else (1, "")
+                if sel:
+                    return 0, json.dumps(sel)
+                return (0, "") if "--ignore-not-found" in args else (1, "")
             return 0, json.dumps({"items": list(self.selectors.values())})
         if verb == "patch" and what == SELECTORS:
-            self.selectors[args[2]]["metadata"]["finalizers"] = json.loads(args[6])["metadata"]["finalizers"]
+            fins = json.loads(args[6])["metadata"]["finalizers"]
+            if HOLD not in fins and self.release_fails > 0:
+                self.release_fails -= 1
+                return 1, ""
+            self.selectors[args[2]]["metadata"]["finalizers"] = fins
             return 0, ""
         if verb == "get" and what == "applications.argoproj.io":
             if self.argo_fails:
@@ -917,3 +942,214 @@ def test_destroy_records_app_resources_before_the_hub_goes_and_sweeps_after():
     sweep = _index(cmds, "sweep-app-resources.py")
     assert sweep > _index(cmds, "delete-cluster --name")
     assert "--inventory" in cmds[sweep]
+
+
+# ------------------------------------------------- review follow-ups (#1217)
+
+# 1. A cluster-scoped (v1) Memory with no Delete in managementPolicies is retained.
+
+def test_v1_memory_without_delete_in_management_policies_is_not_recorded(tmp_path):
+    mod = load("record-app-resources.py")
+    inv = inventory(tmp_path)
+    crs = {"memories.bedrockagentcore.aws.upbound.io": [
+        memory("observed.memory", "Mobserved-x", managementPolicies=["Observe"]),
+        memory("no-delete.memory", "Mnodelete-x", managementPolicies=["Observe", "Create", "Update"]),
+        memory("full.memory", "Mfull-x", managementPolicies=["*"]),
+        memory("default.memory", MID),
+    ]}
+    assert mod.main([REGION, "hb-hub", "--inventory", inv], kubectl=FakeKubectl(crs)) == 0
+    rec = sl.load_app_record(sl.app_record_path(inv), "hb-hub")
+    assert sorted(m["id"] for m in rec["agentcore_memories"]) == sorted(["Mfull-x", MID])
+
+
+def test_already_retained_v1_matches_v2_for_management_policies():
+    for mp, kept in ((["Observe"], True), (["Observe", "Create", "Update", "LateInitialize"], True),
+                     (["*"], False), (["Observe", "Delete"], False), (None, False)):
+        spec = {"managementPolicies": mp} if mp is not None else {}
+        assert sl.already_retained("xp1", {"spec": spec}) is kept, mp
+        assert sl.already_retained("xp2", {"spec": spec}) is kept, mp
+    assert sl.already_retained("xp1", {"spec": {"deletionPolicy": "Orphan"}}) is True
+
+
+# 2. Read errors are per resource, recorded for the final check, and never stop the sweep.
+
+class DeniedAws(FakeAws):
+    def __init__(self, *a, deny=(), delete_fails=(), **k):
+        super().__init__(*a, **k)
+        self.deny, self.delete_fails = set(deny), set(delete_fails)
+
+    def get_memory(self, memoryId):
+        if "get_memory" in self.deny:
+            raise AwsError("AccessDeniedException")
+        return super().get_memory(memoryId)
+
+    def get_queue_url(self, QueueName):
+        if QueueName in self.deny:
+            raise AwsError("AccessDenied")
+        return super().get_queue_url(QueueName)
+
+    def delete_topic(self, TopicArn):
+        if "delete_topic" in self.delete_fails:
+            raise AwsError("AuthorizationError")
+        return super().delete_topic(TopicArn)
+
+
+def _failures(path):
+    return sorted(open(path).read().split()) if os.path.exists(path) else []
+
+
+def test_a_read_error_on_one_resource_does_not_stop_the_others(tmp_path, capsys, _failures_file):
+    mod = load("sweep-app-resources.py")
+    inv = _record(tmp_path, **residue_record())
+    aws = DeniedAws([MID], ["hb-amp-incidents"], ["hb-amp-incidents", "hb-amp-incidents-dlq"],
+                    deny={"get_memory", "hb-amp-incidents"})
+    assert mod.main(["hb", REGION, "hb-hub", "--inventory", inv], eks=FakeEks(), client_for=lambda s, r: aws) == 0
+    assert aws.deleted == [("queue", "hb-amp-incidents-dlq"), ("topic", "hb-amp-incidents")]
+    assert _failures(_failures_file) == [f"sweep-app-resources(agentcore-memory:{MID})",
+                                         "sweep-app-resources(sqs-queue:hb-amp-incidents)"]
+    out = capsys.readouterr().out
+    assert "not read (AccessDeniedException)" in out and "2 not read or not deleted" in out
+
+
+def test_unknown_agentcore_client_is_recorded_and_the_sweep_goes_on(tmp_path, _failures_file):
+    mod = load("sweep-app-resources.py")
+    inv = _record(tmp_path, **residue_record())
+    aws = FakeAws([MID], ["hb-amp-incidents"], ["hb-amp-incidents", "hb-amp-incidents-dlq"])
+
+    class UnknownServiceError(Exception):
+        pass
+
+    def client_for(svc, r):
+        if svc == "bedrock-agentcore-control":
+            raise UnknownServiceError("Unknown service: 'bedrock-agentcore-control'")
+        return aws
+    assert mod.main(["hb", REGION, "hb-hub", "--inventory", inv], eks=FakeEks(), client_for=client_for) == 0
+    assert len(aws.deleted) == 3
+    assert _failures(_failures_file) == [f"sweep-app-resources(agentcore-memory:{MID})"]
+
+
+def test_a_failed_delete_is_recorded(tmp_path, _failures_file):
+    mod = load("sweep-app-resources.py")
+    inv = _record(tmp_path, **residue_record())
+    aws = DeniedAws([MID], ["hb-amp-incidents"], ["hb-amp-incidents", "hb-amp-incidents-dlq"],
+                    delete_fails={"delete_topic"})
+    assert mod.main(["hb", REGION, "hb-hub", "--inventory", inv], eks=FakeEks(), client_for=lambda s, r: aws) == 0
+    assert _failures(_failures_file) == ["sweep-app-resources(sns-topic:hb-amp-incidents)"]
+
+
+def test_a_stopped_sweep_is_recorded(tmp_path, monkeypatch, capsys, _failures_file):
+    mod = load("sweep-app-resources.py")
+    inv = _record(tmp_path, **residue_record())
+
+    def boom(*a, **k):
+        raise AwsError("InternalFailure")
+    monkeypatch.setattr(mod.sl, "sweep_app_resources", boom)
+    assert mod.main(["hb", REGION, "hb-hub", "--inventory", inv], eks=FakeEks(),
+                    client_for=lambda s, r: FakeAws()) == 0
+    assert "sweep stopped (InternalFailure)" in capsys.readouterr().out
+    assert _failures(_failures_file) == ["sweep-app-resources(stopped)"]
+
+
+def test_a_clean_sweep_records_no_failure(tmp_path, _failures_file):
+    mod = load("sweep-app-resources.py")
+    inv = _record(tmp_path, **residue_record())
+    aws = FakeAws([MID], ["hb-amp-incidents"], ["hb-amp-incidents", "hb-amp-incidents-dlq"])
+    assert mod.main(["hb", REGION, "hb-hub", "--inventory", inv], eks=FakeEks(), client_for=lambda s, r: aws) == 0
+    assert _failures(_failures_file) == []
+
+
+# 3. A failed release keeps the selector held; a re-run releases a terminating held one.
+
+def _run_deadlock(mod, kc, wait):
+    clk = FakeClock()
+
+    def tick(s):
+        kc.tick(s)
+        clk.sleep(s)
+    return mod.main(["hb-hub", str(wait)], kubectl=kc, sleep=tick, clock=clk)
+
+
+def test_a_failed_release_stays_held_and_is_retried_on_the_next_poll(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DeadlockKubectl(ack_polls=2)
+    kc.release_fails = 1
+    assert _run_deadlock(mod, kc, 1200) == 0
+    out = capsys.readouterr().out
+    assert "release failed, retrying: incident-bridge-aws" in out
+    assert "OAM apps drained" in out, "retried, released, and the app could finish"
+    assert "incident-bridge-aws" not in kc.selectors
+
+
+def test_a_failed_release_is_retried_by_the_finally(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DeadlockKubectl(ack_polls=2)
+    kc.release_fails = 1
+    # The wait ends on the poll whose release fails: only the finally can retry it.
+    assert _run_deadlock(mod, kc, 30) == 0
+    out = capsys.readouterr().out
+    assert "release failed, retrying: incident-bridge-aws" in out
+    assert out.rstrip().endswith("released IAMRoleSelector incident-bridge-aws")
+    assert "incident-bridge-aws" not in kc.selectors
+
+
+def test_a_release_that_keeps_failing_is_reported_not_claimed(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=10 ** 6, release_fails=10 ** 6)
+    clk = FakeClock()
+    mod.main(["hb-hub", "30"], kubectl=kc, sleep=clk.sleep, clock=clk)
+    out = capsys.readouterr().out
+    assert "could not release incident-bridge-aws" in out
+    assert "released IAMRoleSelector incident-bridge-aws" not in out
+
+
+def test_a_rerun_releases_a_terminating_selector_that_still_has_the_hold():
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=1)
+    md = kc.selectors["incident-bridge-aws"]["metadata"]
+    md["finalizers"], md["deletionTimestamp"] = ["x.io/keep", HOLD], "now"
+    # a terminating selector WITHOUT the hold is not touched
+    kc.selectors["other"] = {"metadata": {"name": "other", "deletionTimestamp": "now",
+                                          "labels": {"app.oam.dev/name": "aiops-agent-hub"}}}
+    clk = FakeClock()
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=clk.sleep, clock=clk) == 0
+    assert md["finalizers"] == ["x.io/keep"]
+    assert [e[1] for e in _selector_events(kc)] == ["incident-bridge-aws"], "only the release, no new hold"
+
+
+def test_a_selector_that_is_already_gone_counts_as_released():
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl()
+    assert mod.release_selectors(kc, ["vanished"]) == (["vanished"], [])
+
+
+# 4. --keep-data keeps the AgentCore memories (DeleteMemory cannot be undone).
+
+def test_keep_data_keeps_the_memories_and_sweeps_the_rest(tmp_path, capsys):
+    mod = load("sweep-app-resources.py")
+    inv = _record(tmp_path, **residue_record())
+    aws = FakeAws([MID], ["hb-amp-incidents"], ["hb-amp-incidents", "hb-amp-incidents-dlq"])
+    assert mod.main(["hb", REGION, "hb-hub", "--inventory", inv, "--keep-data"], eks=FakeEks(),
+                    client_for=lambda s, r: aws) == 0
+    assert ("memory", MID) not in aws.deleted and len(aws.deleted) == 3
+    assert f"skip {MID}: AgentCore memory kept: DESTROY_KEEP_DATA=true" in capsys.readouterr().out
+
+
+def test_step_2c_gets_keep_data_and_the_comment_says_so():
+    cmds = _cmds("destroy")
+    i = _index(cmds, "sweep-app-resources.py")
+    c = cmds[i]
+    assert c.index('KEEP_DATA_ARGS=""') < c.index("sweep-app-resources.py"), "same shell, defined before"
+    line = c[c.index("sweep-app-resources.py"):].split("|| true")[0]
+    assert "$KEEP_DATA_ARGS" in line
+    src = open(TASKFILE).read()
+    doc = src[src.index("# DESTROY_KEEP_DATA=true"):src.index("DESTROY_KEEP_DATA: '")]
+    assert "AgentCore memories" in doc
+
+
+# 6. Namespaced Crossplane v2 MRs are listed in every namespace.
+
+def test_managed_resources_are_listed_in_all_namespaces():
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl(steps_to_finish=1)
+    mod.pending(kc, ["aiops-agent-hb-hub"], {"aiops-agent"})
+    assert ["get", "managed", "-A", "-o", "json"] in kc.calls

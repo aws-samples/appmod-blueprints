@@ -2110,8 +2110,10 @@ tasks:
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
       # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
-      # (step 2b) and take a final snapshot of the DevLake databases before they are
-      # deleted (6eii). Default false: deleted without a snapshot, as before.
+      # (step 2b) and the AgentCore memories recorded from the hub (step 2c: they hold
+      # the agents' session and long-term memory and DeleteMemory cannot be undone),
+      # and take a final snapshot of the DevLake databases before they are deleted
+      # (6eii). Default false: all deleted, the databases without a snapshot, as before.
       DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
     cmds:
       # Preflight: the extended sweep (step 6) runs python helpers that import boto3.
@@ -2414,9 +2416,10 @@ tasks:
           #     still in AWS: AgentCore memories (by id), and the SQS queues and SNS
           #     topics named ${PREFIX}-* (the aiops-agent <prefix>-amp-incidents topic,
           #     queue and DLQ). Only recorded ids, never a pattern; nothing while the hub
-          #     is live. See scripts/sweep-app-resources.py.
+          #     is live. DESTROY_KEEP_DATA=true keeps the AgentCore memories (listed, not
+          #     deleted). See scripts/sweep-app-resources.py.
           python3 "{{.ROOT_DIR}}/scripts/sweep-app-resources.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
-            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
+            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" $KEEP_DATA_ARGS 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
           #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
           #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),
@@ -2791,7 +2794,7 @@ tasks:
           fi
           FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           if [ -s "$FAILED" ]; then
-            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, a failed list call, or EKS unreadable in an enabled region) and swept nothing: %s{{.C_RESET}}\n' \
+            printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, a failed list or read call, or EKS unreadable in an enabled region) or could not delete what they found: %s{{.C_RESET}}\n' \
               "$(sort -u "$FAILED" | tr '\n' ' ')"
             printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
             exit 1
