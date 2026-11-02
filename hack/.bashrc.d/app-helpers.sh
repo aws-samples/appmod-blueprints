@@ -5,13 +5,16 @@
 
 # open_when_ready <url> [timeout_seconds]
 #   Polls <url> until the ALB answers with a 2xx/3xx, then opens it in the IDE
-#   browser. Guards against an empty/half-formed URL (ingress with no address yet).
+#   browser. Guards against a URL with no host (e.g. an empty $DNS_DEV in this shell).
 open_when_ready() {
   local url="$1" timeout="${2:-300}" start=$SECONDS code
   local host="${url#*://}"; host="${host%%/*}"
   if [ -z "$url" ] || [ -z "$host" ]; then
-    echo "⚠️  Empty/incomplete URL ('$url'). The ingress may not have an ALB address yet" >&2
-    echo "    (check \$DNS_DEV / \$DNS_PROD). Re-run the export step and retry." >&2
+    # An empty host means the shell variable holding the hostname is unset/empty,
+    # not that the ALB is slow: say so, so participants fix the right thing.
+    echo "⚠️  URL has no host ('$url'): the variable that holds the app hostname" >&2
+    echo "    (e.g. \$DNS_DEV / \$DNS_PROD) is empty in this shell. Re-export it" >&2
+    echo "    (see the step above) or open a new terminal, then retry." >&2
     return 1
   fi
   echo "⏳ Waiting for the load balancer to serve ${url} (can take 1-2 min)…"
