@@ -27,8 +27,9 @@
 # existing hooks (matched by URL) and never duplicates them.
 #
 # Inputs (env): HUB_CLUSTER_NAME AWS_REGION GIT_DOMAIN GIT_USERNAME GITLAB_TOKEN (user PAT,
-# glpat-...) KUBECONFIG. Optional: CAPABILITY_NAME (default argocd), PROJECT (default
-# fleet-config), SECRET_NAME, ARGOCD_APPSET_WEBHOOK (0 = opt out of the ApplicationSet hook).
+# glpat-...) KUBECONFIG. Optional: ARGOCD_WEBHOOK_CAPABILITY_NAME (default argocd),
+# ARGOCD_WEBHOOK_PROJECT (default fleet-config), ARGOCD_WEBHOOK_SECRET_NAME (default
+# argocd-webhook-creds-secret), ARGOCD_APPSET_WEBHOOK (0 = opt out of the ApplicationSet hook).
 # shellcheck disable=SC2015  # ok() never fails, so A && ok || warn is a safe if/else
 set +x
 set -uo pipefail
@@ -48,8 +49,10 @@ main() {
   [ -n "${HUB_CLUSTER_NAME:-}" ] && [ -n "${AWS_REGION:-}" ] || { warn "hub/region unset"; return 0; }
   [ -n "${GIT_DOMAIN:-}" ]    || { warn "GitLab domain unresolved"; return 0; }
   [ -n "${GITLAB_TOKEN:-}" ]  || { warn "no GitLab token yet"; return 0; }
-  local user="${GIT_USERNAME:-user1}" project="${PROJECT:-fleet-config}"
-  local cap="${CAPABILITY_NAME:-argocd}" secret="${SECRET_NAME:-argocd-webhook-creds-secret}"
+  # Prefixed names: a stray PROJECT/SECRET_NAME/CAPABILITY_NAME in the caller's shell is ignored.
+  local user="${GIT_USERNAME:-user1}" project="${ARGOCD_WEBHOOK_PROJECT:-fleet-config}"
+  local cap="${ARGOCD_WEBHOOK_CAPABILITY_NAME:-argocd}"
+  local secret="${ARGOCD_WEBHOOK_SECRET_NAME:-argocd-webhook-creds-secret}"
 
   # 1. Argo CD server URL
   local server

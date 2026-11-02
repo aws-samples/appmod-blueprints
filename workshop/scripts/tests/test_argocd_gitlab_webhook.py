@@ -176,6 +176,29 @@ def test_generated_token_never_in_jq_argv(env):
     assert tok not in calls
 
 
+def test_generic_env_names_are_ignored(env):
+    # A stray PROJECT/SECRET_NAME/CAPABILITY_NAME in the caller's shell must not retarget.
+    e, mock = env
+    p = run(e, PROJECT="java", SECRET_NAME="other", CAPABILITY_NAME="nope")
+    assert p.returncode == 0
+    calls = (mock / "calls.log").read_text()
+    assert "--capability-name argocd " in calls
+    assert "get secret argocd-webhook-creds-secret" in calls
+    w = writes(mock)
+    assert len(w) == 2 and all("/projects/user1%2Ffleet-config/hooks" in x for x in w)
+
+
+def test_prefixed_env_names_are_honoured(env):
+    e, mock = env
+    p = run(e, ARGOCD_WEBHOOK_PROJECT="java", ARGOCD_WEBHOOK_SECRET_NAME="other",
+            ARGOCD_WEBHOOK_CAPABILITY_NAME="cap2")
+    assert p.returncode == 0
+    calls = (mock / "calls.log").read_text()
+    assert "--capability-name cap2 " in calls
+    assert "get secret other" in calls
+    assert all("/projects/user1%2Fjava/hooks" in x for x in writes(mock))
+
+
 def test_appset_opt_out(env):
     e, mock = env
     p = run(e, ARGOCD_APPSET_WEBHOOK="0")
