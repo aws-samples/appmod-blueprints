@@ -31,14 +31,17 @@ template: {
 		service: string
 	}
 
-	// The object keeps the name <appName>-<component>-iam-policy: the
-	// aws-service-identity trait's accessFor finds it by that name. The AWS policy
-	// name (crossplane.io/external-name) is account-global, so it carries the cluster
-	// and a hash, like the trait's role name:
+	// The Policy object is named after its AWS name, so one name serves both:
 	//   <first 100 chars of "<cluster>-<appName>-<component>">-<8 hex>-iam-policy   (<= 128)
 	// where the 8 hex chars are sha256("<region>/<cluster>/<namespace>/<appName>/<component>").
-	// Without it, the same app on two clusters of one account (dev and prod spokes,
-	// or two installs) shares one policy.
+	// The AWS name is account-global: without the cluster and hash, the same app on two
+	// clusters of one account (dev and prod spokes, or two installs) shares one policy.
+	// The aws-service-identity trait (accessFor) computes the same name for its
+	// policyArnRef (keep the two in step). Renaming the object, rather than only the AWS
+	// name, matters on upgrade: a RolePolicyAttachment resolves policyArnRef once (and
+	// policy_arn cannot change in place), and an existing Policy object keeps reporting
+	// its old status.atProvider.arn until the provider has created the renamed policy.
+	// A new object has no ARN until its policy exists, so the reference waits for it.
 	_cluster:    "{{ .Values.global.clusterName }}"
 	_region:     "{{ .Values.global.awsRegion }}"
 	_policyKey:  _region + "/" + _cluster + "/" + context.namespace + "/" + context.appName + "/" + context.name
@@ -46,8 +49,9 @@ template: {
 	_policyBase: _cluster + "-" + context.appName + "-" + context.name
 	_policyHead: [if len(_policyBase) > 100 {strings.SliceRunes(_policyBase, 0, 100)}, _policyBase][0]
 	_policyName: _policyHead + "-" + _policyHash + "-iam-policy"
-	// Without a cluster name (a bare render of the chart): no external-name, so the AWS
-	// name stays today's object name, byte for byte.
+	// Without a cluster name (a bare render of the chart): the object keeps today's name
+	// <appName>-<component>-iam-policy and there is no external-name, byte for byte.
+	_policyObjName: [if _cluster == "" {"\(context.appName)-\(context.name)-iam-policy"}, _policyName][0]
 	_policyAnnotations: {
 		if _cluster != "" {
 			annotations: "crossplane.io/external-name": _policyName
@@ -56,11 +60,11 @@ template: {
 
 	outputs: {
 		if parameter.policy == _|_ {
-			"\(context.appName)-\(context.name)-iam-policy": {
+			"\(_policyObjName)": {
 				apiVersion: "iam.aws.upbound.io/v1beta1"
 				kind:       "Policy"
 				metadata: {
-					name: "\(context.appName)-\(context.name)-iam-policy"
+					name: _policyObjName
 					_policyAnnotations
 				}
 				spec: {
@@ -84,11 +88,11 @@ template: {
 		}
 
 		if parameter.policy != _|_ {
-			"\(context.appName)-\(context.name)-iam-policy": {
+			"\(_policyObjName)": {
 				apiVersion: "iam.aws.upbound.io/v1beta1"
 				kind:       "Policy"
 				metadata: {
-					name: "\(context.appName)-\(context.name)-iam-policy"
+					name: _policyObjName
 					_policyAnnotations
 				}
 				spec: {
