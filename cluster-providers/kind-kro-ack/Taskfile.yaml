@@ -2110,10 +2110,14 @@ tasks:
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
       # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
-      # (step 2b) and the AgentCore memories recorded from the hub (step 2c: they hold
-      # the agents' session and long-term memory and DeleteMemory cannot be undone),
-      # and take a final snapshot of the DevLake databases before they are deleted
-      # (6eii). Default false: all deleted, the databases without a snapshot, as before.
+      # (step 2b) and take a final snapshot of the DevLake databases before they are
+      # deleted (6eii). It does NOT protect AgentCore memories in a normal destroy:
+      # step 6c (hub:destroy-addons) deletes the OAM apps while Crossplane still runs,
+      # and their Memory CRs (deletionPolicy Delete) delete the memories (session and
+      # long-term memory, DeleteMemory cannot be undone) before step 2c. Under
+      # keep-data, step 2c only keeps the memories the hub's Crossplane did not delete
+      # (stranded ones). Tracked in https://github.com/aws-samples/appmod-blueprints/issues/1227. Default false: all deleted, the
+      # databases without a snapshot, as before.
       DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
     cmds:
       # Preflight: the extended sweep (step 6) runs python helpers that import boto3.
@@ -2413,11 +2417,14 @@ tasks:
           python3 "{{.ROOT_DIR}}/scripts/sweep-hub-leftovers.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" --domain "{{.DOMAIN}}" $KEEP_DATA_ARGS 2>&1 || true
           # 2c. App resources recorded from this hub's CRs at the start of destroy and
-          #     still in AWS: AgentCore memories (by id), and the SQS queues and SNS
-          #     topics named ${PREFIX}-* (the aiops-agent <prefix>-amp-incidents topic,
-          #     queue and DLQ). Only recorded ids, never a pattern; nothing while the hub
-          #     is live. DESTROY_KEEP_DATA=true keeps the AgentCore memories (listed, not
-          #     deleted). See scripts/sweep-app-resources.py.
+          #     still in AWS: AgentCore memories (by id), and the SNS topic
+          #     ${PREFIX}-amp-incidents and the SQS queues ${PREFIX}-amp-incidents and
+          #     ${PREFIX}-amp-incidents-dlq (the exact names the aiops-agent app renders).
+          #     Only recorded ids and these exact names, never a pattern; nothing while
+          #     the hub is live. DESTROY_KEEP_DATA=true keeps the memories this step still
+          #     finds (listed, not deleted); it cannot bring back those step 6c already
+          #     deleted (see the DESTROY_KEEP_DATA note, https://github.com/aws-samples/appmod-blueprints/issues/1227).
+          #     See scripts/sweep-app-resources.py.
           python3 "{{.ROOT_DIR}}/scripts/sweep-app-resources.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" $KEEP_DATA_ARGS 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
