@@ -161,6 +161,21 @@ def test_empty_or_absent_key_generates_and_patches_only_that_key(env, data):
     assert PAT not in out
 
 
+def test_generated_token_never_in_jq_argv(env):
+    # Wrap jq to log its argv: on the generate path the new token must not appear there.
+    e, mock = env
+    real_jq = shutil.which("jq")
+    bindir = e["PATH"].split(":")[0]
+    _mk(os.path.join(bindir, "jq"), '#!/usr/bin/env bash\necho "jq $*" >> "$MOCK/calls.log"\nexec %s "$@"\n' % real_jq)
+    (mock / "secret.json").write_text(json.dumps({"data": {}}))
+    p = run(e)
+    assert p.returncode == 0
+    tok = json.loads((mock / "patch.json").read_text())["stringData"]["webhook.gitlab.secret"]
+    calls = (mock / "calls.log").read_text()
+    assert "jq " in calls
+    assert tok not in calls
+
+
 def test_appset_opt_out(env):
     e, mock = env
     p = run(e, ARGOCD_APPSET_WEBHOOK="0")

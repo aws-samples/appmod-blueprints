@@ -76,10 +76,11 @@ main() {
     ok "reusing the capability's existing ${key} (Secret not modified)"
   else
     tok=$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "$tok" in *[!0-9a-f]*) tok="" ;; esac
     [ "${#tok}" -eq 64 ] || { warn "could not generate token"; return 0; }
-    jq -n --arg t "$tok" --arg k "$key" '{stringData: {($k): $t}}' > "$TMP/patch.json" \
+    # printf is a builtin, so the token never reaches an argv; hex-only needs no JSON escaping.
+    ( umask 077; printf '{"stringData":{"%s":"%s"}}\n' "$key" "$tok" > "$TMP/patch.json" ) \
       || { warn "patch build failed"; return 0; }
-    chmod 600 "$TMP/patch.json"
     kubectl -n argocd patch secret "$secret" --type merge --patch-file "$TMP/patch.json" >/dev/null 2>&1 \
       || { warn "cannot patch $secret"; return 0; }
     rm -f "$TMP/patch.json"
