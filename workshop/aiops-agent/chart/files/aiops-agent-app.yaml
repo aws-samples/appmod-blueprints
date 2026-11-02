@@ -206,10 +206,11 @@ REPLACE_FORGE_MCP_SERVERS
     type: agent
   # ▶EKS-READ: least-privilege AWS policy so eks-read-mcp's OWN Pod Identity role
   # (REPLACE_EKS_MCP_ROLE_NAME, not the agent's) can DISCOVER and read the fleet clusters.
-  # Emitted as a Crossplane iam.aws.upbound.io Policy object named <appName>-<component>-iam-policy
-  # so the eks-read-mcp aws-service-identity trait (accessFor: eks-read-access) attaches it to
-  # the role. Its AWS name (external-name) follows the component-iam-policy rule: cluster +
-  # hash, so two installs in one account never share it (see templates/application.yaml).
+  # Emitted as a Crossplane iam.aws.upbound.io Policy object so the eks-read-mcp
+  # aws-service-identity trait (accessFor: eks-read-access) attaches it to that role. The
+  # object name is its AWS name (external-name), computed by the component-iam-policy rule:
+  # cluster + hash, so two installs in one account never share it, and an upgrade gets a new
+  # object whose ARN the attachment waits for (see templates/application.yaml).
   # Cluster/k8s object reads are still gated by the per-cluster EKS AccessEntries
   # (agent-access component, AmazonEKSViewPolicy + the aiops-agent-cluster-read group) —
   # this only grants the AWS control-plane calls (ListClusters/DescribeCluster), the
@@ -222,7 +223,7 @@ REPLACE_FORGE_MCP_SERVERS
       - apiVersion: iam.aws.upbound.io/v1beta1
         kind: Policy
         metadata:
-          name: aiops-agent-hub-eks-read-access-iam-policy
+          name: REPLACE_EKS_READ_POLICY_NAME
           annotations:
             crossplane.io/external-name: REPLACE_EKS_READ_POLICY_NAME
         spec:
