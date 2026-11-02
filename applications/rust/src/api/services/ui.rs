@@ -2,10 +2,18 @@ use crate::types::{Category, Menu, Page, Product, UIResponder};
 use crate::utils::{query_ddb, reconstruct_result, reconstruct_results};
 use aws_sdk_dynamodb as ddb;
 use tracing::{info, instrument};
-use rocket::serde::json::Json;
+use rocket::serde::json::{json, Json, Value};
 use rocket::{error, get, State};
 use tokio::time::{sleep, Duration};
 
+
+/// Landing route. Behind the ALB the `/rust-app` prefix is rewritten away, so the
+/// bare prefix reaches the app as `/`. Answer 200 with a pointer to a real endpoint.
+/// (A relative redirect would resolve to `/collection/...` for the bare `/rust-app`.)
+#[get("/")]
+pub async fn root() -> Value {
+    json!({"status": "ok", "see": "collection/FRONT_PAGE"})
+}
 
 #[get("/menu/<menu_id>")]
 pub async fn get_menu(menu_id: &str) -> UIResponder<Vec<Menu>> {

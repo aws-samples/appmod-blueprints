@@ -23,6 +23,7 @@ spec:
           type: string
           description: The environment (e.g., dev, prod)
           enum: ['dev', 'prod']
+          default: dev
         provider:
           title: Provider
           type: string
