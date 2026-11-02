@@ -170,7 +170,7 @@ template: {
 				// <appName>-<c>-iam-policy otherwise. A renamed object has no ARN until the
 				// provider has created the renamed policy, so the reference below cannot
 				// latch the ARN of the policy being replaced.
-				let polBase = _cluster + "-" + context.appName + "-" + c
+				let polBase = strings.ToLower(strings.Replace(_cluster, "_", "-", -1)) + "-" + context.appName + "-" + c
 				let polHead = [if len(polBase) > 100 {strings.SliceRunes(polBase, 0, 100)}, polBase][0]
 				let polHash = strings.SliceRunes(hex.Encode(sha256.Sum256(_region + "/" + _cluster + "/" + context.namespace + "/" + context.appName + "/" + c)), 0, 8)
 				let polObj = [if _cluster == "" {"\(context.appName)-\(c)-iam-policy"}, polHead + "-" + polHash + "-iam-policy"][0]
