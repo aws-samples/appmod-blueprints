@@ -1,7 +1,7 @@
 {{- /*
   aiops-agent cluster-wide READ-ONLY RBAC (hub + every spoke).
 
-  Why: the agent's identity (IAM role aiops-agent-role, shared by the agent and
+  Why: the agent's identity (IAM role <hub>-aiops-agent-<hash>-role, shared by the agent and
   eks-read-mcp via Pod Identity) gets AmazonEKSViewPolicy on each cluster through an
   EKS AccessEntry (chart/files/aiops-agent-app.yaml, component agent-access). That
   managed policy does NOT cover cluster-scoped core objects (nodes) nor any CRD

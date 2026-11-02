@@ -5,9 +5,9 @@
 # clusterName and region are pulled from the `env-config` EnvironmentConfig
 # via function-environment-configs, so callers never supply them.
 #
-# accessFor policy attachments are handled by the OAP aws-service-identity
-# trait (they reference OAM-app-scoped sibling policies), attaching to the IAM
-# role by its deterministic name "<serviceAccount>-role".
+# accessFor policy attachments are handled by the aws-service-identity trait
+# (they reference OAM-app-scoped sibling policies), attaching to the IAM role by
+# the name the trait chose and passed in spec.roleName.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -39,9 +39,9 @@ spec:
         apiVersion: pt.fn.crossplane.io/v1beta1
         kind: Resources
         resources:
-          # IAM role trusted by EKS Pod Identity. Deterministic name
-          # "<serviceAccount>-role" so the aws-service-identity trait can attach
-          # accessFor policies to it without a managed-resource cross-reference.
+          # IAM role trusted by EKS Pod Identity, named spec.roleName (chosen by the
+          # aws-service-identity trait, unique per region/cluster/namespace/SA) so the
+          # trait can attach accessFor policies to it without a cross-reference.
           - name: iam-role
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
@@ -64,13 +64,8 @@ spec:
                   name: default
             patches:
               - type: FromCompositeFieldPath
-                fromFieldPath: spec.serviceAccount
+                fromFieldPath: spec.roleName
                 toFieldPath: metadata.annotations[crossplane.io/external-name]
-                transforms:
-                  - type: string
-                    string:
-                      type: Format
-                      fmt: "%s-role"
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.arn
                 toFieldPath: status.roleArn
@@ -82,13 +77,33 @@ spec:
               kind: PodIdentityAssociation
               spec:
                 forProvider:
+                  # resolve: Always re-resolves roleArn on every reconcile. Without it
+                  # crossplane-runtime keeps the ARN it resolved first, so when
+                  # spec.roleName changes (the external-name patch above makes the
+                  # provider create the new role) the association would stay on the old
+                  # role. role_arn is updated in place on an association.
                   roleArnSelector:
                     matchControllerRef: true
                     matchLabels:
                       role: pod-identity
+                    policy:
+                      resolve: Always
                 providerConfigRef:
                   name: default
             patches:
+              # The role the association actually hands to pods (last path segment of
+              # the observed roleArn), not the role that merely exists: the trait's
+              # wait-for-pod-identity-role gate waits on it, so new pods only start once
+              # EKS serves the role their template names.
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.roleArn
+                toFieldPath: status.roleName
+                transforms:
+                  - type: string
+                    string:
+                      type: Regexp
+                      regexp:
+                        match: '[^/]+$'
               - type: FromEnvironmentFieldPath
                 fromFieldPath: clusterName
                 toFieldPath: spec.forProvider.clusterName

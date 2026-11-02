@@ -89,7 +89,8 @@ set it back to `false` (or drop the key) — the label disappears and the Applic
 
 ## Cluster read access (RBAC)
 
-The agent identity (`aiops-agent-role`, shared by the agent and `eks-read-mcp` via Pod
+The agent identity (`<hub>-aiops-agent-<hash>-role`, named by the platform's
+`aws-service-identity` rule and computed in `templates/application.yaml`; shared by the agent and `eks-read-mcp` via Pod
 Identity) is read-only on every fleet cluster through two layers:
 
 - the `agent-access` AccessEntries (one per cluster) associate `AmazonEKSViewPolicy`
