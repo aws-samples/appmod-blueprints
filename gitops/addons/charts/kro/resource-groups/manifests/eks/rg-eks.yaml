@@ -832,6 +832,8 @@ spec:
           secretString:
             # CEL reference (not a literal) so kro creates this only after the k8s
             # Secret exists; ACK does not watch it and backs off up to ~16 min.
+            # Day-2 value changes are NOT re-pushed to SM by themselves: see
+            # README.md next to this file (manual spec bump, spokes only).
             name: ${clusterConfigK8sSecretFleet.metadata.name}
             namespace: ${schema.spec.name}
             key: config
