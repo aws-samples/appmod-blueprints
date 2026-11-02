@@ -24,13 +24,15 @@ component-iam-policy traits, platform/oam/definitions/traits/): the agent runs o
 hub, <clusterPrefix>-hub, in namespace aiops-agent. Same rule as the traits:
   role:   <first 50 of "<cluster>-<sa>">-<sha256("<region>/<cluster>/<ns>/<sa>")[:8]>-role
   policy: <first 100 of "<cluster>-<app>-<component>">-<sha256("<region>/<cluster>/<ns>/<app>/<component>")[:8]>-iam-policy
+  The cluster is lowercased and "_" becomes "-" in the policy name (a valid object name for
+  any EKS cluster name); the hash input keeps it as given.
 */ -}}
 {{- $hub := printf "%s-hub" .Values.clusterPrefix -}}
 {{- $agentRole := include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "aiops-agent") -}}
 {{- /* eks-read-mcp has its own SA (and so its own trait-named role): it is the principal of the EKS AccessEntries (hub here, spokes in templates/spoke-access.yaml). */ -}}
 {{- $eksMcpRole := include "aiops-agent.podIdentityRoleName" (dict "root" $ "sa" "eks-read-mcp") -}}
 {{- $polKey := printf "%s/%s/aiops-agent/aiops-agent-hub/eks-read-access" .Values.region $hub -}}
-{{- $eksReadPolicy := printf "%s-%s-iam-policy" (printf "%s-aiops-agent-hub-eks-read-access" $hub | trunc 100) (sha256sum $polKey | trunc 8) -}}
+{{- $eksReadPolicy := printf "%s-%s-iam-policy" (printf "%s-aiops-agent-hub-eks-read-access" ($hub | replace "_" "-" | lower) | trunc 100) (sha256sum $polKey | trunc 8) -}}
 {{- /*
 MR project (path) the agent and the incident-bridge dup-check target = the fleet repo,
 DERIVED from .Values.fleetRepoUrl (scheme+host and .git stripped). "" when there is no

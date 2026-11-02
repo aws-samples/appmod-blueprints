@@ -46,7 +46,7 @@ template: {
 	_region:     "{{ .Values.global.awsRegion }}"
 	_policyKey:  _region + "/" + _cluster + "/" + context.namespace + "/" + context.appName + "/" + context.name
 	_policyHash: strings.SliceRunes(hex.Encode(sha256.Sum256(_policyKey)), 0, 8)
-	_policyBase: _cluster + "-" + context.appName + "-" + context.name
+	_policyBase: strings.ToLower(strings.Replace(_cluster, "_", "-", -1)) + "-" + context.appName + "-" + context.name
 	_policyHead: [if len(_policyBase) > 100 {strings.SliceRunes(_policyBase, 0, 100)}, _policyBase][0]
 	_policyName: _policyHead + "-" + _policyHash + "-iam-policy"
 	// Without a cluster name (a bare render of the chart): the object keeps today's name
@@ -60,7 +60,7 @@ template: {
 
 	outputs: {
 		if parameter.policy == _|_ {
-			"\(_policyObjName)": {
+			"\(context.appName)-\(context.name)-iam-policy": {
 				apiVersion: "iam.aws.upbound.io/v1beta1"
 				kind:       "Policy"
 				metadata: {
@@ -88,7 +88,7 @@ template: {
 		}
 
 		if parameter.policy != _|_ {
-			"\(_policyObjName)": {
+			"\(context.appName)-\(context.name)-iam-policy": {
 				apiVersion: "iam.aws.upbound.io/v1beta1"
 				kind:       "Policy"
 				metadata: {
