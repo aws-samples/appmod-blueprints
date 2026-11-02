@@ -89,13 +89,28 @@ set it back to `false` (or drop the key) — the label disappears and the Applic
 
 ## Cluster read access (RBAC)
 
-The agent identity (`<hub>-aiops-agent-<hash>-role`, named by the platform's
-`aws-service-identity` rule and computed in `templates/application.yaml`; shared by the agent and `eks-read-mcp` via Pod
-Identity) is read-only on every fleet cluster through two layers:
+Cluster reads go through `eks-read-mcp` only. It has its **own** ServiceAccount
+(`eks-read-mcp`) and Pod Identity role (`<hub>-eks-read-mcp-<hash>-role`, from the
+`aws-service-identity` trait and the platform's per-cluster naming rule, recomputed in
+`templates/_helpers.tpl`), which carries only the `eks-read-access` policy. The
+agent's role (`<hub>-aiops-agent-<hash>-role`) keeps only the AgentCore memory policy and
+has no EKS access entry. The read identity is read-only on every fleet cluster through two layers:
 
-- the `agent-access` AccessEntries (one per cluster) associate `AmazonEKSViewPolicy`
-  (namespaced built-ins) and map the role into the Kubernetes group
-  `aiops-agent-cluster-read`;
+- the AccessEntries associate `AmazonEKSViewPolicy` (namespaced built-ins) and map the
+  role into the Kubernetes group `aiops-agent-cluster-read`. The hub entry is the
+  `agent-access` component; the spoke entries come from the `aiops-agent-spoke-access`
+  ApplicationSet (`templates/spoke-access.yaml`), one per spoke cluster secret on this hub
+  with its real `aws_cluster_name` and region (`aws_region`, else the hub's), rendered
+  from `../access-chart`. Nothing to configure; a hub without spokes gets none. These
+  AccessEntry objects (namespace `aiops-agent` on the hub) are also how the agent learns
+  the spoke names: eks-mcp-server has no tool that lists EKS clusters, so the prompt tells
+  it to list them with `list_k8s_resources` and read `spec.clusterName`. Every entry
+  reaches ACK only after the `incident-bridge-eks` IAMRoleSelector exists, because the
+  managed ACK capability caches "no role selected" at a CR's first reconcile: the hub
+  entry through `dependsOn: incident-bridge-selectors`, each spoke entry through a PreSync
+  Job in `../access-chart` that waits for that selector. Both wait for the selector only,
+  not for the whole Application to be Healthy, so a Degraded agent component does not
+  hold back read access;
 - the `aiops-agent-rbac` addon (`../rbac-chart`, registry entry in the workshop overlay
   `overrides.yaml`) installs a read-only `ClusterRole`/`ClusterRoleBinding` for that group
   on the hub **and** every spoke: nodes, namespaces, events, CRDs, `argoproj.io`
@@ -106,8 +121,41 @@ Identity) is read-only on every fleet cluster through two layers:
 The IAM policy `eks-read-access` adds `eks:ListInsights`/`eks:DescribeInsight` on top of
 the discovery calls.
 
-> Known limitation: one identity serves both the autonomous RCA path and the interactive
-> chat, so this cluster-wide read also applies to the chat until the two-agent RBAC split.
+`eks-read-mcp` hardening, in the manifest:
+
+- the server is started with an explicit `--no-allow-write` (container `command`, which
+  repeats the image ENTRYPOINT);
+- the image is pinned by digest (`images.eksMcp.tag: v1@sha256:…`). If you override
+  `imageRegistry` (or `images.eksMcp.registry`), also set `images.eksMcp.tag`: the default
+  digest only exists in the default registry;
+- the `eks-read-mcp-tool-access` AgentgatewayPolicy (`backend.mcp.authorization`,
+  `Require`) is a tool allow-list: `tools/list` and `tools/call` see only the read tools
+  plus `manage_k8s_resource` (its `read` operation; the others stay refused by the server
+  flag and by `AmazonEKSViewPolicy`). Add a tool there if a new server version adds one.
+
+> Upgrade note: an install that ran the per-cluster role names with the former inline
+> spoke entries (`<role>-spoke-dev`/`-prod` in `agent-access`) and then moves to these
+> ApplicationSet entries (`<role>-<cluster>`) has two CRs for the same (cluster,
+> principal), which is one AWS entry for ACK. When KubeVela deletes the old CR, ACK
+> deletes that AWS entry and the new CR only recreates it at its next drift resync. Ship
+> both changes together; an install caught in between gets its spoke access back by
+> deleting the new AccessEntry CRs (ArgoCD recreates them at once). With eks-read-mcp as
+> the principal (above) the old and new entries name different roles, so an install that
+> moves straight to this version is not affected.
+
+> Known limitations:
+>
+> - one identity serves both the autonomous RCA path and the interactive chat, so this
+>   cluster-wide read also applies to the chat until the two-agent RBAC split;
+> - eks-read-mcp runs in the hub's region, so a spoke in another region gets its entry
+>   (with its own `services.k8s.aws/region`) and shows up in discovery, but isn't readable
+>   through eks-read yet: the server only calls `DescribeCluster` in its own region. The
+>   prompt tells the agent so.
+
+The PreSync Job that waits for the `incident-bridge-eks` selector before each spoke
+AccessEntry uses `bitnami/kubectl:latest` by default. On a hub that cannot pull from Docker
+Hub, set `crdWait.image` (same name as the ack-pod-identity crd-wait hook) in the overlay
+values; it is passed to the access chart. Unset, the render is unchanged.
 
 ## Per-cluster overrides (fleet-config overlay)
 
@@ -118,6 +166,46 @@ imageRegistry: "<your-account>.dkr.ecr.<region>.amazonaws.com/<your-ecr-namespac
 imageTag: "prod-2026-09"
 gitlabDomain: "gitlab.mycorp.internal"   # gitlab-mcp GITLAB_API_URL host
 ```
+
+## Forge variants (GitLab / no forge)
+
+`files/aiops-agent-app.yaml` is a **forge-neutral core**: each `REPLACE_FORGE_<SLOT>` token in
+it is filled from `files/forge/<forge>/<slot>.txt` before the other `REPLACE_*` tokens. The
+forge is **derived** by default (`templates/_helpers.tpl` `aiops-agent.forge`), from two values
+the registry entry already injects, unless the optional `forge` chart value overrides it:
+
+| `gitlabDomain` (`gitlab_domain_name`) | host of `fleetRepoUrl` | forge |
+|---|---|---|
+| set | equal to `gitlabDomain` (case-insensitive, port ignored), or no `fleetRepoUrl` | `gitlab` |
+| set | another host (e.g. `github.com`) | `none` |
+| empty | any | `none` |
+
+`forge` (chart value, default `""`): `""` or `auto` keeps the derivation above, byte for byte;
+`gitlab` or `none` forces that variant (e.g. `none` when `gitlab_domain_name` is set but the
+fleet repo is on GitHub/GHES; `gitlab` still needs `gitlabDomain` for the API host). Any other
+value fails the render. It is a chart value only (overlay values of the addon): no new
+`<hub>/config` key and no registry change.
+
+- **`gitlab`** (the workshop): `files/forge/gitlab/` holds the original text byte for byte, so
+  the render is unchanged: `gitlab-mcp` + its `gitlab-mcp-token` ExternalSecret, the
+  incident-bridge open-MR dup-check env (`GITLAB_*`), and the prompt rules for opening MRs.
+- **`none`** (e.g. an appmod install whose fleet repo is on GitHub, or no fleet repo): no
+  `gitlab-mcp`, no token ExternalSecret. The agent's `mcpServers` are
+  `skills-mcp` + `eks-read-mcp` only. That list is what decides readiness (the OAP agent's
+  `/ready` requires every configured server; `MCP_REQUIRED_SERVERS` is not read), so the agent
+  becomes Ready without a forge. Its prompt says it has no write tool and must give each fix
+  as a file path plus a minimal unified diff for a human to apply.
+- **Both variants** render the incident path from the core (IAMRoleSelectors incl. the eks
+  one the AccessEntries need, ACK IAM/SNS/SQS, `AmpIncident`, `incident-bridge`). It does not
+  need GitLab: the bridge's open-MR dup-check and ceiling are fail-open when `GITLAB_*` is
+  unset (slot `BRIDGE_ENV`), and the agent answers an incident with a text change (file path
+  plus keys and values) in the none variant. Keeping it in both variants is also what makes a variant switch safe: a GitLab ->
+  none switch only GCs the `gitlab-mcp` objects (no finalizer-bearing ACK/kro CR). Removing the
+  incident path in the same GC pass as its IAMRoleSelectors left the ACK CRs stuck in deletion,
+  with their AWS resources still present.
+
+A GitLab install without the bot token (`aiops_agent_git_token`) still renders the GitLab
+variant; making that case fail-soft is a separate change.
 
 ## gitlab-mcp (agent write path)
 
@@ -157,6 +245,7 @@ RGD compiles to `Active`/`GraphAccepted`.
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
-| `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO) |
+| `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO); with `fleetRepoUrl` it selects the forge variant (see Forge variants) |
 | `fleetRepoUrl` | `overlay_repo_url`, else `fleetRepoURL` if ≠ `addonsRepoURL` | **derived** by the registry entry (same resolution as `gitops/bootstrap/addons.yaml` `$overlay`); the chart strips scheme+host and `.git` to get the MR project. Empty ⇒ bridge dup-check off (fail-open) |
+| `forge` | — | optional override of the derived forge: `""`/`auto` (default), `gitlab`, `none` |
 | `gitlabMrProject` | — | **deprecated** explicit MR-project override; wins over `fleetRepoUrl` when set |
