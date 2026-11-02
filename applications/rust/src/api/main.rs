@@ -69,6 +69,7 @@ async fn main() -> Result<(), rocket::Error> {
         .mount(
             "/",
             routes![
+                root,
                 create_cart,
                 add_to_cart,
                 get_cart,
