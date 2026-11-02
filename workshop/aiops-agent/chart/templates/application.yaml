@@ -25,7 +25,33 @@ fleet repo (dup-check disabled, fail-open). .Values.gitlabMrProject, when set, s
 (deprecated explicit override kept for one release).
 */ -}}
 {{- $mrProject := .Values.gitlabMrProject | default (trimSuffix ".git" (regexReplaceAll "^https?://[^/]+/" (.Values.fleetRepoUrl | default "") "")) -}}
-{{- .Files.Get "files/aiops-agent-app.yaml"
+{{- $doc := .Files.Get "files/aiops-agent-app.yaml" -}}
+{{- /*
+Argo CD status tool (component argocd-status-mcp, src/argocd-status-mcp): "on" ONLY when
+.Values.images.argocdStatusMcp.tag is set. It deliberately does NOT inherit the global
+imageTag: an image that is not published must never be rendered, because the agent's
+OAP /ready probe requires EVERY server in mcpServers and the install would wait on it.
+  off  (tag "")  no component, not in mcpServers/dependsOn, no prompt note: the agent
+                 keeps the prompt-only per-Application sweep rule (#1230).
+  on   (tag set) the component, a mcpServers entry, a dependsOn entry and a tool note
+                 telling the agent to prefer it for Application health/sync questions.
+Line slots replace token+newline (so "off" leaves no line behind); the prompt slot is
+inline. Slots are filled BEFORE the REPLACE_* tokens below, which the fragments also use.
+*/ -}}
+{{- $asm := (index $im "argocdStatusMcp") | default dict -}}
+{{- $asmTag := index $asm "tag" | default "" | toString -}}
+{{- $asmMode := ternary "on" "off" (ne $asmTag "") -}}
+{{- range $slot := list "AGENT_DEPENDS" "MCP_SERVERS" "COMPONENT" -}}
+{{- $doc = replace (printf "REPLACE_ARGOCD_STATUS_%s\n" $slot) ($.Files.Get (printf "files/argocd-status/%s/%s.txt" $asmMode ($slot | lower | replace "_" "-"))) $doc -}}
+{{- end -}}
+{{- $doc = replace "REPLACE_ARGOCD_STATUS_PROMPT_TOOL_NOTES" ($.Files.Get (printf "files/argocd-status/%s/prompt-tool-notes.txt" $asmMode) | trimSuffix "\n") $doc -}}
+{{- if contains "REPLACE_ARGOCD_STATUS_" $doc -}}
+{{- fail (printf "aiops-agent: unfilled REPLACE_ARGOCD_STATUS_ slot (%s)" $asmMode) -}}
+{{- end -}}
+{{- $doc = $doc
+      | replace "REPLACE_REG_ARGOCD_STATUS_MCP" (default $reg (index $asm "registry"))
+      | replace "REPLACE_TAG_ARGOCD_STATUS_MCP" $asmTag -}}
+{{- $doc
       | replace "REPLACE_REG_SKILLS_MCP"      (default $reg (index $skills "registry"))
       | replace "REPLACE_TAG_SKILLS_MCP"      (default $tag (index $skills "tag" | toString))
       | replace "REPLACE_REG_AGENT"           (default $reg (index $agent  "registry"))

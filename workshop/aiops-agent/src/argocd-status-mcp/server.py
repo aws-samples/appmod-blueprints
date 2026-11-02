@@ -5,7 +5,7 @@ argocd-status-mcp — a tiny READ-ONLY FastMCP (StreamableHTTP) server that answ
 
 Why it exists: the upstream eks-mcp-server's list_k8s_resources returns no status and
 status cannot be field-selected, so a full sweep means reading every Application
-(~13 KB each, 180+ on a loaded hub). This server lists them in-cluster, page by page,
+(~33 KB each, 180+ on a loaded hub). This server lists them in-cluster, page by page,
 and returns only totals plus one compact row per app that is not Synced+Healthy.
 
 Access: the pod's own ServiceAccount token (in-cluster), bound to a Role that only

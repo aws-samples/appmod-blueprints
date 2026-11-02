@@ -7,7 +7,7 @@
 #   Images published (each at its OWN pinned tag below — MUST match chart/values.yaml
 #   images.*.tag so the pinned set is reproducible; never overwrite a mutable tag in place):
 #   chat-ui, eks-mcp, gitlab-mcp, incident-bridge, skills-mcp (PEEKS .kiro/skills baked in),
-#   strands-agent
+#   strands-agent, argocd-status-mcp
 #
 # Run in the account that owns the public ECR alias (<account-id>), us-east-1
 # region for the ecr-public control plane. Requires privilegedMode (Docker) + a service role
@@ -37,6 +37,9 @@ env:
     GITLAB_MCP_TAG: "v2"
     INCIDENT_BRIDGE_TAG: "v1.6"
     SKILLS_MCP_TAG: "v4"
+    # argocd-status-mcp: chart/values.yaml images.argocdStatusMcp.tag is EMPTY until this is
+    # published (empty = component not rendered); set it to this value once pushed.
+    ARGOCD_STATUS_MCP_TAG: "v1"
     STRANDS_TAG: "v1.15"
     # TODO(pre-publish): APPMOD_REF is a MOVING fork ref; pin it to a tag/SHA. Tracked in the
     # B2/B4 build-pin issue (#964). OAP_REPO/OAP_REF already point at upstream awslabs on a tag.
@@ -66,6 +69,7 @@ phases:
       - docker build -t "$REG/eks-mcp:$EKS_MCP_TAG"            "$SRC/eks-mcp"
       - docker build -t "$REG/gitlab-mcp:$GITLAB_MCP_TAG"      "$SRC/gitlab-mcp"
       - docker build -t "$REG/incident-bridge:$INCIDENT_BRIDGE_TAG" "$SRC/incident-bridge"
+      - docker build -t "$REG/argocd-status-mcp:$ARGOCD_STATUS_MCP_TAG" "$SRC/argocd-status-mcp"
       # 2) skills-mcp: base + PEEKS overlay (context = appmod repo ROOT for .kiro/skills)
       - docker build -t "skills-mcp-base:$SKILLS_MCP_TAG" "$SRC/skills-mcp"
       - docker build -f /src/workshop/aiops-agent/skills-overlay/Dockerfile
@@ -79,6 +83,7 @@ phases:
       - docker push "$REG/eks-mcp:$EKS_MCP_TAG"
       - docker push "$REG/gitlab-mcp:$GITLAB_MCP_TAG"
       - docker push "$REG/incident-bridge:$INCIDENT_BRIDGE_TAG"
+      - docker push "$REG/argocd-status-mcp:$ARGOCD_STATUS_MCP_TAG"
       - docker push "$REG/skills-mcp:$SKILLS_MCP_TAG"
       - docker push "$REG/strands-agent:$STRANDS_TAG"
       - echo "Published chat-ui:$CHAT_UI_TAG eks-mcp:$EKS_MCP_TAG gitlab-mcp:$GITLAB_MCP_TAG incident-bridge:$INCIDENT_BRIDGE_TAG skills-mcp:$SKILLS_MCP_TAG strands-agent:$STRANDS_TAG to $REG"

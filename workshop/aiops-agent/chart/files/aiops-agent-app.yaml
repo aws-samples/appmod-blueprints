@@ -71,6 +71,7 @@ spec:
     - skills-mcp
     - eks-read-mcp
     - gitlab-mcp
+REPLACE_ARGOCD_STATUS_AGENT_DEPENDS
     inputs:
     - from: memory-id
       parameterKey: properties.memory.config.memoryId
@@ -86,6 +87,7 @@ spec:
       # ▶GITLAB: write path (branches/MRs). Backed by the gitlab-mcp component below
       # (supergateway wrapping @zereight/gitlab-mcp), PAT injected via ExternalSecret.
       - name: gitlab-mcp
+REPLACE_ARGOCD_STATUS_MCP_SERVERS
       modelConfig:
         llmGatewayUrl: http://bifrost.bifrost.svc.cluster.local:8080/v1
         modelId: claude-sonnet
@@ -154,7 +156,7 @@ spec:
         \ narrows server-side, through `label_selector` / `field_selector` (metadata fields; `status.*` is\
         \ rejected for custom resources), and it returns names/labels/annotations only, no status. Each\
         \ eks-read call runs in its own short-lived server process, so issue at most 4 eks-read calls in\
-        \ parallel in one turn; more at once can exhaust its memory and fail every call in the batch.\n- `gitlab` MCP: `create_merge_request` / `create_branch` only. The gitlab write path is create_or_update_file, which UPSERTS (create if the file is absent, update if it already exists) — use it to edit an EXISTING overlay; if a write is rejected with commit_id Required, first READ the file on your branch to get its last-commit id and retry as an update; and NEVER call a create action on a file that already exists (GitLab returns 400 Bad Request) — read the file first: found means update, not-found means create. Do not thrash between create and update.\n\n\n\
+        \ parallel in one turn; more at once can exhaust its memory and fail every call in the batch.\n- `gitlab` MCP: `create_merge_request` / `create_branch` only. The gitlab write path is create_or_update_file, which UPSERTS (create if the file is absent, update if it already exists) — use it to edit an EXISTING overlay; if a write is rejected with commit_id Required, first READ the file on your branch to get its last-commit id and retry as an update; and NEVER call a create action on a file that already exists (GitLab returns 400 Bad Request) — read the file first: found means update, not-found means create. Do not thrash between create and update.REPLACE_ARGOCD_STATUS_PROMPT_TOOL_NOTES\n\n\n\
         # Skills index (pull the full method with skills.get_skill(<name>))\n- **eks-best-practices**\
         \ — Advisory guidance for Amazon EKS architecture and configuration decisions — compute strategy,\
         \ networking, security, reliability, cost, autoscaling, observability, multi-tenancy, and upgrade\
@@ -395,6 +397,7 @@ spec:
                 services:
                   matchLabels:
                     agentgateway.dev/target: eks-read-mcp
+REPLACE_ARGOCD_STATUS_COMPONENT
   # ▶GITLAB: gitlab-mcp — the agent's write path (create branches / MRs on the
   # fleet-config + app repos). supergateway wrapping the upstream @zereight/gitlab-mcp
   # server (stateful, port 8000, path /mcp), exposed to the agent via AgentGateway
