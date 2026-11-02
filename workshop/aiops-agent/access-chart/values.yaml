@@ -7,3 +7,8 @@ clusterName: ""
 accountId: ""
 roleName: ""
 region: ""
+# Image of the PreSync selector-wait Job (templates/selector-wait-hook.yaml). Same value name
+# and default as the ack-pod-identity crd-wait hook (crdWait.image); override it for a hub
+# that cannot pull from Docker Hub. The aiops-agent chart passes it through when set.
+crdWait:
+  image: bitnami/kubectl:latest

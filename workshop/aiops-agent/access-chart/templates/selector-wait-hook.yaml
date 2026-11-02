@@ -88,7 +88,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: wait
-        image: bitnami/kubectl:latest
+        image: {{ (default dict .Values.crdWait).image | default "bitnami/kubectl:latest" }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

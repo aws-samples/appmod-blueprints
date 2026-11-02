@@ -61,3 +61,9 @@ gitlabMrProject: ""
 # Workspace CR via externalRef — no literal id, no cluster-secret stamp. The AmpIncident
 # INSTANCE is the `amp-incident` component in files/aiops-agent-app.yaml; its workspaceName
 # defaults to "<clusterPrefix>-amp" — edit that component if your AMP Workspace CR differs.
+
+# Optional image override for the PreSync selector-wait Job that gates each spoke AccessEntry
+# (access-chart). Same name as the ack-pod-identity crdWait.image. Empty = the access chart's
+# default (bitnami/kubectl:latest); set it where Docker Hub is not reachable from the hub.
+crdWait:
+  image: ""

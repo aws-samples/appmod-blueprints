@@ -23,7 +23,12 @@ spec:
   # ▶MEMORY ── AgentCore persistent memory (always-on; requires the bedrockagentcore
   # Crossplane provider enabled in crossplane-base → registry platform.yaml).
   # Provisions an AWS Bedrock AgentCore Memory via the Upbound provider and emits an
-  # IAM policy (<app>-<component>-iam-policy). Its memoryId output is injected into the
+  # IAM policy. Its object name is its AWS name (external-name), computed per cluster by the
+  # component-iam-policy rule: <hub>-aiops-agent-hub-aiops-agent-memory-<hash>-iam-policy
+  # (hub cluster part sanitized, hash = sha256 of region/cluster/ns/app/component, first 8).
+  # The attachment (accessFor: aiops-agent-memory) resolves that name only once
+  # awslabs/open-agentic-platform#131 is on the hub: merge it together with this change.
+  # Its memoryId output is injected into the
   # aiops-agent component below (properties.memory.config.memoryId) and the policy is
   # attached to the agent's Pod Identity role via the aws-service-identity accessFor.
   # region is set EXPLICITLY — the ComponentDefinition default is a Helm string that

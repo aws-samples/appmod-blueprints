@@ -152,6 +152,11 @@ the discovery calls.
 >   through eks-read yet: the server only calls `DescribeCluster` in its own region. The
 >   prompt tells the agent so.
 
+The PreSync Job that waits for the `incident-bridge-eks` selector before each spoke
+AccessEntry uses `bitnami/kubectl:latest` by default. On a hub that cannot pull from Docker
+Hub, set `crdWait.image` (same name as the ack-pod-identity crd-wait hook) in the overlay
+values; it is passed to the access chart. Unset, the render is unchanged.
+
 ## Per-cluster overrides (fleet-config overlay)
 
 The appset auto-adds `overlays/clusters/<cluster>/aiops-agent/values.yaml` (last wins). Example:
