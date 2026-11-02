@@ -1,0 +1,2 @@
+                # ▶NO-FORGE: no GitLab open-MR dup-check / ceiling (GITLAB_* unset, the
+                # bridge is fail-open without them); the DEDUP_TTL window still applies.

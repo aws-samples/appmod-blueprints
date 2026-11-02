@@ -38,7 +38,36 @@ fleet repo (dup-check disabled, fail-open). .Values.gitlabMrProject, when set, s
 (deprecated explicit override kept for one release).
 */ -}}
 {{- $mrProject := .Values.gitlabMrProject | default (trimSuffix ".git" (regexReplaceAll "^https?://[^/]+/" (.Values.fleetRepoUrl | default "") "")) -}}
-{{- .Files.Get "files/aiops-agent-app.yaml"
+{{- /*
+Forge variant (templates/_helpers.tpl "aiops-agent.forge", derived, no parameter):
+files/aiops-agent-app.yaml is the forge-neutral core; each REPLACE_FORGE_<SLOT> token in it
+is filled from files/forge/<forge>/<slot>.txt.
+  gitlab  the original GitLab text, byte for byte (workshop render unchanged).
+  none    no gitlab-mcp, no token ExternalSecret; the agent's mcpServers are skills-mcp +
+          eks-read-mcp only (OAP /ready requires every listed server), and its prompt says
+          it is read-only and gives fixes as text. The incident path (IAMRoleSelectors,
+          ACK IAM/SNS/SQS, AmpIncident, incident-bridge) is in the core, so it is rendered
+          in BOTH variants: it does not need GitLab (the bridge's open-MR dup-check is
+          fail-open and is the only forge-specific part, slot BRIDGE_ENV), and keeping it
+          means a GitLab -> none switch deletes no ACK CR (deleting them in the same GC
+          pass as their IAMRoleSelectors left them stuck in deletion with the AWS
+          resources still there).
+Line slots stand alone on their own line: the token AND its newline are replaced, so an
+empty fragment leaves no blank line. Prompt slots sit inside the systemMessage scalar.
+Slots are filled BEFORE the REPLACE_* tokens below, which the fragments also use.
+*/ -}}
+{{- $forge := include "aiops-agent.forge" . -}}
+{{- $doc := .Files.Get "files/aiops-agent-app.yaml" -}}
+{{- range $slot := list "AGENT_DEPENDS" "MCP_SERVERS" "WRITE_COMPONENT" "BRIDGE_ENV" -}}
+{{- $doc = replace (printf "REPLACE_FORGE_%s\n" $slot) ($.Files.Get (printf "files/forge/%s/%s.txt" $forge ($slot | lower | replace "_" "-"))) $doc -}}
+{{- end -}}
+{{- range $slot := list "PROMPT_INCIDENT_FIX" "PROMPT_WRITE_RULE" "PROMPT_TOOL_NOTES" "PROMPT_IDEMPOTENCY" "PROMPT_ACT_FIRST" -}}
+{{- $doc = replace (printf "REPLACE_FORGE_%s" $slot) ($.Files.Get (printf "files/forge/%s/%s.txt" $forge ($slot | lower | replace "_" "-"))) $doc -}}
+{{- end -}}
+{{- if contains "REPLACE_FORGE_" $doc -}}
+{{- fail (printf "aiops-agent: unfilled REPLACE_FORGE_ slot for forge %q" $forge) -}}
+{{- end -}}
+{{- $doc
       | replace "REPLACE_REG_SKILLS_MCP"      (default $reg (index $skills "registry"))
       | replace "REPLACE_TAG_SKILLS_MCP"      (default $tag (index $skills "tag" | toString))
       | replace "REPLACE_REG_AGENT"           (default $reg (index $agent  "registry"))
