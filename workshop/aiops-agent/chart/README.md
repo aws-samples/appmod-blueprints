@@ -104,7 +104,13 @@ has no EKS access entry. The read identity is read-only on every fleet cluster t
   from `../access-chart`. Nothing to configure; a hub without spokes gets none. These
   AccessEntry objects (namespace `aiops-agent` on the hub) are also how the agent learns
   the spoke names: eks-mcp-server has no tool that lists EKS clusters, so the prompt tells
-  it to list them with `list_k8s_resources` and read `spec.clusterName`;
+  it to list them with `list_k8s_resources` and read `spec.clusterName`. Every entry
+  reaches ACK only after the `incident-bridge-eks` IAMRoleSelector exists, because the
+  managed ACK capability caches "no role selected" at a CR's first reconcile: the hub
+  entry through `dependsOn: incident-bridge-selectors`, each spoke entry through a PreSync
+  Job in `../access-chart` that waits for that selector. Both wait for the selector only,
+  not for the whole Application to be Healthy, so a Degraded agent component does not
+  hold back read access;
 - the `aiops-agent-rbac` addon (`../rbac-chart`, registry entry in the workshop overlay
   `overrides.yaml`) installs a read-only `ClusterRole`/`ClusterRoleBinding` for that group
   on the hub **and** every spoke: nodes, namespaces, events, CRDs, `argoproj.io`

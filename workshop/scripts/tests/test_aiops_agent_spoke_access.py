@@ -267,3 +267,78 @@ def test_access_chart_requires_cluster_name():
                                                              "access-chart"),
                           "--set", f"accountId={ACCOUNT}"], capture_output=True, text=True)
     assert res.returncode != 0 and "clusterName is required" in res.stderr
+
+
+# ── Ordering against the incident-bridge-eks IAMRoleSelector (#1208 review, P5) ──
+# The managed ACK capability caches "no role selected" at a CR's first reconcile, so every
+# AccessEntry (hub and spokes) must reach ACK only after the selector exists. The guarantee
+# must hang on that selector alone, not on the whole aiops-agent Application being Healthy.
+
+SELECTOR_COMPONENT = "incident-bridge-selectors"
+
+
+def _components(app):
+    return {c["name"]: c for c in app["spec"]["components"]}
+
+
+@needs_helm
+def test_hub_entry_depends_on_the_selectors_only():
+    (app,) = _by_kind(_render_chart("acme"), "Application")
+    comps = _components(app)
+    assert comps["agent-access"].get("dependsOn") == [SELECTOR_COMPONENT]
+    sel = comps[SELECTOR_COMPONENT]
+    names = [o["metadata"]["name"] for o in sel["properties"]["objects"]
+             if o["kind"] == "IAMRoleSelector"]
+    assert "incident-bridge-eks" in names
+    # The selector component is the root: it waits on nothing, so no other component's
+    # health (an image that does not pull, say) can hold the entries back.
+    assert not sel.get("dependsOn")
+
+
+def _render_access(cluster, tmp_path):
+    vals = tmp_path / "a.json"
+    vals.write_text(json.dumps({"clusterName": cluster, "accountId": ACCOUNT, "roleName": "r"}))
+    return _docs(_helm("template", "aiops-agent-access",
+                       os.path.join(REPO, "workshop", "aiops-agent", "access-chart"),
+                       "-f", str(vals)))
+
+
+@needs_helm
+def test_spoke_entry_waits_for_the_selector_in_presync(tmp_path):
+    docs = _render_access("acme-dev", tmp_path)
+    (entry,) = _by_kind(docs, "AccessEntry")
+    # The entry itself is a normal sync resource: applied after every PreSync hook.
+    assert "argocd.argoproj.io/hook" not in (entry["metadata"].get("annotations") or {})
+    (job,) = _by_kind(docs, "Job")
+    ann = job["metadata"]["annotations"]
+    assert ann["argocd.argoproj.io/hook"] == "PreSync"
+    assert "HookSucceeded" in ann["argocd.argoproj.io/hook-delete-policy"]
+    assert job["metadata"]["namespace"] == entry["metadata"]["namespace"] == "aiops-agent"
+    script = job["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "kubectl get iamroleselectors.services.k8s.aws incident-bridge-eks" in script
+    # It waits for the selector, never for the aiops-agent Application's health.
+    assert "applications" not in script and "Healthy" not in script
+    (role,) = _by_kind(docs, "ClusterRole")
+    assert role["rules"] == [{"apiGroups": ["services.k8s.aws"], "resources": ["iamroleselectors"],
+                              "resourceNames": ["incident-bridge-eks"], "verbs": ["get"]}]
+    # The RBAC hooks sort before the Job.
+    waves = {d["kind"]: int(d["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"])
+             for d in docs if d["kind"] != "AccessEntry"}
+    assert max(waves[k] for k in ("ServiceAccount", "ClusterRole", "ClusterRoleBinding")) < waves["Job"]
+
+
+@needs_helm
+def test_spoke_gates_have_distinct_short_names(tmp_path):
+    long_a = "a-very-long-platform-prefix-spoke-development-eu-west-1"
+    long_b = "a-very-long-platform-prefix-spoke-development-eu-west-2"
+    names = set()
+    for i, c in enumerate(("acme-dev", "acme-prod", long_a, long_b)):
+        d = tmp_path / str(i)
+        d.mkdir()
+        docs = _render_access(c, d)
+        (job,) = _by_kind(docs, "Job")
+        (crb,) = _by_kind(docs, "ClusterRoleBinding")
+        assert len(job["metadata"]["name"]) <= 63
+        assert crb["metadata"]["name"] == job["metadata"]["name"]
+        names.add(job["metadata"]["name"])
+    assert len(names) == 4

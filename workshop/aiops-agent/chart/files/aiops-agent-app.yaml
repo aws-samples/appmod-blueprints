@@ -540,8 +540,15 @@ REPLACE_FORGE_WRITE_COMPONENT
   # entry's principal in place, so when the role name changes (e.g. an install moving from
   # the old aiops-agent-role, or from the agent's role to this one) KubeVela creates new
   # entries and deletes the old ones instead of leaving entries that point at a deleted role.
+  # dependsOn incident-bridge-selectors: the incident-bridge-eks IAMRoleSelector must exist
+  # before ACK first reconciles these entries (see the CARM wiring note below: the managed
+  # capability caches "no role selected" and would try eks:CreateAccessEntry with the
+  # capability role). It depends on that one component only, not on the app being Healthy.
+  # The spoke entries get the same guarantee from a PreSync gate in ../../access-chart.
   - name: agent-access
     type: k8s-objects
+    dependsOn:
+    - incident-bridge-selectors
     properties:
       objects:
       - apiVersion: eks.services.k8s.aws/v1alpha1
@@ -586,8 +593,9 @@ REPLACE_FORGE_WRITE_COMPONENT
   # ManageIRSARoles → cannot create SNS/SQS/AMP or a cluster-mgmt-* role).
   # These selectors MUST exist before any incident-bridge ACK CR's first reconcile:
   # the managed capability caches "no role selected" and does NOT re-evaluate a
-  # selector added later (it would need a delete/recreate). incident-bridge-aws
-  # therefore dependsOn this component. Once the selector is matched, a missing
+  # selector added later (it would need a delete/recreate). incident-bridge-aws and
+  # agent-access (the hub AccessEntry) therefore dependsOn this component; the spoke
+  # AccessEntries wait for incident-bridge-eks in a PreSync gate (../../access-chart). Once the selector is matched, a missing
   # target role is a normal Recoverable error that ACK retries — so role-creation
   # ordering inside incident-bridge-aws self-heals.
   - name: incident-bridge-selectors
