@@ -131,3 +131,13 @@ def test_output_is_small_compared_with_the_input():
     big += [app(f"bad-{i}", sync="Unknown", conditions=[{"message": "m" * 5000}]) for i in range(30)]
     out = json.dumps(status.summarize(big))
     assert len(out) < 0.02 * len(json.dumps(big))
+
+
+def test_succeeded_operation_message_is_not_used_as_explanation():
+    # seen live: an OutOfSync app whose last sync Succeeded ("successfully synced")
+    a = app("boot", sync="OutOfSync", phase="Succeeded")
+    a["status"]["operationState"]["message"] = "successfully synced (all tasks run)"
+    assert status.summarize([a])["applications"][0]["message"] == ""
+    b = app("fail", sync="OutOfSync", phase="Failed")
+    b["status"]["operationState"]["message"] = "one or more objects failed to apply"
+    assert status.summarize([b])["applications"][0]["message"] == "one or more objects failed to apply"

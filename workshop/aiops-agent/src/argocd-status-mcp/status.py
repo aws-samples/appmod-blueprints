@@ -32,9 +32,14 @@ def _first_message(status: dict) -> str:
     for cond in status.get("conditions") or []:
         if cond.get("message"):
             return _truncate(cond["message"])
-    for src in ((status.get("health") or {}), (status.get("operationState") or {})):
-        if src.get("message"):
-            return _truncate(src["message"])
+    health = status.get("health") or {}
+    if health.get("message"):
+        return _truncate(health["message"])
+    op = status.get("operationState") or {}
+    # A Succeeded operation's message ("successfully synced") explains nothing about a
+    # current OutOfSync; only a running/failed operation's message is useful.
+    if op.get("message") and op.get("phase") != "Succeeded":
+        return _truncate(op["message"])
     return ""
 
 
