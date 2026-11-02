@@ -410,6 +410,14 @@ data:
       spoke_prod_cluster_name: '{{ .Values.spoke_prod_cluster_name | default (printf "%s-spoke-prod" .Values.global.resource_prefix) }}'
       model_s3_bucket: '{{ .Values.model_s3_bucket }}'
       workshop_git_branch: '{{ .Values.workshop_git_branch }}'
+      addons_repo_url: '{{ .Values.addons_repo_url }}'
+      addons_repo_revision: '{{ .Values.addons_repo_revision }}'
+      fleet_repo_url: '{{ .Values.fleet_repo_url }}'
+      fleet_repo_revision: '{{ .Values.fleet_repo_revision }}'
+      platform_repo_url: '{{ .Values.platform_repo_url }}'
+      platform_repo_revision: '{{ .Values.platform_repo_revision }}'
+      workload_repo_url: '{{ .Values.workload_repo_url }}'
+      workload_repo_revision: '{{ .Values.workload_repo_revision }}'
 ---
 apiVersion: v1
 kind: Service

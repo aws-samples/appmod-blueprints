@@ -118,6 +118,20 @@ backstage:
     ingress_domain_name: '{{.metadata.annotations.ingress_domain_name}}'
     insecure: '{{default "false" .metadata.annotations.insecure}}'
     workshop_git_branch: '{{.metadata.annotations.addonsRepoRevision}}'
+    # Upstream repo coordinates of the platform, read from THIS (hub) cluster secret so the
+    # Backstage eks-cluster-template can write them EXPLICITLY into a new spoke's entry, the
+    # same values dev/prod get. fleet falls back to addons (single-repo installs); platform/
+    # workload are only set when the hub secret carries them, else "" and the EksclusterWithVpc
+    # RGD defaults apply (as for dev/prod). The overlay (fleet-config) is NOT per spoke: every
+    # spoke reads the hub's overlay_repo_* via the appsets, so nothing to write here.
+    addons_repo_url: '{{.metadata.annotations.addonsRepoURL}}'
+    addons_repo_revision: '{{.metadata.annotations.addonsRepoRevision}}'
+    fleet_repo_url: '{{ or (index .metadata.annotations "fleetRepoURL") .metadata.annotations.addonsRepoURL }}'
+    fleet_repo_revision: '{{ or (index .metadata.annotations "fleetRepoRevision") .metadata.annotations.addonsRepoRevision }}'
+    platform_repo_url: '{{ index .metadata.annotations "platformRepoURL" }}'
+    platform_repo_revision: '{{ index .metadata.annotations "platformRepoRevision" }}'
+    workload_repo_url: '{{ index .metadata.annotations "workloadRepoURL" }}'
+    workload_repo_revision: '{{ index .metadata.annotations "workloadRepoRevision" }}'
     gitlab_domain_name: '{{default "" .metadata.annotations.gitlab_domain_name}}'
     git_username: 'user1'
     working_repo: 'fleet-config'

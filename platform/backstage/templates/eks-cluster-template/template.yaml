@@ -211,17 +211,23 @@ spec:
               resourcePrefix: "${{ parameters.resourcePrefix }}"
               adminRoleName: "${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}"
               domainName: "${{ steps['fetchSystem'].output.entity.spec.ingress_hostname }}"
-              # Git URLs: an empty field is written as "" on purpose. The workshop GitLab only
-              # hosts fleet-config; the addons/platform code lives on the hub's own repos. The
-              # kro-clusters chart treats "" as "not set" and inherits the SAME repo URL and
-              # revision as the hub (addons/fleet from the hub cluster-secret annotations,
-              # platform/workload from the EksclusterWithVpc RGD defaults, as the dev/prod
-              # spokes do). Only a URL typed in the form overrides that.
+              # Git URLs/revisions: written EXPLICITLY, like dev/prod. A field left empty takes
+              # the platform's upstream coordinates from the system-info entity, which is fed
+              # from the hub cluster secret (addonsRepoURL/Revision, fleetRepoURL/Revision and,
+              # when set, platformRepo*/workloadRepo*). A URL typed in the form wins and then
+              # uses the hub revision. Anything still empty is written as "" and the
+              # kro-clusters chart skips it, so the EksclusterWithVpc RGD default applies (as for
+              # dev/prod). The overlay (event fleet-config) is not per spoke: every spoke reads
+              # the hub's overlay_repo_* through the appsets.
               gitops:
-                addonsRepoUrl: "${{ parameters.addonsRepoUrl or '' }}"
-                fleetRepoUrl: "${{ parameters.fleetRepoUrl or '' }}"
-                platformRepoUrl: "${{ parameters.platformRepoUrl or '' }}"
-                workloadRepoUrl: "${{ parameters.workloadRepoUrl or '' }}"
+                addonsRepoUrl: "${{ parameters.addonsRepoUrl or steps['fetchSystem'].output.entity.spec.addons_repo_url or '' }}"
+                addonsRepoRevision: "${{ steps['fetchSystem'].output.entity.spec.addons_repo_revision or '' }}"
+                fleetRepoUrl: "${{ parameters.fleetRepoUrl or steps['fetchSystem'].output.entity.spec.fleet_repo_url or '' }}"
+                fleetRepoRevision: "${{ steps['fetchSystem'].output.entity.spec.fleet_repo_revision or '' }}"
+                platformRepoUrl: "${{ parameters.platformRepoUrl or steps['fetchSystem'].output.entity.spec.platform_repo_url or '' }}"
+                platformRepoRevision: "${{ steps['fetchSystem'].output.entity.spec.platform_repo_revision or '' }}"
+                workloadRepoUrl: "${{ parameters.workloadRepoUrl or steps['fetchSystem'].output.entity.spec.workload_repo_url or '' }}"
+                workloadRepoRevision: "${{ steps['fetchSystem'].output.entity.spec.workload_repo_revision or '' }}"
               addons:
                 enable_argo_rollouts: "true"
                 enable_cert_manager: "true"

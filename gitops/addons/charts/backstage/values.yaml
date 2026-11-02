@@ -4,6 +4,16 @@ gitlab_domain_name: ""
 working_repo: ""
 ingress_domain_name: ""
 workshop_git_branch: "main"
+# Upstream repo coordinates exposed in the system-info entity (set from the hub cluster secret
+# by gitops/addons/registry/platform.yaml); empty = the eks-cluster-template leaves them to the chart/RGD defaults.
+addons_repo_url: ""
+addons_repo_revision: ""
+fleet_repo_url: ""
+fleet_repo_revision: ""
+platform_repo_url: ""
+platform_repo_revision: ""
+workload_repo_url: ""
+workload_repo_revision: ""
 # spoke_clusters: list of {name, url, token} entries.
 # Each entry registers a remote cluster in Backstage's Kubernetes plugin
 # (kubernetes.clusters), kubernetesIngestor.clusters, and the k8s-config.yaml
