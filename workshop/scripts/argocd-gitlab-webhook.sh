@@ -97,7 +97,8 @@ main() {
   printf 'PRIVATE-TOKEN: %s\n' "$GITLAB_TOKEN" > "$TMP/hdr"; chmod 600 "$TMP/hdr"
   local api="https://${GIT_DOMAIN}/api/v4" pid="${user}%2F${project}"
   local hooks
-  hooks=$(curl -fsS --max-time 20 -H "@$TMP/hdr" "$api/projects/$pid/hooks" 2>/dev/null) \
+  # per_page=100: GitLab defaults to 20, and a hook past the first page would be duplicated.
+  hooks=$(curl -fsS --max-time 20 -H "@$TMP/hdr" "$api/projects/$pid/hooks?per_page=100" 2>/dev/null) \
     || { warn "cannot list hooks on ${user}/${project}"; return 0; }
   echo "$hooks" | jq -e 'type=="array"' >/dev/null 2>&1 || { warn "unexpected hooks response"; return 0; }
 

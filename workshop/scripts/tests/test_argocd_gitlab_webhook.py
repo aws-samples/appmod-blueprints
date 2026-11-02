@@ -221,6 +221,7 @@ def test_rerun_updates_existing_hooks_without_duplicates(env):
     assert len(w) == 2 and all(x.startswith("PUT ") for x in w)
     assert any(x.split()[1].endswith("/hooks/7") for x in w)
     assert any(x.split()[1].endswith("/hooks/9") for x in w)
+    assert "/projects/user1%2Ffleet-config/hooks?per_page=100" in (mock / "calls.log").read_text()
 
 
 @pytest.mark.parametrize("extra", [
