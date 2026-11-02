@@ -95,6 +95,44 @@ def test_forge_is_derived_from_existing_values(tmp_path, domain, url, forge):
     assert BRIDGE_COMPONENTS <= set(comps)  # incident path in both variants
 
 
+# ---------------------------------------------------------------- explicit forge override
+@needs_helm
+@pytest.mark.parametrize("forge", ["", "auto", "AUTO"])
+def test_forge_auto_keeps_the_derivation(tmp_path, forge):
+    for vals, expected in ((WORKSHOP, True), (NO_FORGE, False)):
+        comps = components(render(tmp_path, {**vals, "forge": forge}))
+        assert ("gitlab-mcp" in comps) == expected
+
+
+@needs_helm
+def test_forge_none_wins_over_a_matching_gitlab_domain(tmp_path):
+    # GitHub/GHES install that sets gitlab_domain_name: the derivation alone says gitlab.
+    gh = {**WORKSHOP, "gitlabDomain": "git.example.invalid",
+          "fleetRepoUrl": "https://git.example.invalid/example-org/fleet-config.git"}
+    assert "gitlab-mcp" in components(render(tmp_path, gh))
+    out = render(tmp_path, {**gh, "forge": "none"})
+    comps = components(out)
+    assert "gitlab-mcp" not in comps and BRIDGE_COMPONENTS <= set(comps)
+    assert "GITLAB_" not in yaml.safe_dump(oam_app(out))
+
+
+@needs_helm
+def test_forge_gitlab_forces_gitlab_when_derivation_says_none(tmp_path):
+    vals = {**NO_FORGE, "gitlabDomain": GL, "forge": "gitlab"}  # fleet repo on github.com
+    comps = components(render(tmp_path, vals))
+    assert "gitlab-mcp" in comps and BRIDGE_COMPONENTS <= set(comps)
+
+
+@needs_helm
+def test_unknown_forge_fails_the_render(tmp_path):
+    f = tmp_path / "v.yaml"
+    f.write_text(yaml.safe_dump({**WORKSHOP, "forge": "bitbucket"}))
+    r = subprocess.run([HELM, "template", "aiops-agent", CHART, "-f", str(f)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0
+    assert "unknown forge" in r.stderr and "bitbucket" in r.stderr
+
+
 # ---------------------------------------------------------------- core + fragments
 def test_every_slot_is_in_the_core_once_and_has_a_fragment_per_forge():
     core = open(CORE, encoding="utf-8").read()
@@ -172,7 +210,9 @@ def test_no_forge_agent_is_ready_with_two_mcp_servers(tmp_path):
 def test_no_forge_prompt_is_read_only_text_remediation(tmp_path):
     sm = components(render(tmp_path, NO_FORGE))["aiops-agent"]["properties"]["systemMessage"]
     assert "strictly READ-ONLY" in sm
-    assert "minimal unified diff" in sm
+    assert "minimal unified diff" not in sm
+    assert "keys and values to change" in sm
+    assert "could not see the current content" in sm
     assert "`gitlab`" not in sm and "gitlab tool" not in sm.lower()
     assert "Idempotency" not in sm
     for kept in ("# Hard boundaries", "# GitOps remediation", "# Skills index"):

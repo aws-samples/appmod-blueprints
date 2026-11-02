@@ -11,14 +11,23 @@ Result:
             GHES, a self-managed GitLab that is not gitlab_domain_name). Fail-safe: the agent
             is rendered read-only, without a forge MCP (the incident path stays, without its
             GitLab dup-check).
+Optional chart value `forge` overrides the derivation: "" or "auto" (default) keeps it as
+described above; "gitlab" or "none" forces that variant (e.g. "none" for a GitHub/GHES install
+that sets gitlabDomain for another purpose). "gitlab" still needs gitlabDomain for the
+gitlab-mcp API host. Any other value fails the render.
 The host is the URL authority without scheme, user info or port (https://h/x, git@h:x).
 Usage: include "aiops-agent.forge" $
 */ -}}
 {{- define "aiops-agent.forge" -}}
+{{- $override := .Values.forge | default "" | toString | lower -}}
+{{- if not (has $override (list "" "auto" "gitlab" "none")) -}}
+{{- fail (printf "aiops-agent: unknown forge %q (allowed: \"\", \"auto\", \"gitlab\", \"none\")" $override) -}}
+{{- end -}}
 {{- $url := .Values.fleetRepoUrl | default "" | toString -}}
 {{- $host := lower (regexReplaceAll "^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:[^@/]*@)?([^/:]*).*$" $url "${1}") -}}
 {{- $gl := lower (.Values.gitlabDomain | default "" | toString) -}}
-{{- if and $gl (or (not $url) (eq $host $gl)) -}}gitlab{{- else -}}none{{- end -}}
+{{- if or (eq $override "gitlab") (eq $override "none") -}}{{- $override -}}
+{{- else if and $gl (or (not $url) (eq $host $gl)) -}}gitlab{{- else -}}none{{- end -}}
 {{- end -}}
 
 {{- /*

@@ -154,14 +154,20 @@ gitlabDomain: "gitlab.mycorp.internal"   # gitlab-mcp GITLAB_API_URL host
 
 `files/aiops-agent-app.yaml` is a **forge-neutral core**: each `REPLACE_FORGE_<SLOT>` token in
 it is filled from `files/forge/<forge>/<slot>.txt` before the other `REPLACE_*` tokens. The
-forge is **derived**, there is no parameter for it (`templates/_helpers.tpl`
-`aiops-agent.forge`), from two values the registry entry already injects:
+forge is **derived** by default (`templates/_helpers.tpl` `aiops-agent.forge`), from two values
+the registry entry already injects, unless the optional `forge` chart value overrides it:
 
 | `gitlabDomain` (`gitlab_domain_name`) | host of `fleetRepoUrl` | forge |
 |---|---|---|
 | set | equal to `gitlabDomain` (case-insensitive, port ignored), or no `fleetRepoUrl` | `gitlab` |
 | set | another host (e.g. `github.com`) | `none` |
 | empty | any | `none` |
+
+`forge` (chart value, default `""`): `""` or `auto` keeps the derivation above, byte for byte;
+`gitlab` or `none` forces that variant (e.g. `none` when `gitlab_domain_name` is set but the
+fleet repo is on GitHub/GHES; `gitlab` still needs `gitlabDomain` for the API host). Any other
+value fails the render. It is a chart value only (overlay values of the addon): no new
+`<hub>/config` key and no registry change.
 
 - **`gitlab`** (the workshop): `files/forge/gitlab/` holds the original text byte for byte, so
   the render is unchanged: `gitlab-mcp` + its `gitlab-mcp-token` ExternalSecret, the
@@ -224,4 +230,5 @@ RGD compiles to `Active`/`GraphAccepted`.
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
 | `gitlabDomain` | `gitlab_domain_name` | gitlab-mcp `GITLAB_API_URL` host (PAT via ESO); with `fleetRepoUrl` it selects the forge variant (see Forge variants) |
 | `fleetRepoUrl` | `overlay_repo_url`, else `fleetRepoURL` if ≠ `addonsRepoURL` | **derived** by the registry entry (same resolution as `gitops/bootstrap/addons.yaml` `$overlay`); the chart strips scheme+host and `.git` to get the MR project. Empty ⇒ bridge dup-check off (fail-open) |
+| `forge` | — | optional override of the derived forge: `""`/`auto` (default), `gitlab`, `none` |
 | `gitlabMrProject` | — | **deprecated** explicit MR-project override; wins over `fleetRepoUrl` when set |

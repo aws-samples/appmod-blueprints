@@ -78,9 +78,10 @@ def mr_project(out):
     return yaml.safe_load(lines[i + 1].strip().split(":", 1)[1])
 
 
-# The dup-check project only exists in the GitLab forge variant (incident-bridge is not
-# rendered without a forge, see test_aiops_agent_forge_variants.py), so these renders carry
-# the GitLab domain of the fleet repo, as the workshop does.
+# The dup-check project only exists in the GitLab forge variant (incident-bridge is rendered
+# in both variants, but without a forge its open-MR dup-check env is absent, see
+# test_aiops_agent_forge_variants.py), so these renders carry the GitLab domain of the
+# fleet repo, as the workshop does.
 GL = "gitlab.example.invalid"
 
 
