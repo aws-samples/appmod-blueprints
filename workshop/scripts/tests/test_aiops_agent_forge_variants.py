@@ -213,6 +213,9 @@ def test_no_forge_prompt_is_read_only_text_remediation(tmp_path):
     assert "minimal unified diff" not in sm
     assert "keys and values to change" in sm
     assert "could not see the current content" in sm
+    # The preserve rule cannot ask it to read the file or compare against it (no read tool).
+    assert "first READ its current content" not in sm and "CURRENT content on the" not in sm
+    assert "minimal diff" not in sm
     assert "`gitlab`" not in sm and "gitlab tool" not in sm.lower()
     assert "Idempotency" not in sm
     for kept in ("# Hard boundaries", "# GitOps remediation", "# Skills index"):
@@ -294,3 +297,5 @@ def test_gitlab_variant_keeps_the_full_toolset(tmp_path):
     es = [o for _, o in objects(comps) if o["kind"] == "ExternalSecret"]
     assert [o["metadata"]["name"] for o in es] == ["gitlab-mcp-token"]
     assert "`gitlab` tool" in agent["properties"]["systemMessage"]
+    # The preserve rule reads the file through the forge: kept verbatim in the GitLab variant.
+    assert "first READ its current content" in agent["properties"]["systemMessage"]

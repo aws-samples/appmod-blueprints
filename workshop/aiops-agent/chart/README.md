@@ -193,8 +193,8 @@ value fails the render. It is a chart value only (overlay values of the addon): 
 - **Both variants** render the incident path from the core (IAMRoleSelectors incl. the eks
   one the AccessEntries need, ACK IAM/SNS/SQS, `AmpIncident`, `incident-bridge`). It does not
   need GitLab: the bridge's open-MR dup-check and ceiling are fail-open when `GITLAB_*` is
-  unset (slot `BRIDGE_ENV`), and the agent answers an incident with a text diff in the none
-  variant. Keeping it in both variants is also what makes a variant switch safe: a GitLab ->
+  unset (slot `BRIDGE_ENV`), and the agent answers an incident with a text change (file path
+  plus keys and values) in the none variant. Keeping it in both variants is also what makes a variant switch safe: a GitLab ->
   none switch only GCs the `gitlab-mcp` objects (no finalizer-bearing ACK/kro CR). Removing the
   incident path in the same GC pass as its IAMRoleSelectors left the ACK CRs stuck in deletion,
   with their AWS resources still present.
