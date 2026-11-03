@@ -32,6 +32,7 @@ spec:
   accountId: {{ $accountId | quote }}
   region: {{ $region | quote }}
   clusterName: {{ $clusterName | quote }}
+  resourcePrefix: {{ $resourcePrefix | quote }}
 {{- if $iamNamePrefix }}
   iamNamePrefix: {{ $iamNamePrefix | quote }}
 {{- end }}

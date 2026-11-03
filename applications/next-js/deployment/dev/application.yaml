@@ -4,7 +4,8 @@ metadata:
   name: next-js-app
   namespace: team-nextjs
 spec:
-  image: public.ecr.aws/a0m0j3q7/modernengg/nextjs-ui:latest
+  # Multi-arch (amd64+arm64) build of applications/next-js at 60132533 (includes b44b1985 unoptimized product images)
+  image: public.ecr.aws/seb-demo/peeks/nextjs-ui@sha256:54c160e354f82993648c65f37bc81f91fe3c164a2b04828e9e000a2268b585fd
   image_name: next-js-app
   replicas: 2
   port: 8080
