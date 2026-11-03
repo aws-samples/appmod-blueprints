@@ -5,12 +5,18 @@
 # reference ("Stage defines no promotion steps"). Inline steps work reliably
 # with both auto-promotion (controller-initiated) and manual promotion.
 #
-# The publishVersion annotation update is intentionally omitted — Kargo v1.7.5
-# yaml-update does not support keys containing dots (neither bracket notation
-# nor dot-escaping works). The image field update alone is sufficient to trigger
-# reconciliation for both kro (spec.image) and kubevela (spec.components.0.properties.image)
-# paths. Both steps use continueOnError so the promotion succeeds regardless of
-# which manifest format is present.
+# Each stage updates the image for both formats: kro (spec.image) and kubevela
+# (spec.components.0.properties.image). The steps use continueOnError so the
+# promotion succeeds regardless of which manifest format is present.
+#
+# The prod stage also updates the KubeVela app.oam.dev/publishVersion annotation.
+# The PROD KubeVela manifest carries that annotation, and KubeVela only rolls out
+# a change to such an Application when the annotation changes, so an image-only
+# update would change Git without deploying anything. Kargo >= 1.11 yaml-update
+# accepts literal dots escaped with a backslash (app\.oam\.dev). This is a separate
+# step so a manifest without the annotation (kro) does not block the image update.
+# The dev stage does not need it: CI already sets publishVersion when it updates
+# the dev image.
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
@@ -117,6 +123,14 @@ spec:
           updates:
           - key: spec.components.0.properties.image
             value: ${{ vars.image }}:${{ imageFrom(vars.image).Tag }}
+      - uses: yaml-update
+        as: update-publishversion-kubevela
+        continueOnError: true
+        config:
+          path: ./src/deployment/${{ ctx.stage }}/application.yaml
+          updates:
+          - key: 'metadata.annotations.app\.oam\.dev/publishVersion'
+            value: ${{ imageFrom(vars.image).Tag }}
       - uses: git-commit
         config:
           path: ./src
