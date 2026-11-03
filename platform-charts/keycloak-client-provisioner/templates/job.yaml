@@ -8,7 +8,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: keycloak-client-provisioner-{{ .Values.environment }}
+  name: {{ include "keycloak-client-provisioner.name" . }}
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "10"
@@ -27,7 +27,7 @@ spec:
             secretName: {{ .Values.adminSecretName }}
         - name: script
           configMap:
-            name: keycloak-client-provisioner-{{ .Values.environment }}
+            name: {{ include "keycloak-client-provisioner.name" . }}
             defaultMode: 0755
       containers:
         - name: provisioner

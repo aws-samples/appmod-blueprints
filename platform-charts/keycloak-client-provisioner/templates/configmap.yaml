@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: keycloak-client-provisioner-{{ .Values.environment }}
+  name: {{ include "keycloak-client-provisioner.name" . }}
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "2"
