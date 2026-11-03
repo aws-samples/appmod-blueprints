@@ -126,7 +126,13 @@ REPLACE_FORGE_MCP_SERVERS
         \ How to use your tools\n- `skills` MCP: `list_skills()`, `get_skill(name)`, `search_skills(query)`,\
         \ `get_steering(name)` — your PEEKS/APEX knowledge base. Load the method on demand instead of\
         \ guessing.\n- `eks-read` MCP: read-only EKS/Kubernetes/AWS inspection (describe/list/get, logs,\
-        \ events). Never write.REPLACE_FORGE_PROMPT_TOOL_NOTES\n\n\n\
+        \ events). Never write. Its tools take NO filter, query, JMESPath, jq or output-projection\
+        \ argument: an argument that is not in the tool schema is silently ignored and the FULL object\
+        \ is returned, so never pass one and never assume a response was filtered. Only `list_k8s_resources`\
+        \ narrows server-side, through `label_selector` / `field_selector` (metadata fields; `status.*` is\
+        \ rejected for custom resources), and it returns names/labels/annotations only, no status. Each\
+        \ eks-read call runs in its own short-lived server process, so issue at most 4 eks-read calls in\
+        \ parallel in one turn; more at once can exhaust its memory and fail every call in the batch.REPLACE_FORGE_PROMPT_TOOL_NOTES\n\n\n\
         # Skills index (pull the full method with skills.get_skill(<name>))\n- **eks-best-practices**\
         \ — Advisory guidance for Amazon EKS architecture and configuration decisions — compute strategy,\
         \ networking, security, reliability, cost, autoscaling, observability, multi-tenancy, and upgrade\
@@ -312,11 +318,15 @@ REPLACE_FORGE_MCP_SERVERS
                   timeoutSeconds: 1
                 resources:
                   limits:
-                    # Bumped 512Mi -> 1Gi: eks-read-mcp (awslabs eks-mcp-server)
-                    # OOMKilled (exitCode 137) while listing deployments/pods across a
-                    # loaded hub (116 ArgoCD apps) during an autonomous RCA, surfacing to
-                    # the agent as "no healthy backends". 512Mi is too tight under load.
-                    memory: 1Gi
+                    # Memory scales with CONCURRENT tool calls, not with the size of the
+                    # answer: supergateway 4.x serves each MCP 2026-07-28 request (what the
+                    # agent sends through agentgateway) with a FRESH eks-mcp-server stdio
+                    # child (~100-125 MiB each, ~1 s cold start), even with --stateful, and
+                    # strands runs all tool calls of one model turn at once (no cap).
+                    # Measured: 4 parallel calls ~0.5 GiB, 12 ~1.25 GiB (PSS) plus the node
+                    # process. 1Gi was OOMKilled by 12 parallel Application reads; 2Gi
+                    # covers ~18 parallel calls. The prompt also asks for <= 4 in parallel.
+                    memory: 2Gi
                   requests:
                     cpu: 100m
                     memory: 512Mi
