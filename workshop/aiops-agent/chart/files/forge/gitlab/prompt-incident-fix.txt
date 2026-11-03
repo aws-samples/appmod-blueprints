@@ -1,0 +1,4 @@
+and, if a `gitlab` tool is\
+        \ available, open a Merge Request on a NEW branch — against the repo/path that OWNS the resource (read its ArgoCD Application source if unsure) — with that fix. **Never merge it. Never mutate\
+        \ the cluster directly.** End with the MR URL (or the proposed diff if no git tool) and an explicit\
+        \ \"awaiting human approval\" note.
