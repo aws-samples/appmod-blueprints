@@ -23,6 +23,7 @@ from .reapers import (
     iam,
     logs,
     rds,
+    residue,
     resweep,
     s3,
     secrets,
@@ -57,10 +58,11 @@ def main(region="us-west-2", prefix="peeks"):
     vpc.reap_guardduty_sgs(ctx)       # 15b. GuardDuty-managed SGs
     resweep.run(ctx)                  # 16.  Final re-sweep of recreatable resources + ENI gate
     finalnet.run(ctx)                 # 16b. Tag-driven final net: delete out-of-CFN prefix-tagged orphans
-    residue = verify.run(ctx)         # 17.  Completeness verification + re-drive
+    residue.reap(ctx)                 # 16c. App-layer residue net: PVC volumes, ECR <prefix>/*, DynamoDB, SSM, fluent-bit logs
+    leftovers = verify.run(ctx)       # 17.  Completeness verification + re-drive
 
     ctx.log("Extended sweep complete.")
 
-    if residue and os.environ.get("SWEEP_ALLOW_RESIDUE", "").lower() not in ("1", "true", "yes"):
+    if leftovers and os.environ.get("SWEEP_ALLOW_RESIDUE", "").lower() not in ("1", "true", "yes"):
         return 1
     return 0

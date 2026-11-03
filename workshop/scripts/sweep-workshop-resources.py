@@ -20,7 +20,9 @@ The heavy lifting lives in the `sweep/` package (issue #924, principle #2):
     sweep/resilience.py   tenacity-backed retry/poll + AWS error classification
     sweep/reapers/*.py    one module per service (EKS, CloudFront, ELB, RDS, AMP,
                           IAM, Secrets, ECR, S3, CloudWatch Logs, VPC, EIP, Grafana),
-                          plus resweep.py (§16) and verify.py (§17)
+                          plus resweep.py (§16), residue.py (§16c: PVC volumes, ECR
+                          <prefix>/*, DynamoDB, SSM, fluent-bit log groups; set
+                          SWEEP_DRY_RUN=1 to list without deleting) and verify.py (§17)
     sweep/orchestrator.py runs every reaper in the load-bearing original order
 
 Exit code: non-zero when owned resources remain (unless SWEEP_ALLOW_RESIDUE) so a
