@@ -1,4 +1,19 @@
 {{/*
+Release name "<cluster>-<suffix>" for sources that must be unique per cluster, as an
+Argo CD go-template string (it is evaluated by the ApplicationSet controller).
+Helm limits a release name to 53 characters. When "<cluster>-<suffix>" fits, the
+name is exactly "<cluster>-<suffix>" (unchanged for existing installs). Otherwise the
+cluster name is cut and a 6-character hash of the full cluster name is added, so the
+result is 53 characters at most and still unique per cluster:
+  "<cluster cut to 45-len(suffix)>-<sha256(cluster)[:6]>-<suffix>"
+Argument: the suffix (string).
+*/}}
+{{- define "application-sets.clusterReleaseName" -}}
+{{- $s := . -}}
+{{- printf "{{ if gt (len .name) %d }}{{ printf \"%%s-%%s-%s\" (trunc %d .name | trimSuffix \"-\") (sha256sum .name | trunc 6) }}{{ else }}{{ .name }}-%s{{ end }}" (sub 52 (len $s)) $s (sub 45 (len $s)) $s -}}
+{{- end }}
+
+{{/*
 Template to generate additional resources configuration.
 Iterates over $chartConfig.additionalResources as a list, rendering one
 additional source entry per item. Supports three resource types:
@@ -29,7 +44,7 @@ Each resource with helm config gets its own releaseName, valuesObject, and value
 {{- end }}
 {{- if and $resource.helm (ne (default "" $resource.type) "manifest") }}
   helm:
-    releaseName: '{{`{{ .name }}`}}-{{ $resource.helm.releaseName }}'
+    releaseName: '{{ include "application-sets.clusterReleaseName" $resource.helm.releaseName }}'
     {{- if $resource.helm.valuesObject }}
     valuesObject:
     {{- $resource.helm.valuesObject | toYaml | nindent 6 }}

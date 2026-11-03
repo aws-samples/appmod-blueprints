@@ -153,8 +153,13 @@ spec:
     {{- if $fleetUrl }}
     fleetRepoUrl: {{ $fleetUrl | quote }}
     {{- end }}
+    {{- /* An empty string means "not set" (the Backstage eks-cluster-template writes ""
+         for a Git URL left blank): skip it so the EksclusterWithVpc RGD default applies,
+         as for a key that is absent. */}}
     {{- range $k, $v := (omit $g "addonsRepoRevision" "fleetRepoRevision" "addonsRepoUrl" "fleetRepoUrl") }}
+    {{- if ne (toString $v) "" }}
     {{ $k }}: {{ $v | quote }}
+    {{- end }}
     {{- end }}
   {{- if $cluster.addons }}
   addons:

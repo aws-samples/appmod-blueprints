@@ -113,6 +113,9 @@ tasks:
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
       # The platform's guarded ApplicationSets reconcile these into live clusters.
       - task: set-overlay-repo
+      # Faster Argo CD refresh after a participant push: GitLab push webhooks to the managed
+      # Argo CD capability. Warn-only (never fails the install); polling stays the fallback.
+      - task: argocd-gitlab-webhook
       # Declare both spokes via Crossplane. Each lands in its environment (dev/prod)
       # and inherits that env's enabled-addons overlay — which enables crossplane +
       # kubevela (app deployment) on the spoke. The platform's guarded ApplicationSets
@@ -2170,6 +2173,42 @@ tasks:
   # the platform provides the PlatformCluster abstraction; the
   # workshop declares/materializes spokes into its own gitops repo.
   # ============================================================
+  argocd-gitlab-webhook:
+    desc: >-
+      Create the GitLab push webhooks (fleet-config) to the managed Argo CD capability's
+      /api/webhook (Applications) and /api/applicationset/webhook (ApplicationSet git
+      generators) receivers, so a push refreshes Argo CD in seconds instead of at the next
+      poll. The hook token is the webhook.gitlab.secret the capability already put in
+      argocd-webhook-creds-secret (reused, Secret not modified); only if that key is empty
+      is a token generated and set. ARGOCD_APPSET_WEBHOOK=0 opts out of the ApplicationSet
+      hook. Idempotent (hooks matched by URL). WARN ONLY: any failure prints a warning and
+      exits 0. Hub only. The token is never printed.
+    vars:
+      GIT_DOMAIN:
+        sh: |
+          if [ -f {{.REPO}}/private/git-domain ]; then
+            cat {{.REPO}}/private/git-domain
+          else
+            yq '.gitDomain // ""' {{.CONFIG_FILE}} 2>/dev/null | grep -v '^$' || true
+          fi
+      GITLAB_TOKEN:
+        sh: aws secretsmanager get-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --query 'SecretString' --output text 2>/dev/null | jq -r '.git_token // empty' 2>/dev/null | grep '^glpat-' || true
+    env:
+      HUB_CLUSTER_NAME: "{{.HUB_CLUSTER_NAME}}"
+      AWS_REGION: "{{.AWS_REGION}}"
+      GIT_DOMAIN: "{{.GIT_DOMAIN}}"
+      GIT_USERNAME: "{{.GIT_USERNAME}}"
+      GITLAB_TOKEN: "{{.GITLAB_TOKEN}}"
+    cmds:
+      - |
+        KC="{{.REPO}}/private/hub-kubeconfig"
+        mkdir -p "$(dirname "$KC")"
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}  ⚠ argocd webhook: cannot build hub kubeconfig (skipping; Argo CD keeps polling){{.C_RESET}}\n'
+          exit 0
+        fi
+        KUBECONFIG="$KC" bash {{.ROOT_DIR}}/scripts/argocd-gitlab-webhook.sh || true
+
   set-overlay-repo:
     desc: >-
       Wire overlay_repo_url -> GitLab fleet-config on the hub cluster config so

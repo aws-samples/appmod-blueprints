@@ -21,7 +21,7 @@ Uses enableAckPodIdentity as the key name for enabling pod identity.
 {{- end }}
 {{- end }}
   helm:
-    releaseName: '{{`{{ .name }}`}}-{{ $chartConfig.chartName | default $chartName }}'
+    releaseName: '{{ include "application-sets.clusterReleaseName" ($chartConfig.chartName | default $chartName) }}'
     valuesObject:
       create: '{{`{{default "`}}{{ $chartConfig.enableAckPodIdentity }}{{`" (index .metadata.annotations "ack_create")}}`}}'
       region: '{{`{{ .metadata.annotations.aws_region }}`}}'

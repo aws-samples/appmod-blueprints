@@ -5,9 +5,10 @@ description: >
   writes the contract JSON to AWS Secrets Manager so consumer charts can
   pull credentials via ExternalSecret.
 
-  Runs as an ArgoCD PostSync Job on the hub cluster, parameterised per
-  spoke environment. Replace this chart with your own IdP provisioner;
+  Runs as an Argo CD PostSync Job on the hub cluster, one release per
+  fleet member (objects named after the release, clients and Secrets
+  Manager paths scoped by environment). Replace this chart with your own IdP provisioner;
   the Secrets Manager path and contract schema are the fixed contract.
 type: application
-version: 0.1.2
+version: 0.1.3
 appVersion: "24.0"
