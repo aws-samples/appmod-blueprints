@@ -8,6 +8,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Never return an empty completion: EOS is blocked until this many new tokens
+MIN_NEW_TOKENS = 8
+
 @serve.deployment
 class TextGenerator:
     def __init__(self, model_id: str = None, max_length: int = 100):
@@ -39,14 +42,18 @@ class TextGenerator:
             
             start_time = time.time()
             
-            # Tokenize input
-            inputs = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
-            
-            # Generate response
+            # Tokenize input (keep the attention mask so generate() does not guess it)
+            encoded = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            inputs = encoded["input_ids"]
+
+            # Generate response. A chat-tuned model fed a raw prompt can sample
+            # the end-of-sequence token first, which gave an empty generated_text.
+            # min_new_tokens keeps EOS masked for the first few tokens.
             with torch.no_grad():
                 outputs = self.model.generate(
-                    inputs,
-                    max_length=inputs.shape[1] + max_tokens,
+                    **encoded,
+                    max_new_tokens=max_tokens,
+                    min_new_tokens=min(MIN_NEW_TOKENS, max_tokens),
                     num_return_sequences=1,
                     temperature=0.7,
                     do_sample=True,
