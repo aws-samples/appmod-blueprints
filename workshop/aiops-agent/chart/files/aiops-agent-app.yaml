@@ -3,7 +3,28 @@ kind: Application
 metadata:
   name: aiops-agent-hub
   namespace: aiops-agent
+  annotations:
+    # ▶TEARDOWN: KubeVela copies every Application annotation onto the resources it renders,
+    # including the Argo CD tracking-id Argo CD stamps on this Application. Argo CD then treats
+    # every KubeVela child (ACK CRs, IAMRoleSelectors, Crossplane claims and their XRs) as its
+    # own and deletes them all at once when the addon is disabled, racing KubeVela's GC
+    # (DeletionError "... not found" on the Crossplane XR) and removing the IAMRoleSelectors
+    # before the ACK resources they route. Filtering the key keeps Argo CD owning only this
+    # Application; KubeVela alone tears the children down, in the order set by the
+    # garbage-collect policy below.
+    filter.oam.dev/annotation-keys: argocd.argoproj.io/tracking-id
 spec:
+  # ▶TEARDOWN: delete components in REVERSE dependsOn order and wait for each dependent to be
+  # gone (finalizers included) before deleting what it depends on. Without it KubeVela deletes
+  # all components at once: the incident-bridge IAMRoleSelectors and provisioning role vanish
+  # while ACK still has to delete the AmpIncident children (SNS/SQS/AMP alertmanager) and the
+  # AccessEntries with them, so those CRs and the AmpIncident hang DELETING forever.
+  # Only affects deletion; apply and update GC are unchanged.
+  policies:
+  - name: teardown-order
+    type: garbage-collect
+    properties:
+      order: dependency
   components:
   - name: skills-mcp
     properties:
@@ -640,6 +661,10 @@ spec:
                 pathType: Prefix
   - name: agent-access
     type: k8s-objects
+    # ▶TEARDOWN/CARM: the AccessEntries are eks CRs routed by the incident-bridge-eks
+    # IAMRoleSelector, so they must be created after it and deleted before it.
+    dependsOn:
+    - incident-bridge-selectors
     properties:
       objects:
       - apiVersion: eks.services.k8s.aws/v1alpha1
