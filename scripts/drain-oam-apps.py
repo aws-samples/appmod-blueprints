@@ -34,7 +34,8 @@ with their AWS resources. Before the ApplicationSet is deleted, those selectors 
 only those: label app.oam.dev/name in the OAM apps found above) get a finalizer; they
 stay until no ACK resource is left in the app's namespaces (the app waits for the
 selectors to be deleted, so they cannot be held to the end of the app); the finalizer
-is removed then, or when the wait ends, whatever the outcome.
+is removed then, or when the wait ends, whatever the outcome. A re-run that finds no
+OAM app left still releases a hold an earlier run left behind.
 Best-effort, never fails the teardown (exit 0). Nothing else is deleted. --dry-run
 prints the plan and deletes nothing. The AWS sweep (sweep-app-resources.py) still
 backstops whatever this wait could not finish.
@@ -171,6 +172,16 @@ def hold_selectors(kubectl, oam, timeout):
     return held
 
 
+def leftover_holds(kubectl, timeout):
+    """Names of the IAMRoleSelectors that still carry HOLD, whatever their label. Only
+    this script adds HOLD, so one found when no OAM app is left was left by an earlier
+    run that stopped before its release (its Argo CD apps already gone)."""
+    sel = _json(lambda a: kubectl(a, timeout=timeout), ['get', SELECTORS])
+    return [(i.get('metadata') or {}).get('name', '')
+            for i in (sel or {}).get('items', [])
+            if HOLD in ((i.get('metadata') or {}).get('finalizers') or [])]
+
+
 def release_selectors(kubectl, names):
     """Remove the hold finalizer again (the selectors go if they were being deleted).
     Returns (released, still_held): a selector whose read or patch failed is still
@@ -270,6 +281,16 @@ def main(argv, kubectl=None, sleep=None, out=sys.stdout, clock=None):
     found = oam_argo_apps(apps, hub)
     if not found:
         say('  6c: no OAM (KubeVela) app on the hub: nothing to drain')
+        # An earlier run may have stopped after its Argo CD apps were deleted but before
+        # it released its hold: only this script adds HOLD, so release any left behind.
+        left_held = leftover_holds(raw, max(1, min(CALL_TIMEOUT, remaining())))
+        if left_held and dry:
+            say(f'  6c: [dry-run] would release IAMRoleSelector {" ".join(left_held)} '
+                f'(hold left by an earlier run)')
+        elif left_held:
+            done, still = release_selectors(raw, left_held)
+            say(f'  6c: released IAMRoleSelector {" ".join(done) or "-"} (hold left by an earlier run)'
+                + (f'; could not release {" ".join(still)} (finalizer {HOLD})' if still else ''))
         return 0
     names = [n for n, _, _ in found]
     owners = sorted({o for _, o, _ in found if o})

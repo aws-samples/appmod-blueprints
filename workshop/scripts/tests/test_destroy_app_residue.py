@@ -1116,6 +1116,37 @@ def test_a_rerun_releases_a_terminating_selector_that_still_has_the_hold():
     assert [e[1] for e in _selector_events(kc)] == ["incident-bridge-aws"], "only the release, no new hold"
 
 
+def test_a_rerun_with_no_oam_app_left_still_releases_an_earlier_hold(capsys):
+    # An earlier run stopped after its Argo CD apps went but before its release: the
+    # re-run finds no OAM app, yet must not leave the hold behind.
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl()
+    kc.argo = [a for a in kc.argo if a["metadata"]["name"] == "backstage-hb-hub"]
+    md = kc.selectors["incident-bridge-aws"]["metadata"]
+    md["finalizers"], md["deletionTimestamp"] = ["x.io/keep", HOLD], "now"
+    kc.selectors["other-install-sel"]["metadata"]["finalizers"] = ["x.io/keep"]
+    clk = FakeClock()
+    assert mod.main(["hb-hub", "1200"], kubectl=kc, sleep=clk.sleep, clock=clk) == 0
+    out = capsys.readouterr().out
+    assert "nothing to drain" in out
+    assert "released IAMRoleSelector incident-bridge-aws (hold left by an earlier run)" in out
+    assert md["finalizers"] == ["x.io/keep"]
+    assert [e[1] for e in _selector_events(kc)] == ["incident-bridge-aws"], \
+        "only the held selector is patched; a selector without the hold is not touched"
+    assert _mutations(kc) == [], "nothing else is deleted or patched"
+
+
+def test_a_rerun_with_no_oam_app_left_only_reports_the_hold_in_dry_run(capsys):
+    mod = load("drain-oam-apps.py")
+    kc = DrainKubectl()
+    kc.argo = []
+    kc.selectors["incident-bridge-aws"]["metadata"]["finalizers"] = [HOLD]
+    assert mod.main(["hb-hub", "1200", "--dry-run"], kubectl=kc) == 0
+    assert "would release IAMRoleSelector incident-bridge-aws" in capsys.readouterr().out
+    assert _selector_events(kc) == []
+    assert kc.selectors["incident-bridge-aws"]["metadata"]["finalizers"] == [HOLD]
+
+
 def test_a_selector_that_is_already_gone_counts_as_released():
     mod = load("drain-oam-apps.py")
     kc = DrainKubectl()
