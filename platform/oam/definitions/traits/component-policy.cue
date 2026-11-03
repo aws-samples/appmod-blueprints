@@ -1,3 +1,9 @@
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
+
 "component-iam-policy": {
 	"annotations": {}
 	"attributes": {
@@ -16,19 +22,51 @@
 
 template: {
 	context: {
-		appName: string
-		name:    string
+		appName:   string
+		name:      string
+		namespace: string
 	}
 	parameter: {
 		policy?: string
 		service: string
 	}
+
+	// The Policy object is named after its AWS name, so one name serves both:
+	//   <first 100 chars of "<cluster>-<appName>-<component>">-<8 hex>-iam-policy   (<= 128)
+	// where the 8 hex chars are sha256("<region>/<cluster>/<namespace>/<appName>/<component>").
+	// The AWS name is account-global: without the cluster and hash, the same app on two
+	// clusters of one account (dev and prod spokes, or two installs) shares one policy.
+	// The aws-service-identity trait (accessFor) computes the same name for its
+	// policyArnRef (keep the two in step). Renaming the object, rather than only the AWS
+	// name, matters on upgrade: a RolePolicyAttachment resolves policyArnRef once (and
+	// policy_arn cannot change in place), and an existing Policy object keeps reporting
+	// its old status.atProvider.arn until the provider has created the renamed policy.
+	// A new object has no ARN until its policy exists, so the reference waits for it.
+	_cluster:    "{{ .Values.global.clusterName }}"
+	_region:     "{{ .Values.global.awsRegion }}"
+	_policyKey:  _region + "/" + _cluster + "/" + context.namespace + "/" + context.appName + "/" + context.name
+	_policyHash: strings.SliceRunes(hex.Encode(sha256.Sum256(_policyKey)), 0, 8)
+	_policyBase: strings.ToLower(strings.Replace(_cluster, "_", "-", -1)) + "-" + context.appName + "-" + context.name
+	_policyHead: [if len(_policyBase) > 100 {strings.SliceRunes(_policyBase, 0, 100)}, _policyBase][0]
+	_policyName: _policyHead + "-" + _policyHash + "-iam-policy"
+	// Without a cluster name (a bare render of the chart): the object keeps today's name
+	// <appName>-<component>-iam-policy and there is no external-name, byte for byte.
+	_policyObjName: [if _cluster == "" {"\(context.appName)-\(context.name)-iam-policy"}, _policyName][0]
+	_policyAnnotations: {
+		if _cluster != "" {
+			annotations: "crossplane.io/external-name": _policyName
+		}
+	}
+
 	outputs: {
 		if parameter.policy == _|_ {
 			"\(context.appName)-\(context.name)-iam-policy": {
 				apiVersion: "iam.aws.upbound.io/v1beta1"
 				kind:       "Policy"
-				metadata: name: "\(context.appName)-\(context.name)-iam-policy"
+				metadata: {
+					name: _policyObjName
+					_policyAnnotations
+				}
 				spec: {
 					providerConfigRef: name: "default"
 					forProvider: policy: {"""
@@ -53,7 +91,10 @@ template: {
 			"\(context.appName)-\(context.name)-iam-policy": {
 				apiVersion: "iam.aws.upbound.io/v1beta1"
 				kind:       "Policy"
-				metadata: name: "\(context.appName)-\(context.name)-iam-policy"
+				metadata: {
+					name: _policyObjName
+					_policyAnnotations
+				}
 				spec: {
 					providerConfigRef: name: "default"
 					forProvider: policy:     "\(parameter.policy)"
