@@ -1541,6 +1541,9 @@ tasks:
       # 30+ min on some fresh accounts, far past the 10-min CRD wait below. Budget 60 min;
       # CREATE_FAILED / DELETING stop at once; the wait time is logged. A read error (older CLI without the API) three
       # times in a row falls through to the CRD wait, as before.
+      # Use `if ...; then ...; fi`, never a trailing `[ ... ] && ...`: under go-task's
+      # interpreter (mvdan/sh) with errexit, a false test that ends a case arm or a loop
+      # body aborts the whole cmd (bash does not, so a bash-only test can't see it).
       - |
         printf '{{.C_STEP}}▸ Waiting for the argocd EKS capability to be ACTIVE (max 3600s)...{{.C_RESET}}\n'
         E=0; MISS=0; ST=""
@@ -1551,10 +1554,12 @@ tasks:
             ACTIVE) break ;;
             CREATE_FAILED|DELETING|DELETE_FAILED)
               printf '{{.C_ERR}}ERROR: argocd capability is %s.{{.C_RESET}}\n' "$ST"; exit 1 ;;
-            "") MISS=$((MISS + 1)); [ "$MISS" -ge 3 ] && break ;;
+            "") MISS=$((MISS + 1)); if [ "$MISS" -ge 3 ]; then break; fi ;;
             *) MISS=0 ;;
           esac
-          [ $((E % 60)) -eq 0 ] && printf '{{.C_INFO}}  [%ss] argocd capability status: %s{{.C_RESET}}\n' "$E" "${ST:-unknown}"
+          if [ $((E % 60)) -eq 0 ]; then
+            printf '{{.C_INFO}}  [%ss] argocd capability status: %s{{.C_RESET}}\n' "$E" "${ST:-unknown}"
+          fi
           sleep 10; E=$((E + 10))
         done
         printf '{{.C_INFO}}  [%ss] argocd capability wait done (status=%s){{.C_RESET}}\n' "$E" "${ST:-unknown}"
