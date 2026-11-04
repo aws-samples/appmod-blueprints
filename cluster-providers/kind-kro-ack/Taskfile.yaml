@@ -1585,6 +1585,29 @@ tasks:
       # root-appset.yaml contains an ApplicationSet, so we must wait until applicationsets.argoproj.io
       # is registered and Established before applying, otherwise kubectl fails with
       # "no matches for kind ApplicationSet in version argoproj.io/v1alpha1".
+      # Wait for the argocd capability itself to be ACTIVE first: its creation alone has taken
+      # 30+ min on some fresh accounts, far past the 10-min CRD wait below. Budget 60 min;
+      # CREATE_FAILED / DELETING stop at once. A read error (older CLI without the API) three
+      # times in a row falls through to the CRD wait, as before.
+      - |
+        printf '{{.C_STEP}}▸ Waiting for the argocd EKS capability to be ACTIVE (max 3600s)...{{.C_RESET}}\n'
+        {{.MARK}} start "hub:argocd-capability ACTIVE"
+        E=0; MISS=0; ST=""
+        while [ "$E" -lt 3600 ]; do
+          ST=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd \
+                 --region {{.AWS_REGION}} --query 'capability.status' --output text 2>/dev/null) || ST=""
+          case "$ST" in
+            ACTIVE) break ;;
+            CREATE_FAILED|DELETING|DELETE_FAILED)
+              {{.MARK}} done "hub:argocd-capability ACTIVE" "status=$ST"
+              printf '{{.C_ERR}}ERROR: argocd capability is %s.{{.C_RESET}}\n' "$ST"; exit 1 ;;
+            "") MISS=$((MISS + 1)); [ "$MISS" -ge 3 ] && break ;;
+            *) MISS=0 ;;
+          esac
+          [ $((E % 60)) -eq 0 ] && printf '{{.C_INFO}}  [%ss] argocd capability status: %s{{.C_RESET}}\n' "$E" "${ST:-unknown}"
+          sleep 10; E=$((E + 10))
+        done
+        {{.MARK}} done "hub:argocd-capability ACTIVE" "status=${ST:-unknown}"
       - printf '{{.C_STEP}}▸ Waiting for ArgoCD capability CRDs (ApplicationSet/Application) to be served...{{.C_RESET}}\n'
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
