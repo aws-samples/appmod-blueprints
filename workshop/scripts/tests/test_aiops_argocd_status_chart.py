@@ -1,6 +1,7 @@
 """Hermetic `helm template` tests for the argocd-status-mcp component of the aiops-agent chart.
 
-Off (images.argocdStatusMcp.tag empty, the default): nothing rendered, the agent's
+Off (images.argocdStatusMcp.tag empty; the chart ships it pinned to v1, so the off cases
+set it empty explicitly): nothing rendered, the agent's
 mcpServers (= the OAP /ready set) and dependsOn are unchanged, and the prompt keeps the
 prompt-only per-Application sweep rule (#1230). On (tag set): the component with its own
 ServiceAccount, a namespaced read-only Role on applications.argoproj.io in argocd, the
@@ -24,6 +25,7 @@ SWEEP_NOTE = "(argocd-status MCP) FIRST, in ONE call"
 SWEEP_RULE = "- Assess ArgoCD health from the Application custom resources"
 BASE = ["--set-string", "accountId=111122223333", "--set", "clusterPrefix=peeks-x",
         "--set", "gitlabDomain=gitlab.example.com"]
+OFF = ["--set-string", "images.argocdStatusMcp.tag="]
 
 
 def render(*extra):
@@ -41,8 +43,15 @@ def objs(comp, kind):
     return [o for o in comp["properties"]["objects"] if o["kind"] == kind]
 
 
-def test_off_by_default_nothing_rendered():
-    comps, servers, agent = render()
+def test_shipped_default_is_on_with_the_v1_pin():
+    comps, servers, _ = render()
+    assert "argocd-status-mcp" in comps and "argocd-status-mcp" in servers
+    ctr = objs(comps["argocd-status-mcp"], "Deployment")[0]["spec"]["template"]["spec"]["containers"][0]
+    assert ctr["image"] == "public.ecr.aws/seb-demo/argocd-status-mcp:v1"
+
+
+def test_off_when_tag_empty_nothing_rendered():
+    comps, servers, agent = render(*OFF)
     assert "argocd-status-mcp" not in comps
     assert "argocd-status-mcp" not in servers
     assert "argocd-status-mcp" not in agent["dependsOn"]
@@ -53,12 +62,12 @@ def test_off_by_default_nothing_rendered():
 
 
 def test_global_image_tag_does_not_turn_it_on():
-    comps, servers, _ = render("--set", "imageTag=v9")
+    comps, servers, _ = render(*OFF, "--set", "imageTag=v9")
     assert "argocd-status-mcp" not in comps and "argocd-status-mcp" not in servers
 
 
 def test_on_adds_server_dependency_and_prompt_note():
-    off_comps, off_servers, _ = render()
+    off_comps, off_servers, _ = render(*OFF)
     comps, servers, agent = render("--set", "images.argocdStatusMcp.tag=v1")
     # the /ready set differs by exactly this server
     assert servers == off_servers + ["argocd-status-mcp"]

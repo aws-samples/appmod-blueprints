@@ -182,7 +182,8 @@ def test_no_forge_renders_no_gitlab_mcp_or_token_but_keeps_incident_path(tmp_pat
     out = render(tmp_path, NO_FORGE)
     comps = components(out)
     assert set(comps) == {"skills-mcp", "aiops-agent-memory", "aiops-agent", "eks-read-access",
-                          "eks-read-mcp", "chat-ui", "agent-access"} | BRIDGE_COMPONENTS
+                          "eks-read-mcp", "chat-ui", "agent-access",
+                          "argocd-status-mcp"} | BRIDGE_COMPONENTS  # status tool ships on (v1 pin)
     kinds = {(o["kind"], o["metadata"]["name"]) for _, o in objects(comps)}
     assert not [k for k in kinds if k[0] == "ExternalSecret"]
     assert not [k for k in kinds if "gitlab" in k[1]]
@@ -201,9 +202,11 @@ def test_no_forge_renders_no_gitlab_mcp_or_token_but_keeps_incident_path(tmp_pat
 def test_no_forge_agent_is_ready_with_two_mcp_servers(tmp_path):
     agent = components(render(tmp_path, NO_FORGE))["aiops-agent"]
     # OAP /ready requires every configured mcpServers entry: this list decides readiness.
-    assert [m["name"] for m in agent["properties"]["mcpServers"]] == ["skills-mcp",
-                                                                       "eks-read-mcp"]
-    assert agent["dependsOn"] == ["aiops-agent-memory", "skills-mcp", "eks-read-mcp"]
+    # argocd-status-mcp: the status tool ships on (images.argocdStatusMcp.tag pinned to v1).
+    assert [m["name"] for m in agent["properties"]["mcpServers"]] == [
+        "skills-mcp", "eks-read-mcp", "argocd-status-mcp"]
+    assert agent["dependsOn"] == ["aiops-agent-memory", "skills-mcp", "eks-read-mcp",
+                                  "argocd-status-mcp"]
 
 
 @needs_helm
@@ -291,7 +294,7 @@ def test_gitlab_variant_keeps_the_full_toolset(tmp_path):
     assert {"GITLAB_API_URL", "GITLAB_MR_PROJECT", "GITLAB_PERSONAL_ACCESS_TOKEN"} <= env
     agent = comps["aiops-agent"]
     assert [m["name"] for m in agent["properties"]["mcpServers"]] == [
-        "skills-mcp", "eks-read-mcp", "gitlab-mcp"]
+        "skills-mcp", "eks-read-mcp", "gitlab-mcp", "argocd-status-mcp"]
     assert "gitlab-mcp" in agent["dependsOn"]
     assert comps["agent-access"]["dependsOn"] == ["incident-bridge-selectors"]
     es = [o for _, o in objects(comps) if o["kind"] == "ExternalSecret"]
