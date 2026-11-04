@@ -114,3 +114,16 @@ def test_background_jobs_and_waiters_log_their_end():
         assert re.search(r"start ['\"]" + re.escape(name), text), name
         assert re.search(r"done ['\"]" + re.escape(name), text), name
     assert "dump" in _text(_cmds("workshop/Taskfile.yaml", "install"))
+
+
+def test_step_labels_are_plain_shell_words():
+    # A `step` marker is an unquoted shell command line: a label with ( ) ; & | < > $ `
+    # breaks the go-task shell parser and aborts the install (seen live).
+    bad = re.compile(r"[()&;|<>`$]")
+    for path in ("workshop/Taskfile.yaml", "cluster-providers/kind-kro-ack/Taskfile.yaml", "Taskfile.yaml"):
+        for line in open(os.path.join(REPO, path)):
+            m = re.search(r"install-timing\.sh\"? step \S+ (.*?)'?$|\{\{\.MARK\}\} step \S+ (.*?)'$", line.strip())
+            if m:
+                label = (m.group(1) or m.group(2) or "").replace("{{.PROVIDER_SPOKE}}", "x").replace(
+                    "{{.RESOURCE_PREFIX}}", "x").replace("{{.PROVIDER}}", "x")
+                assert not bad.search(label), (path, line.strip())
