@@ -61,7 +61,7 @@ def test_o1_spokes_declared_between_platform_phases():
 
 def test_o1_fallback_keeps_full_platform_install():
     block = WS[_index(WS, "task install:hub")]
-    assert "task --list-all" in block and "task install\n" in block
+    assert "install:hub:" in block and "Taskfile.yaml" in block and "task install\n" in block
 
 
 def test_o2_cloudfront_attach_backgrounded_and_joined_before_idc():
