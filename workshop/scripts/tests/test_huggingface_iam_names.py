@@ -67,3 +67,16 @@ def test_rgd_prefixes_only_the_iam_names():
     # Kubernetes object names are unchanged
     assert policy["metadata"]["name"] == "${schema.metadata.name}-s3-policy"
     assert role["metadata"]["name"] == "${schema.metadata.name}-role"
+
+
+def test_role_is_tagged_with_the_stack_prefix_for_the_teardown_sweep():
+    # The default-prefix role keeps its legacy unprefixed name, so the sweep finds it by tag.
+    for prefix in ("peeks", "kfr"):
+        for spec in _render(prefix).values():
+            assert spec["resourcePrefix"] == prefix
+    schema, nodes = _rgd_nodes()
+    assert schema["resourcePrefix"] == 'string | default="peeks"'
+    assert nodes["iamRole"]["spec"]["tags"] == [
+        {"key": "platform.gitops.io/prefix", "value": "${schema.spec.resourcePrefix}"}]
+    # names are unchanged: no live role is renamed
+    assert nodes["iamRole"]["spec"]["name"] == "${schema.spec.iamNamePrefix}${schema.metadata.name}-role"
