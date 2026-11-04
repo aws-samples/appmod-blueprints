@@ -8,7 +8,17 @@ the residue list. The orchestrator turns a non-empty residue into a non-zero exi
 """
 
 from ..context import name_is_ours
+from . import residue as residue_reaper
 from .logs import log_group_is_ours
+
+
+def _tagged_arn_exists(ctx, arn):
+    """Re-check a tag-index hit for the types whose tag index lags (EBS volumes). Anything
+    else, or a check that cannot decide, counts as existing: the gate never hides residue."""
+    parts = arn.split(":", 5)
+    if len(parts) == 6 and parts[2] == "ec2" and parts[5].startswith("volume/"):
+        return residue_reaper.still_exists(ctx, "ebs", parts[5].split("/", 1)[1])
+    return True
 
 
 def run(ctx):
@@ -146,9 +156,28 @@ def run(ctx):
             for arn, tags in ctx.discover_by_tag():
                 if any(k.startswith("aws:cloudformation:") for k in tags):
                     continue  # Layer 1, CloudFormation reaps it after the sweep
+                # The tagging API is eventually consistent: it can still return a resource
+                # that is already deleted (a PVC volume, R-27). Look it up before counting it.
+                if not _tagged_arn_exists(ctx, arn):
+                    log(f"  [verify] {arn} no longer exists (stale tag index), not counted")
+                    continue
                 _add(f"tagged:{arn}")
         except Exception as e:
             log(f"  [verify] {ctx.OWNER_PREFIX_TAG} gate: {e}")
+
+        # 17e. App-layer families that carry no ownership tag the gate can enumerate
+        #      (R-27): PVC volumes, ECR <prefix>/*, DynamoDB <prefix>-*, SSM /<prefix>/*,
+        #      fluent-bit log groups. Same listers as the §16c net; each hit is looked up
+        #      again so a resource deleted since the listing is not reported.
+        found, errors = residue_reaper.enumerate_families(ctx)
+        for fam, err in errors.items():
+            log(f"  [verify] cannot list {fam} residue ({err})")
+        for fam, idents in found.items():
+            for ident in idents:
+                if residue_reaper.still_exists(ctx, fam, ident):
+                    _add(f"{fam}:{ident}")
+                else:
+                    log(f"  [verify] {fam}:{ident} no longer exists, not counted")
         if residue:
             log(f"DESTROY INCOMPLETE — {len(residue)} owned resource(s) still present:")
             for r in residue:
