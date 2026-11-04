@@ -84,7 +84,7 @@ def test_all_healthy_returns_empty_list_but_full_total():
 
 def test_row_is_compact_and_message_truncated():
     row = [x for x in status.summarize(FLEET)["applications"] if x["name"] == "b-unknown"][0]
-    assert set(row) == {"name", "cluster", "sync", "health", "operation", "message"}
+    assert set(row) == {"name", "cluster", "namespace", "sync", "health", "operation", "message"}
     assert len(row["message"]) <= status.MESSAGE_MAX
     assert row["message"].startswith("cluster not found")
     assert row["cluster"] == "spoke-staging"
@@ -141,3 +141,14 @@ def test_succeeded_operation_message_is_not_used_as_explanation():
     b = app("fail", sync="OutOfSync", phase="Failed")
     b["status"]["operationState"]["message"] = "one or more objects failed to apply"
     assert status.summarize([b])["applications"][0]["message"] == "one or more objects failed to apply"
+
+
+def test_row_carries_destination_namespace():
+    r = status.summarize(FLEET)
+    assert all(row["namespace"] == "default" for row in r["applications"])
+
+
+def test_default_row_cap_is_50():
+    many = [app(f"x{i:03d}", sync="OutOfSync") for i in range(120)]
+    r = status.summarize(many)
+    assert len(r["applications"]) == 50 and r["truncated"] == 70 and r["unhealthy"] == 120

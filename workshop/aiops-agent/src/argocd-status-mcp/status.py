@@ -60,6 +60,7 @@ def app_row(app: dict) -> dict:
     return {
         "name": (app.get("metadata") or {}).get("name", ""),
         "cluster": _cluster(app),
+        "namespace": ((app.get("spec") or {}).get("destination") or {}).get("namespace") or "",
         "sync": (status.get("sync") or {}).get("status") or "Unknown",
         "health": (status.get("health") or {}).get("status") or "Unknown",
         "operation": (status.get("operationState") or {}).get("phase") or "",
@@ -75,7 +76,7 @@ def summarize(
     apps: Iterable[dict],
     cluster: str | None = None,
     addon: str | None = None,
-    max_rows: int = 200,
+    max_rows: int = 50,
 ) -> dict:
     """Return totals plus one compact row per Application that is not Synced+Healthy.
 

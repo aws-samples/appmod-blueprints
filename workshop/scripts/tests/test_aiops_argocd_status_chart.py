@@ -20,6 +20,8 @@ yaml = pytest.importorskip("yaml")
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 CHART = os.path.join(REPO, "workshop", "aiops-agent", "chart")
 TOOL = "argocd_unhealthy_applications"
+SWEEP_NOTE = "(argocd-status MCP) FIRST, in ONE call"
+SWEEP_RULE = "- Assess ArgoCD health from the Application custom resources"
 BASE = ["--set-string", "accountId=111122223333", "--set", "clusterPrefix=peeks-x",
         "--set", "gitlabDomain=gitlab.example.com"]
 
@@ -45,7 +47,7 @@ def test_off_by_default_nothing_rendered():
     assert "argocd-status-mcp" not in servers
     assert "argocd-status-mcp" not in agent["dependsOn"]
     msg = agent["properties"]["systemMessage"]
-    assert TOOL not in msg
+    assert TOOL not in msg and SWEEP_NOTE not in msg
     # prompt-only fallback (#1230) is kept
     assert "never answer that nothing is unhealthy from a sample" in msg
 
@@ -64,6 +66,10 @@ def test_on_adds_server_dependency_and_prompt_note():
     assert set(comps) - set(off_comps) == {"argocd-status-mcp"}
     msg = agent["properties"]["systemMessage"]
     assert TOOL in msg and "never answer that nothing is unhealthy from a sample" in msg
+    # the sweep rule itself defers to the tool: the note sits right before it, once
+    assert msg.count(SWEEP_NOTE) == 1
+    assert msg.index(SWEEP_NOTE) < msg.index(SWEEP_RULE)
+    assert msg.index(SWEEP_RULE) - msg.index(SWEEP_NOTE) < 400
 
 
 def test_on_component_shape():

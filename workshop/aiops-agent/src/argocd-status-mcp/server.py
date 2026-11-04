@@ -31,7 +31,8 @@ from status import summarize
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 NAMESPACE = os.getenv("ARGOCD_NAMESPACE", "argocd")
 PAGE = int(os.getenv("PAGE_SIZE", "50"))
-MAX_ROWS = int(os.getenv("MAX_ROWS", "200"))
+# 50 rows x ~300 chars stays near 4k tokens even on a badly broken hub; counts stay exact.
+MAX_ROWS = int(os.getenv("MAX_ROWS", "50"))
 TIMEOUT = float(os.getenv("K8S_TIMEOUT_SECONDS", "20"))
 
 mcp = FastMCP("argocd-status")
@@ -78,9 +79,10 @@ def argocd_unhealthy_applications(cluster: str | None = None, addon: str | None 
       total        Applications read (after the optional filters) — your coverage;
       unhealthy    how many are not Synced+Healthy;
       by_state     counts per "<sync>/<health>";
-      applications one row per not-green app: name, cluster (destination), sync,
-                   health, operation (operationState.phase), message (first condition,
-                   else health/operation message, max 200 chars);
+      applications one row per not-green app: name, cluster and namespace
+                   (destination), sync, health, operation (operationState.phase),
+                   message (first condition, else health/operation message, max 200
+                   chars); at most 50 rows by default, sorted by cluster then name;
       truncated    rows left out past the row cap (counts stay exact).
     A missing status counts as Unknown. Optional filters: `cluster` (destination
     name/server or the clusterName label) and `addon` (the addon/addonName label).
