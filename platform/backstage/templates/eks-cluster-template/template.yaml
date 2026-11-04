@@ -5,7 +5,7 @@ metadata:
   title: Setup EKS Environment
   description: Creates an Amazon EKS Auto Mode cluster with kro and ACK, and registers it with the Argo CD hub for GitOps deployment.
 spec:
-  owner: user:guest
+  owner: guest
   type: service
   parameters:
     - title: EKS Cluster Information
@@ -291,7 +291,7 @@ spec:
                 title: Git Repo URL
                 icon: github
           spec:
-            owner: user:guest
+            owner: guest
             lifecycle: experimental
             type: service
     - id: createGitlabMergeRequest
