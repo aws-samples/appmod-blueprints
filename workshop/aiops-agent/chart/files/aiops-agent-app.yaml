@@ -76,6 +76,7 @@ spec:
     - skills-mcp
     - eks-read-mcp
 REPLACE_FORGE_AGENT_DEPENDS
+REPLACE_ARGOCD_STATUS_AGENT_DEPENDS
     inputs:
     - from: memory-id
       parameterKey: properties.memory.config.memoryId
@@ -89,6 +90,7 @@ REPLACE_FORGE_AGENT_DEPENDS
       - name: skills-mcp
       - name: eks-read-mcp
 REPLACE_FORGE_MCP_SERVERS
+REPLACE_ARGOCD_STATUS_MCP_SERVERS
       modelConfig:
         llmGatewayUrl: http://bifrost.bifrost.svc.cluster.local:8080/v1
         modelId: claude-sonnet
@@ -143,7 +145,7 @@ REPLACE_FORGE_MCP_SERVERS
         - Your cluster access is **READ-ONLY** (enforced by RBAC on your ServiceAccount). Do not attempt\
         \ writes; if a task needs a change, express it as a GitOps PR/MR, never as a live `kubectl apply`/`delete`.\n\
         REPLACE_FORGE_PROMPT_WRITE_RULE\n\
-        - Prefer tools over training data. When a skill exists for the task, load and follow it.\n\n# EKS Managed Capabilities — operational facts (do NOT misread as incidents)\n- ArgoCD, kro and ACK run as EKS MANAGED CAPABILITIES: their control planes live in the EKS-managed plane, NOT as pods in the cluster. The `argocd` namespace having ZERO pods is EXPECTED and NORMAL — never report it as an issue, a missing control plane, an RBAC problem, or a connectivity failure. There is likewise NO kro controller pod and NO ACK controller pod in the cluster; do not hunt for or flag their absence.\n- Assess ArgoCD health from the Application custom resources, not pods: listing `applications.argoproj.io` in the `argocd` namespace returns metadata only (no status), and status cannot be filtered server-side (field selectors on `status.*` are rejected), so read each Application to get `.status.health.status` and `.status.sync.status`. A hub can have well over 100 Applications. State how many you read out of how many exist, and never answer that nothing is unhealthy from a sample; offer to continue or to narrow by the `clusterName`, `addon` or `environment` labels. Report every app that is NOT both Synced and Healthy: sync OutOfSync or Unknown (an Unknown sync with a ComparisonError condition is a real problem), or health Degraded, Missing, Progressing, Suspended or Unknown.\n- The argo-workflows / argo-rollouts / argo-events ADD-ONS *do* run as pods — those are different from the ArgoCD capability; don't conflate them. A read tool returning 0 pods for a capability-backed component is a property of managed capabilities, not a connection error.\n\n#\
+        - Prefer tools over training data. When a skill exists for the task, load and follow it.\n\n# EKS Managed Capabilities — operational facts (do NOT misread as incidents)\n- ArgoCD, kro and ACK run as EKS MANAGED CAPABILITIES: their control planes live in the EKS-managed plane, NOT as pods in the cluster. The `argocd` namespace having ZERO pods is EXPECTED and NORMAL — never report it as an issue, a missing control plane, an RBAC problem, or a connectivity failure. There is likewise NO kro controller pod and NO ACK controller pod in the cluster; do not hunt for or flag their absence.REPLACE_ARGOCD_STATUS_PROMPT_SWEEP\n- Assess ArgoCD health from the Application custom resources, not pods: listing `applications.argoproj.io` in the `argocd` namespace returns metadata only (no status), and status cannot be filtered server-side (field selectors on `status.*` are rejected), so read each Application to get `.status.health.status` and `.status.sync.status`. A hub can have well over 100 Applications. State how many you read out of how many exist, and never answer that nothing is unhealthy from a sample; offer to continue or to narrow by the `clusterName`, `addon` or `environment` labels. Report every app that is NOT both Synced and Healthy: sync OutOfSync or Unknown (an Unknown sync with a ComparisonError condition is a real problem), or health Degraded, Missing, Progressing, Suspended or Unknown.\n- The argo-workflows / argo-rollouts / argo-events ADD-ONS *do* run as pods — those are different from the ArgoCD capability; don't conflate them. A read tool returning 0 pods for a capability-backed component is a property of managed capabilities, not a connection error.\n\n#\
         \ How to use your tools\n- `skills` MCP: `list_skills()`, `get_skill(name)`, `search_skills(query)`,\
         \ `get_steering(name)` — your PEEKS/APEX knowledge base. Load the method on demand instead of\
         \ guessing.\n- `eks-read` MCP: read-only EKS/Kubernetes/AWS inspection (describe/list/get, logs,\
@@ -153,7 +155,7 @@ REPLACE_FORGE_MCP_SERVERS
         \ narrows server-side, through `label_selector` / `field_selector` (metadata fields; `status.*` is\
         \ rejected for custom resources), and it returns names/labels/annotations only, no status. Each\
         \ eks-read call runs in its own short-lived server process, so issue at most 4 eks-read calls in\
-        \ parallel in one turn; more at once can exhaust its memory and fail every call in the batch.REPLACE_FORGE_PROMPT_TOOL_NOTES\n\n\n\
+        \ parallel in one turn; more at once can exhaust its memory and fail every call in the batch.REPLACE_FORGE_PROMPT_TOOL_NOTESREPLACE_ARGOCD_STATUS_PROMPT_TOOL_NOTES\n\n\n\
         # Skills index (pull the full method with skills.get_skill(<name>))\n- **eks-best-practices**\
         \ — Advisory guidance for Amazon EKS architecture and configuration decisions — compute strategy,\
         \ networking, security, reliability, cost, autoscaling, observability, multi-tenancy, and upgrade\
@@ -459,6 +461,7 @@ REPLACE_FORGE_MCP_SERVERS
                 policy:
                   matchExpressions:
                   - 'mcp.tool.name in ["list_k8s_resources", "list_api_versions", "manage_k8s_resource", "get_pod_logs", "get_k8s_events", "get_cloudwatch_logs", "get_cloudwatch_metrics", "get_eks_metrics_guidance", "get_eks_insights", "get_eks_vpc_config", "get_policies_for_role", "search_eks_troubleshoot_guide"]'
+REPLACE_ARGOCD_STATUS_COMPONENT
 REPLACE_FORGE_WRITE_COMPONENT
   - name: chat-ui
     type: k8s-objects
