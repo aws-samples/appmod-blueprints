@@ -29,8 +29,9 @@ images:
   # an install never waits on an unpublished image and the agent keeps the prompt-only sweep
   # rule. Set the tag (published by buildspec-public-ecr.yaml ARGOCD_STATUS_MCP_TAG, or your
   # own registry via buildspec.yaml) to turn the tool on.
-  # TODO(pre-publish): pin a published tag here once the image is on the public registry.
-  argocdStatusMcp: { registry: "", tag: "" }
+  # v1 = PR #1243 head b241c904: one call for the fleet question, rows with destination
+  # namespace, 50-row cap. Published to public.ecr.aws/seb-demo/argocd-status-mcp:v1.
+  argocdStatusMcp: { registry: "", tag: "v1" }
 
 # Per-deployment values — NOT hardcoded: injected from cluster-secret annotations by the
 # registry entry (the fleet-secret/ESO stamps resource_prefix, aws_account_id, aws_region,
