@@ -127,8 +127,10 @@ means reading every Application (about 33 KB each: 183 Applications were 6.1 MB 
 (`src/argocd-status-mcp`, FastMCP) has ONE tool, `argocd_unhealthy_applications(cluster?,
 addon?)`: it lists every Application in `argocd` page by page and returns `total`,
 `unhealthy`, counts per `<sync>/<health>` and one compact row per not-green app (name,
-destination cluster, sync, health, `operationState.phase`, first condition message ≤ 200
-chars). A missing status counts as `Unknown`.
+destination cluster and namespace, sync, health, `operationState.phase`, first condition
+message ≤ 200 chars), at most 50 rows (`MAX_ROWS`; counts and `truncated` stay exact). A
+missing status counts as `Unknown`. On 183 Applications with one unhealthy, the answer is
+about 350 characters; with every app broken it stays near 4.5k tokens.
 
 - Identity: its own ServiceAccount and in-cluster token; no IAM, Pod Identity or AccessEntry.
 - RBAC: a Role in `argocd` with `get`/`list` on `applications.argoproj.io` only (no secrets,
@@ -141,7 +143,8 @@ chars). A missing status counts as `Unknown`.
   this feature. It does NOT inherit `imageTag`, so an install never waits on an unpublished
   image. Set the tag (image built by `buildspec*.yaml`) to turn it on: the agent then waits
   for it like any other MCP server, and its prompt prefers this tool for Application
-  health/sync questions.
+  health/sync questions: a note placed right before the per-Application sweep rule tells it
+  to call the tool first, in one call, and to keep the per-Application read as the fallback.
 
 ## gitlab-mcp (agent write path)
 
