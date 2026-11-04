@@ -885,11 +885,6 @@ tasks:
       # cluster. root-appset.yaml contains an ApplicationSet, so we must wait until
       # applicationsets.argoproj.io is registered and Established before applying, otherwise kubectl
       # fails with "no matches for kind ApplicationSet in version argoproj.io/v1alpha1".
-      # First wait for the capability itself to be ACTIVE (ceiling ARGOCD_CAPABILITY_WAIT_SECS,
-      # default 1800 s), so a slow or failed capability is reported as such instead of as a
-      # 10 min CRD timeout.
-      - printf '{{.C_STEP}}▸ Waiting for the ArgoCD EKS capability to be ACTIVE...{{.C_RESET}}\n'
-      - bash "{{.ROOT_DIR}}/scripts/wait-argocd-capability.sh" "{{.HUB_CLUSTER_NAME}}" "{{.AWS_REGION}}" "{{.CAPABILITY_NAME}}"
       - printf '{{.C_STEP}}▸ Waiting for ArgoCD capability CRDs (ApplicationSet/Application) to be served...{{.C_RESET}}\n'
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
