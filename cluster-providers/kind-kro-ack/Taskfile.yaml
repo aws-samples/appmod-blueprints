@@ -27,6 +27,8 @@ env:
 
 vars:
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
+  # Uniform start/done timing markers (stdout + /tmp/install-timing.log); never fails.
+  MARK: 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh"'
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   HUB_CLUSTER_NAME:
     sh: yq '.hub.clusterName' {{.CONFIG_FILE}}
@@ -209,13 +211,21 @@ tasks:
       INSTALL_START:
         sh: date +%s
     cmds:
+      - '{{.MARK}} step hub kind:create'
       - task: kind:create
+      - '{{.MARK}} step hub kind:kubeconfig'
       - task: kind:kubeconfig
+      - '{{.MARK}} step hub credentials:setup'
       - task: credentials:setup
+      - '{{.MARK}} step hub ack:install'
       - task: ack:install
+      - '{{.MARK}} step hub kro:install'
       - task: kro:install
+      - '{{.MARK}} step hub kro:install-eso-bootstrap'
       - task: kro:install-eso-bootstrap
+      - '{{.MARK}} step hub kro:install-cluster-secret-store-bootstrap'
       - task: kro:install-cluster-secret-store-bootstrap
+      - '{{.MARK}} step hub kro:apply-rgds'
       - task: kro:apply-rgds
       # Create the cluster-mgmt IAM roles BEFORE hub:claim.
       # The eksclusterwithvpc RGD immediately tries to create ACK-managed IAM resources
@@ -225,16 +235,25 @@ tasks:
       # KRO stays stuck reporting:
       #   "cniMetricsHelperPolicy.status.ackResourceMetadata.arn: no such key: arn (data pending)"
       # Running this before hub:claim ensures the roles exist when ACK first processes the CRs.
+      - '{{.MARK}} step hub hub:create-mgmt-roles'
       - task: hub:create-mgmt-roles
+      - '{{.MARK}} step hub hub:claim'
       - task: hub:claim
+      - '{{.MARK}} step hub hub:wait-for-eks'
       - task: hub:wait-for-eks
+      - '{{.MARK}} step hub hub:authorize-ide-access'
       - task: hub:authorize-ide-access
       # Re-check credentials before hub:seed — if this is a resumed install
       # the kind cluster credentials may have expired (STS tokens last ~1h).
+      - '{{.MARK}} step hub credentials:check-and-refresh'
       - task: credentials:check-and-refresh
+      - '{{.MARK}} step hub hub:wait-for-gitlab-init'
       - task: hub:wait-for-gitlab-init
+      - '{{.MARK}} step hub hub:seed'
       - task: hub:seed
+      - '{{.MARK}} step hub hub:force-eso-refresh'
       - task: hub:force-eso-refresh
+      - '{{.MARK}} step hub hub:wait-for-sync'
       - task: hub:wait-for-sync
         vars: { MAX_OUTOFSYNC: "20" }
       # Bootstrap the hub Crossplane providers' credentials (create provider-aws-iam/eks pod
@@ -244,6 +263,7 @@ tasks:
       # bootstrap can't self-heal an already-running hub. crossplane-base only declares the
       # downstream provider PIAs (createIdentity:false for iam/eks) — nothing else seeds the first
       # credential, so without this the whole crossplane chain stays credential-less.
+      - '{{.MARK}} step hub hub:bootstrap-crossplane-identity'
       - task: hub:bootstrap-crossplane-identity
       # Enable spokes EARLY (kro-ack-specific optimization): KRO-provisioned spokes are
       # created by the hub's ACK EKS capability, NOT the Crossplane providers, so spoke
@@ -253,6 +273,7 @@ tasks:
       # workshop, or OAP) declare spokes against their own repo / via PlatformCluster
       # claims. See workshop/ for the reference consumer.
       # Crossplane provider bring-up for the hub's OWN observability (AMP/RDS/Grafana).
+      - '{{.MARK}} step hub install:post-sync'
       - task: install:post-sync
       # ── Perf lever #1 (kro-ack): NEITHER the global full-sync wait NOR the
       #    Crossplane-providers wait is a precondition for the consumer declaring
@@ -268,11 +289,15 @@ tasks:
       #    force-sync remediation) and return "hub bootstrap complete" immediately →
       #    the consumer declares spokes ~25 min sooner so spoke provisioning (~21 min)
       #    overlaps the hub settle instead of queuing after it.
+      - '{{.MARK}} step hub install:hub-settle-bg'
       - task: install:hub-settle-bg
+      - '{{.MARK}} step hub install:finalize'
       - task: install:finalize
       # Seed inline now if AMP/AMG became ACTIVE but the keys are still missing (e.g. the
       # background seed gave up); otherwise print the pending action. Never fails install.
+      - '{{.MARK}} step hub observability:converge'
       - task: observability:converge
+      - '{{.MARK}} step hub -'
       - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
   install:post-sync:
@@ -316,8 +341,10 @@ tasks:
         # creates its redirect target, so the long AMP poll could never survive. The outer
         # `sh` exits at once, orphaning the subshell so it outlives go-task. REPO_ROOT is
         # passed via the environment so paths with spaces/quotes are safe.
+        # The subshell brackets the seed with timing markers so its real end is logged
+        # (start/done + rc in /tmp/install-timing.log), not just its launch.
         REPO_ROOT="$REPO_ROOT" \
-          sh -c '( cd "$REPO_ROOT" && exec task kind-kro-ack:secrets-manager:seed-observability ) >> /tmp/observability-seed-{{.HUB_CLUSTER_NAME}}.log 2>&1 < /dev/null &'
+          sh -c '( cd "$REPO_ROOT" && T=scripts/install-timing.sh; sh "$T" start "observability-seed (bg)"; task kind-kro-ack:secrets-manager:seed-observability; rc=$?; sh "$T" done "observability-seed (bg)" "rc=$rc"; exit $rc ) >> /tmp/observability-seed-{{.HUB_CLUSTER_NAME}}.log 2>&1 < /dev/null &'
         printf '{{.C_INFO}}  Observability seeding running in background (log: /tmp/observability-seed-{{.HUB_CLUSTER_NAME}}.log){{.C_RESET}}\n'
 
   install:finalize:
@@ -329,10 +356,15 @@ tasks:
     # FIRST — and because finalize is foreground, this also gives idc:configure its
     # Keycloak head start before the hub returns.
     cmds:
+      - '{{.MARK}} step finalize hub:wait-for-keycloak'
       - task: hub:wait-for-keycloak
+      - '{{.MARK}} step finalize hub:restart-langfuse'
       - task: hub:restart-langfuse
+      - '{{.MARK}} step finalize hub:restart-backstage'
       - task: hub:restart-backstage
+      - '{{.MARK}} step finalize urls'
       - task: urls
+      - '{{.MARK}} step finalize -'
 
   # ── Perf lever #1 (background settle launcher) ──────────────────────────────
   # Launch hub:settle in the background so `task install` returns immediately after
@@ -1668,6 +1700,7 @@ tasks:
         # Mark running up front (review #1053 §6) so a re-run's `urls` doesn't show the
         # PREVIOUS run's terminal status while this one is still in flight.
         printf 'running\n' > "$STATUS"
+        {{.MARK}} start "hub:settle (bg)"
         if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}} --kubeconfig "$KC" >/dev/null; then
           printf '✗ hub:settle: could not update kubeconfig for {{.HUB_CLUSTER_NAME}} — aborting settle (addons still converge via ArgoCD auto-sync; review #1053 §6).\n'
           printf 'kubeconfig-error\n' > "$STATUS"
@@ -1730,6 +1763,7 @@ tasks:
         else
           printf '  all Crossplane providers Healthy.\n'
         fi
+        {{.MARK}} done "hub:settle (bg)" "status=$(cat "$STATUS" 2>/dev/null)"
         # $KC is removed by the EXIT trap set above.
 
   hub:wait-for-sync:
