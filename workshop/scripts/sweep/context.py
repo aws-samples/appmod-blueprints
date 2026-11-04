@@ -15,6 +15,8 @@ VPC). This preserves the exact behavior of the pre-split script.
 
 from __future__ import annotations
 
+import os
+
 import boto3
 
 # PR #914 stamps every workshop-owned EKS cluster and VPC with this ownership tag,
@@ -63,6 +65,10 @@ class SweepContext:
         self.grafana = boto3.client("grafana", region_name=region)
         self.ecr = boto3.client("ecr", region_name=region)
         self.s3 = boto3.client("s3")
+        self.ddb = boto3.client("dynamodb", region_name=region)
+        self.ssm = boto3.client("ssm", region_name=region)
+        # SWEEP_DRY_RUN=1: the §16c residue net lists what it would delete and deletes nothing.
+        self.dry_run = os.environ.get("SWEEP_DRY_RUN", "").lower() in ("1", "true", "yes")
         # Cross-service enumeration by the ownership tag (platform.gitops.io/prefix).
         # Regional client: the tagging API is per-region (global resources like CloudFront
         # won't appear — those stay with their dedicated ordered reaper).
