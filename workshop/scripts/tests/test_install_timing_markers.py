@@ -43,11 +43,12 @@ def test_step_closes_previous_and_carries_duration(tmp_path):
     _run(tmp_path, "step", "w", "join prewarm Phase A")  # multi-word names
     _run(tmp_path, "step", "w", "-")
     lines = _log(tmp_path)
-    assert [ln.split(" @")[0].split("] ", 1)[1] for ln in lines] == [
+    got = [re.sub(r"took=\d+s", "took=Ns", ln.split(" @")[0].split("] ", 1)[1]) for ln in lines]
+    assert got == [
         "hub:wait-for-eks start",
-        "hub:wait-for-eks done took=0s",
+        "hub:wait-for-eks done took=Ns",
         "join prewarm Phase A start",
-        "join prewarm Phase A done took=0s",
+        "join prewarm Phase A done took=Ns",
     ]
     assert all(LINE.match(ln) for ln in lines), lines
 
@@ -113,3 +114,16 @@ def test_background_jobs_and_waiters_log_their_end():
         assert re.search(r"start ['\"]" + re.escape(name), text), name
         assert re.search(r"done ['\"]" + re.escape(name), text), name
     assert "dump" in _text(_cmds("workshop/Taskfile.yaml", "install"))
+
+
+def test_step_labels_are_plain_shell_words():
+    # A `step` marker is an unquoted shell command line: a label with ( ) ; & | < > $ `
+    # breaks the go-task shell parser and aborts the install (seen live).
+    bad = re.compile(r"[()&;|<>`$]")
+    for path in ("workshop/Taskfile.yaml", "cluster-providers/kind-kro-ack/Taskfile.yaml", "Taskfile.yaml"):
+        for line in open(os.path.join(REPO, path)):
+            m = re.search(r"install-timing\.sh\"? step \S+ (.*?)'?$|\{\{\.MARK\}\} step \S+ (.*?)'$", line.strip())
+            if m:
+                label = (m.group(1) or m.group(2) or "").replace("{{.PROVIDER_SPOKE}}", "x").replace(
+                    "{{.RESOURCE_PREFIX}}", "x").replace("{{.PROVIDER}}", "x")
+                assert not bad.search(label), (path, line.strip())

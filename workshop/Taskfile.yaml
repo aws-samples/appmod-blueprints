@@ -242,7 +242,7 @@ tasks:
       # [perf O3] Gate the install on spokes ACTIVE (+ their Argo CD cluster secrets)
       # only. The ~10 min of spoke addon sync then runs in the background, next to the
       # tail below, instead of blocking it.
-      - '{{.MARK}} step workshop wait-for-spokes (ACTIVE)'
+      - '{{.MARK}} step workshop wait-for-spokes:active'
       - task: wait-for-spokes
         vars: { SPOKE_APPS: "false" }
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes (ACTIVE) done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
