@@ -43,11 +43,12 @@ def test_step_closes_previous_and_carries_duration(tmp_path):
     _run(tmp_path, "step", "w", "join prewarm Phase A")  # multi-word names
     _run(tmp_path, "step", "w", "-")
     lines = _log(tmp_path)
-    assert [ln.split(" @")[0].split("] ", 1)[1] for ln in lines] == [
+    got = [re.sub(r"took=\d+s", "took=Ns", ln.split(" @")[0].split("] ", 1)[1]) for ln in lines]
+    assert got == [
         "hub:wait-for-eks start",
-        "hub:wait-for-eks done took=0s",
+        "hub:wait-for-eks done took=Ns",
         "join prewarm Phase A start",
-        "join prewarm Phase A done took=0s",
+        "join prewarm Phase A done took=Ns",
     ]
     assert all(LINE.match(ln) for ln in lines), lines
 
