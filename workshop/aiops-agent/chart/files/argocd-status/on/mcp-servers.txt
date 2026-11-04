@@ -1,0 +1,3 @@
+      # ▶ARGOCD-STATUS: read-only "which Applications are not Synced+Healthy" tool
+      # (argocd-status-mcp component). Rendered only when its image tag is pinned.
+      - name: argocd-status-mcp

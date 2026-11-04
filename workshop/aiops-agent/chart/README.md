@@ -6,6 +6,7 @@ Strands agent stack as **one** KubeVela `Application`:
 - `aiops-agent` (agent) — the agent brain (Bedrock via bifrost, 2-mode)
 - `skills-mcp` — PEEKS `.kiro/skills` served to the agent
 - `eks-read-mcp` — read-only EKS MCP (supergateway → awslabs eks-mcp-server)
+- `argocd-status-mcp` — read-only "Argo CD Applications not Synced+Healthy" tool; rendered only when `images.argocdStatusMcp.tag` is set (see below)
 - `chat-ui` — Keycloak-gated A2A chat front-end
 - `aiops-agent-memory` — AgentCore session memory (Crossplane `bedrockagentcore` provider)
 - incident bridge (SNS/SQS + AMP `AlertManagerDefinition` + `incident-bridge`) — autonomous-remediation demo
@@ -241,7 +242,7 @@ RGD compiles to `Active`/`GraphAccepted`.
 |---|---|---|
 | `imageRegistry` | `aiops_agent_image_registry` | default `public.ecr.aws/seb-demo` |
 | `imageTag` | `aiops_agent_image_tag` | default `v1` |
-| `images.<component>.{registry,tag}` | `aiops_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images) |
+| `images.<component>.{registry,tag}` | `aiops_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images). Exception: `argocdStatusMcp.tag` empty ⇒ that component is off (no inheritance) |
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
