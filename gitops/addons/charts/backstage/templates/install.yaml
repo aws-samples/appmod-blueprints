@@ -318,6 +318,13 @@ data:
           instances:
             - name: in-cluster
               url: https://{{ .Values.argocd_hostname }}
+              # The EKS managed Argo CD capability has no local login (POST /api/v1/session
+              # fails), so the admin/password pair below cannot authenticate against it and
+              # the entity Argo CD card gets no app (find/name 404). The plugin uses `token`
+              # first when it is non-empty: an API token minted by
+              # scripts/backstage-argocd-token.sh into <cluster>/secrets argocd_api_token.
+              # Empty (not minted) falls back to username/password, as before.
+              token: ${ARGOCD_AUTH_TOKEN}
               username: admin
               password: ${ARGOCD_ADMIN_PASSWORD}
     argoWorkflows:
@@ -606,6 +613,11 @@ spec:
                 optional: true
             - secretRef:
                 name: argocd-credentials
+            - secretRef:
+                # ARGOCD_AUTH_TOKEN for the Argo CD card (see argocd-secrets.yaml). Optional so
+                # Backstage still boots before the ExternalSecret has synced.
+                name: argocd-api-token
+                optional: true
           image: {{ .Values.backstage_image }}
           name: backstage
           ports:
