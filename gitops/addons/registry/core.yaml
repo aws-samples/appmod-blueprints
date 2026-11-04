@@ -1,5 +1,5 @@
 # Core infrastructure addons
-# Wave ordering: -1 (external-secrets, default-storage-class) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi, pod-identities) → 5 (lbc, ingress-class-alb, external-dns)
+# Wave ordering: -1 (external-secrets, default-storage-class, network-policy-enforcement) → 0 (argocd, metrics-server) → 2 (cert-manager) → 4 (efs-csi, pod-identities) → 5 (lbc, ingress-class-alb, external-dns)
 # NOTE: pod-identities runs at wave 4 (after crossplane-base at wave 3, defined
 # in platform.yaml) because it creates iam.aws.upbound.io / eks.aws.upbound.io
 # resources whose CRDs are registered by the Crossplane providers. A PreSync
@@ -19,6 +19,32 @@ default-storage-class:
       - key: enable_default_storage_class
         operator: In
         values: ['true']
+
+# NetworkPolicy enforcement is part of the CLUSTER CONTRACT (issue #1239): every
+# platform cluster (hub and spokes, any provider) enforces NetworkPolicy, so a policy
+# such as OAP's per-agent gateway-only rule is never silently inert. On by default:
+#   - `environment Exists` scopes it to platform-registered clusters (every fleet
+#     cluster secret carries `environment`), not a bare in-cluster/bootstrap secret;
+#   - `enable_network_policy_enforcement NotIn [false]` selects every such cluster
+#     WITHOUT an enabled-addons entry; only an explicit 'false' label opts one out.
+# Standard mode: pods that no NetworkPolicy selects stay open, so this changes nothing
+# for workloads that ship no policy. See the chart template for the single-owner
+# reasoning when a vpc-cni EKS add-on also exists on the cluster.
+network-policy-enforcement:
+  namespace: kube-system
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/network-policy-enforcement'
+  annotationsAppSet:
+    # Before the addons whose NetworkPolicies depend on it.
+    argocd.argoproj.io/sync-wave: '-1'
+  goTemplateOptions:
+    - "missingkey=zero"
+  selector:
+    matchExpressions:
+      - key: environment
+        operator: Exists
+      - key: enable_network_policy_enforcement
+        operator: NotIn
+        values: ['false']
 
 env_config:
   namespace: crossplane-system
