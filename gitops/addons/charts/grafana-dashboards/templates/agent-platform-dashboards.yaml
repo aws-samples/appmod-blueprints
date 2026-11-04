@@ -29,7 +29,7 @@ spec:
           "type": "stat",
           "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
           "datasource": {"uid": "prometheus"},
-          "targets": [{"expr": "count(kube_pod_info{namespace=~\"mcp-.*\"})", "legendFormat": "MCP Servers"}]
+          "targets": [{"expr": "count(kube_pod_info{pod=~\".*mcp.*\"})", "legendFormat": "MCP Servers"}]
         },
         {
           "title": "Bifrost Ready",
@@ -51,7 +51,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"bifrost|otel|agentgateway-system|langfuse|jaeger|mcp-.*|default\"}[5m])) by (namespace)", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}"}
+            {"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"bifrost|otel|agentgateway-system|langfuse|jaeger|agent-core-infra|aiops-agent|default\"}[5m])) by (namespace)", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}"}
           ]
         },
         {
@@ -60,7 +60,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "sum(container_memory_working_set_bytes{namespace=~\"bifrost|otel|agentgateway-system|langfuse|jaeger|mcp-.*|default\"}) by (namespace) / 1024 / 1024", "legendFormat": "{{ "{{" }}namespace{{ "}}" }} (MiB)"}
+            {"expr": "sum(container_memory_working_set_bytes{namespace=~\"bifrost|otel|agentgateway-system|langfuse|jaeger|agent-core-infra|aiops-agent|default\"}) by (namespace) / 1024 / 1024", "legendFormat": "{{ "{{" }}namespace{{ "}}" }} (MiB)"}
           ]
         },
         {
@@ -69,7 +69,7 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"bifrost|otel|agentgateway-system|langfuse|mcp-.*|default\"}[1h]) > 0", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}pod{{ "}}" }}"}
+            {"expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"bifrost|otel|agentgateway-system|langfuse|agent-core-infra|aiops-agent|default\"}[1h]) > 0", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}pod{{ "}}" }}"}
           ]
         },
         {
@@ -78,7 +78,7 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
           "datasource": {"uid": "prometheus"},
           "targets": [
-            {"expr": "kube_replicaset_status_ready_replicas{namespace=~\"default|mcp-.*|bifrost\"}", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}replicaset{{ "}}" }}"}
+            {"expr": "kube_replicaset_status_ready_replicas{namespace=~\"default|agent-core-infra|aiops-agent|bifrost\"}", "legendFormat": "{{ "{{" }}namespace{{ "}}" }}/{{ "{{" }}replicaset{{ "}}" }}"}
           ]
         }
       ]
