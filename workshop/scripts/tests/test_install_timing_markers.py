@@ -82,7 +82,8 @@ def _text(cmds):
 
 def test_every_install_task_call_has_a_step_marker():
     for path, task, lane in [
-        ("cluster-providers/kind-kro-ack/Taskfile.yaml", "install", "hub"),
+        ("cluster-providers/kind-kro-ack/Taskfile.yaml", "install:hub", "hub"),
+        ("cluster-providers/kind-kro-ack/Taskfile.yaml", "install:complete", "hub"),
         ("cluster-providers/kind-kro-ack/Taskfile.yaml", "install:finalize", "finalize"),
         ("workshop/Taskfile.yaml", "install", "workshop"),
     ]:
@@ -101,7 +102,8 @@ def test_background_jobs_and_waiters_log_their_end():
     for text, name in [
         (wk, "gitlab:init-ec2 (bg)"),
         (wk, "prewarm Phase A (bg)"),
-        (wk, "prewarm-pathA-frontend (bg)"),
+        (wk, "spoke apps + frontend prewarm (bg)"),
+        (wk, "cloudfront:attach (bg)"),
         (wk, "observability re-seed (bg)"),
         (wk, "wait-for-spokes: $S ACTIVE"),
         (wk, "wait-for-spokes: spoke apps"),

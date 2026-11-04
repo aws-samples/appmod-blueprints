@@ -104,29 +104,57 @@ tasks:
         printf '{{.C_INFO}}  gitlab:init-ec2 started in background (PID=%s, log: /tmp/gitlab-init.log){{.C_RESET}}\n' "$(cat /tmp/gitlab-init.pid)"
       # Platform install as a black box (OAP model): prepare the platform artifact
       # (in-place parent repo, or a pinned clone into .platform), then run its own
-      # `task install`. The platform provisions the hub + addons only.
+      # install. The platform provisions the hub + addons only.
+      #
+      # [perf O1] The platform install runs in its two phases (install:hub, then
+      # install:complete) so the spokes are declared right after the hub bootstrap,
+      # BEFORE the Keycloak-dependent finalize (~13 min) and the CloudFront attach
+      # (~8.5 min): the ~17-min spoke EKS creation then overlaps them instead of
+      # queuing after them. A platform without install:hub (an older pinned
+      # platform.ref) gets the previous order: full `task install`, then the spokes.
       - '{{.MARK}} step workshop platform:prepare'
       - task: platform:prepare
-      - '{{.MARK}} step workshop platform-install'
-      - 'cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install'
-      - 'printf "{{.C_INFO}}  [%ds] platform install done ({{.PLATFORM_DIR}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
-      # Point CloudFront at the ALB the load balancer controller just created. Must happen
-      # HERE: the ALB does not exist until the platform install above, and post-install ->
-      # idc:configure reaches Keycloak *through* the CloudFront domain, so the origin has to
-      # be attached before then or IDC federation cannot work. Doing it now also lets the
-      # distribution propagate while spokes and ray run.
-      - '{{.MARK}} step workshop cloudfront:attach'
-      - task: cloudfront:attach
+      - '{{.MARK}} step workshop platform install:hub'
+      - |
+        rm -f /tmp/workshop-platform-split
+        if (cd {{.PLATFORM_DIR}} && task --list-all 2>/dev/null | grep -q '^\* install:hub:'); then
+          touch /tmp/workshop-platform-split
+          cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:hub
+        else
+          printf '{{.C_INFO}}  platform has no install:hub — running the full platform install first.{{.C_RESET}}\n'
+          cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install
+        fi
+      - 'printf "{{.C_INFO}}  [%ds] platform install:hub done ({{.PLATFORM_DIR}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # [perf O2] Point CloudFront at the platform ALB IN THE BACKGROUND. The attach
+      # script waits for the ALB itself (the load balancer controller creates it a few
+      # minutes after the hub addons sync) and then for the VPC origin to deploy
+      # (~9 min); nothing before IDC needs it. post-install -> idc:configure reaches
+      # Keycloak *through* the CloudFront domain, so it is joined right before IDC
+      # (and re-run inline there if the background run failed: it is idempotent).
+      # Same detach pattern as prewarm Phase A: the wrapper writes its OS PID and rc.
+      - |
+        rm -f /tmp/cloudfront-attach.pid /tmp/cloudfront-attach.rc
+        sh -c 'echo $$ > /tmp/cloudfront-attach.pid; {{.MARK}} start "cloudfront:attach (bg)"; task cloudfront:attach; rc=$?; echo $rc > /tmp/cloudfront-attach.rc; {{.MARK}} done "cloudfront:attach (bg)" "rc=$rc"' \
+          > /tmp/cloudfront-attach.log 2>&1 < /dev/null &
+        printf '{{.C_INFO}}  cloudfront:attach started in background (log: /tmp/cloudfront-attach.log){{.C_RESET}}\n'
       # Wire the GitLab fleet-config overlay to the hub, then declare spokes into it.
-      # The platform's guarded ApplicationSets reconcile these into live clusters.
+      # The overlay goes first (steering Issue #10): it also moves the hub's
+      # backstage/gitlab/keycloak to the -peeks nodepools, and the spoke entries are
+      # read from fleet-config only once the overlay points there. set-overlay-repo
+      # waits for fleet-config with `git ls-remote` (GitLab init joined in install:hub).
       - '{{.MARK}} step workshop set-overlay-repo'
       - task: set-overlay-repo
       # Faster Argo CD refresh after a participant push: GitLab push webhooks to the managed
       # Argo CD capability. Warn-only (never fails the install); polling stays the fallback.
       - '{{.MARK}} step workshop argocd-gitlab-webhook'
       - task: argocd-gitlab-webhook
-      # Declare both spokes via Crossplane. Each lands in its environment (dev/prod)
+      # Credential gate before declaring spokes (steering Issue #8): the spokes inherit
+      # crossplane + kubevela addons, and the hub Crossplane providers must have their
+      # Pod Identity credentials first. install:hub only backgrounds this settle, so
+      # wait for it here (force-syncs crossplane-base after 5 min; non-fatal, max 15 min).
+      - '{{.MARK}} step workshop hub:wait-for-providers'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-providers'
+      # Declare both spokes. Each lands in its environment (dev/prod)
       # and inherits that env's enabled-addons overlay — which enables crossplane +
       # kubevela (app deployment) on the spoke. The platform's guarded ApplicationSets
       # reconcile the cluster + addons.
@@ -137,6 +165,30 @@ tasks:
       - task: spokes:enable-{{.PROVIDER_SPOKE}}
         vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
       - 'printf "{{.C_INFO}}  [%ds] spokes declared (spoke-dev + spoke-prod via {{.PROVIDER_SPOKE}}){{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Platform phase 2: wait for Keycloak to be configured, restart its OIDC clients,
+      # converge observability, enable capability logs. Runs while the spokes are created.
+      - '{{.MARK}} step workshop platform install:complete'
+      - |
+        if [ -f /tmp/workshop-platform-split ]; then
+          cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:complete
+        fi
+      - printf '{{.C_OK}}✓ Platform hub install complete.{{.C_RESET}}\n'
+      # Join the background CloudFront attach (IDC needs the platform domain). Poll the
+      # rc file / /proc, like the Phase A join. If it failed or left no status, run it
+      # inline once more (idempotent; exits 0 at once when already attached).
+      - '{{.MARK}} step workshop join cloudfront:attach'
+      - |
+        CPID=$(cat /tmp/cloudfront-attach.pid 2>/dev/null || echo '')
+        E=0
+        while [ ! -s /tmp/cloudfront-attach.rc ] && [ -n "$CPID" ] && [ -d "/proc/$CPID" ] && [ "$E" -lt 2400 ]; do
+          sleep 5; E=$((E + 5))
+        done
+        CRC=$(cat /tmp/cloudfront-attach.rc 2>/dev/null || echo '')
+        printf '{{.C_INFO}}  cloudfront:attach joined after %ss (rc=%s, log: /tmp/cloudfront-attach.log).{{.C_RESET}}\n' "$E" "${CRC:-none}"
+        if [ "$CRC" != "0" ]; then
+          printf '{{.C_INFO}}  re-running cloudfront:attach inline (background run did not succeed).{{.C_RESET}}\n'
+          task cloudfront:attach
+        fi
       # IDC/Keycloak federation (ArgoCD SSO).
       # MUST run BEFORE ray:setup: ray:setup kicks off a multi-GB `docker build && docker
       # push` of the vLLM image in the BACKGROUND (nohup &, see common/Taskfile.ray.yaml).
@@ -184,19 +236,24 @@ tasks:
         sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > /tmp/prewarm-phase-a.rc; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
           > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
         printf '{{.C_INFO}}  prewarm Phase A started in background (log: /tmp/prewarm-phase-a.log){{.C_RESET}}\n'
-      - '{{.MARK}} step workshop wait-for-spokes'
+      # [perf O3] Gate the install on spokes ACTIVE (+ their Argo CD cluster secrets)
+      # only. The ~10 min of spoke addon sync then runs in the background, next to the
+      # tail below, instead of blocking it.
+      - '{{.MARK}} step workshop wait-for-spokes (ACTIVE)'
       - task: wait-for-spokes
-      - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Pre-deploy the Path A Next.js frontend on spoke-dev in the background (needs
-      # only spoke-dev; ~30-60 s). Same detach pattern as Phase A (fds closed so the SSM
-      # tee / cfn-signal never wait on it); joined before the hub pivot below.
-      # The child writes its own OS PID: go-task's shell interpreter sets `$!` to a job
-      # id (e.g. "g1"), not a PID, so `echo $!` cannot be used to join it later.
+        vars: { SPOKE_APPS: "false" }
+      - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes (ACTIVE) done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Background: wait for the spoke apps to sync (same tolerant loop and nudges as
+      # before), THEN pre-deploy the Path A Next.js frontend on spoke-dev (it needs the
+      # spoke's kro AppmodService CRD, which comes with those apps). Detached like the
+      # hub settle (double fork + setsid, fds closed) so it may outlive the install
+      # without holding the SSM tee / cfn-signal. The install checks the spoke apps at
+      # the end (non-blocking); the module that first uses spoke apps is the point of use.
       - |
-        printf '' > /tmp/prewarm-pathA-frontend.pid
-        sh -c 'echo $$ > /tmp/prewarm-pathA-frontend.pid; {{.MARK}} start "prewarm-pathA-frontend (bg)"; task prewarm-pathA-frontend INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; {{.MARK}} done "prewarm-pathA-frontend (bg)" "rc=$rc"; exit $rc' \
-          > /tmp/prewarm-pathA-frontend.log 2>&1 < /dev/null &
-        printf '{{.C_INFO}}  prewarm-pathA-frontend started in background (log: /tmp/prewarm-pathA-frontend.log){{.C_RESET}}\n'
+        printf '' > /tmp/spoke-apps-bg.rc
+        S=""; command -v setsid >/dev/null 2>&1 && S=setsid
+        S="$S" sh -c '( exec $S task spoke-apps-bg INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}} ) >> /tmp/spoke-apps-bg.log 2>&1 < /dev/null &'
+        printf '{{.C_INFO}}  spoke apps sync + prewarm-pathA-frontend running in background (log: /tmp/spoke-apps-bg.log){{.C_RESET}}\n'
       # Re-seed observability now that spokes are ACTIVE. The initial seed runs in background
       # during hub install (before spokes exist) so spoke_dev/prod_cluster_arn annotations
       # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
@@ -280,18 +337,6 @@ tasks:
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
         ignore_error: true
       - 'printf "{{.C_INFO}}  [%ds] prewarm-pathA-rust-kro done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      - '{{.MARK}} step workshop join prewarm-pathA-frontend'
-      # Join the background frontend prewarm (its waits are capped by the same DEADLINE).
-      # Poll /proc rather than `wait`: each go-task cmd runs in its own shell interpreter,
-      # so the child is not one of this shell's jobs (and kill -0 is not supported by it).
-      - cmd: |
-          FPID=$(cat /tmp/prewarm-pathA-frontend.pid 2>/dev/null || echo '')
-          E=0
-          while [ -n "$FPID" ] && [ -d "/proc/$FPID" ] && [ "$E" -lt 420 ]; do
-            sleep 5; E=$((E + 5))
-          done
-          printf '{{.C_INFO}}  prewarm-pathA-frontend joined after %ss (log: /tmp/prewarm-pathA-frontend.log).{{.C_RESET}}\n' "$E"
-        ignore_error: true
       - '{{.MARK}} step workshop hub:pivot'
       # [#1033] FINAL step — hub self-adoption pivot (detach from the ephemeral kind bootstrap
       # cluster). Runs LAST, after overlay wiring + spokes + idc + ray are all up, so:
@@ -329,6 +374,23 @@ tasks:
               printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind; the pivot fail-closed and restarted kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
             fi
           fi
+        ignore_error: true
+      # Spoke apps check (non-blocking, O3): report where the background spoke sync is.
+      - '{{.MARK}} step workshop spoke apps check'
+      - cmd: |
+          KC=$(mktemp)
+          if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
+            RE="{{.RESOURCE_PREFIX}}-spoke-dev|{{.RESOURCE_PREFIX}}-spoke-prod"
+            APPS=$(kubectl --kubeconfig "$KC" get applications.argoproj.io -n argocd \
+              -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,DEST:.spec.destination.name --no-headers 2>/dev/null \
+              | awk -v re="$RE" '$3 ~ ("^("re")$")')
+            TOTAL=$(echo "$APPS" | awk 'NF>0' | wc -l | tr -d ' ')
+            OOS=$(echo "$APPS" | awk '$2!="Synced" && NF>0' | wc -l | tr -d ' ')
+            BRC=$(cat /tmp/spoke-apps-bg.rc 2>/dev/null || echo '')
+            printf '{{.C_INFO}}  spoke apps now: %s total, %s out-of-sync; background sync %s (log: /tmp/spoke-apps-bg.log).{{.C_RESET}}\n' \
+              "$TOTAL" "$OOS" "$( [ -n "$BRC" ] && echo "done (rc=$BRC)" || echo "still running" )"
+          fi
+          rm -f "$KC"
         ignore_error: true
       - '{{.MARK}} step workshop -'
       # Whole-install timing (foreground steps, background jobs that ended, waiters):
@@ -520,6 +582,9 @@ tasks:
     vars:
       SPOKES: "{{.RESOURCE_PREFIX}}-spoke-dev {{.RESOURCE_PREFIX}}-spoke-prod"
       MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+      # [perf O3] SPOKE_APPS=false: gate on spokes ACTIVE + cluster secrets only; the
+      # install runs wait-for-spokes:apps in the background instead.
+      SPOKE_APPS: '{{.SPOKE_APPS | default "true"}}'
     cmds:
       - |
         # Strictly non-fatal: disable errexit so no internal check can fail the install.
@@ -567,7 +632,42 @@ tasks:
         done
 
         {{.MARK}} done "wait-for-spokes: cluster secrets"
-        # 3) Spoke-targeted apps synced within tolerance, nudging stuck ones (resets ArgoCD backoff)
+        rm -f "$KC"
+      # 3) Spoke-targeted apps synced within tolerance (separate task, so the install
+      #    can run it in the background: see SPOKE_APPS).
+      - '[ "{{.SPOKE_APPS}}" != "true" ] || task wait-for-spokes:apps SPOKES="{{.SPOKES}}" MAX_OUTOFSYNC="{{.MAX_OUTOFSYNC}}"'
+      - printf '{{.C_OK}}✓ Spoke wait-gate complete.{{.C_RESET}}\n'
+
+  # Background worker of the install (O3): spoke apps sync, then the Path A frontend
+  # prewarm. Writes its rc to /tmp/spoke-apps-bg.rc for the install's final check.
+  spoke-apps-bg:
+    desc: "Install background job: wait-for-spokes:apps, then prewarm-pathA-frontend (non-fatal)"
+    cmds:
+      - '{{.MARK}} start "spoke apps + frontend prewarm (bg)"'
+      - task: wait-for-spokes:apps
+      - task: prewarm-pathA-frontend
+        vars:
+          INSTALL_START: '{{.INSTALL_START | default ""}}'
+          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+        ignore_error: true
+      - echo 0 > /tmp/spoke-apps-bg.rc
+      - '{{.MARK}} done "spoke apps + frontend prewarm (bg)" rc=0'
+
+  wait-for-spokes:apps:
+    desc: "Wait for the spoke-targeted Argo CD apps to sync within tolerance, nudging stuck ones (non-fatal)"
+    vars:
+      SPOKES: '{{.SPOKES | default (print .RESOURCE_PREFIX "-spoke-dev " .RESOURCE_PREFIX "-spoke-prod")}}'
+      MAX_OUTOFSYNC: '{{.MAX_OUTOFSYNC | default "5"}}'
+    cmds:
+      - |
+        set +e
+        KC=$(mktemp)
+        if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
+          printf '{{.C_ERR}}⚠ wait-for-spokes:apps: cannot get hub kubeconfig — skipping (non-fatal).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 0
+        fi
+        KC_HUB="kubectl --kubeconfig $KC"
+        # Spoke-targeted apps synced within tolerance, nudging stuck ones (resets ArgoCD backoff)
         {{.MARK}} start "wait-for-spokes: spoke apps"
         printf '{{.C_STEP}}▸ Waiting for spoke apps to sync (tolerance %s, non-fatal)...{{.C_RESET}}\n' "{{.MAX_OUTOFSYNC}}"
         SPOKE_RE=$(echo "{{.SPOKES}}" | tr ' ' '|')
@@ -607,7 +707,6 @@ tasks:
         fi
         {{.MARK}} done "wait-for-spokes: spoke apps" "total=${TOTAL:-?}" "out-of-sync=${OOS:-?}"
         rm -f "$KC"
-      - printf '{{.C_OK}}✓ Spoke wait-gate complete.{{.C_RESET}}\n'
 
   # ============================================================
   # PRE-WARM — pre-create the Rust CI/CD pipeline + publish the first image
