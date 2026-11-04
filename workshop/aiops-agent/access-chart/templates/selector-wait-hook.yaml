@@ -1,0 +1,109 @@
+{{- /*
+PreSync gate: this spoke's AccessEntry is applied only once the incident-bridge-eks
+IAMRoleSelector exists on the hub.
+
+Why: the managed ACK capability picks the role for a CR from the IAMRoleSelector matching
+its namespace at the CR's FIRST reconcile, and caches "no role selected" when none matches
+(it falls back to the capability role, which cannot call eks:CreateAccessEntry, and does
+not re-evaluate a selector added later). The selector is owned by the aiops-agent OAM
+Application (component incident-bridge-selectors in ../chart/files/aiops-agent-app.yaml),
+which ArgoCD does not order against these per-spoke Applications. On "enable aiops-agent
+on a hub that already has spokes", the entries could otherwise reach ACK first.
+
+The gate waits for that one object only, not for the aiops-agent Application to be
+Healthy: a Degraded component of the agent (e.g. an image that does not pull) does not
+block spoke read access. Same pattern as the ack-pod-identity crd-wait-hook. Once the
+selector exists the Job returns at once, so later syncs are not slowed. On timeout the
+sync fails and the ApplicationSet's retry (limit -1) runs it again.
+*/ -}}
+{{- $cluster := required "clusterName is required (set by the aiops-agent spoke-access ApplicationSet)" .Values.clusterName -}}
+{{- /* One gate per spoke Application; cluster-scoped RBAC needs a per-spoke name. Kept
+under the 63-char Job/label limit, with a hash so two long names cannot collide. */ -}}
+{{- $name := printf "aiops-access-wait-%s-%s" ($cluster | trunc 30 | trimSuffix "-") (sha256sum $cluster | trunc 8) -}}
+{{- $selector := "incident-bridge-eks" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: aiops-agent
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-2"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-2"
+rules:
+- apiGroups: ["services.k8s.aws"]
+  resources: ["iamroleselectors"]
+  resourceNames: [{{ $selector | quote }}]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-2"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: aiops-agent
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: aiops-agent
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 660
+  # No ttlSecondsAfterFinished: it would race ArgoCD's hook-delete-policy (see the
+  # ack-pod-identity crd-wait-hook).
+  template:
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: wait
+        image: {{ (default dict .Values.crdWait).image | default "bitnami/kubectl:latest" }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eu
+          deadline=$(( $(date +%s) + 600 ))
+          echo "Waiting for IAMRoleSelector {{ $selector }} before the AccessEntry for {{ $cluster }}"
+          until kubectl get iamroleselectors.services.k8s.aws {{ $selector }} >/dev/null 2>&1; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "ERROR: IAMRoleSelector {{ $selector }} not found after 600s (is the aiops-agent Application synced?)"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "IAMRoleSelector {{ $selector }} found."
