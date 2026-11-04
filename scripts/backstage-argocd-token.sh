@@ -4,13 +4,15 @@
 # Why: the EKS managed Argo CD capability has no local login, so the plugin's
 # username/password pair cannot get a session and the entity "Argo CD overview" card
 # finds no application (GET /api/argocd/find/name/<app> fails). The capability accepts
-# API tokens; this script mints one for the `admin` account with your current SSO
-# session (the same as Settings > Accounts > admin > Generate New Token in the UI),
+# API tokens; this script mints one for your own SSO account with your current session
+# (the same as Settings > Accounts > <you> > Generate New Token in the UI). The capability
+# has no local `admin` account: it only lists Identity Center users. The script
 # stores it in Secrets Manager <hub>/secrets under `argocd_api_token`, and restarts
 # Backstage so it reads it (ExternalSecret argocd-api-token, refresh 5m).
 #
-# Note: an `admin` account token is not read-only. The managed capability does not let
-# you define a read-only local account; project-role tokens are limited to one project.
+# Note: the token carries the caller's role (ADMIN for user1), so it is not read-only.
+# The managed capability does not let you define a read-only local account; project-role
+# tokens are read-only but limited to one project.
 #
 # Usage (on the IDE, after `source scripts/argocd-refresh-token.sh`):
 #   bash scripts/backstage-argocd-token.sh
@@ -43,9 +45,16 @@ printf 'Authorization: Bearer %s\n' "$ARGOCD_AUTH_TOKEN" > "$TMP/auth"
 jq -n --arg id "backstage-$(date -u +%Y%m%d%H%M%S)" --argjson ttl "$TTL" \
   '{id: $id, expiresIn: $ttl}' > "$TMP/body"
 
+SERVER="https://${ARGOCD_SERVER#https://}"
+# The account to mint on is the caller itself (its Identity Center user id).
+ACCOUNT=$(curl -sS -H @"$TMP/auth" "$SERVER/api/v1/session/userinfo" | jq -r '.username // empty')
+if [[ -z "$ACCOUNT" ]]; then
+  echo "ERROR: the SSO session is not valid; refresh it with scripts/argocd-refresh-token.sh." >&2
+  exit 1
+fi
 HTTP=$(curl -sS -o "$TMP/resp" -w '%{http_code}' -X POST \
   -H @"$TMP/auth" -H 'Content-Type: application/json' --data @"$TMP/body" \
-  "https://${ARGOCD_SERVER#https://}/api/v1/account/admin/token")
+  "$SERVER/api/v1/account/${ACCOUNT}/token")
 if [[ "$HTTP" != "200" ]]; then
   echo "ERROR: Argo CD refused to mint the token (HTTP $HTTP). Your SSO session must map to the ADMIN role; refresh it with scripts/argocd-refresh-token.sh." >&2
   exit 1
