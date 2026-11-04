@@ -117,7 +117,10 @@ tasks:
       - '{{.MARK}} step workshop platform install:hub'
       - |
         rm -f /tmp/workshop-platform-split
-        if (cd {{.PLATFORM_DIR}} && task --list-all 2>/dev/null | grep -q '^\* install:hub:'); then
+        # Read the platform's root Taskfile, not `task --list-all | grep -q`: on the IDE
+        # that pipeline reported no match (go-task listing + pipefail) and the install
+        # silently took the fallback.
+        if grep -q '^  install:hub:' "{{.PLATFORM_DIR}}/Taskfile.yaml"; then
           touch /tmp/workshop-platform-split
           cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:hub
         else
