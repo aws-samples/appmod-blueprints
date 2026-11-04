@@ -1731,8 +1731,12 @@ spec:
                       parameters:
                         - name: body
                           value: "{{workflow.parameters.body}}"
+                # No tag (a prod push whose image is not this pipeline's, such as the
+                # placeholder): nothing was deployed, so skip the wait and the DevLake record.
+                # An empty tag would otherwise match any running image in check-rollout-status.
                 - - name: check-rollout
                     template: check-rollout-status
+                    when: "'{{steps.resolve-tag.outputs.result}}' != ''"
                     arguments:
                       parameters:
                         - name: namespace
@@ -1743,6 +1747,7 @@ spec:
                           value: "{{workflow.parameters.body}}"
                 - - name: process-and-send-deployment
                     template: process-deployment
+                    when: "'{{steps.resolve-tag.outputs.result}}' != ''"
                     arguments:
                       parameters:
                         - name: status
@@ -1937,11 +1942,20 @@ spec:
                         "https://${schema.spec.gitlab.hostname}/api/v4/projects/$PROJECT_ID/repository/files/$FILE/raw?ref=$AFTER" \
                         | grep -m1 -oE 'image: *"?[^" ]+' | sed -E 's/image: *"?//')
                       if [ -n "$IMAGE" ]; then
-                        TAG=$(printf '%s' "$IMAGE" | awk -F ":" '{print $NF}')
+                        # Only this pipeline's own image is a deployment to record. Anything else,
+                        # such as the httpd:alpine placeholder a PROD manifest starts from before
+                        # its first promotion, is not: waiting for it would time out (it is never
+                        # rolled out) or record a placeholder rollout as a PRODUCTION deployment.
+                        REPO=$(printf '%s' "$IMAGE" | sed -E 's|:[^:/]+$||')
+                        if [ "$REPO" = "${ecrmainrepo.status.repositoryURI}" ]; then
+                          TAG=$(printf '%s' "$IMAGE" | awk -F ":" '{print $NF}')
+                        else
+                          echo "Image $IMAGE is not from this pipeline's ECR repository: no deployment to record" >&2
+                        fi
                         break
                       fi
                     done < /tmp/prod-files
-                    [ -n "$TAG" ] || echo "No image found in the pushed deployment/prod/ manifests" >&2
+                    [ -n "$TAG" ] || echo "No application image in the pushed deployment/prod/ manifests: skipping the rollout check and the DevLake record" >&2
                   fi
                   # Later steps inline the tag in their scripts: only pass a plain image tag
                   if [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "$TAG"; fi
