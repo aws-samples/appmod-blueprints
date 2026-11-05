@@ -34,6 +34,11 @@ spec:
         // the same name the PodIdentityAssociation targets; for the hub it starts with the
         // install's resource_prefix. The hash keeps the name one-to-one with the
         // (region, cluster, namespace, serviceAccount) it serves even when truncated.
+        // global.clusterName is required: the render fails without it.
+        //
+        // The accessFor attachments name the sibling Policy objects by the rule the
+        // component-iam-policy trait and the OAP components use. awslabs/open-agentic-platform
+        // scripts/check-iam-names.sh <this checkout> checks that the three agree.
         //
         // Ordering: EKS injects Pod Identity creds via a mutating webhook at pod
         // admission, which only fires if the association already exists. To avoid that
@@ -98,13 +103,20 @@ spec:
         _roleHash: strings.SliceRunes(hex.Encode(sha256.Sum256(_roleKey)), 0, 8)
         _roleBase: _cluster + "-" + context.name
         _roleHead: [if len(_roleBase) > 50 {strings.SliceRunes(_roleBase, 0, 50)}, _roleBase][0]
-        // Without a cluster name (a bare render of the chart) the name is today's
-        // "<serviceAccount>-role", byte for byte.
-        _roleName: [if _cluster == "" {context.name + "-role"}, _roleHead + "-" + _roleHash + "-role"][0]
-        // Attachment object names: see the accessFor block. Without a cluster name the role
-        // does not change, so the attachments keep today's names too (a new attachment for
-        // the same role/policy pair, followed by the old one's delete, would detach it).
-        _rpaPrefix: [if _cluster == "" {context.name}, context.namespace + "." + context.name][0]
+        _roleName: _roleHead + "-" + _roleHash + "-role"
+        // Attachment object names: see the accessFor block.
+        _rpaPrefix: context.namespace + "." + context.name
+
+        // FAIL CLOSED without a cluster name. The role and the attachments' policy objects
+        // would otherwise get names that are shared by every cluster of the account, and that
+        // no longer match the Policy objects the OAP components emit (they require the
+        // cluster name): the attachment would wait on a Policy that does not exist, and the
+        // workload would be denied at runtime with nothing failing at deploy time. Fail the
+        // render instead. The two strings conflict on purpose: KubeVela prints both, so the
+        // error names the missing value.
+        if _cluster == "" {
+        	_clusterIdentity: "set" & "global.clusterName is empty: set it on the kubevela chart (the cluster secret's aws_cluster_name annotation)"
+        }
 
         outputs: {
         	// XPodIdentity claim — the Composition resolves clusterName/region from
@@ -168,14 +180,13 @@ spec:
         	if parameter.accessFor != _|_ {
         		for _, c in parameter.accessFor {
         			// The sibling's Policy object, named as component-iam-policy names it
-        			// (same rule, same inputs): the AWS name when there is a cluster name,
-        			// <appName>-<c>-iam-policy otherwise. A renamed object has no ARN until the
+        			// (same rule, same inputs): its AWS name. A renamed object has no ARN until the
         			// provider has created the renamed policy, so the reference below cannot
         			// latch the ARN of the policy being replaced.
         			let polBase = strings.ToLower(strings.Replace(_cluster, "_", "-", -1)) + "-" + context.appName + "-" + c
         			let polHead = [if len(polBase) > 100 {strings.SliceRunes(polBase, 0, 100)}, polBase][0]
         			let polHash = strings.SliceRunes(hex.Encode(sha256.Sum256(_region+"/"+_cluster+"/"+context.namespace+"/"+context.appName+"/"+c)), 0, 8)
-        			let polObj = [if _cluster == "" {"\(context.appName)-\(c)-iam-policy"}, polHead + "-" + polHash + "-iam-policy"][0]
+        			let polObj = polHead + "-" + polHash + "-iam-policy"
         			"\(context.name)-\(c)-iam-policy": {
         				apiVersion: "iam.aws.upbound.io/v1beta1"
         				kind:       "RolePolicyAttachment"
