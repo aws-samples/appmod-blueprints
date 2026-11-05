@@ -76,6 +76,13 @@ Pick one of three options:
 | **(b) Fork of the example** | You want to add/change spokes or edit enabled addons | [Fork the example repo](https://github.com/allamand/fleet-config-peeks-example/fork) and set `fleetRepo.url` to your fork. A **public** fork is read anonymously (no PAT). A **private** fork, or the generative `spokes:*` flows that push to the repo, need a PAT — see below |
 | **(c) Your own git provider** | Private GitHub/GitLab repo, or a layout you control | Follow [custom-install.md — fleet repo](custom-install.md#1-fleet-repo-prerequisite--fork-or-your-own-git-provider) and [git token](custom-install.md#2-git-token-only-for-a-private-fleet-repo-or-generative-spoke-push) |
 
+> [!WARNING]
+> **Another hub in the same AWS account, or a fleet repo forked from / shared with another hub?**
+> Set `fleetScopeByPrefix: true` and a unique `resourcePrefix` before the first install. Without
+> it the new hub adopts the other hub's spoke clusters, duplicates their VPCs, and deletes them
+> on its own teardown. See
+> [custom-install.md, section 3a](custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
+
 Config keys: `fleetRepo.{url,revision,basepath}`, each falling back to `repo.*` when omitted
 ([example block](custom-install.md#1-fleet-repo-prerequisite--fork-or-your-own-git-provider)).
 

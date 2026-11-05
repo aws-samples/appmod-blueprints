@@ -177,6 +177,10 @@ certificateArn: arn:aws:acm:<region>:<account-id>:certificate/<cert-id>   # ISSU
 
 resourcePrefix: <prefix>              # lowercase, starts with a letter; prefixes ECR repos / S3 buckets / IAM roles
 
+# REQUIRED (true) when another hub runs in the same AWS account, or when the fleet repo is a
+# fork / shared by several hubs -> see section 3a. Set it BEFORE the first install.
+fleetScopeByPrefix: false
+
 adminRoleName: Admin                  # IAM role granted cluster-admin + used by Backstage templates
 
 identityCenter:                       # REQUIRED — the ArgoCD Capability needs an IdC instance
@@ -207,6 +211,99 @@ is set after install from your fleet repo, see
 [Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md). It must include the
 NAT egress IPs of the hub and of OAP spokes (`<nat-eip>/32`), re‑checked after each reinstall,
 or SSO breaks ([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
+
+---
+
+## 3a. Shared account or forked fleet repo: scope the fleet
+
+> [!WARNING]
+> **Set `fleetScopeByPrefix: true` and a unique, non-empty `resourcePrefix` BEFORE the first
+> install** if any of these is true:
+>
+> - another hub (any install of this platform) already runs in the **same AWS account**;
+> - your fleet repo is a **fork** of another hub's fleet repo, or a branch of it, and still carries
+>   that hub's spoke entries;
+> - several hubs read the **same** fleet repo (for example the public example repo of
+>   [quick-existing-fleet.md](quick-existing-fleet.md)).
+>
+> The key is off by default. A hub without it provisions **every** spoke entry it finds in the
+> fleet repo, including the spokes of other hubs.
+
+### What happens without it
+
+The `clusters-kro` ApplicationSet creates one `EksclusterWithVpc` per marker file
+`fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json`. The EKS cluster of that graph is
+declared with `services.k8s.aws/adoption-policy: adopt-or-create`, and its `deletionPolicy`
+defaults to `delete`. When the marker names a spoke that another hub already created in the same
+account and region:
+
+1. **ACK adopts the existing EKS cluster** (same name) instead of failing, with
+   `deletion-policy: delete`, and so do the name-keyed resources of the graph that already exist
+   (IAM roles, OIDC provider, access entries). The new hub now owns resources it did not create.
+2. What ACK cannot find by name is created again: a **duplicate VPC** (same name, same CIDR), NAT
+   gateways, Elastic IPs, subnets, route tables, and any IAM role whose name does not exist yet.
+   One incident counted about a hundred duplicate AWS resources for two spokes.
+3. ACK keeps trying to move the adopted cluster onto the new subnets. EKS rejects the update, so
+   the resources stay in an error loop.
+4. **Any delete on the new hub deletes the original clusters**: pruning its spoke Application,
+   [delete-spoke.md](delete-spoke.md), or `task destroy`.
+
+The same applies to `fleet/members/*/values.yaml`, which registers clusters with this hub's ArgoCD.
+
+### How scoping works
+
+With `fleetScopeByPrefix: true`, `hub:seed` stamps `fleet_scope_by_prefix: "true"` on the hub's
+cluster-secret, and the hub only reads its own sub-directory:
+
+| Without scoping (default) | With `fleetScopeByPrefix: true` |
+|---|---|
+| `fleet/spoke-values/tenants/<tenant>/kro-clusters/clusters/<name>.json` | `fleet/spoke-values/tenants/<tenant>/kro-clusters/clusters/<resourcePrefix>/<name>.json` |
+| `fleet/members/<name>/values.yaml` | `fleet/members/<resourcePrefix>/<name>/values.yaml` |
+
+Rules that go with it:
+
+- **`resourcePrefix` must be unique per hub and non-empty.** With an empty prefix the template
+  inserts no segment and the hub falls back to the flat layout, so it is not scoped at all.
+- **Spoke names must still be unique in the account and region.** Scoping limits what a hub
+  reads; it does not rename anything. Two hubs that each declare a spoke `dev` still target the
+  same EKS cluster. Give spokes distinct names (for example `<prefix>-dev`).
+- **Remove the entries you inherited** from a forked fleet repo (markers, specs in
+  `kro-clusters/values.yaml`, members) before the install, even with scoping on.
+- **Write your markers and members under the prefix directory.** The generative
+  `spokes:enable-kro` task and the Backstage EKS cluster template write the flat layout; with
+  scoping on, move what they write under `<resourcePrefix>/`.
+- The flag is sticky: a value set on `<hub>/config` is kept on re-seed. To turn it off, remove
+  the key from `<hub>/config` too ([kind-kro-ack README](../../cluster-providers/kind-kro-ack/README.md#multi-hub-fleet-scoping-opt-in)).
+
+### If a hub has already adopted another hub's spokes
+
+Do **not** run `task destroy`, [delete-spoke.md](delete-spoke.md) or a pruning sync on the hub
+that adopted the spokes: each of them would delete the original clusters. In this order:
+
+1. **Retain first.** In the fleet branch that this hub reads, set `deletionPolicy: retain` on each
+   adopted entry of `fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml`, push, and let
+   ArgoCD sync. Check that every ACK resource of the spoke now carries the retain annotation
+   before going further:
+
+   ```bash
+   SPOKE=<spoke-name>
+   for k in $(kubectl api-resources --namespaced -o name | grep 'services.k8s.aws$'); do
+     kubectl get "$k" -n "$SPOKE" -o jsonpath='{range .items[*]}{.kind}/{.metadata.name} {.metadata.annotations.services\.k8s\.aws/deletion-policy}{"\n"}{end}'
+   done
+   ```
+
+2. **Record the IDs of the duplicates** while the ACK resources still exist: the VPC, subnet, NAT
+   gateway, Elastic IP and route table IDs from each resource's `.status` (for example
+   `.status.vpcID`, or `.status.ackResourceMetadata.arn`). Compare them with the original
+   cluster's VPC (`aws eks describe-cluster --name <spoke> --query cluster.resourcesVpcConfig`):
+   the original resources are the ones the cluster uses.
+3. **Remove the entries** (spec, marker, member) from that fleet branch and prune, as in
+   [delete-spoke.md](delete-spoke.md). With `retain`, ACK leaves every AWS resource in place.
+4. **Delete the duplicates by ID only**, from the list of step 2. Never select them by name, tag
+   or CIDR: the duplicates carry the same name, CIDR and tags as the originals. An IAM role whose
+   name matches an existing role is the original role, adopted, not a copy: keep it.
+5. Turn on `fleetScopeByPrefix` with a unique `resourcePrefix` on that hub before declaring its
+   own spokes again.
 
 ---
 

@@ -105,6 +105,16 @@ task install
 
 Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `config.local.yaml`. `hub:seed` then writes `fleet_scope_by_prefix: "true"` into the `<hub>/config` metadata, which ESO copies onto the hub cluster-secret, and the hub discovers only `clusters/<resourcePrefix>/*.json` and `fleet/members/<resourcePrefix>/*/values.yaml`. When the key is absent or `false`, nothing is written and the flat `clusters/*.json` / `fleet/members/*/values.yaml` layout is used, exactly as before. A value set by hand on `<hub>/config` is kept on re-seed; to turn it off, remove the key from `<hub>/config` too.
 
+> [!WARNING]
+> Turn it on, with a unique non-empty `resourcePrefix`, **before the first install** whenever
+> another hub runs in the same AWS account or the fleet repo is a fork of, or shared with, another
+> hub's fleet repo. Without it this hub provisions the other hubs' spoke entries: ACK adopts their
+> EKS clusters (`adopt-or-create`, `deletion-policy: delete`), duplicates their VPC, NAT gateways
+> and subnets, and any delete on this hub deletes their clusters. An empty `resourcePrefix` falls
+> back to the flat layout, and spoke names must still be unique in the account and region.
+> Prevention and recovery steps:
+> [custom-install.md, section 3a](../../docs/install/custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
+
 ## Credentials on Kind
 
 ACK controllers on Kind cannot use Pod Identity (no IMDS). The Taskfile creates an `aws-credentials` Secret and configures each ACK controller Helm chart with:
