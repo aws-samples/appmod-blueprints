@@ -56,14 +56,37 @@ def save():
 def log(*ev):
     with open(LOG, "a") as f:
         f.write(json.dumps(ev) + "\n")
+APP_K, AS_K = "applications.argoproj.io", "applicationsets.argoproj.io"
+FIN = "resources-finalizer.argocd.argoproj.io"
+def owned_by(o, kind, n):
+    return any(r.get("kind") == kind and r.get("name") == n for r in o["metadata"].get("ownerReferences", []))
+def preserve(a):
+    # The controller acts on a patched preserveResourcesOnDeletion only after `lag` s.
+    sp = a["spec"].get("syncPolicy", {})
+    if a.get("pres_at") is not None and st["clock"] < a["pres_at"] + st.get("lag", 0):
+        return a.get("pres_old", False)
+    return sp.get("preserveResourcesOnDeletion", False)
 def progress():
     for kind, objs in st["objs"].items():
         for k, o in list(objs.items()):
             if o.get("gone_at") is not None and st["clock"] >= o["gone_at"]:
                 del objs[k]
+    # ApplicationSet controller: while preserve is off, a template finalizer is (re)added.
+    for a in st["objs"].get(AS_K, {}).values():
+        if a.get("tmpl_finalizer") and not preserve(a):
+            for o in st["objs"].get(APP_K, {}).values():
+                if owned_by(o, "ApplicationSet", a["metadata"]["name"]):
+                    f = o["metadata"].setdefault("finalizers", [])
+                    if FIN not in f:
+                        f.append(FIN)
 progress()
 rc = 0
-if me == "sleep":
+if me == "date":
+    if sys.argv[1:] == ["+%s"]:
+        log("date", st["clock"]); print(1700000000 + int(st["clock"]))
+    else:
+        os.execv("/bin/date", ["date"] + sys.argv[1:])
+elif me == "sleep":
     st["clock"] += float(sys.argv[1]); log("sleep", float(sys.argv[1])); progress()
 elif me == "git":
     log("git", sys.argv[1:])
@@ -83,6 +106,7 @@ elif me == "aws":
     else:
         rc = 0
 else:  # kubectl
+    st["clock"] += st.get("kubectl_cost", 0)
     a, pos, flags = sys.argv[1:], [], {}
     i = 0
     while i < len(a):
@@ -104,6 +128,9 @@ else:  # kubectl
     elif verb in ("get", "delete", "patch") and kind != "crd" and kind not in st["crds"] \
             and kind not in ("applications.argoproj.io", "applicationsets.argoproj.io"):
         sys.stderr.write('error: the server doesn\'t have a resource type "%s"\n' % kind); rc = 1
+    elif verb == "get" and not name and st.get("fail_list", {}).get(kind, 0) != 0:
+        st["fail_list"][kind] -= 1
+        sys.stderr.write("Unable to connect to the server: i/o timeout\n"); rc = 1
     elif verb == "get":
         objs = objs or {}
         if name:
@@ -136,12 +163,29 @@ else:  # kubectl
                         if any(r.get("kind") == "RelationalDatabase" for r in o["metadata"].get("ownerReferences", [])):
                             if st.get("children_takes") is not None and o.get("gone_at") is None:
                                 o["gone_at"] = st["clock"] + st["children_takes"]
-            elif kind in ("eksclusterwithvpcs.kro.run", "platformclusters.platform.gitops.io"):
+            elif kind == AS_K:
                 del objs[k]
+                # Kubernetes GC: the generated Applications go with their ApplicationSet;
+                # one still holding the resources-finalizer cascades into what it renders.
+                apps = st["objs"].get(APP_K, {})
+                for ak, o in list(apps.items()):
+                    if owned_by(o, "ApplicationSet", name):
+                        log("cascade" if FIN in o["metadata"].get("finalizers", []) else "gc", o["metadata"]["name"])
+                        del apps[ak]
             else:
                 del objs[k]
     elif verb == "patch":
         log("patch", kind, ns, name, flags.get("-p"))
+        o = (objs or {}).get("%s/%s" % (ns or "", name))
+        body = json.loads(flags.get("-p") or "{}")
+        if o is not None:
+            if "finalizers" in body.get("metadata", {}):
+                o["metadata"]["finalizers"] = body["metadata"]["finalizers"]
+            sp = body.get("spec", {}).get("syncPolicy", {})
+            if "preserveResourcesOnDeletion" in sp:
+                o["pres_old"] = preserve(o)
+                o["pres_at"] = st["clock"]
+                o["spec"].setdefault("syncPolicy", {})["preserveResourcesOnDeletion"] = sp["preserveResourcesOnDeletion"]
     else:
         log("unexpected", a)
 save()
@@ -177,7 +221,7 @@ def _run(tmp_path, cmds, tvars, state):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     fake = FAKE.replace("{python}", sys.executable)
-    for b in ("kubectl", "sleep", "aws", "git"):
+    for b in ("kubectl", "sleep", "aws", "git", "date"):
         (bindir / b).write_text(fake)
         (bindir / b).chmod(0o755)
     (tmp_path / "private").mkdir(exist_ok=True)
@@ -234,7 +278,7 @@ def _obj(kind, ns, oname, ann=None, owners=None, **spec):
     return {"apiVersion": kind, "kind": kind, "metadata": md, "spec": spec}
 
 
-def _kro_state(children_takes=60):
+def _kro_state(children_takes=60, lag=0):
     """The devlake RelationalDatabase rendered by devlake-acme-hub, generated by the
     devlake appset, rendered by cluster-addons, generated by the cluster-addons appset,
     rendered by bootstrap, generated by the bootstrap appset (applied by the install)."""
@@ -254,12 +298,19 @@ def _kro_state(children_takes=60):
             "argocd/bootstrap": _obj(APPSET, "argocd", "bootstrap"),
         },
     }
+    # As shipped: preserveResourcesOnDeletion off (gitops/bootstrap/addons.yaml) and a
+    # resources-finalizer on every generated Application, kept there by the controller.
+    for a in objs[APPSET].values():
+        a["spec"]["syncPolicy"] = {"preserveResourcesOnDeletion": False}
+        a["tmpl_finalizer"] = True
+    for o in objs[APP].values():
+        o["metadata"]["finalizers"] = ["resources-finalizer.argocd.argoproj.io"]
     ref = [{"kind": "RelationalDatabase", "name": "devlake-mysql"}]
     for k in ACK_KINDS:
         objs[k] = {f"devlake/devlake-mysql-{k.split('.')[0]}": _obj(k, "devlake", f"devlake-mysql-{k.split('.')[0]}", owners=ref)}
     # An unrelated ACK SG in the namespace (not owned by the instance) is never waited for.
     objs["securitygroups.ec2.services.k8s.aws"]["devlake/other"] = _obj("sg", "devlake", "other")
-    return {"crds": [RDB_KIND] + ACK_KINDS, "objs": objs, "children_takes": children_takes}
+    return {"crds": [RDB_KIND] + ACK_KINDS, "objs": objs, "children_takes": children_takes, "lag": lag}
 
 
 def test_p25_no_crds_does_not_abort_and_does_not_wait(tmp_path):
@@ -290,23 +341,87 @@ def test_p25_kro_stops_argo_chain_top_down_then_deletes_and_waits(tmp_path):
                     (APP, "cluster-addons"), (APPSET, "devlake"), (APP, "devlake-acme-hub"),
                     (RDB_KIND, "devlake-mysql")], dels
     patches = {(e[1], e[3]): e[4] for e in events if e[0] == "patch"}
-    for n in ("bootstrap", "cluster-addons", "devlake"):
-        assert "preserveResourcesOnDeletion" in patches[(APPSET, n)]
+    for n in ("bootstrap", "cluster-addons"):
+        assert '"preserveResourcesOnDeletion":true' in patches[(APPSET, n)]
+    # The appset generating the instance's own Application cascades, as Phase 3 step 7
+    # would have: preserve off, so devlake-acme-hub keeps its resources-finalizer.
+    assert '"preserveResourcesOnDeletion":false' in patches[(APPSET, "devlake")]
     # Ancestors are orphaned (finalizer stripped); the app rendering the instance is not,
     # so its own resources-finalizer still cascades to the rest of the chart.
     assert '"finalizers":[]' in patches[(APP, "bootstrap")]
     assert '"finalizers":[]' in patches[(APP, "cluster-addons")]
     assert (APP, "devlake-acme-hub") not in patches
+    assert [e[1] for e in events if e[0] == "cascade"] == ["devlake-acme-hub"], events
     slept = sum(e[1] for e in events if e[0] == "sleep")
-    assert 60 <= slept <= 70, slept
+    assert 60 <= slept <= 75, slept
     assert "DevLake RDS resources deleted" in res.stdout, res.stdout
 
 
 def test_p25_kro_wait_is_bounded(tmp_path):
     res, events, _ = _run(tmp_path, [_phase25_cmd()], _p25_vars(wait="120"), _kro_state(children_takes=None))
     assert res.returncode == 0, res.stdout + res.stderr
-    assert sum(e[1] for e in events if e[0] == "sleep") <= 120
+    start = next(i for i, e in enumerate(events) if e[0] == "date")  # the wait's deadline
+    assert sum(e[1] for e in events[start:] if e[0] == "sleep") <= 120
     assert "still present after 120s" in res.stdout, res.stdout
+
+
+def test_p25_preserve_patch_lands_before_appset_delete(tmp_path):
+    """Review #1265: the controller acts on the preserve patch late (lag). Deleting an
+    ancestor ApplicationSet right after the patch let GC delete its Application with the
+    resources-finalizer still on, cascading into every addon ApplicationSet."""
+    res, events, _ = _run(tmp_path, [_phase25_cmd()], _p25_vars(), _kro_state(children_takes=0, lag=5))
+    assert res.returncode == 0, res.stdout + res.stderr
+    cascades = [e[1] for e in events if e[0] == "cascade"]
+    assert "cluster-addons" not in cascades and "bootstrap" not in cascades, events
+    assert (RDB_KIND, "devlake-mysql") in [(e[1], e[3]) for e in events if e[0] == "delete"]
+
+
+def test_p25_appset_never_safe_is_left_and_instance_kept(tmp_path):
+    res, events, st = _run(tmp_path, [_phase25_cmd()], _p25_vars(wait="60"), _kro_state(lag=10000))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not [e for e in events if e[0] == "cascade"], events
+    assert "could not make ApplicationSet bootstrap safe to delete" in res.stdout, res.stdout
+    assert (RDB_KIND, "devlake-mysql") not in [(e[1], e[3]) for e in events if e[0] == "delete"]
+    assert "devlake/devlake-mysql" in st["objs"][RDB_KIND]
+    assert "still present after" not in res.stdout  # no pointless wait
+
+
+def test_p25_failed_read_is_not_counted_as_deleted(tmp_path):
+    """Review #1265: a failed `kubectl get` used to count as 0 in ack_left."""
+    s = _kro_state(children_takes=0)
+    s["fail_list"] = {"dbclusters.rds.services.k8s.aws": -1}
+    res, _, _ = _run(tmp_path, [_phase25_cmd()], _p25_vars(wait="60"), s)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "DevLake RDS resources deleted" not in res.stdout, res.stdout
+    assert "still present after 60s" in res.stdout, res.stdout
+
+
+def test_p25_rerun_waits_for_children_of_an_already_deleted_instance(tmp_path):
+    """Review #1265: a re-run after a killed destroy finds the instance gone and its ACK
+    children still finalizing; it must wait for them."""
+    s = _kro_state(children_takes=None)
+    s["objs"][RDB_KIND] = {}
+    for k in ACK_KINDS:
+        for o in s["objs"][k].values():
+            if o["metadata"].get("ownerReferences"):
+                o["gone_at"] = 40
+    res, events, _ = _run(tmp_path, [_phase25_cmd()], _p25_vars(), s)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "nothing to wait for" not in res.stdout, res.stdout
+    assert "DevLake RDS resources deleted" in res.stdout, res.stdout
+    assert 40 <= sum(e[1] for e in events if e[0] == "sleep") <= 50
+
+
+def test_p25_wait_is_bounded_by_time_not_poll_count(tmp_path):
+    """Review #1265: every poll also spends time in kubectl; the bound is a deadline."""
+    s = _kro_state(children_takes=None)
+    s["kubectl_cost"] = 3
+    res, events, st = _run(tmp_path, [_phase25_cmd()], _p25_vars(wait="120"), s)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "still present after 120s" in res.stdout, res.stdout
+    start = next(e[1] for e in events if e[0] == "date")  # DEADLINE = start + WAIT_MAX
+    # past the deadline by at most one poll's reads (4 kinds) and its clock read
+    assert st["clock"] <= start + 120 + 4 * 3 + 3, (start, st["clock"])
 
 
 def test_p25_kro_instance_without_argo_owner_is_deleted_directly(tmp_path):
@@ -352,6 +467,60 @@ def test_p2_overlay_unreachable_falls_back_to_hub(tmp_path):
     assert deleted == ["acme-spoke-dev", "acme-spoke-prod"], deleted
     assert "Sparing kro spoke acme-keep" in out, out
     assert "nothing to tear down" not in out
+
+
+@pytest.mark.parametrize("secret", ["pa/ss-w0rd", "a/b@c"])
+def test_p2_clone_error_redacts_a_password_with_slash_or_at(tmp_path, secret):
+    """Review #1265: the redaction stopped at the first `/`, printing the URL in full."""
+    cmds, tvars = _disable_all()
+    tvars["GIT_PASSWORD"] = secret
+    res, _, _ = _run(tmp_path, cmds, tvars, {"git_fails": True, "crds": []})
+    out = res.stdout + res.stderr
+    assert "Could not resolve host" in out, out
+    assert secret not in out and "user1:" not in out, out
+
+
+def _clusters_kro_state(lag=0, finalizer=False):
+    """Spokes rendered by clusters-kro-<name> Applications (automated, retry -1),
+    generated by the clusters-kro ApplicationSet. `finalizer`: a template that carries
+    the resources-finalizer (the two-way door in gitops/bootstrap/clusters-kro.yaml)."""
+    kro, apps = {}, {}
+    for n, pol in (("acme-spoke-dev", None), ("acme-keep", "retain")):
+        spec = {"resourcePrefix": PREFIX}
+        if pol:
+            spec["deletionPolicy"] = pol
+        o = _kro_cluster(n, **spec)
+        o["metadata"]["annotations"] = {
+            "argocd.argoproj.io/tracking-id": f"clusters-kro-{n}:kro.run/EksclusterWithVpc:{n}/{n}"}
+        kro[f"{n}/{n}"] = o
+        app = _obj(APP, "argocd", f"clusters-kro-{n}", owners=[{"kind": "ApplicationSet", "name": "clusters-kro"}])
+        if finalizer:
+            app["metadata"]["finalizers"] = ["resources-finalizer.argocd.argoproj.io"]
+        apps[f"argocd/clusters-kro-{n}"] = app
+    aset = _obj(APPSET, "argocd", "clusters-kro")
+    aset["spec"]["syncPolicy"] = {"preserveResourcesOnDeletion": not finalizer}
+    aset["tmpl_finalizer"] = finalizer
+    return {"git_fails": True, "crds": ["eksclusterwithvpcs.kro.run"], "eks_live": [], "lag": lag,
+            "objs": {"eksclusterwithvpcs.kro.run": kro, APP: apps, APPSET: {"argocd/clusters-kro": aset}}}
+
+
+@pytest.mark.parametrize("finalizer,lag", [(False, 0), (True, 5)])
+def test_p2_hub_fallback_stops_clusters_kro_before_deleting(tmp_path, finalizer, lag):
+    """Review #1265: selfHeal:false does not stop an automated, retried sync from
+    re-applying a deleted instance. Stop its Application and ApplicationSet first,
+    never cascading into the other (retained) spokes."""
+    cmds, tvars = _disable_all()
+    res, events, st = _run(tmp_path, cmds, tvars, _clusters_kro_state(lag=lag, finalizer=finalizer))
+    out = res.stdout + res.stderr
+    assert res.returncode == 0, out
+    dels = [(e[1], e[3]) for e in events if e[0] == "delete"]
+    i_as = dels.index((APPSET, "clusters-kro"))
+    i_app = dels.index((APP, "clusters-kro-acme-spoke-dev"))
+    i_inst = dels.index(("eksclusterwithvpcs.kro.run", "acme-spoke-dev"))
+    assert i_as < i_app < i_inst, dels
+    assert not [e for e in events if e[0] == "cascade"], events
+    assert "acme-keep/acme-keep" in st["objs"]["eksclusterwithvpcs.kro.run"]
+    assert (APP, "clusters-kro-acme-keep") not in dels
 
 
 def test_p2_hub_fallback_crossplane_claims(tmp_path):
