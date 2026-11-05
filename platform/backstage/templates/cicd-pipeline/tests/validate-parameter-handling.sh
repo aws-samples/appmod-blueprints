@@ -78,14 +78,19 @@ echo "✓ deployment_path validation pattern found: $DEPLOYMENT_PATTERN"
 # Check default values
 echo "Checking default values..."
 
-# Check aws_region default
+# Check aws_region has NO hardcoded default: an empty value falls back to the
+# platform region (system-info aws_region, from the hub cluster secret).
 AWS_REGION_DEFAULT=$(yq '.spec.parameters[1].properties.aws_region.default' "$TEMPLATE_FILE")
-if [ "$AWS_REGION_DEFAULT" != "us-west-2" ]; then
-    echo "ERROR: aws_region default should be 'us-west-2', found: $AWS_REGION_DEFAULT"
+if [ "$AWS_REGION_DEFAULT" != "null" ]; then
+    echo "ERROR: aws_region must not have a hardcoded default, found: $AWS_REGION_DEFAULT"
+    exit 1
+fi
+if ! grep -q "parameters.aws_region or steps\['fetchSystem'\].output.entity.spec.aws_region" "$TEMPLATE_FILE"; then
+    echo "ERROR: aws_region must fall back to the platform region (system-info aws_region)"
     exit 1
 fi
 
-echo "✓ aws_region default value: $AWS_REGION_DEFAULT"
+echo "✓ aws_region falls back to the platform region"
 
 # Check cluster_name default
 CLUSTER_DEFAULT=$(yq '.spec.parameters[1].properties.cluster_name.default' "$TEMPLATE_FILE")

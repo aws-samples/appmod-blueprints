@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # Defaults from environment
-AWS_REGION="${AWS_REGION:-us-west-2}"
+AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-peeks}"
 ROLE_ARN="${1:-}"
 PARAMETER_PREFIX="/${RESOURCE_PREFIX}/keycloak-idc-integration-credentials"

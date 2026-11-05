@@ -103,7 +103,7 @@ argocd-refresh-token() {
         if [[ -n "$idc_instance_id" && -n "$domain_name" && "$domain_name" != "None" && -n "$keycloak_admin_password" ]]; then
             echo "Running IDC-Keycloak federation setup..." >&2
             python3 "$script_dir/configure_identity_center.py" \
-                --region "${AWS_REGION:-us-west-2}" \
+                --region "${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}" \
                 --instance-id "$idc_instance_id" \
                 --keycloak-dns "$domain_name" \
                 --keycloak-admin-password="$keycloak_admin_password" 2>&1 | tail -5 >&2
