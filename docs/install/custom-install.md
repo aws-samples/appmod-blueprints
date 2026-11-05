@@ -420,11 +420,18 @@ opposite effects on AWS (kind-kro-ack provider, `cluster-providers/kind-kro-ack/
   `deletionPolicy: retain`; with `delete`, the default, ACK deletes it. Before any destroy, remove
   foreign members from the fleet branch explicitly, one at a time, and check that the hub no
   longer has their `clusters-kro-<member>` Application.
+- **The destroy does not infer ownership.** To exclude a member from a destroy, mark it
+  `deletionPolicy: retain` or remove it before running destroy. Do not extend the hub's
+  retain->delete flip to members.
 
 > [!NOTE]
 > Before you run a task, read what it executes (`task --summary <name>`, or its `cmds:` in the
 > Taskfile). A similar name is not enough: `destroy-kind` and `destroy` differ by one word and
 > by the whole fleet.
+
+A generator that is too broad applies a correct chain to someone else's resources, and for a
+spoke that chain ends in a deletion. This is why `fleetScopeByPrefix` is a safety setting, not a
+tidiness one.
 
 ---
 
