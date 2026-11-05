@@ -110,7 +110,9 @@ Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `
 > another hub runs in the same AWS account or the fleet repo is a fork of, or shared with, another
 > hub's fleet repo. Without it this hub provisions the other hubs' spoke entries: ACK adopts their
 > EKS clusters (`adopt-or-create`, `deletion-policy: delete`), duplicates their VPC, NAT gateways
-> and subnets, and any delete on this hub deletes their clusters. An empty `resourcePrefix` falls
+> and subnets, and any delete on this hub deletes their clusters. When those spokes do not exist
+> yet, the likely case on a new account, this hub creates them under their names instead, and the
+> other hub's install fails on names already taken. An empty `resourcePrefix` falls
 > back to the flat layout, and spoke names must still be unique in the account and region.
 > Prevention and recovery steps:
 > [custom-install.md, section 3a](../../docs/install/custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).

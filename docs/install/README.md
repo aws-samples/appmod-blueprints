@@ -80,7 +80,8 @@ Pick one of three options:
 > **Another hub in the same AWS account, or a fleet repo forked from / shared with another hub?**
 > Set `fleetScopeByPrefix: true` and a unique `resourcePrefix` before the first install. Without
 > it the new hub adopts the other hub's spoke clusters, duplicates their VPCs, and deletes them
-> on its own teardown. See
+> on its own teardown; or, when those spokes do not exist yet (the likely case on a new account),
+> it creates them under their names and the other hub's install fails. See
 > [custom-install.md, section 3a](custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
 
 Config keys: `fleetRepo.{url,revision,basepath}`, each falling back to `repo.*` when omitted

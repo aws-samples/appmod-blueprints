@@ -234,8 +234,21 @@ or SSO breaks ([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egr
 The `clusters-kro` ApplicationSet creates one `EksclusterWithVpc` per marker file
 `fleet/spoke-values/tenants/*/kro-clusters/clusters/*.json`. The EKS cluster of that graph is
 declared with `services.k8s.aws/adoption-policy: adopt-or-create`, and its `deletionPolicy`
-defaults to `delete`. When the marker names a spoke that another hub already created in the same
-account and region:
+defaults to `delete`. The same misconfiguration fails in one of two ways, depending on whether
+the other hub's spoke already exists when this hub reconciles the entry:
+
+| Form | When | What this hub does | Main damage |
+|---|---|---|---|
+| **Adoption** | The other hub's spoke already exists | Adopts the existing EKS cluster and name-keyed resources, duplicates the rest | Its teardown deletes the other hub's clusters |
+| **Name preemption** | The other hub's spoke does not exist yet | Creates the spoke under the names generated for it | The other hub's install fails on names already taken |
+
+**Name preemption is the most likely form on a new account**, or on any account where the other
+hub has not installed its spokes yet: whichever hub reconciles a spoke entry first takes the
+names.
+
+#### Form 1: adoption
+
+When the marker names a spoke that another hub already created in the same account and region:
 
 1. **ACK adopts the existing EKS cluster** (same name) instead of failing, with
    `deletion-policy: delete`, and so do the name-keyed resources of the graph that already exist
@@ -247,6 +260,27 @@ account and region:
    the resources stay in an error loop.
 4. **Any delete on the new hub deletes the original clusters**: pruning its spoke Application,
    [delete-spoke.md](delete-spoke.md), or `task destroy`.
+
+#### Form 2: name preemption
+
+When the marker names a spoke that the other hub has not created yet, there is nothing to adopt.
+This hub **creates** the whole spoke graph under the names generated for that spoke: the EKS
+cluster, its VPC, subnets, NAT gateways and Elastic IPs, the `<spoke>-*` IAM roles, the OIDC
+provider, access entries and Pod Identity associations.
+
+1. **The legitimate install fails later.** When the other hub reconciles its own entry, every
+   name-keyed resource already exists. Depending on the resource, its ACK controller either
+   reports a conflict (`AlreadyExists`, `EntityAlreadyExists`, `ResourceInUseException`) or adopts
+   the resource that this hub created, so the two hubs end up managing the same resources.
+2. **The resources look legitimate.** They carry the names the other hub expects, so nothing in
+   their names tells you which hub created them, and a quick look at the account suggests the
+   other hub's spokes are installed.
+3. **Cleanup is harder than for adoption.** The resources have the right names but belong to the
+   wrong hub: deleting them by name may delete what the other hub has started to adopt, and
+   leaving them blocks the other hub. Their deletion policy is `delete` on this hub, so any delete
+   on this hub removes them, even after the other hub depends on them.
+4. The preempting hub also consumes per-region quotas (VPCs, Elastic IPs, NAT gateways), which
+   can make the other hub's install fail for a reason unrelated to names.
 
 The same applies to `fleet/members/*/values.yaml`, which registers clusters with this hub's ArgoCD.
 
@@ -275,7 +309,17 @@ Rules that go with it:
 - The flag is sticky: a value set on `<hub>/config` is kept on re-seed. To turn it off, remove
   the key from `<hub>/config` too ([kind-kro-ack README](../../cluster-providers/kind-kro-ack/README.md#multi-hub-fleet-scoping-opt-in)).
 
-### If a hub has already adopted another hub's spokes
+### If a hub has already adopted or preempted another hub's spokes
+
+First find out which form you have. For each spoke entry that belongs to another hub, check
+whether that spoke existed before this hub reconciled it: compare the cluster's `createdAt`
+(`aws eks describe-cluster`) and the creator of `CreateCluster` in CloudTrail (step 3 of the
+preemption procedure) with the time this hub first synced the entry. If the spoke existed,
+follow the adoption procedure; if it did not, follow the preemption procedure. In both cases, do **not** run `task destroy`,
+[delete-spoke.md](delete-spoke.md) or a pruning sync on the misconfigured hub first: each of
+them deletes resources that may belong to, or be needed by, the other hub.
+
+#### Adoption: retain, then disengage
 
 Do **not** run `task destroy`, [delete-spoke.md](delete-spoke.md) or a pruning sync on the hub
 that adopted the spokes: each of them would delete the original clusters. In this order:
@@ -304,6 +348,50 @@ that adopted the spokes: each of them would delete the original clusters. In thi
    name matches an existing role is the original role, adopted, not a copy: keep it.
 5. Turn on `fleetScopeByPrefix` with a unique `resourcePrefix` on that hub before declaring its
    own spokes again.
+
+#### Name preemption: identify the owner before any deletion
+
+The resources carry the expected names, so the name never tells you who created them. Establish
+the owner of each resource **before** deleting anything, and stop the misconfigured hub from
+changing them while you do:
+
+1. **Freeze the misconfigured hub.** Set `deletionPolicy: retain` on the entries it preempted,
+   push, sync, and check the retain annotation as in step 1 of the adoption procedure. Then
+   remove those entries from the fleet branch it reads, so that it stops reconciling them. With
+   `retain`, ACK leaves the AWS resources in place.
+2. **Read the tags.** The graphs tag the cluster, VPC, NAT gateways and Elastic IPs with
+   `platform.gitops.io/prefix` and `platform.gitops.io/cluster`, plus the hub's `platformTags`, and
+   ACK adds its own controller tags (`services.k8s.aws/*`). The prefix tag comes from the entry's
+   `resourcePrefix` when the entry sets one, otherwise from the hub's: a forked entry that pins
+   the other hub's prefix produces the same tags on both hubs. Tags are therefore a hint, not a
+   proof. Compare them with the values of each hub:
+
+   ```bash
+   aws eks describe-cluster --name <spoke> --query cluster.tags
+   aws ec2 describe-vpcs --filters Name=tag:Name,Values=<spoke>* --query 'Vpcs[].{id:VpcId,tags:Tags}'
+   aws iam list-role-tags --role-name <spoke>-<suffix>
+   ```
+
+3. **Check the creator in CloudTrail.** Tags can be copied or missing, so confirm with the
+   identity that called the create API (`CreateCluster`, `CreateVpc`, `CreateRole`, ...). The
+   principal is the ACK controller's role (or the credentials) of one hub; match it with the role
+   that hub's ACK controllers use:
+
+   ```bash
+   aws cloudtrail lookup-events \
+     --lookup-attributes AttributeKey=ResourceName,AttributeValue=<spoke> \
+     --query 'Events[?EventName==`CreateCluster`].{time:EventTime,user:Username,event:CloudTrailEvent}'
+   ```
+
+   CloudTrail event history covers the last 90 days in the region of the call (IAM calls are
+   recorded in `us-east-1`). For older resources, query the trail logs instead.
+4. **Decide per resource, by ID.** A resource created by the misconfigured hub and not yet used
+   by the other hub can be deleted, by ID only, so that the other hub can create its own. A
+   resource the other hub has already adopted or depends on stays: hand it over to that hub
+   (its own entry, with its own deletion policy) instead of deleting it. Never select resources
+   by name, tag or CIDR alone.
+5. Re-run the other hub's install, then turn on `fleetScopeByPrefix` with a unique
+   `resourcePrefix` on the misconfigured hub before declaring its own spokes again.
 
 ---
 
