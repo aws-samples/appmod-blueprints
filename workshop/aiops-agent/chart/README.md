@@ -208,7 +208,7 @@ value fails the render. It is a chart value only (overlay values of the addon): 
 A GitLab install without the bot token (`aiops_agent_git_token`) still renders the GitLab
 variant; making that case fail-soft is a separate change.
 
-## argocd-status-mcp (Argo CD Application health, off until its image is pinned)
+## argocd-status-mcp (Argo CD Application health, on with the pinned image)
 
 `eks-read-mcp` (upstream eks-mcp-server, kept unforked) lists Applications without status
 and cannot filter on status, so a complete "which apps are not Synced and Healthy?" answer
@@ -226,11 +226,11 @@ about 350 characters; with every app broken it stays near 4.5k tokens.
   no write, nothing cluster-wide), bound to that ServiceAccount.
 - Gateway: route `/mcp/argocd-status-mcp`, stateless backend, `Require` allow-list with the
   one tool.
-- **On/off**: `images.argocdStatusMcp.tag`. Empty (default) = the component is not rendered,
+- **On/off**: `images.argocdStatusMcp.tag`, pinned to `v1` by default (on). Empty = the component is not rendered,
   it is not in the agent's `mcpServers` (the OAP `/ready` set) or `dependsOn`, and the prompt
   keeps the per-Application sweep rule; the render is byte-identical to the chart without
   this feature. It does NOT inherit `imageTag`, so an install never waits on an unpublished
-  image. Set the tag (image built by `buildspec*.yaml`) to turn it on: the agent then waits
+  image. With a tag set (image built by `buildspec*.yaml`), it is on: the agent then waits
   for it like any other MCP server, and its prompt prefers this tool for Application
   health/sync questions: a note placed right before the per-Application sweep rule tells it
   to call the tool first, in one call, and to keep the per-Application read as the fallback.

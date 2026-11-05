@@ -9,8 +9,10 @@ injects from cluster annotations: gitlabDomain (gitlab_domain_name) and fleetRep
 - gitlab: the workshop. gitlab-mcp, its token ExternalSecret and the bridge's GitLab
           open-MR dup-check env stay.
 - none:   no GitLab forge for the fleet repo. No gitlab-mcp, no token ExternalSecret; the
-          agent lists skills-mcp + eks-read-mcp only (OAP /ready requires every configured
-          mcpServers entry), and its prompt says it is read-only.
+          agent lists skills-mcp + eks-read-mcp + argocd-status-mcp (OAP /ready requires
+          every configured mcpServers entry), and its prompt says it is read-only.
+The read-only argocd-status tool is forge-independent and on by default (the chart pins
+images.argocdStatusMcp.tag, #1246): ARGOCD_STATUS below is in both variants.
 - both:   the incident path (selectors, ACK IAM/SNS/SQS, AmpIncident, incident-bridge) is in
           the core. A GitLab <-> none switch therefore GCs no AWS-backed CR (ACK/kro): removing
           them with their IAMRoleSelectors in one GC pass left them stuck in deletion.
@@ -42,6 +44,8 @@ NO_FORGE = {"accountId": "111111111111", "clusterPrefix": "example-b", "gitlabDo
 LINE_SLOTS = ["AGENT_DEPENDS", "MCP_SERVERS", "WRITE_COMPONENT", "BRIDGE_ENV"]
 PROMPT_SLOTS = ["PROMPT_INCIDENT_FIX", "PROMPT_WRITE_RULE", "PROMPT_TOOL_NOTES",
                 "PROMPT_IDEMPOTENCY", "PROMPT_ACT_FIRST"]
+# Forge-independent, on because chart/values.yaml pins images.argocdStatusMcp.tag (#1246).
+ARGOCD_STATUS = "argocd-status-mcp"
 BRIDGE_COMPONENTS = {"incident-bridge-selectors", "incident-bridge-aws", "amp-incident",
                      "incident-bridge"}
 GITLAB_OBJECTS = {("ExternalSecret", "gitlab-mcp-token"), ("Deployment", "gitlab-mcp"),
@@ -182,7 +186,8 @@ def test_no_forge_renders_no_gitlab_mcp_or_token_but_keeps_incident_path(tmp_pat
     out = render(tmp_path, NO_FORGE)
     comps = components(out)
     assert set(comps) == {"skills-mcp", "aiops-agent-memory", "aiops-agent", "eks-read-access",
-                          "eks-read-mcp", "chat-ui", "agent-access"} | BRIDGE_COMPONENTS
+                          "eks-read-mcp", "chat-ui", "agent-access",
+                          ARGOCD_STATUS} | BRIDGE_COMPONENTS
     kinds = {(o["kind"], o["metadata"]["name"]) for _, o in objects(comps)}
     assert not [k for k in kinds if k[0] == "ExternalSecret"]
     assert not [k for k in kinds if "gitlab" in k[1]]
@@ -198,12 +203,13 @@ def test_no_forge_renders_no_gitlab_mcp_or_token_but_keeps_incident_path(tmp_pat
 
 
 @needs_helm
-def test_no_forge_agent_is_ready_with_two_mcp_servers(tmp_path):
+def test_no_forge_agent_is_ready_without_gitlab_mcp(tmp_path):
     agent = components(render(tmp_path, NO_FORGE))["aiops-agent"]
     # OAP /ready requires every configured mcpServers entry: this list decides readiness.
-    assert [m["name"] for m in agent["properties"]["mcpServers"]] == ["skills-mcp",
-                                                                       "eks-read-mcp"]
-    assert agent["dependsOn"] == ["aiops-agent-memory", "skills-mcp", "eks-read-mcp"]
+    assert [m["name"] for m in agent["properties"]["mcpServers"]] == [
+        "skills-mcp", "eks-read-mcp", ARGOCD_STATUS]
+    assert agent["dependsOn"] == ["aiops-agent-memory", "skills-mcp", "eks-read-mcp",
+                                  ARGOCD_STATUS]
 
 
 @needs_helm
@@ -291,7 +297,7 @@ def test_gitlab_variant_keeps_the_full_toolset(tmp_path):
     assert {"GITLAB_API_URL", "GITLAB_MR_PROJECT", "GITLAB_PERSONAL_ACCESS_TOKEN"} <= env
     agent = comps["aiops-agent"]
     assert [m["name"] for m in agent["properties"]["mcpServers"]] == [
-        "skills-mcp", "eks-read-mcp", "gitlab-mcp"]
+        "skills-mcp", "eks-read-mcp", "gitlab-mcp", ARGOCD_STATUS]
     assert "gitlab-mcp" in agent["dependsOn"]
     assert comps["agent-access"]["dependsOn"] == ["incident-bridge-selectors"]
     es = [o for _, o in objects(comps) if o["kind"] == "ExternalSecret"]
