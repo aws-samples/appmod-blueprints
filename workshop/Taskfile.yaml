@@ -353,10 +353,28 @@ tasks:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
       HUB_KUBECONFIG: "{{.REPO}}/private/hub-kubeconfig"
+      # Phase marker: at the start of each phase, "<phase> <utc>" is written to this SSM
+      # parameter, so the phase a destroy reached stays readable after the machine that
+      # ran it is gone (e.g. a destroy killed by an SSM executionTimeout). Same
+      # /<prefix>/... namespace as the consumer's own init-status / destroy-status
+      # markers. Strictly best-effort: every write ends in `|| true` and is bounded by
+      # short CLI timeouts, so a missing permission or network can never fail or stall
+      # the destroy. The caller reads it and, once done, deletes it.
+      DESTROY_PHASE_PARAM: "/{{.RESOURCE_PREFIX}}/destroy-phase"
+      DESTROY_MARK: >-
+        aws ssm put-parameter --name "{{.DESTROY_PHASE_PARAM}}" --type String --overwrite
+        --region "{{.AWS_REGION}}" --cli-connect-timeout 5 --cli-read-timeout 10 --value
+      # Phase 2.5: the kro RelationalDatabase instance the devlake addon renders
+      # (gitops/addons/charts/devlake/templates/rds-ack.yaml) and the cap on the wait
+      # for its ACK resources to be deleted.
+      DEVLAKE_RDS_NS: '{{.DEVLAKE_RDS_NS | default "devlake"}}'
+      DEVLAKE_RDS_NAME: '{{.DEVLAKE_RDS_NAME | default "devlake-mysql"}}'
+      RDS_DELETE_WAIT: '{{.RDS_DELETE_WAIT | default "900"}}'
     cmds:
       - printf '{{.C_STEP}}▸ Workshop destroy starting (workloads → spokes → hub){{.C_RESET}}\n'
 
       # Phase 0: hub kubeconfig
+      - '{{.DESTROY_MARK}} "0 kubeconfig $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
         aws eks update-kubeconfig \
           --name $(yq '.hub.clusterName // "peeks-hub"' {{.CONFIG_FILE}}) \
@@ -366,6 +384,7 @@ tasks:
       # Phase 1: drain workloads (Ingress → ALBs, LB Services → NLBs, PVCs → EBS)
       # from every spoke BEFORE deleting the spoke clusters, so no ENI-locked VPCs
       # block the spoke VPC deletion.
+      - '{{.DESTROY_MARK}} "1 drain $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
         printf '{{.C_STEP}}▸ Phase 1 — draining workloads from spoke clusters...{{.C_RESET}}\n'
         PREFIX=$(yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}})
@@ -415,6 +434,7 @@ tasks:
       # out-of-band instances (not managed by a Backstage ArgoCD app, so not self-healed).
       # Infra RGDs (ekscluster/eksclusterwithvpc/vpc) are intentionally excluded:
       # spokes are handled by Phase 2 and the hub by Phase 3.
+      - '{{.DESTROY_MARK}} "1b app-layer $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
         printf '{{.C_STEP}}▸ Phase 1b — tearing down app-layer workloads (ArgoCD apps → kro → ACK deprovision)...{{.C_RESET}}\n'
         if kubectl --kubeconfig {{.HUB_KUBECONFIG}} cluster-info >/dev/null 2>&1; then
@@ -450,39 +470,230 @@ tasks:
         fi
 
       # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
+      - '{{.DESTROY_MARK}} "2 spokes $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
       - task: spokes:disable-all
 
-      # Phase 2.5: release the Crossplane-managed DevLake RDS while the hub
-      # controllers are still alive, and WAIT for Crossplane to reap the composed
-      # AWS resources (RDS cluster, subnet group, and — critically — the security
-      # group rds-mysql-sg-*). Otherwise that SG is orphaned in the IDE VPC once
-      # the hub/Crossplane is destroyed, and blocks VPC + CloudFormation stack
-      # deletion. Same philosophy as spokes:disable-all above. See appmod-blueprints#895.
+      # Phase 2.5: release the DevLake RDS while the hub controllers are still alive,
+      # and WAIT (bounded) for them to delete its AWS resources (DB cluster + instance,
+      # subnet group and its security group). Otherwise the SG is orphaned in the
+      # consumer's VPC once the hub is destroyed and blocks the VPC delete.
+      # See appmod-blueprints#895.
+      #
+      # Two implementations exist, and only the one whose CRDs the hub serves is used:
+      #   * kro/ACK (current): the devlake addon renders a kro RelationalDatabase
+      #     (gitops/addons/charts/devlake/templates/rds-ack.yaml), composed of ACK
+      #     rds.services.k8s.aws DBSubnetGroup/DBCluster/DBInstance and an ACK
+      #     ec2.services.k8s.aws SecurityGroup, each owned by the instance.
+      #   * Crossplane (legacy, kind-crossplane): a KubeVela app devlake-rds-mysql /
+      #     RelationalDatabase claim composing Upbound managed resources.
+      #
+      # Every lookup is guarded so that a CRD the hub does not serve, or an unreachable
+      # hub, reads as "nothing there" instead of aborting the destroy under the
+      # Taskfile's errexit/pipefail (the original N-7 abort). Inside the wait, a failed
+      # read of a served kind counts as "still there". The wait runs when something was
+      # deleted, or when ACK objects owned by the instance are still present.
+      - '{{.DESTROY_MARK}} "2.5 devlake-rds $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
-        printf '{{.C_STEP}}▸ Phase 2.5 — releasing Crossplane-managed DevLake RDS...{{.C_RESET}}\n'
+        printf '{{.C_STEP}}▸ Phase 2.5 — releasing the DevLake RDS...{{.C_RESET}}\n'
         export KUBECONFIG={{.HUB_KUBECONFIG}}
-        # Delete the KubeVela Application (cascades to the RelationalDatabase claim
-        # → XRelationalDatabase), and the claim directly in case the App is already gone.
-        kubectl delete application.core.oam.dev devlake-rds-mysql -n devlake --wait=false 2>/dev/null || true
-        kubectl delete relationaldatabases.awsblueprints.io --all -A --wait=false 2>/dev/null || true
-        # Wait up to 15 min for Crossplane to delete the composed Upbound managed
-        # resources — this is what actually deletes the AWS security group.
-        for i in $(seq 1 90); do
-          REMAIN=$(kubectl get securitygroups.ec2.aws.upbound.io,clusters.rds.aws.upbound.io,subnetgroups.rds.aws.upbound.io \
-            -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$REMAIN" = "0" ]; then
-            printf '{{.C_OK}}  ✓ Crossplane RDS managed resources reaped.{{.C_RESET}}\n'
-            break
-          fi
-          printf '{{.C_INFO}}  [%s/90] waiting for %s Crossplane RDS managed resource(s)...{{.C_RESET}}\n' "$i" "$REMAIN"
-          sleep 10
+        NS="{{.DEVLAKE_RDS_NS}}"; RDB="{{.DEVLAKE_RDS_NAME}}"
+        WAIT_MAX="{{.RDS_DELETE_WAIT}}"; POLL=10
+        has_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
+        # Applications generated by ApplicationSet $1, one per line.
+        appset_children() {
+          kubectl get applications.argoproj.io -n argocd -o json 2>/dev/null | jq -r --arg a "$1" '
+            .items[] | select(any((.metadata.ownerReferences // [])[]; .kind == "ApplicationSet" and .name == $a))
+            | "\(.metadata.name) \((.metadata.finalizers // []) | length)"' 2>/dev/null
+        }
+        # Make ApplicationSet $1 safe to delete without cascading: preserveResourcesOnDeletion,
+        # then strip its Applications' finalizers until a later read (after the controller
+        # had a chance to act on the patch) finds none. Patch-then-delete with nothing in
+        # between races the controller: Kubernetes GC would delete a child Application
+        # that still carries resources-finalizer, cascading into everything it renders.
+        orphan_appset() {
+          kubectl patch applicationsets.argoproj.io "$1" -n argocd --type merge \
+            -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' >/dev/null 2>&1 || return 1
+          E=0
+          while true; do
+            KIDS=$(appset_children "$1") || return 1
+            HELD=$(printf '%s\n' "$KIDS" | awk '$2 != "" && $2 != "0" {print $1}')
+            if [ -z "$HELD" ] && [ "$E" -gt 0 ]; then return 0; fi
+            if [ "$E" -ge 30 ]; then return 1; fi
+            for A in $HELD; do
+              kubectl patch applications.argoproj.io "$A" -n argocd --type merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            done
+            sleep 3; E=$((E + 3))
+          done
+        }
+
+        # ── kro/ACK ──────────────────────────────────────────────────────────────
+        # The ACK kinds the hub serves are read ONCE: in the wait loop below a failed read
+        # then means "unknown", which counts as still there, never as deleted.
+        ACK_KINDS=""
+        for K in dbinstances.rds.services.k8s.aws dbclusters.rds.services.k8s.aws \
+                 dbsubnetgroups.rds.services.k8s.aws securitygroups.ec2.services.k8s.aws; do
+          if has_crd "$K"; then ACK_KINDS="$ACK_KINDS $K"; fi
         done
+        # ACK objects the instance owns (ownerReferences → RelationalDatabase/<name>). The
+        # references outlive the instance, so this also finds children still finalizing
+        # after an earlier, interrupted destroy deleted the instance itself.
+        ack_left() {
+          N=0
+          for K in $ACK_KINDS; do
+            C=$(kubectl get "$K" -n "$NS" -o json 2>/dev/null | jq --arg r "$RDB" \
+              '[.items[] | select(any((.metadata.ownerReferences // [])[]; .kind == "RelationalDatabase" and .name == $r))] | length' 2>/dev/null) || C=""
+            case "$C" in ''|*[!0-9]*) C=1 ;; esac
+            N=$((N + C))
+          done
+          echo "$N"
+        }
+        KRO_WAIT=false; RDB_SEEN=false
+        if has_crd relationaldatabases.kro.run \
+            && kubectl get relationaldatabases.kro.run "$RDB" -n "$NS" >/dev/null 2>&1; then
+          RDB_SEEN=true
+          # The instance is rendered by an Argo CD Application with selfHeal, itself
+          # generated by an ApplicationSet that another Application renders, and so on:
+          # deleting the instance alone gets it re-created within seconds, and kro then
+          # provisions a NEW DB cluster. So first stop that chain, top-down. Ancestors are
+          # orphaned (orphan_appset, then each ancestor Application without its finalizer,
+          # so nothing else is deleted). The ApplicationSet that generates the instance's
+          # own Application is deleted the way hub:destroy-addons deletes an addon in
+          # Phase 3 step 7 (preserveResourcesOnDeletion=false, resources-finalizer on its
+          # Application first), so the rest of the devlake chart is still cascaded: once
+          # that ApplicationSet is gone, step 7 no longer sees it. The chain is read from the
+          # objects themselves (Argo CD tracking annotation/label, ApplicationSet
+          # ownerReferences), so no app or appset name is assumed.
+          owner_app() {
+            kubectl get "$@" -o json 2>/dev/null | jq -r '
+              ((.metadata.annotations // {})["argocd.argoproj.io/tracking-id"] // "" | split(":")[0]) as $t
+              | if $t != "" then $t else ((.metadata.labels // {})["app.kubernetes.io/instance"] // "") end
+              | split("_") | last' 2>/dev/null || true
+          }
+          CHAIN=""
+          CUR=$(owner_app relationaldatabases.kro.run "$RDB" -n "$NS")
+          BOTTOM="$CUR"; BOTTOM_AS=""
+          for i in $(seq 1 8); do
+            if [ -z "$CUR" ]; then break; fi
+            CHAIN="application/$CUR $CHAIN"
+            AS=$(kubectl get applications.argoproj.io "$CUR" -n argocd -o json 2>/dev/null \
+              | jq -r '[(.metadata.ownerReferences // [])[] | select(.kind == "ApplicationSet") | .name][0] // ""' 2>/dev/null || true)
+            if [ -z "$AS" ]; then break; fi
+            if [ "$i" = 1 ]; then BOTTOM_AS="$AS"; fi
+            CHAIN="applicationset/$AS $CHAIN"
+            CUR=$(owner_app applicationsets.argoproj.io "$AS" -n argocd)
+          done
+          if [ -n "$CHAIN" ]; then
+            printf '{{.C_INFO}}  Stopping Argo CD regeneration (top-down): %s{{.C_RESET}}\n' "$CHAIN"
+          fi
+          CHAIN_OK=true
+          for O in $CHAIN; do
+            case "$O" in
+              applicationset/*)
+                if [ "${O#*/}" = "$BOTTOM_AS" ]; then
+                  kubectl patch applicationsets.argoproj.io "${O#*/}" -n argocd --type merge \
+                    -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' >/dev/null 2>&1 || true
+                  E=0
+                  while [ "$E" -lt 60 ]; do
+                    F=$(kubectl get applications.argoproj.io "$BOTTOM" -n argocd -o json 2>/dev/null \
+                      | jq -r '(.metadata.finalizers // []) | join(" ")' 2>/dev/null || true)
+                    case "$F" in *resources-finalizer*) break ;; esac
+                    sleep 2; E=$((E + 2))
+                  done
+                  kubectl delete applicationsets.argoproj.io "${O#*/}" -n argocd --wait=false --ignore-not-found >/dev/null 2>&1 || true
+                elif orphan_appset "${O#*/}"; then
+                  kubectl delete applicationsets.argoproj.io "${O#*/}" -n argocd --wait=false --ignore-not-found >/dev/null 2>&1 || true
+                else
+                  printf '{{.C_ERR}}  ⚠ could not make ApplicationSet %s safe to delete (its Applications keep their finalizer); left for Phase 3.{{.C_RESET}}\n' "${O#*/}"
+                  CHAIN_OK=false
+                  break
+                fi
+                ;;
+              application/*)
+                if [ "${O#*/}" != "$BOTTOM" ]; then
+                  kubectl patch applications.argoproj.io "${O#*/}" -n argocd --type merge \
+                    -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+                fi
+                kubectl delete applications.argoproj.io "${O#*/}" -n argocd --wait=false --ignore-not-found >/dev/null 2>&1 || true
+                ;;
+            esac
+          done
+          if [ "$CHAIN_OK" != true ]; then
+            printf '{{.C_ERR}}  ⚠ RelationalDatabase %s/%s not deleted: Argo CD would re-create it. Phase 3 removes it with the devlake addon.{{.C_RESET}}\n' "$NS" "$RDB"
+          elif kubectl delete relationaldatabases.kro.run "$RDB" -n "$NS" --wait=false --ignore-not-found >/dev/null 2>&1; then
+            KRO_WAIT=true
+            printf '{{.C_INFO}}  Deleted RelationalDatabase %s/%s (kro → ACK deprovision).{{.C_RESET}}\n' "$NS" "$RDB"
+          else
+            printf '{{.C_ERR}}  ⚠ could not delete RelationalDatabase %s/%s; Phase 3 removes it with the devlake addon.{{.C_RESET}}\n' "$NS" "$RDB"
+          fi
+        fi
+        # Re-run after an interrupted destroy: the instance is already gone, its ACK
+        # children may still be deleting. Wait for them too.
+        if [ "$RDB_SEEN" != true ] && [ "$(ack_left)" != 0 ]; then
+          printf '{{.C_INFO}}  ACK resources owned by RelationalDatabase %s/%s are still present — waiting for them.{{.C_RESET}}\n' "$NS" "$RDB"
+          KRO_WAIT=true
+        fi
+
+        # ── Crossplane (legacy) ──────────────────────────────────────────────────
+        XP_DELETED=false
+        if has_crd applications.core.oam.dev \
+            && kubectl get applications.core.oam.dev devlake-rds-mysql -n "$NS" >/dev/null 2>&1; then
+          kubectl delete applications.core.oam.dev devlake-rds-mysql -n "$NS" --wait=false >/dev/null 2>&1 || true
+          XP_DELETED=true
+        fi
+        if has_crd relationaldatabases.awsblueprints.io; then
+          XP_CLAIMS=$(kubectl get relationaldatabases.awsblueprints.io -A -o name 2>/dev/null || true)
+          if [ -n "$XP_CLAIMS" ]; then
+            kubectl delete relationaldatabases.awsblueprints.io --all -A --wait=false >/dev/null 2>&1 || true
+            XP_DELETED=true
+          fi
+        fi
+        XP_KINDS=""
+        for K in securitygroups.ec2.aws.upbound.io clusters.rds.aws.upbound.io subnetgroups.rds.aws.upbound.io; do
+          if has_crd "$K"; then XP_KINDS="$XP_KINDS $K"; fi
+        done
+        # Same rule as ack_left: a failed read counts as still there.
+        xp_left() {
+          N=0
+          for K in $XP_KINDS; do
+            C=$(kubectl get "$K" -A -o json 2>/dev/null | jq '.items | length' 2>/dev/null) || C=""
+            case "$C" in ''|*[!0-9]*) C=1 ;; esac
+            N=$((N + C))
+          done
+          echo "$N"
+        }
+
+        if [ "$KRO_WAIT" != true ] && [ "$XP_DELETED" != true ]; then
+          printf '{{.C_INFO}}  No DevLake RDS (kro or Crossplane) on the hub — nothing to wait for.{{.C_RESET}}\n'
+          exit 0
+        fi
+        # Wait for the controllers to delete the AWS resources, bounded by wall-clock time
+        # (each poll also spends time in kubectl, so a poll count would overrun WAIT_MAX).
+        DEADLINE=$(( $(date +%s) + WAIT_MAX ))
+        DONE=false
+        while true; do
+          REMAIN=0
+          if [ "$KRO_WAIT" = true ]; then REMAIN=$((REMAIN + $(ack_left))); fi
+          if [ "$XP_DELETED" = true ]; then REMAIN=$((REMAIN + $(xp_left))); fi
+          if [ "$REMAIN" = "0" ]; then DONE=true; break; fi
+          LEFT=$(( DEADLINE - $(date +%s) ))
+          if [ "$LEFT" -le 0 ]; then break; fi
+          printf '{{.C_INFO}}  [%ss left] waiting for %s DevLake RDS resource(s) to be deleted...{{.C_RESET}}\n' "$LEFT" "$REMAIN"
+          if [ "$LEFT" -lt "$POLL" ]; then sleep "$LEFT"; else sleep "$POLL"; fi
+        done
+        if [ "$DONE" = true ]; then
+          printf '{{.C_OK}}  ✓ DevLake RDS resources deleted.{{.C_RESET}}\n'
+        else
+          printf '{{.C_ERR}}  ⚠ DevLake RDS resources still present after %ss; continuing (the consumer sweep catches leftovers).{{.C_RESET}}\n' "$WAIT_MAX"
+        fi
 
       # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
+      - '{{.DESTROY_MARK}} "3 hub $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_STEP}}▸ Phase 3 — destroying hub platform ({{.PROVIDER}})...{{.C_RESET}}\n'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy'
 
+      - '{{.DESTROY_MARK}} "done $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_OK}}✓ Workshop destroy complete.{{.C_RESET}}\n'
 
   # ============================================================
@@ -3200,37 +3411,158 @@ tasks:
         set -u
         # 1. Discover spokes from the fleet-config overlay (the single source of truth
         #    for cluster specs). If the overlay is unreachable we must NOT silently
-        #    proceed to hub teardown — surviving spokes would be orphaned.
+        #    proceed to hub teardown — surviving spokes would be orphaned — so fall back
+        #    to discovering them on the hub (step 1b).
         REPO_DIR=$(mktemp -d)
-        if ! git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>/dev/null; then
-          printf '{{.C_ERR}}⚠ fleet-config overlay unreachable — cannot discover spokes automatically.{{.C_RESET}}\n'
-          printf '{{.C_INFO}}  If any spoke clusters exist, delete them first with:{{.C_RESET}}\n'
-          printf '    task spokes:disable-kro -- <name>   /   task spokes:disable-crossplane -- <name>\n'
-          rm -rf "$REPO_DIR"; exit 0
+        KRO_SPOKES=""; XP_SPOKES=""; SOURCE=overlay
+        if CLONE_ERR=$(git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>&1); then
+          KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
+          XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
+          if [ -f "$KRO_VALUES" ]; then KRO_SPOKES=$(yq '.clusters // {} | keys | .[]' "$KRO_VALUES" 2>/dev/null || true); fi
+          if [ -f "$XP_VALUES" ]; then XP_SPOKES=$(yq '.clusters // {} | keys | .[]' "$XP_VALUES" 2>/dev/null || true); fi
+        else
+          SOURCE=hub
+          printf '{{.C_ERR}}⚠ fleet-config overlay unreachable — discovering spokes on the hub instead. git said:{{.C_RESET}}\n'
+          # Credentials are in the clone URL: redact any user:password@ before printing.
+          # Up to the LAST @ of the URL token: a password may contain `/` or `@`.
+          printf '%s\n' "$CLONE_ERR" | sed -E 's#(https?://)[^[:space:]]*@#\1***@#g' | tail -n 5 | sed 's/^/    /'
         fi
-        KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
-        XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
-        KRO_SPOKES=""; XP_SPOKES=""
-        [ -f "$KRO_VALUES" ] && KRO_SPOKES=$(yq '.clusters // {} | keys | .[]' "$KRO_VALUES" 2>/dev/null)
-        [ -f "$XP_VALUES" ]  && XP_SPOKES=$(yq '.clusters // {} | keys | .[]' "$XP_VALUES" 2>/dev/null)
         rm -rf "$REPO_DIR"
 
+        # 1b. Hub-side discovery: the provisioning objects the hub controllers reconcile.
+        #     kro: EksclusterWithVpc instances (kro-clusters renders one per spoke, in a
+        #     namespace named after it). Crossplane: PlatformCluster claims in
+        #     crossplane-system. Never the hub's own object (its name, or a
+        #     fleetMember=control-plane kro instance); only this install's prefix; and a
+        #     spoke marked deletionPolicy=retain is spared, as the provider destroy does.
+        #     They are deleted directly, because their clusters-kro-<name> /
+        #     clusters-<tenant> Application (prune:false, selfHeal:false) would sync them
+        #     back from Git, which still declares them, so a prune through it is a no-op.
+        #     selfHeal:false alone does not stop a re-apply: the Application is automated
+        #     with an unbounded retry, so a retried or new-revision sync would re-create a
+        #     deleted instance. So step 2 first stops that Application and the
+        #     ApplicationSet that generates it, without cascading.
+        HUB_KRO=""; HUB_XP=""
+        if [ "$SOURCE" = hub ]; then
+          aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --kubeconfig {{.REPO}}/private/hub-kubeconfig >/dev/null 2>&1 || true
+          KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
+          PREFIX="{{.RESOURCE_PREFIX}}"; HUB="{{.HUB_CLUSTER_NAME}}"
+          if $KC_HUB get crd eksclusterwithvpcs.kro.run >/dev/null 2>&1; then
+            HUB_KRO=$($KC_HUB get eksclusterwithvpcs.kro.run -A -o json 2>/dev/null | jq -r --arg p "$PREFIX" --arg h "$HUB" '
+              .items[]
+              | select(.metadata.name != $h and (.spec.name // .metadata.name) != $h
+                       and (.spec.fleetMember // "spoke") != "control-plane"
+                       and (.spec.resourcePrefix // $p) == $p)
+              | "\(.metadata.namespace)/\(.metadata.name)/\(.spec.name // .metadata.name)/\(.spec.deletionPolicy // "delete")"' 2>/dev/null || true)
+          fi
+          if $KC_HUB get crd platformclusters.platform.gitops.io >/dev/null 2>&1; then
+            HUB_XP=$($KC_HUB get platformclusters.platform.gitops.io -A -o json 2>/dev/null | jq -r --arg p "$PREFIX" --arg h "$HUB" '
+              .items[]
+              | select(.metadata.name != $h and (.spec.clusterName // .metadata.name) != $h
+                       and (.spec.resourcePrefix // $p) == $p)
+              | "\(.metadata.namespace)/\(.metadata.name)/\(.spec.clusterName // .metadata.name)/delete"' 2>/dev/null || true)
+          fi
+          for E in $HUB_KRO; do
+            N=$(echo "$E" | cut -d/ -f3); POL=$(echo "$E" | cut -d/ -f4)
+            if [ "$POL" = retain ]; then
+              printf '{{.C_INFO}}  Sparing kro spoke %s (deletionPolicy=retain).{{.C_RESET}}\n' "$N"
+            else
+              KRO_SPOKES="$KRO_SPOKES $N"
+            fi
+          done
+          for E in $HUB_XP; do
+            XP_SPOKES="$XP_SPOKES $(echo "$E" | cut -d/ -f3)"
+          done
+        fi
+
         if [ -z "$(echo $KRO_SPOKES $XP_SPOKES | tr -d ' ')" ]; then
-          printf '{{.C_OK}}✓ No spoke clusters declared in the overlay — nothing to tear down.{{.C_RESET}}\n'
+          if [ "$SOURCE" = hub ]; then
+            printf '{{.C_ERR}}⚠ No spoke found on the hub either (or the hub is unreachable). If spoke clusters exist, delete them with:{{.C_RESET}}\n'
+            printf '    task spokes:disable-kro -- <name>   /   task spokes:disable-crossplane -- <name>\n'
+          else
+            printf '{{.C_OK}}✓ No spoke clusters declared in the overlay — nothing to tear down.{{.C_RESET}}\n'
+          fi
           exit 0
         fi
-        printf '{{.C_STEP}}▸ Spokes to delete — KRO: [%s]  Crossplane: [%s]{{.C_RESET}}\n' "$(echo $KRO_SPOKES | tr '\n' ' ')" "$(echo $XP_SPOKES | tr '\n' ' ')"
+        printf '{{.C_STEP}}▸ Spokes to delete (from the %s) — KRO: [%s]  Crossplane: [%s]{{.C_RESET}}\n' "$SOURCE" "$(echo $KRO_SPOKES | tr '\n' ' ')" "$(echo $XP_SPOKES | tr '\n' ' ')"
 
-        # 2. Deliberate deletion via the existing per-cluster disable tasks (they remove
-        #    the cluster from the overlay in Git, then run a scoped `argocd app sync --prune`).
-        for c in $KRO_SPOKES; do
-          printf '{{.C_STEP}}▸ Disabling KRO spoke %s...{{.C_RESET}}\n' "$c"
-          task spokes:disable-kro -- "$c" || printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
-        done
-        for c in $XP_SPOKES; do
-          printf '{{.C_STEP}}▸ Disabling Crossplane spoke %s...{{.C_RESET}}\n' "$c"
-          task spokes:disable-crossplane -- "$c" || printf '{{.C_ERR}}⚠ disable-crossplane failed for %s (continuing).{{.C_RESET}}\n' "$c"
-        done
+        # 2. Deliberate deletion. From the overlay: the existing per-cluster disable
+        #    tasks (they remove the cluster from the overlay in Git, then run a scoped
+        #    `argocd app sync --prune`). From the hub: delete the provisioning objects;
+        #    their kro/ACK or Crossplane finalizers delete the EKS cluster and VPC.
+        if [ "$SOURCE" = overlay ]; then
+          for c in $KRO_SPOKES; do
+            printf '{{.C_STEP}}▸ Disabling KRO spoke %s...{{.C_RESET}}\n' "$c"
+            task spokes:disable-kro -- "$c" || printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
+          done
+          for c in $XP_SPOKES; do
+            printf '{{.C_STEP}}▸ Disabling Crossplane spoke %s...{{.C_RESET}}\n' "$c"
+            task spokes:disable-crossplane -- "$c" || printf '{{.C_ERR}}⚠ disable-crossplane failed for %s (continuing).{{.C_RESET}}\n' "$c"
+          done
+        else
+          # Stop the Applications that render the kro instances to delete (clusters-kro-<name>,
+          # read from the instance's tracking annotation) and the ApplicationSets that
+          # generate them, never cascading: each ApplicationSet gets
+          # preserveResourcesOnDeletion and its Applications lose their finalizers (until a
+          # re-read finds none) before it is deleted. Otherwise GC would cascade into every
+          # spoke, retained ones included. If that cannot be made safe, it is left alone.
+          STOP_APPS=""; STOP_AS=""
+          for E in $HUB_KRO; do
+            ENS=$(echo "$E" | cut -d/ -f1); EN=$(echo "$E" | cut -d/ -f2); POL=$(echo "$E" | cut -d/ -f4)
+            if [ "$POL" = retain ]; then continue; fi
+            A=$($KC_HUB get eksclusterwithvpcs.kro.run "$EN" -n "$ENS" -o json 2>/dev/null | jq -r '
+              ((.metadata.annotations // {})["argocd.argoproj.io/tracking-id"] // "" | split(":")[0]) as $t
+              | if $t != "" then $t else ((.metadata.labels // {})["app.kubernetes.io/instance"] // "") end
+              | split("_") | last' 2>/dev/null || true)
+            if [ -z "$A" ]; then continue; fi
+            STOP_APPS="$STOP_APPS $A"
+            S=$($KC_HUB get applications.argoproj.io "$A" -n argocd -o json 2>/dev/null \
+              | jq -r '[(.metadata.ownerReferences // [])[] | select(.kind == "ApplicationSet") | .name][0] // ""' 2>/dev/null || true)
+            case " $STOP_AS " in *" $S "*) ;; *) if [ -n "$S" ]; then STOP_AS="$STOP_AS $S"; fi ;; esac
+          done
+          for S in $STOP_AS; do
+            $KC_HUB patch applicationsets.argoproj.io "$S" -n argocd --type merge \
+              -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' >/dev/null 2>&1 || true
+            SAFE=false; T=0
+            while [ "$T" -le 30 ]; do
+              HELD=$($KC_HUB get applications.argoproj.io -n argocd -o json 2>/dev/null | jq -r --arg a "$S" '
+                .items[] | select(any((.metadata.ownerReferences // [])[]; .kind == "ApplicationSet" and .name == $a))
+                | select(((.metadata.finalizers // []) | length) > 0) | .metadata.name' 2>/dev/null) || HELD="?"
+              if [ -z "$HELD" ] && [ "$T" -gt 0 ]; then SAFE=true; break; fi
+              for A in $HELD; do
+                if [ "$A" != "?" ]; then
+                  $KC_HUB patch applications.argoproj.io "$A" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+                fi
+              done
+              sleep 3; T=$((T + 3))
+            done
+            if [ "$SAFE" = true ]; then
+              printf '{{.C_INFO}}  Stopping ApplicationSet %s (no cascade) so it cannot re-create the spokes.{{.C_RESET}}\n' "$S"
+              $KC_HUB delete applicationsets.argoproj.io "$S" -n argocd --wait=false --ignore-not-found >/dev/null 2>&1 || true
+            else
+              printf '{{.C_ERR}}⚠ could not make ApplicationSet %s safe to delete; it is left in place.{{.C_RESET}}\n' "$S"
+            fi
+          done
+          for A in $STOP_APPS; do
+            $KC_HUB patch applications.argoproj.io "$A" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            $KC_HUB delete applications.argoproj.io "$A" -n argocd --wait=false --ignore-not-found >/dev/null 2>&1 || true
+          done
+          for E in $HUB_KRO; do
+            ENS=$(echo "$E" | cut -d/ -f1); EN=$(echo "$E" | cut -d/ -f2); POL=$(echo "$E" | cut -d/ -f4)
+            if [ "$POL" = retain ]; then continue; fi
+            printf '{{.C_ERR}}▸ Deleting EksclusterWithVpc %s/%s — this DELETES the live cluster + its VPC.{{.C_RESET}}\n' "$ENS" "$EN"
+            $KC_HUB delete eksclusterwithvpcs.kro.run "$EN" -n "$ENS" --wait=false --ignore-not-found \
+              || printf '{{.C_ERR}}⚠ delete failed for %s/%s (continuing).{{.C_RESET}}\n' "$ENS" "$EN"
+          done
+          for E in $HUB_XP; do
+            ENS=$(echo "$E" | cut -d/ -f1); EN=$(echo "$E" | cut -d/ -f2)
+            printf '{{.C_ERR}}▸ Deleting PlatformCluster %s/%s — this DELETES the live cluster + its VPC.{{.C_RESET}}\n' "$ENS" "$EN"
+            $KC_HUB delete platformclusters.platform.gitops.io "$EN" -n "$ENS" --wait=false --ignore-not-found \
+              || printf '{{.C_ERR}}⚠ delete failed for %s/%s (continuing).{{.C_RESET}}\n' "$ENS" "$EN"
+          done
+          printf '{{.C_INFO}}  The overlay still declares them: remove them from fleet-config once it is reachable (task spokes:disable-kro / disable-crossplane).{{.C_RESET}}\n'
+        fi
 
         # 3. Wait for the spoke EKS clusters to actually disappear from AWS BEFORE the
         #    hub teardown removes the controllers that reconcile their deletion. Without
