@@ -254,9 +254,24 @@ provider's own directory but should not duplicate values from `config.yaml`.
 
 ### AWS credential resolution (EC2 vs local) — kubectl implications
 
-The provider Taskfiles export `AWS_PROFILE` (from `aws.profile`, default `"default"`)
-to every `aws`/`kubectl`/`helm` call so local multi-account users get consistent
-credential targeting. On an EC2 instance authenticated by an **instance role**,
+The `kind-crossplane`, `kind-kro-ack` and `terraform` provider Taskfiles export
+`AWS_PROFILE` (from `aws.profile`, default `"default"`) in their `env:` block to every
+`aws`/`kubectl`/`helm` call so local multi-account users get consistent credential
+targeting.
+
+**ACK credentials in `kind-kro-ack`.** `credentials:refresh` writes the identity the
+bootstrap ACK controllers run with into `ack-system/aws-credentials`:
+
+| `aws.profile` | Source |
+|---------------|--------|
+| a named profile | that profile (`aws configure export-credentials --profile <name>`) |
+| `"default"` | the EC2 instance role (IMDS) when it is on `aws.accountId`; otherwise a `[default]` profile from your own `~/.aws/config` or `~/.aws/credentials` (never the generated `private/aws-config` below, whose `[default]` is the instance role itself); off EC2, the `default` profile |
+| empty / unset | the EC2 instance role (IMDS) when IMDS answers, otherwise the `default` profile |
+
+Whatever the source, the resolved account must equal `aws.accountId` (when it is a
+12-digit id), otherwise the task fails without writing the secret.
+`credentials:check-and-refresh` also refreshes a secret that is valid but on another
+account, so a wrong-account secret does not survive re-runs. On an EC2 instance authenticated by an **instance role**,
 there is usually no `[default]` profile in `~/.aws/config`, so a bare
 `AWS_PROFILE=default` fails (`config profile (default) could not be found`) and the
 credential chain never falls through to IMDS.

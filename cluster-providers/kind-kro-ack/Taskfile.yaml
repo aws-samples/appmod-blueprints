@@ -24,8 +24,33 @@ env:
   # every aws call in install and destroy inherits it.
   AWS_RETRY_MODE: "standard"
   AWS_MAX_ATTEMPTS: "10"
+  # Same AWS_PROFILE / AWS_CONFIG_FILE contract as kind-crossplane and terraform
+  # (cluster-providers/README.md, "AWS credential resolution"). go-task already leaks
+  # those siblings' env: into this provider's tasks when run from the root Taskfile, so
+  # declaring it here changes no value; it makes the contract explicit instead of
+  # depending on that leak (#1259). `| default` for the same render race as there.
+  AWS_PROFILE: '{{.AWS_PROFILE | default "default"}}'
+  AWS_CONFIG_FILE: '{{.AWS_CONFIG_FILE | default (printf "%s/.aws/config" (env "HOME"))}}'
 
 vars:
+  # Keep both in sync with cluster-providers/kind-crossplane/Taskfile.yaml.
+  # Never empty: yq `//` does not fall back on "", and AWS_PROFILE="" breaks every aws call.
+  AWS_PROFILE:
+    sh: |
+      P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      echo "$P"
+  # On EC2: a generated config whose [default] resolves through the instance role, so a
+  # bare AWS_PROFILE=default still works. Off-instance: the user's own config, unchanged.
+  AWS_CONFIG_FILE:
+    sh: |
+      if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
+        mkdir -p "{{.ROOT_DIR}}/private"
+        printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
+        echo "{{.ROOT_DIR}}/private/aws-config"
+      else
+        echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+      fi
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   # Uniform start/done timing markers (stdout + /tmp/install-timing.log); never fails.
   MARK: 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh"'
@@ -462,17 +487,35 @@ tasks:
           ST=$(kubectl -n {{.ACK_NAMESPACE}} get secret aws-credentials \
             -o jsonpath='{.data.credentials}' 2>/dev/null | base64 -d | \
             grep aws_session_token | awk '{print $3}' || true)
-          RESULT=$(AWS_ACCESS_KEY_ID="$AKI" AWS_SECRET_ACCESS_KEY="$SAK" \
+          # Test the secret's keys only: no profile env var may take part in the call.
+          RESULT=$( (unset AWS_PROFILE AWS_DEFAULT_PROFILE
+            AWS_ACCESS_KEY_ID="$AKI" AWS_SECRET_ACCESS_KEY="$SAK" \
             AWS_SESSION_TOKEN="$ST" aws sts get-caller-identity \
-            --region {{.AWS_REGION}} --output text 2>&1 || echo "FAILED")
+            --region {{.AWS_REGION}} --output text) 2>&1 || echo "FAILED")
           if echo "$RESULT" | grep -qiE "ExpiredToken|InvalidClientTokenId|AuthFailure|FAILED"; then
             printf '{{.C_INFO}}  ACK credentials expired — refreshing...{{.C_RESET}}\n'
             NEEDS_REFRESH=true
+          elif printf '%s' '{{.AWS_ACCOUNT_ID}}' | grep -Eq '^[0-9]{12}$' \
+              && [ "$(echo "$RESULT" | awk 'NR==1 {print $1}')" != '{{.AWS_ACCOUNT_ID}}' ]; then
+            # #1259: valid is not enough. A secret written for another account (e.g. the
+            # host's instance role) used to survive every re-run, since setup skips an
+            # existing secret and this check only tested validity.
+            printf '{{.C_WARN}}  ACK credentials are valid but not for aws.accountId — refreshing...{{.C_RESET}}\n'
+            WRONG_ACCOUNT=true
           else
             printf '{{.C_OK}}✓ ACK credentials valid.{{.C_RESET}}\n'
           fi
         fi
-        [ "$NEEDS_REFRESH" = "true" ] && task credentials:refresh || true
+        # A wrong-account refresh must fail the run (refresh refuses to write such a
+        # secret); the expired/missing case keeps its historical best-effort behaviour.
+        # Through the ROOT Taskfile, like :2334: a bare `task credentials:refresh` runs in
+        # this directory, loads this Taskfile as the root and dies on its dynamic vars
+        # (yq on gitops/addons/registry/core.yaml: no such file) before refresh starts.
+        if [ "${WRONG_ACCOUNT:-false}" = "true" ]; then
+          ( cd "{{.ROOT_DIR}}" && task kind-kro-ack:credentials:refresh )
+        elif [ "$NEEDS_REFRESH" = "true" ]; then
+          ( cd "{{.ROOT_DIR}}" && task kind-kro-ack:credentials:refresh ) || true
+        fi
 
   credentials:refresh:
     desc: Force-refresh AWS credentials secret
@@ -480,36 +523,92 @@ tasks:
       - kubectl create namespace {{.ACK_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
       - |
         set -e
-        # Prefer explicit aws.profile from config — IMDS only used as fallback when no profile
-        # is set (or set to "default"). Without this, EC2-hosted runners (Cloud9, Workshop Studio,
-        # any EC2-based bootstrap host) silently override the user's intended account by reading
-        # the instance role from IMDS, causing ACK controllers to provision in the wrong account.
+        # Source order (unchanged): a named aws.profile wins; with no profile or "default",
+        # the EC2 instance role (IMDS) is used when IMDS answers, else the default profile.
+        # Then the resolved identity must be on aws.accountId (#1259). On an EC2 host whose
+        # instance role is in another account (a cloud dev desktop, a bootstrap instance),
+        # the shipped `profile: "default"` used to write THAT role into the ACK secret, and
+        # ACK provisioned in the wrong account. Now:
+        #   - profile "default" that is configured locally: used when the instance role is
+        #     not on aws.accountId, exactly like a named profile;
+        #   - any source still not on aws.accountId: hard error, no secret written.
+        # The instance role stays the source whenever it IS on aws.accountId (workshop IDE),
+        # and with no profile at all IMDS remains the deliberate choice.
         AWS_PROFILE_NAME=$(yq '.aws.profile // ""' {{.CONFIG_FILE}})
-        AKI=""; SAK=""; ST=""
-        if [ -n "$AWS_PROFILE_NAME" ] && [ "$AWS_PROFILE_NAME" != "default" ]; then
-          printf '  Using AWS profile from config: %s\n' "$AWS_PROFILE_NAME"
-          EXPORTED=$(aws configure export-credentials --profile "$AWS_PROFILE_NAME" --format env-no-export)
+        WANT_ACCOUNT='{{.AWS_ACCOUNT_ID}}'
+        AKI=""; SAK=""; ST=""; SOURCE=""
+        # The user's own AWS config. On EC2, AWS_CONFIG_FILE is the generated
+        # private/aws-config, whose only [default] IS the instance role: looking the
+        # default profile up there would just resolve the same role again.
+        USER_AWS_CONFIG="${AWS_CONFIG_FILE:-}"
+        if [ -z "$USER_AWS_CONFIG" ] || [ "$USER_AWS_CONFIG" = "{{.ROOT_DIR}}/private/aws-config" ]; then
+          USER_AWS_CONFIG="$HOME/.aws/config"
+        fi
+        # $2: config file to resolve the profile in (default: the task's AWS_CONFIG_FILE).
+        from_profile() {
+          if ! EXPORTED=$(AWS_CONFIG_FILE="${2:-${AWS_CONFIG_FILE:-$HOME/.aws/config}}" \
+              aws configure export-credentials --profile "$1" --format env-no-export); then
+            printf '{{.C_ERR}}ERROR: cannot resolve AWS credentials for profile %s.{{.C_RESET}}\n' "$1"
+            printf '       Check: aws sts get-caller-identity --profile %s\n' "$1"
+            exit 1
+          fi
           AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
           SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
           ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
+          SOURCE="AWS profile $1"
+        }
+        from_imds() {
+          ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
+          CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/"$ROLE")
+          AKI=$(echo "$CREDS" | jq -r .AccessKeyId)
+          SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
+          ST=$(echo  "$CREDS" | jq -r .Token)
+          SOURCE="EC2 instance role (IMDS)"
+        }
+        # Account of the candidate credentials, and only those: profile env vars unset in a
+        # subshell. Not `env -u`: uv installs a sourceable ~/.local/bin/env that can shadow
+        # /usr/bin/env on PATH.
+        account_of_candidate() {
+          ( unset AWS_PROFILE AWS_DEFAULT_PROFILE
+            AWS_ACCESS_KEY_ID="$AKI" AWS_SECRET_ACCESS_KEY="$SAK" AWS_SESSION_TOKEN="$ST" \
+              aws sts get-caller-identity --region {{.AWS_REGION}} --query Account --output text 2>/dev/null ) || true
+        }
+        CHECK_ACCOUNT=false
+        if printf '%s' "$WANT_ACCOUNT" | grep -Eq '^[0-9]{12}$'; then CHECK_ACCOUNT=true; fi
+        if [ -n "$AWS_PROFILE_NAME" ] && [ "$AWS_PROFILE_NAME" != "default" ]; then
+          printf '  Using AWS profile from config: %s\n' "$AWS_PROFILE_NAME"
+          from_profile "$AWS_PROFILE_NAME"
         else
           TOKEN=$(curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
           if [ -n "$TOKEN" ]; then
             printf '  Using EC2 instance role credentials (IMDS)\n'
-            ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
-            CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)
-            AKI=$(echo "$CREDS" | jq -r .AccessKeyId)
-            SAK=$(echo "$CREDS" | jq -r .SecretAccessKey)
-            ST=$(echo  "$CREDS" | jq -r .Token)
+            from_imds
+            if [ "$CHECK_ACCOUNT" = "true" ] && [ "$AWS_PROFILE_NAME" = "default" ] \
+                && [ "$(account_of_candidate)" != "$WANT_ACCOUNT" ] \
+                && AWS_CONFIG_FILE="$USER_AWS_CONFIG" aws configure list-profiles 2>/dev/null | grep -qx default; then
+              printf '  Instance role is not on aws.accountId; using the configured AWS profile default instead\n'
+              from_profile default "$USER_AWS_CONFIG"
+            fi
           else
             printf '  Using AWS default profile\n'
-            EXPORTED=$(aws configure export-credentials --profile default --format env-no-export)
-            AKI=$(echo "$EXPORTED" | sed -n 's/^AWS_ACCESS_KEY_ID=//p')
-            SAK=$(echo "$EXPORTED" | sed -n 's/^AWS_SECRET_ACCESS_KEY=//p')
-            ST=$(echo  "$EXPORTED" | sed -n 's/^AWS_SESSION_TOKEN=//p')
+            from_profile default
           fi
         fi
         if [ -z "$AKI" ] || [ -z "$SAK" ]; then echo "ERROR: empty credentials"; exit 1; fi
+        if [ "$CHECK_ACCOUNT" = "true" ]; then
+          GOT_ACCOUNT=$(account_of_candidate)
+          if [ "$GOT_ACCOUNT" != "$WANT_ACCOUNT" ]; then
+            printf '{{.C_ERR}}ERROR: %s resolves to account %s, not aws.accountId %s.{{.C_RESET}}\n' \
+              "$SOURCE" "${GOT_ACCOUNT:-<unknown: sts get-caller-identity failed>}" "$WANT_ACCOUNT"
+            printf '       Refusing to write ACK credentials for another account.\n'
+            printf '       Set aws.profile in config.local.yaml to a profile of that account, then\n'
+            printf '       re-run: task kind-kro-ack:credentials:refresh\n'
+            exit 1
+          fi
+          printf '{{.C_OK}}✓ ACK credentials (%s) are on aws.accountId.{{.C_RESET}}\n' "$SOURCE"
+        else
+          printf '{{.C_WARN}}  aws.accountId is not a 12-digit account id: account check skipped.{{.C_RESET}}\n'
+        fi
         rm -f {{.ROOT_DIR}}/private/aws-creds.ini
         install -m 600 /dev/null {{.ROOT_DIR}}/private/aws-creds.ini
         {

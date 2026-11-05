@@ -65,7 +65,7 @@ hub:
 aws:
   region: "<aws-region>"                     # e.g. us-west-2
   accountId: "<12-digit-account-id>"         # e.g. 123456789012
-  profile: "default"                         # AWS CLI profile (local dev only)
+  profile: "default"                         # AWS CLI profile; kind-kro-ack checks it is on accountId
 
 # Domain and networking
 # `domain` is the ingress hostname, provisioned by YOU (Route53, CloudFront, etc.).
