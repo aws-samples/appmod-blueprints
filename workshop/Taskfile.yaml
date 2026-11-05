@@ -151,12 +151,22 @@ tasks:
       # Argo CD capability. Warn-only (never fails the install); polling stays the fallback.
       - '{{.MARK}} step workshop argocd-gitlab-webhook'
       - task: argocd-gitlab-webhook
-      # Credential gate before declaring spokes (steering Issue #8): the spokes inherit
-      # crossplane + kubevela addons, and the hub Crossplane providers must have their
-      # Pod Identity credentials first. install:hub only backgrounds this settle, so
-      # wait for it here (force-syncs crossplane-base after 5 min; non-fatal, max 15 min).
-      - '{{.MARK}} step workshop hub:wait-for-providers'
-      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-providers'
+      # Hub Crossplane providers credential gate (steering Issue #8), kind-crossplane only.
+      # Issue #8 was about Crossplane-PROVISIONED spokes. On kind-kro-ack the spokes are
+      # created by the hub ACK capability via the kro RGD, their pod identities come from
+      # ACK (RGD bootstrap PIAs + ack_pod_identities, provider=kro-ack), and the hub's own
+      # Crossplane credentials are seeded inside install:hub
+      # (hub:bootstrap-crossplane-identity); the background hub:settle keeps the
+      # crossplane-base force-sync. So nothing on the kro-ack spoke path waits for hub
+      # providers Healthy, and this gate cost 7:23 on the critical path (rc8 event B).
+      # kind-crossplane keeps it (its install:hub already gates on providers too).
+      - |
+        if [ "{{.PROVIDER}}" = "kind-kro-ack" ]; then
+          printf '{{.C_INFO}}  hub:wait-for-providers skipped on kind-kro-ack (spokes are ACK/kro-provisioned; providers settle in the background hub:settle).{{.C_RESET}}\n'
+        else
+          {{.MARK}} step workshop hub:wait-for-providers
+          cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-providers
+        fi
       # Declare both spokes. Each lands in its environment (dev/prod)
       # and inherits that env's enabled-addons overlay — which enables crossplane +
       # kubevela (app deployment) on the spoke. The platform's guarded ApplicationSets

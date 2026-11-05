@@ -2,7 +2,8 @@
 
 O1  the workshop runs the platform install in two phases and declares the spokes in
     between: after install:hub (hub bootstrap), the overlay wiring, the webhook and
-    the Crossplane providers credential gate; before install:complete (Keycloak).
+    (kind-crossplane only) the Crossplane providers credential gate; before
+    install:complete (Keycloak). On kind-kro-ack the providers gate is skipped.
 O2  cloudfront:attach runs in the background from right after install:hub and is
     joined before post-install (IDC reaches Keycloak through CloudFront).
 O3  the install gates on spokes ACTIVE only; the spoke apps sync runs in a
@@ -57,6 +58,25 @@ def test_o1_spokes_declared_between_platform_phases():
     complete = _index(WS, "task install:complete")
     idc = _index(WS, "task: post-install")
     assert hub < overlay < hook < providers < dev < prod < complete < idc
+
+
+def test_o1_providers_gate_off_the_kro_ack_spoke_path():
+    # On kind-kro-ack the spokes are ACK/kro-provisioned: the hub Crossplane providers
+    # gate must not sit between the overlay wiring and the spoke declaration (it cost
+    # 7:23 on rc8 event B). kind-crossplane keeps the gate (steering Issue #8).
+    block = WS[_index(WS, ":hub:wait-for-providers")]
+    skip, other = block.split("else", 1)
+    assert '[ "{{.PROVIDER}}" = "kind-kro-ack" ]' in skip
+    assert "wait-for-providers skipped" in skip and "task " not in skip
+    assert "task {{.PROVIDER}}:hub:wait-for-providers" in other
+    assert not any(ln.startswith("cd ") and "wait-for-providers" in ln for ln in WS)
+    # On kro-ack the providers still settle, in the background hub:settle, which keeps
+    # the crossplane-base force-sync; install:hub seeds their credentials itself.
+    t = _tasks("cluster-providers/kind-kro-ack/Taskfile.yaml")
+    hub = [c["task"] for c in t["install:hub"]["cmds"] if isinstance(c, dict) and "task" in c]
+    assert "hub:wait-for-providers" not in hub
+    assert hub.index("hub:bootstrap-crossplane-identity") < hub.index("install:hub-settle-bg")
+    assert "Force-syncing crossplane-base" in str(t["hub:settle"]["cmds"])
 
 
 def test_o1_fallback_keeps_full_platform_install():
