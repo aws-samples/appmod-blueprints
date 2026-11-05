@@ -4354,17 +4354,17 @@ tasks:
           fi
           # [#1033 S2] Reachability check INSIDE the precondition (before kind is stopped) so an
           # unreachable / mis-authenticated overlay refuses up front with no stop/start cycle.
-          # Credential handling: GIT_ASKPASS feeds the password out-of-band so it is NEVER on
-          # git's argv (ps-visible) and needs no URL-encoding — the probed URL carries no secret.
+          # Credential handling (shared with the GitOps commit below): every overlay git call
+          # goes through pivot-overlay-git.sh — credential-free https URL, username via
+          # credential.username, password via GIT_ASKPASS from the ENVIRONMENT. The secret is
+          # never on git's argv (ps-visible), never in a clone's .git/config, and never handed
+          # to a credential helper.
           OVERLAY_HOSTPATH="${OVERLAY_URL#https://}"
-          ASKPASS=$(mktemp); printf '#!/bin/sh\nexec echo "$REPO_PASS"\n' > "$ASKPASS"; chmod +x "$ASKPASS"
-          if ! GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 REPO_PASS="$REPO_PASS" \
-                 git -c credential.username="${REPO_USER:-x-access-token}" ls-remote "https://$OVERLAY_HOSTPATH" >/dev/null 2>&1; then
-            rm -f "$ASKPASS"
+          if ! OVERLAY_GIT_PASSWORD="$REPO_PASS" OVERLAY_GIT_USERNAME="${REPO_USER:-x-access-token}" \
+                 bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' probe "https://$OVERLAY_HOSTPATH" >/dev/null 2>&1; then
             printf '{{.C_ERR}}✗ Refusing live pivot: overlay repo %s is not reachable with the registered ArgoCD credential (checked up front, before stopping kind).{{.C_RESET}}\n' "$OVERLAY_URL"
             exit 1
           fi
-          rm -f "$ASKPASS"
           printf '{{.C_OK}}  ✓ consumer-supplied overlay repo + reusable ArgoCD credential present and reachable — %s @ %s.{{.C_RESET}}\n' "$OVERLAY_URL" "$OVERLAY_REV"
         fi
 
@@ -4426,27 +4426,22 @@ tasks:
         # consumer registered — it never builds a GitLab URL or writes a repo password itself.
         HUB_GITOPS_ACTIVE=0
         if [ "{{.HUB_PIVOT_GITOPS}}" = "true" ]; then
-          # Authenticated push URL = overlay URL + the reused credential (never logged).
+          # Credential-free overlay URL; the reused credential travels only via the
+          # environment into pivot-overlay-git.sh (GIT_ASKPASS) — never argv, never .git/config.
           OVERLAY_HOSTPATH=${OVERLAY_URL#https://}
-          if [ -n "$REPO_USER" ]; then PUSH_URL="https://$REPO_USER:$REPO_PASS@$OVERLAY_HOSTPATH"; else PUSH_URL="https://$REPO_PASS@$OVERLAY_HOSTPATH"; fi
           # Manifest path inside the overlay repo (honour basepath if the overlay nests).
           REL_DIR="self-adoption/hub"; [ -n "$OVERLAY_BP" ] && REL_DIR="${OVERLAY_BP%/}/self-adoption/hub"
           printf '{{.C_STEP}}▸ [LIVE] GitOps adoption: committing hub EksCluster to the overlay repo (%s @ %s, path %s)…{{.C_RESET}}\n' "$OVERLAY_URL" "$OVERLAY_REV" "$REL_DIR"
           PUSHED=0
-          if git ls-remote "$PUSH_URL" >/dev/null 2>&1; then
-            REPO_DIR=$(mktemp -d)
-            if git clone --branch "$OVERLAY_REV" --single-branch "$PUSH_URL" "$REPO_DIR" >/dev/null 2>&1 && [ -d "$REPO_DIR/.git" ]; then
-              # self-adoption/hub/<hub>.yaml is OUTSIDE every appset's scan path
-              # (clusters-kro reads gitops/fleet/spoke-values/...), so no appset ever
-              # treats it as its own child → only the dedicated App below manages it.
-              mkdir -p "$REPO_DIR/$REL_DIR"
-              yq -p=json -o=yaml '.' "$WORK/hub-instance.json" > "$REPO_DIR/$REL_DIR/$HUB.yaml"
-              if ( cd "$REPO_DIR"; git add -A; \
-                   git -c user.email=pivot@peeks.local -c user.name=peeks-pivot \
-                     commit -m "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1 || true; \
-                   git push "$PUSH_URL" "HEAD:$OVERLAY_REV" >/dev/null 2>&1 ); then PUSHED=1; fi
-            fi
-            rm -rf "$REPO_DIR"
+          # self-adoption/hub/<hub>.yaml is OUTSIDE every appset's scan path
+          # (clusters-kro reads gitops/fleet/spoke-values/...), so no appset ever
+          # treats it as its own child → only the dedicated App below manages it.
+          yq -p=json -o=yaml '.' "$WORK/hub-instance.json" > "$WORK/hub-instance.yaml"
+          if OVERLAY_GIT_PASSWORD="$REPO_PASS" OVERLAY_GIT_USERNAME="${REPO_USER:-x-access-token}" \
+               bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' publish \
+                 "https://$OVERLAY_HOSTPATH" "$OVERLAY_REV" "$REL_DIR" "$WORK/hub-instance.yaml" "$HUB.yaml" \
+                 "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1; then
+            PUSHED=1
           fi
           if [ "$PUSHED" = 1 ]; then
             # Dedicated hub self-adoption Application. source.repoURL = the overlay URL;
