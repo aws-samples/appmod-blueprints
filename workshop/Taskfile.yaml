@@ -2336,9 +2336,48 @@ tasks:
           [ "$i" = "30" ] && printf '{{.C_ERR}}⚠ API server not ready after 150s — proceeding anyway.{{.C_RESET}}\n' || sleep 5
         done
 
+        # Register an ArgoCD credential Secret (manifest on stdin) without racing ESO.
+        # The argocd-gitlab-repo-creds chart ships an ExternalSecret of the SAME name
+        # (creationPolicy: Owner) for both Secrets below, and ESO may create the Secret
+        # while we do: `kubectl apply` GETs (NotFound), ESO creates it, our CREATE then
+        # fails with AlreadyExists and errexit aborts the whole install. So:
+        #   - ExternalSecret present -> ESO is the owner: wait for it to create the
+        #     Secret (~60s) and do not write it ourselves (no two writers);
+        #   - otherwise (cold start, or ESO stalled) apply it, retrying: after an
+        #     AlreadyExists/Conflict the next apply is an update and goes through.
+        # A real error (Forbidden, invalid manifest...) still fails after the retries.
+        register_repo_secret() {
+          RS_NAME="$1"
+          RS_MANIFEST=$(cat)
+          RS_APPLIES=0
+          for RS_TRY in $(seq 1 17); do
+            if KUBECONFIG="$KC" kubectl -n argocd get externalsecret "$RS_NAME" >/dev/null 2>&1; then
+              if KUBECONFIG="$KC" kubectl -n argocd get secret "$RS_NAME" >/dev/null 2>&1; then
+                printf '{{.C_OK}}✓ argocd/%s is managed by its ExternalSecret — leaving it to ESO.{{.C_RESET}}\n' "$RS_NAME"
+                return 0
+              fi
+              if [ "$RS_TRY" -le 12 ]; then
+                sleep 5
+                continue
+              fi
+            fi
+            if printf '%s\n' "$RS_MANIFEST" | KUBECONFIG="$KC" kubectl apply -f -; then
+              return 0
+            fi
+            RS_APPLIES=$((RS_APPLIES + 1))
+            if [ "$RS_APPLIES" -ge 5 ]; then
+              break
+            fi
+            printf '{{.C_INFO}}  apply of argocd/%s failed (attempt %d/5) — retrying...{{.C_RESET}}\n' "$RS_NAME" "$RS_APPLIES"
+            sleep 5
+          done
+          printf '{{.C_ERR}}✗ could not register argocd/%s.{{.C_RESET}}\n' "$RS_NAME"
+          return 1
+        }
+
         # 3. ArgoCD repo credential for the private GitLab fleet-config repo
         printf '{{.C_STEP}}▸ Registering ArgoCD repository credential for fleet-config...{{.C_RESET}}\n'
-        cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
+        cat <<EOF | register_repo_secret fleet-config-repo
         apiVersion: v1
         kind: Secret
         metadata:
@@ -2359,7 +2398,7 @@ tasks:
         #     matching credential template those CD Applications fail with ComparisonError.
         #     A repo-creds secret applies to every repository whose URL starts with `url`.
         printf '{{.C_STEP}}▸ Registering ArgoCD repo-creds for {{.GIT_USERNAME}} GitLab namespace...{{.C_RESET}}\n'
-        cat <<EOF | KUBECONFIG="$KC" kubectl apply -f -
+        cat <<EOF | register_repo_secret gitlab-user-repo-creds
         apiVersion: v1
         kind: Secret
         metadata:
