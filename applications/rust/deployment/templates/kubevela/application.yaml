@@ -64,7 +64,9 @@ spec:
         tableName: ${RESOURCE_PREFIX}-rust-app-table-<environment>
         partitionKeyName: partition_key
         sortKeyName: sort_key
-        region: us-west-2
+        # Rendered at copy time like the kro template's ${AWS_REGION} (the render
+        # step's sed substitutes it), so the table lands in the deployment region.
+        region: "${AWS_REGION}"
       traits:
         - type: component-iam-policy
           properties:

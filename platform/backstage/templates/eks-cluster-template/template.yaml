@@ -12,7 +12,6 @@ spec:
       required:
         - clusterName
         - environment
-        - region
         - k8sVersion
         - tenant
       properties:
@@ -31,7 +30,7 @@ spec:
           title: AWS Region
           type: string
           description: AWS Region for the EKS cluster
-          default: "us-west-2"
+          ui:help: Leave empty to use the platform's own AWS region (recommended).
         k8sVersion:
           title: Kubernetes Version
           type: string
@@ -206,7 +205,7 @@ spec:
               accountId: "${{ parameters.accountId or steps['fetchSystem'].output.entity.spec.aws_account_id }}"
               tenant: "${{ parameters.tenant }}"
               environment: "${{ parameters.environment }}"
-              region: "${{ parameters.region }}"
+              region: "${{ parameters.region or steps['fetchSystem'].output.entity.spec.aws_region }}"
               k8sVersion: "${{ parameters.k8sVersion }}"
               resourcePrefix: "${{ parameters.resourcePrefix }}"
               adminRoleName: "${{ steps['fetchSystem'].output.entity.spec.admin_role_name }}"

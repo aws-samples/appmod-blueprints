@@ -41,9 +41,9 @@ spec:
           title: Enter namespace within the EKS cluster to deploy this
           type: string
         aws_region:
-          default: "${{ steps['fetchSystem'].output.entity.spec.aws_region }}"
           title: Region
           type: string
+          ui:help: Leave empty to use the platform's own AWS region (recommended).
         repoHostUrl:
           type: string
           default: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}
@@ -69,7 +69,7 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          aws_region: ${{ parameters.aws_region }}
+          aws_region: ${{ parameters.aws_region or steps['fetchSystem'].output.entity.spec.aws_region }}
           repoUrl: https://${{ parameters.repoHostUrl }}/${{ parameters.repoUsername }}
       name: Fetch Base
     - id: publish

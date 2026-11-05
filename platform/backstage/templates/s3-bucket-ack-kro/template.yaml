@@ -12,7 +12,6 @@ spec:
       required:
         - bucket_name
         - environment
-        - region
       properties:
         bucket_name:
           title: Bucket Name
@@ -28,7 +27,7 @@ spec:
           title: Region
           type: string
           description: AWS region for the S3 bucket
-          default: us-west-2
+          ui:help: Leave empty to use the platform's own AWS region (recommended).
         accountId:
           title: AWS Account ID
           type: string
@@ -58,7 +57,7 @@ spec:
           configuration: ${{ parameters.configuration }}
           namespace: ${{ parameters.namespace | default('default') }}
           environment: ${{ parameters.environment }}
-          region: ${{ parameters.region }}
+          region: ${{ parameters.region or steps['fetchSystem'].output.entity.spec.aws_region }}
           accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
           resource_prefix: ${{ steps['fetchSystem'].output.entity.spec.resource_prefix }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}

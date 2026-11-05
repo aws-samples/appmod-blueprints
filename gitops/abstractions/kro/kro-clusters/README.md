@@ -57,7 +57,7 @@ Commit and push — ArgoCD will sync and KRO creates the cluster.
 |-------|------|---------|-------------|
 | `tenant` | string | `tenant1` | Tenant name for labeling |
 | `environment` | string | `staging` | Environment (dev, staging, prod) |
-| `region` | string | `us-west-2` | AWS region |
+| `region` | string | hub region (`global.defaultRegion`) | AWS region; when omitted the spoke lands in the hub's own region |
 | `k8sVersion` | string | `1.37` | EKS Kubernetes version |
 | `accountId` | string | (required) | AWS account ID for the cluster |
 | `managementAccountId` | string | (required) | Management account ID |

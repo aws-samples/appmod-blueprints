@@ -67,8 +67,13 @@ spec:
        used to get "" even on a kro-ack hub, i.e. the Crossplane chart, whose providers
        are not bootstrapped there, and no ACK pod identities. */}}
   provider: {{ $cluster.provider | default $.Values.global.provider | default "" | quote }}
-  region: {{ $cluster.region | default "us-west-2" | quote }}
-  managementRegion: {{ $cluster.region | default "us-west-2" | quote }}
+  {{- /* Per-cluster region wins; else the hub's own region (global.defaultRegion, from the
+       hub cluster secret's aws_region annotation via clusters-kro.yaml), so a spoke
+       declared without a region (e.g. by the Backstage eks-cluster-template) lands in
+       the deployment region instead of a hardcoded one. The literal is a render-only
+       fallback for `helm template` without globals. */}}
+  region: {{ $cluster.region | default $.Values.global.defaultRegion | default "us-west-2" | quote }}
+  managementRegion: {{ $cluster.region | default $.Values.global.defaultRegion | default "us-west-2" | quote }}
   k8sVersion: {{ $cluster.k8sVersion | default "1.37" | quote }}
   # Per-cluster fleet-config value wins; else fall back to the SAME global.accountId
   # for both fields (there is only one global account identity — managementAccountId

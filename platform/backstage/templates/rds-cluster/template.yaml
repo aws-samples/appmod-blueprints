@@ -21,6 +21,7 @@ spec:
         region:
           title: aws region
           type: string
+          ui:help: Leave empty to use the platform's own AWS region (recommended).
         subnetIds:
           title: Subnet IDs
           description: ID of subnets for rds cluster
@@ -30,7 +31,6 @@ spec:
       title: Configuration Options
       required:
         - name
-        - region
         - subnetIds
   steps:
     - id: fetchSystem
@@ -45,7 +45,7 @@ spec:
         values:
           name: ${{ parameters.name }}
           namespace: ${{ parameters.namespace }}
-          region: ${{ parameters.region }}
+          region: ${{ parameters.region or steps['fetchSystem'].output.entity.spec.aws_region }}
           repoUrl: ${{ steps['fetchSystem'].output.entity.spec.gitlab_hostname }}/${{ steps['fetchSystem'].output.entity.spec.gituser }}
           subnetIds: ${{parameters.subnetIds}}
       name: Fetch Base

@@ -235,7 +235,7 @@ verify_keycloak_secrets() {
     print_info "Checking Keycloak secrets..."
     
     # Check AWS Secrets Manager
-    if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-us-west-2}" >/dev/null 2>&1; then
+    if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}" >/dev/null 2>&1; then
         print_success "Keycloak clients secret exists in AWS Secrets Manager"
         return 0
     fi
@@ -268,7 +268,7 @@ verify_keycloak_secrets() {
             sleep 5
             
             # Verify secret created
-            if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-us-west-2}" >/dev/null 2>&1; then
+            if aws secretsmanager describe-secret --secret-id "$secret_name" --region "${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}" >/dev/null 2>&1; then
                 print_success "Keycloak clients secret created successfully"
                 return 0
             else
@@ -629,7 +629,7 @@ check_keycloak_postsync_hook() {
     
     # Check if keycloak-clients secret exists in AWS Secrets Manager
     local secret_name="${RESOURCE_PREFIX:-peeks}-hub/keycloak-clients"
-    local secret_exists=$(aws secretsmanager describe-secret --secret-id "$secret_name" --region ${AWS_REGION:-us-west-2} --query 'Name' --output text 2>/dev/null || echo "")
+    local secret_exists=$(aws secretsmanager describe-secret --secret-id "$secret_name" --region ${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}} --query 'Name' --output text 2>/dev/null || echo "")
     
     if [ -n "$secret_exists" ] && [ "$secret_exists" != "None" ]; then
         print_info "Keycloak secrets already exist in AWS Secrets Manager"
