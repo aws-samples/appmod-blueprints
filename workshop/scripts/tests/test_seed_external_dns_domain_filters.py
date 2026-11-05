@@ -7,11 +7,19 @@ registry entry reads `external_dns_domain_filters` for `domainFilters` and falls
 rebuilds the metadata from scratch on every install, so without preservation a re-install would
 silently narrow external-dns back to `ingress_domain_name`.
 
-Contract:
+Contract (CloudFront / upstream-TLS mode, insecure=true -- the workshop's mode):
   - fresh seed            -> no key (default behaviour unchanged);
   - re-seed, key set      -> the stored value is kept verbatim, nothing else changes;
   - re-seed, key absent   -> still absent;
   - re-seed, key empty    -> not written (empty means default).
+
+Own-domain mode (insecure=false), kind-kro-ack only: the seed DERIVES the key from `domain`
+as its parent zone, so hosts that are siblings of ingress_domain_name (the open-agentic-platform
+`agents.<parent>` host) get a Route53 record without a manual step:
+  - fresh seed, 3+ labels -> key = parent of `domain`;
+  - bare apex (2 labels)  -> no key (nothing above the apex to widen to);
+  - re-seed, hand-set     -> the hand-set value wins;
+  - re-seed, derived value of an OLD domain -> re-derived from the current one.
 
 Same harness as test_seed_nat_egress_cidrs.py: the provider Taskfile's cmds run verbatim under
 go-task with a fake `aws` on PATH. No AWS, no network.
@@ -80,7 +88,7 @@ json.dump(st, open(st_path, "w"))
 sys.exit(rc)
 '''
 
-BASE_CONFIG = {"domain": "d111111abcdef8.cloudfront.net", "platformTags": {},
+BASE_CONFIG = {"domain": "d111111abcdef8.cloudfront.net", "insecure": True, "platformTags": {},
                "hub": {"clusterName": HUB}, "aws": {"accountId": "111122223333"}}
 TVARS = {"HUB_CLUSTER_NAME": HUB, "AWS_REGION": REGION, "AWS_ACCOUNT_ID": "111122223333",
          "REPO_URL": "https://example.com/acme/appmod-blueprints", "REPO_REVISION": "main",
@@ -89,7 +97,7 @@ TVARS = {"HUB_CLUSTER_NAME": HUB, "AWS_REGION": REGION, "AWS_ACCOUNT_ID": "11112
          "FLEET_REPO_BASEPATH": "gitops/", "CLUSTER_ARN": f"arn:aws:eks:{REGION}:111122223333:cluster/{HUB}",
          "VPC_ID": "vpc-0", "PRIVATE_SUBNET_IDS": "subnet-a,subnet-b", "SUBNET_IDS": "subnet-a,subnet-b",
          "CLUSTER_SG": "sg-0", "INGRESS_SECURITY_GROUPS": "", "RESOURCE_PREFIX": "acme",
-         "INSECURE": "false", "INGRESS_CERT_ARN": "", "CERTIFICATE_ARN": "", "INGRESS_NAME": "",
+         "INSECURE": "true", "INGRESS_CERT_ARN": "", "CERTIFICATE_ARN": "", "INGRESS_NAME": "",
          "ADMIN_ROLE_NAME": "Admin", "USER_PASSWORD": "not-a-real-token",
          "ARGOCD_URL": "argocd-0123abcd.example.com", "INGRESS_DOMAIN": "d111111abcdef8.cloudfront.net",
          "DOMAIN": "d111111abcdef8.cloudfront.net", "GITLAB_DOMAIN": "git.example.com"}
@@ -131,12 +139,21 @@ def _go(tmp_path, env, script_text, tvars):
                           capture_output=True, text=True, timeout=120)
 
 
-def _seed(tmp_path, provider, existing=None):
-    """Run the task's cmds; return the one secret string written."""
+def _seed(tmp_path, provider, existing=None, domain=None, insecure=True):
+    """Run the task's cmds; return the one secret string written.
+
+    Defaults to CloudFront mode (the workshop's): `domain` a *.cloudfront.net name,
+    insecure=true. Pass domain=/insecure=False for own-domain mode."""
     cfg = tmp_path / "config.local.yaml"
-    cfg.write_text(yaml.safe_dump(BASE_CONFIG))
+    conf = dict(BASE_CONFIG, insecure=insecure)
+    if domain is not None:
+        conf["domain"] = domain
+    cfg.write_text(yaml.safe_dump(conf))
     sf, env = _env(tmp_path, {"secret": existing})
-    tvars = dict(TVARS, CONFIG_FILE=str(cfg), ROOT_DIR=str(tmp_path), NAT_EGRESS_CIDRS="")
+    tvars = dict(TVARS, CONFIG_FILE=str(cfg), ROOT_DIR=str(tmp_path), NAT_EGRESS_CIDRS="",
+                 INSECURE="true" if insecure else "false")
+    if domain is not None:
+        tvars.update(DOMAIN=domain, INGRESS_DOMAIN=domain)
     cmds = _task(provider)["cmds"]
     text = "\n".join(c["cmd"] if isinstance(c, dict) else c for c in cmds)
     res = _go(tmp_path, env, text, tvars)
@@ -188,4 +205,64 @@ class TestDomainFiltersPreserved:
         first, _ = _seed(_sub(tmp_path, "a"), provider)
         again, _ = _seed(_sub(tmp_path, "b"), provider,
                          existing=_with(first, external_dns_domain_filters=""))
+        assert "external_dns_domain_filters" not in _meta(again)
+
+
+DOMAIN = "acme.platform.example.com"
+DOMAIN_PARENT = "platform.example.com"
+
+
+class TestDomainFiltersDerivedInDomainMode:
+    """kind-kro-ack, insecure=false: the key is derived from `domain` (no new config key)."""
+    P = "kind-kro-ack"
+
+    def test_fresh_seed_derives_the_parent_zone(self, tmp_path):
+        secret, res = _seed(tmp_path, self.P, domain=DOMAIN, insecure=False)
+        meta = _meta(secret)
+        assert meta["external_dns_domain_filters"] == DOMAIN_PARENT
+        assert meta["ingress_domain_name"] == DOMAIN
+        assert f"external_dns_domain_filters={DOMAIN_PARENT}" in res.stdout
+
+    def test_only_that_key_differs_from_cloudfront_mode_shape(self, tmp_path):
+        own, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        cf, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=True)
+        m_own, m_cf = _meta(own), _meta(cf)
+        assert "external_dns_domain_filters" not in m_cf
+        extra = set(m_own) - set(m_cf)
+        assert extra == {"external_dns_domain_filters"}
+        assert {k: v for k, v in m_own.items() if k != "external_dns_domain_filters"
+                and k != "insecure"} == {k: v for k, v in m_cf.items() if k != "insecure"}
+
+    def test_bare_apex_gets_no_key(self, tmp_path):
+        secret, _ = _seed(tmp_path, self.P, domain="example.com", insecure=False)
+        assert "external_dns_domain_filters" not in _meta(secret)
+
+    def test_reseed_keeps_a_hand_set_value(self, tmp_path):
+        first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        again, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=False,
+                         existing=_with(first, external_dns_domain_filters="example.com"))
+        assert _meta(again)["external_dns_domain_filters"] == "example.com"
+
+    def test_narrow_scope_set_by_hand_is_kept(self, tmp_path):
+        """prerequisites.md: setting the key to ingress_domain_name keeps the narrow
+        Route53 scope (review #1261) - it is never mistaken for a derived value."""
+        first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        again, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=False,
+                         existing=_with(first, external_dns_domain_filters=DOMAIN))
+        assert _meta(again)["external_dns_domain_filters"] == DOMAIN
+
+    def test_reseed_is_stable(self, tmp_path):
+        first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        again, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=False, existing=first)
+        assert _meta(again) == _meta(first)
+
+    def test_derived_value_follows_a_domain_change(self, tmp_path):
+        first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        again, _ = _seed(_sub(tmp_path, "b"), self.P, domain="acme.other.example.org",
+                         insecure=False, existing=first)
+        assert _meta(again)["external_dns_domain_filters"] == "other.example.org"
+
+    def test_switch_to_insecure_drops_a_derived_value(self, tmp_path):
+        first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        again, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=True, existing=first)
         assert "external_dns_domain_filters" not in _meta(again)

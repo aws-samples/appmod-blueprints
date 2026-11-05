@@ -1385,7 +1385,30 @@ tasks:
           [ -n "$FLEET_SCOPE" ] || FLEET_SCOPE=$(echo "$EMETA" | jq -r 'if .fleet_scope_by_prefix == "true" then "true" else "" end')
           # Same for the optional external-dns scope widening (docs/install/prerequisites.md).
           PRESERVED_EDF=$(echo "$EMETA" | jq -r '.external_dns_domain_filters // "" | tostring')
+          # A value equal to the parent of the stored ingress_domain_name is the one derived
+          # below by a previous seed, not a hand-set one: drop it so it is re-derived from the
+          # CURRENT domain/insecure (a changed domain or a switch to insecure must not keep a
+          # stale scope). Any other value was set by hand and is kept verbatim.
+          PREV_DOMAIN=$(echo "$EMETA" | jq -r '.ingress_domain_name // "" | tostring')
+          if [ -n "$PRESERVED_EDF" ] && [ "$PREV_DOMAIN" != "${PREV_DOMAIN#*.*.}" ] \
+             && [ "$PRESERVED_EDF" = "${PREV_DOMAIN#*.}" ]; then
+            PRESERVED_EDF=""
+          fi
         fi
+        # external-dns scope (external_dns_domain_filters, read by the external-dns and
+        # *-pod-identity registry entries; empty -> ingress_domain_name). In own-domain mode
+        # (insecure != true) widen it to the PARENT zone of `domain` so hosts that are siblings
+        # of the ingress domain (e.g. a dedicated `<name>.<parent>` host behind the same
+        # `*.<parent>` wildcard cert) get their Route53 records. Derived only from `domain`
+        # and `insecure`, only when the domain has a parent (3+ labels), and never over a
+        # value set by hand. insecure=true (CloudFront/upstream TLS, incl. the workshop) and
+        # a bare apex domain keep today's behaviour: no key, scope = ingress_domain_name.
+        DERIVED_EDF=""; INSECURE_MODE="{{.INSECURE}}"
+        if [ "$INSECURE_MODE" != "true" ] && [ "$RUNTIME_DOMAIN" != "${RUNTIME_DOMAIN#*.*.}" ]; then
+          DERIVED_EDF="${RUNTIME_DOMAIN#*.}"
+        fi
+        EDF_FINAL="${PRESERVED_EDF:-$DERIVED_EDF}"
+        echo "[hub:seed] external_dns_domain_filters=${EDF_FINAL:-<default: ingress_domain_name>}"
         # Prefer a freshly-resolved capability URL; fall back to the previously stored one so a
         # transient describe-capability miss never blanks a good value.
         ARGOCD_FINAL="{{.ARGOCD_URL}}"
@@ -1426,7 +1449,7 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$PRESERVED_EDF" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$EDF_FINAL" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
