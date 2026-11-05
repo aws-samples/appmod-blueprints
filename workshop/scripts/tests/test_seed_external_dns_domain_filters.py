@@ -243,6 +243,14 @@ class TestDomainFiltersDerivedInDomainMode:
                          existing=_with(first, external_dns_domain_filters="example.com"))
         assert _meta(again)["external_dns_domain_filters"] == "example.com"
 
+    def test_narrow_scope_set_by_hand_is_kept(self, tmp_path):
+        """prerequisites.md: setting the key to ingress_domain_name keeps the narrow
+        Route53 scope (review #1261) - it is never mistaken for a derived value."""
+        first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
+        again, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=False,
+                         existing=_with(first, external_dns_domain_filters=DOMAIN))
+        assert _meta(again)["external_dns_domain_filters"] == DOMAIN
+
     def test_reseed_is_stable(self, tmp_path):
         first, _ = _seed(_sub(tmp_path, "a"), self.P, domain=DOMAIN, insecure=False)
         again, _ = _seed(_sub(tmp_path, "b"), self.P, domain=DOMAIN, insecure=False, existing=first)
