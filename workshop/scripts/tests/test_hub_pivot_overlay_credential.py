@@ -236,6 +236,8 @@ def test_refuses_credentialed_or_plain_http_url(env, bad):
     res = run(env, "probe", bad)
     assert res.returncode == 2
     assert git_calls(env) == []
+    # the refusal names its reason on stderr, and never echoes the secret
+    assert "pivot-overlay-git:" in res.stderr and SECRET not in res.stderr + res.stdout
 
 
 def test_requires_password_in_env(env):
@@ -267,3 +269,13 @@ def test_taskfile_git_calls_all_go_through_the_helper():
     assert 'REL_DIR="self-adoption/hub"' in s
     assert '"$OVERLAY_REV" "$REL_DIR" "$WORK/hub-instance.yaml" "$HUB.yaml"' in s
     assert '"[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)"' in s
+
+
+def test_taskfile_keeps_the_helper_refusal_visible():
+    """Review #1264: `2>&1` also hid the helper's own die message (never the secret), so a
+    URL with user@ was reported as "not reachable". Only stdout is discarded."""
+    s = _pivot_script()
+    calls = re.findall(r"pivot-overlay-git\.sh' (?:probe|publish)(?:[^\n]*\\\n)*[^\n]*; then", s)
+    assert len(calls) == 2, calls
+    for c in calls:
+        assert c.endswith(">/dev/null; then") and "2>&1" not in c, c

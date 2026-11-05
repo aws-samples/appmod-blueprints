@@ -22,9 +22,10 @@
 #     pivot-overlay-git.sh publish <https-url> <revision> <rel-dir> <src-file> <dest-name> <commit-msg>
 #
 #   probe   : exit 0 iff `git ls-remote` succeeds with the credential.
-#   publish : ls-remote, shallow single-branch clone of <revision>, copy <src-file> to
+#   publish : ls-remote, single-branch clone of <revision>, copy <src-file> to
 #             <rel-dir>/<dest-name>, commit (a no-op commit is tolerated), push HEAD to
-#             <revision>. Exit 0 iff the push succeeded. All git output is silenced.
+#             <revision>. Exit 0 iff the push succeeded. All git output is silenced;
+#             only this script's own refusals (die) reach stderr.
 set -euo pipefail
 
 die() { printf 'pivot-overlay-git: %s\n' "$*" >&2; exit 2; }

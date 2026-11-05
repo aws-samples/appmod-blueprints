@@ -4358,10 +4358,12 @@ tasks:
           # goes through pivot-overlay-git.sh — credential-free https URL, username via
           # credential.username, password via GIT_ASKPASS from the ENVIRONMENT. The secret is
           # never on git's argv (ps-visible), never in a clone's .git/config, and never handed
-          # to a credential helper.
+          # to a credential helper. Only stdout is discarded: the helper silences git itself,
+          # so its stderr carries just its own refusal (never the secret), e.g. a URL with
+          # user@, instead of reporting every refusal as "not reachable".
           OVERLAY_HOSTPATH="${OVERLAY_URL#https://}"
           if ! OVERLAY_GIT_PASSWORD="$REPO_PASS" OVERLAY_GIT_USERNAME="${REPO_USER:-x-access-token}" \
-                 bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' probe "https://$OVERLAY_HOSTPATH" >/dev/null 2>&1; then
+                 bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' probe "https://$OVERLAY_HOSTPATH" >/dev/null; then
             printf '{{.C_ERR}}✗ Refusing live pivot: overlay repo %s is not reachable with the registered ArgoCD credential (checked up front, before stopping kind).{{.C_RESET}}\n' "$OVERLAY_URL"
             exit 1
           fi
@@ -4440,7 +4442,7 @@ tasks:
           if OVERLAY_GIT_PASSWORD="$REPO_PASS" OVERLAY_GIT_USERNAME="${REPO_USER:-x-access-token}" \
                bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' publish \
                  "https://$OVERLAY_HOSTPATH" "$OVERLAY_REV" "$REL_DIR" "$WORK/hub-instance.yaml" "$HUB.yaml" \
-                 "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null 2>&1; then
+                 "[#1033] GitOps-assert hub $HUB EksCluster (self-adoption)" >/dev/null; then
             PUSHED=1
           fi
           if [ "$PUSHED" = 1 ]; then
