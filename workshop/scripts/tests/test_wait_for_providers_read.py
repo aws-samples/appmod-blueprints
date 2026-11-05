@@ -21,7 +21,9 @@ TASKFILE = os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yam
 
 def _block():
     cmds = yaml.safe_load(open(TASKFILE))["tasks"]["hub:wait-for-providers"]["cmds"]
-    b = [c for c in cmds if isinstance(c, str) and "providers.pkg.crossplane.io" in c][0]
+    # Select the poll block by its command text, not by the dotted resource name: a bare
+    # `"<host-like>" in str` trips CodeQL py/incomplete-url-substring-sanitization.
+    b = [c for c in cmds if isinstance(c, str) and "kubectl get providers" in c][0]
     b = b.replace("{{.ROOT_DIR}}", "/nonexistent").replace("{{.HUB_CLUSTER_NAME}}", "hub")
     return re.sub(r"\{\{\s*\.C_[A-Z]+\s*\}\}", "", b)
 
