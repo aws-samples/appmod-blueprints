@@ -263,7 +263,7 @@ bootstrap ACK controllers run with into `ack-system/aws-credentials`:
 | `aws.profile` | Source |
 |---------------|--------|
 | a named profile | that profile (`aws configure export-credentials --profile <name>`) |
-| `"default"` | the EC2 instance role (IMDS) when it is on `aws.accountId`; otherwise the locally configured `default` profile; off EC2, the `default` profile |
+| `"default"` | the EC2 instance role (IMDS) when it is on `aws.accountId`; otherwise a `[default]` profile from your own `~/.aws/config` or `~/.aws/credentials` (never the generated `private/aws-config` below, whose `[default]` is the instance role itself); off EC2, the `default` profile |
 | empty / unset | the EC2 instance role (IMDS) when IMDS answers, otherwise the `default` profile |
 
 Whatever the source, the resolved account must equal `aws.accountId` (when it is a

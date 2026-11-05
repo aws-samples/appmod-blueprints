@@ -53,7 +53,14 @@ def block(task, index):
 
 # Credentials are fake strings that carry their account: AKI-<account>-<source>.
 FAKE_AWS = r"""#!/bin/sh
-echo "aws $*" >> "$FAKE_LOG"
+echo "aws $* cfg=${AWS_CONFIG_FILE:-}" >> "$FAKE_LOG"
+# The generated private/aws-config holds only [default] = the instance role (IMDS); it
+# shadows the user's default, other named profiles stay visible (~/.aws/credentials).
+case "${AWS_CONFIG_FILE:-}" in */private/aws-config)
+  P="default:$FAKE_IMDS_ACCOUNT"
+  for p in $FAKE_PROFILES; do [ "${p%%:*}" = default ] || P="$P $p"; done
+  FAKE_PROFILES=$P ;;
+esac
 case "$1 $2" in
   "configure list-profiles")
     for p in $FAKE_PROFILES; do echo "${p%%:*}"; done; exit 0 ;;
@@ -124,8 +131,10 @@ def harness(tmp_path, profile):
         "tasks": {
             "under-test-refresh": {"cmds": [block("credentials:refresh", 1)]},
             "under-test-check": {"cmds": [block("credentials:check-and-refresh", 0)]},
-            # stub the nested `task credentials:refresh` of check-and-refresh
-            "credentials:refresh": {"cmds": ['echo REFRESH-CALLED; exit "${FAKE_REFRESH_RC:-0}"']},
+            # stub the nested refresh of check-and-refresh. It must be reached through the
+            # ROOT Taskfile ({{.ROOT_DIR}} = tmp_path here): a bare `credentials:refresh`
+            # stub would hide a call that only works with this provider's Taskfile as root.
+            "kind-kro-ack:credentials:refresh": {"cmds": ['echo REFRESH-CALLED; exit "${FAKE_REFRESH_RC:-0}"']},
         },
     }
     (tmp_path / "Taskfile.yml").write_text(yaml.safe_dump(tf, sort_keys=False))
@@ -137,6 +146,8 @@ def run(tmp_path, bin_dir, task, profiles="", imds=None, **extra):
     env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "calls.log"),
                FAKE_PROFILES=profiles, FAKE_IMDS_ACCOUNT=imds or "",
                AWS_PROFILE="default", AWS_DEFAULT_PROFILE="default")  # as exported by env:
+    if imds:  # on EC2 the provider's env: points AWS_CONFIG_FILE at the generated config
+        env["AWS_CONFIG_FILE"] = str(tmp_path / "private" / "aws-config")
     env.update(extra)
     r = subprocess.run([TASK, "-d", str(tmp_path), task], env=env, capture_output=True, text=True, timeout=60)
     return r, r.stdout + r.stderr
@@ -166,6 +177,9 @@ def test_default_profile_present_and_instance_role_on_other_account(tmp_path):
     assert r.returncode == 0, out
     assert secret_key(tmp_path) == f"AKI-{WANT}-default"
     assert "using the configured AWS profile default instead" in out
+    # looked up in the user's config, never in the generated private/aws-config
+    lookups = [x for x in calls(tmp_path).splitlines() if "configure" in x]
+    assert lookups and all("private/aws-config" not in x for x in lookups), lookups
 
 
 def test_default_profile_instance_role_on_intended_account_is_kept(tmp_path):
@@ -182,6 +196,8 @@ def test_default_profile_not_configured_and_instance_role_on_other_account_fails
     r, out = run(tmp_path, b, "under-test-refresh", profiles="", imds=OTHER)
     assert r.returncode != 0
     assert f"resolves to account {OTHER}, not aws.accountId {WANT}" in out
+    assert "EC2 instance role (IMDS) resolves to account" in out  # not "AWS profile default"
+    assert "export-credentials" not in calls(tmp_path)
     assert secret_key(tmp_path) is None
 
 
@@ -267,6 +283,15 @@ def test_check_refreshes_valid_secret_of_other_account_and_propagates_failure(tm
                  FAKE_REFRESH_RC="1")
     assert "not for aws.accountId" in out and "REFRESH-CALLED" in out
     assert r.returncode != 0
+
+
+def test_check_nested_refresh_goes_through_root_taskfile():
+    """Review #1262: a bare `task credentials:refresh` loads this provider's Taskfile as
+    root and fails on its dynamic vars before refresh starts."""
+    text = block("credentials:check-and-refresh", 0)
+    code = "\n".join(x for x in text.splitlines() if not x.lstrip().startswith("#"))
+    assert re.search(r"(^|[^:])\btask credentials:refresh", code) is None, code
+    assert code.count('( cd "{{.ROOT_DIR}}" && task kind-kro-ack:credentials:refresh )') == 2
 
 
 def test_check_keeps_valid_secret_of_intended_account(tmp_path):
