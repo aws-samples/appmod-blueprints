@@ -1,0 +1,8 @@
+apiVersion: v2
+name: network-policy-enforcement
+description: >-
+  Cluster-contract addon: turns on Kubernetes NetworkPolicy enforcement (VPC CNI
+  network policy controller, standard mode) on every platform cluster, so a
+  NetworkPolicy is never silently inert.
+type: application
+version: 0.1.0

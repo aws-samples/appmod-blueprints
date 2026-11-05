@@ -1,0 +1,3 @@
+      # ▶GITLAB: write path (branches/MRs). Backed by the gitlab-mcp component below
+      # (supergateway wrapping @zereight/gitlab-mcp), PAT injected via ExternalSecret.
+      - name: gitlab-mcp

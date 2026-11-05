@@ -86,6 +86,10 @@ node:
       # false back to true), so an overlay may write either `false` or "false".
       # Omitting the key — including when an overlay replaces `node:` wholesale —
       # yields "true", i.e. fail-secure.
+      # Keep it "true": the add-on writes it into kube-system/amazon-vpc-cni, the
+      # same key the network-policy-enforcement contract addon sets on every
+      # cluster (#1239). Both writers hold the same value, so they never fight; a
+      # "false" here would contradict the contract.
       enableNetworkPolicy: "true"
 
 # Common tags on managed IAM resources.

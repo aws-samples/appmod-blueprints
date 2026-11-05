@@ -1,3 +1,9 @@
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
+
 // DEPRECATED — superseded by the `aws-service-identity` TRAIT
 // (platform/oam/definitions/traits/aws-service-identity.cue). Kept only so Applications that
 // still list this component keep rendering during the migration window; it will be
@@ -16,10 +22,11 @@
 // `accessFor`. The workload component (e.g. `service-rollout`) now owns the
 // ServiceAccount this used to create.
 //
-// NOTE: the policyArnRef below intentionally matches the RENAMED, unprefixed policy
-// emitted by the `component-iam-policy` trait (`<appName>-<component>-iam-policy`),
-// so the old and new identity paths resolve the SAME policy for the duration of the
-// migration. Do not re-add the prefix here without also re-adding it there.
+// NOTE: the policyArnRef below (polObj) intentionally names the SAME Policy object as
+// the `component-iam-policy` trait: `<appName>-<component>-iam-policy` without a
+// global.clusterName, otherwise the trait's per-cluster object name (same rule, same
+// inputs), so the old and new identity paths resolve the SAME policy for the duration
+// of the migration. Keep the two in step.
 "dp-service-account": {
 	"alias": ""
 	"annotations": {}
@@ -85,14 +92,22 @@ template: {
 		if parameter.componentNamesForAccess != _|_ {
 			for _, c in parameter.componentNamesForAccess {
 				let component = context.components["\(c)"]
+				let polBase = strings.ToLower(strings.Replace("{{ .Values.global.clusterName }}", "_", "-", -1)) + "-" + context.appName + "-" + c
+				let polHead = [if len(polBase) > 100 {strings.SliceRunes(polBase, 0, 100)}, polBase][0]
+				let polHash = strings.SliceRunes(hex.Encode(sha256.Sum256("{{ .Values.global.awsRegion }}/{{ .Values.global.clusterName }}/" + context.namespace + "/" + context.appName + "/" + c)), 0, 8)
+				// Same object name as the component-iam-policy trait gives its Policy (keep in step).
+				let polObj = [if "{{ .Values.global.clusterName }}" == "" {"\(context.appName)-\(c)-iam-policy"}, polHead + "-" + polHash + "-iam-policy"][0]
+				// With a cluster name the policy (and so its ARN) changes: give the attachment a new name too,
+				// as aws-service-identity does, so it resolves the renamed policy instead of keeping the old ARN.
+				let rpaPrefix = [if "{{ .Values.global.clusterName }}" == "" {context.name}, context.namespace + "." + context.name][0]
 				if component != _|_ {}
 				"\(context.name)-\(c)-iam-policy": {
 					apiVersion: "iam.aws.upbound.io/v1beta1"
 					kind:       "RolePolicyAttachment"
-					metadata: name: "\(context.name)-\(c)-role-policy-attachment"
+					metadata: name: "\(rpaPrefix)-\(c)-role-policy-attachment"
 					spec: {
 						forProvider: {
-							policyArnRef: name: "\(context.appName)-\(c)-iam-policy"
+							policyArnRef: name: polObj
 							roleRef: name:      "\(parameter.resourcePrefix)-\(context.name)-iam-role"
 						}
 						providerConfigRef: name: "default"

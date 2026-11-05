@@ -28,6 +28,11 @@ Only ``aws eks describe-cluster``, ``aws eks update-kubeconfig --kubeconfig <tmp
 ``kubectl logs`` and anonymous HTTP GETs are issued. Secret values are never printed:
 cluster-secret ``data`` is dropped on read and annotation findings report key names only.
 
+The one exception is opt-in: ``--probe-networkpolicy`` runs the deny-all conformance
+probe below, which creates two scratch namespaces (``np-conformance-*``) with two
+busybox pods and one deny-all NetworkPolicy per cluster, and always deletes them.
+Without the flag nothing is written.
+
 Checks (optional ones SKIP when their feature is not enabled on the hub):
   eks.cluster-active        hub + every spoke registered on the hub are ACTIVE
   argocd.applications       every Application Synced + Healthy (lists the bad ones)
@@ -46,6 +51,12 @@ Checks (optional ones SKIP when their feature is not enabled on the hub):
   agentgateway.auth         gateway MCP/SSE endpoints answer 401 without a token
   external-dns.records      ingress hosts resolve to the ingress load balancer
   ray.operator              KubeRay operator ready, no failed RayCluster
+  networkpolicy.enforcement kube-system/amazon-vpc-cni has enable-network-policy-controller
+                            "true" (per cluster; SKIP when the cluster secret opts out with
+                            enable_network_policy_enforcement=false)
+  networkpolicy.deny-all    opt-in (--probe-networkpolicy): a pod reachable from another
+                            namespace becomes unreachable once a deny-all ingress
+                            NetworkPolicy selects it, i.e. policies are really enforced
 """
 
 from __future__ import annotations
@@ -926,13 +937,111 @@ def ray_check(hub_secret: Optional[ClusterSecret], hub: Cluster) -> Result:
 
 
 # --------------------------------------------------------------------------------------
+# NetworkPolicy enforcement (cluster contract, #1239)
+# --------------------------------------------------------------------------------------
+
+NETPOL_CM_NS, NETPOL_CM, NETPOL_KEY = "kube-system", "amazon-vpc-cni", "enable-network-policy-controller"
+NETPOL_OPT_OUT_LABEL = "enable_network_policy_enforcement"
+NETPOL_PROBE_IMAGE = "public.ecr.aws/docker/library/busybox:1.36"
+NOT_FOUND = re.compile(r"\(NotFound\)|not found", re.I)
+
+
+def netpol_opted_out(sec: Optional[ClusterSecret]) -> bool:
+    """Only an explicit 'false' label opts a cluster out of the contract (absent = enforced)."""
+    return bool(sec) and str(sec.labels.get(NETPOL_OPT_OUT_LABEL, "")).lower() == "false"
+
+
+def netpol_config_check(c: Cluster, opted_out: bool) -> Result:
+    check = "networkpolicy.enforcement"
+    if opted_out:
+        return Result(check, c.name, SKIP, f"cluster secret sets {NETPOL_OPT_OUT_LABEL}=false")
+
+    def run() -> Result:
+        rc, out, err = c.kubectl("get", "configmap", NETPOL_CM, "-n", NETPOL_CM_NS, "-o", "json")
+        if rc != 0:
+            if NOT_FOUND.search(err or ""):
+                return Result(check, c.name, FAIL,
+                              f"{NETPOL_CM_NS}/{NETPOL_CM} absent: NetworkPolicy objects are accepted but not enforced")
+            raise RuntimeError((err or out or f"kubectl rc={rc}").strip().splitlines()[-1][:200])
+        value = ((json.loads(out or "{}").get("data") or {}).get(NETPOL_KEY))
+        if str(value).lower() != "true":
+            return Result(check, c.name, FAIL,
+                          f"{NETPOL_CM_NS}/{NETPOL_CM} {NETPOL_KEY}={value!r}: NetworkPolicy is not enforced")
+        return Result(check, c.name, PASS, f"{NETPOL_KEY}=true (standard mode controller on)")
+
+    return _wrap(check, c.name, run)
+
+
+def netpol_policy_doc(namespace: str) -> dict:
+    """Deny-all INGRESS for every pod of the scratch server namespace (egress untouched)."""
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+            "metadata": {"name": "deny-all-ingress", "namespace": namespace},
+            "spec": {"podSelector": {}, "policyTypes": ["Ingress"]}}
+
+
+def netpol_probe(c: Cluster, workdir: str, suffix: str, image: str = NETPOL_PROBE_IMAGE,
+                 timeout: int = 180, interval: int = 10,
+                 sleep: Callable[[float], None] = time.sleep) -> Result:
+    """Active conformance probe. Writes only to two scratch namespaces, deleted on exit."""
+    check = "networkpolicy.deny-all"
+    srv_ns, cli_ns = f"np-conformance-{suffix}-srv", f"np-conformance-{suffix}-cli"
+
+    def k(*args: str) -> Tuple[int, str, str]:
+        return c.kubectl(*args)
+
+    def must(*args: str) -> str:
+        rc, out, err = k(*args)
+        if rc != 0:
+            raise RuntimeError(f"kubectl {' '.join(args[:2])}: {(err or out).strip()[:160]}")
+        return out
+
+    def reachable(ip: str) -> bool:
+        rc, _, _ = k("exec", "-n", cli_ns, "client", "--", "wget", "-q", "-T", "3", "-O", "-", f"http://{ip}:8080/")
+        return rc == 0
+
+    try:
+        for ns in (srv_ns, cli_ns):
+            must("create", "namespace", ns)
+        must("run", "server", "-n", srv_ns, f"--image={image}", "--restart=Never", "--labels=app=np-server",
+             "--command", "--", "sh", "-c", "echo ok > /tmp/index.html && exec httpd -f -p 8080 -h /tmp")
+        must("run", "client", "-n", cli_ns, f"--image={image}", "--restart=Never",
+             "--command", "--", "sleep", str(timeout + 300))
+        for ns, pod_name in ((srv_ns, "server"), (cli_ns, "client")):
+            must("wait", "-n", ns, "--for=condition=Ready", f"pod/{pod_name}", f"--timeout={timeout}s")
+        ip = must("get", "pod", "server", "-n", srv_ns, "-o", "jsonpath={.status.podIP}").strip()
+        if not ip:
+            return Result(check, c.name, FAIL, "probe server pod has no IP")
+        if not reachable(ip):
+            return Result(check, c.name, FAIL, "inconclusive: the server pod is unreachable even before any policy")
+        path = os.path.join(workdir, f"netpol-{re.sub(r'[^A-Za-z0-9_.-]', '_', c.name)}.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(netpol_policy_doc(srv_ns), fh)
+        must("apply", "-f", path)
+        waited = 0
+        while True:
+            if not reachable(ip):
+                return Result(check, c.name, PASS, f"deny-all ingress enforced (blocked after ~{waited}s)")
+            if waited >= timeout:
+                return Result(check, c.name, FAIL,
+                              f"deny-all ingress NOT enforced: still reachable after {timeout}s")
+            sleep(interval)
+            waited += interval
+    except RuntimeError as e:
+        return Result(check, c.name, FAIL, f"probe error: {e}")
+    finally:
+        k("delete", "namespace", srv_ns, cli_ns, "--ignore-not-found", "--wait=false")
+
+
+# --------------------------------------------------------------------------------------
 # Orchestration
 # --------------------------------------------------------------------------------------
 
 
 def verify(inp: Inputs, run: Runner, fetch: Fetcher, resolver: Resolver, workdir: str,
            use_contexts: bool = False, argocd_ns: str = "argocd", realm: str = "platform",
-           skip_spokes: bool = False, pending_grace: int = 900) -> List[Result]:
+           skip_spokes: bool = False, pending_grace: int = 900, probe_netpol: bool = False,
+           probe_image: str = NETPOL_PROBE_IMAGE, probe_timeout: int = 180,
+           sleep: Callable[[float], None] = time.sleep) -> List[Result]:
     results: List[Result] = []
     r = check_eks_active(inp, inp.hub, inp.region, run)
     results.append(r)
@@ -999,6 +1108,22 @@ def verify(inp: Inputs, run: Runner, fetch: Fetcher, resolver: Resolver, workdir
                                   expect_kro=is_hub and (hub_secret.enabled("kro")
                                                          or hub_secret.enabled("kro_manifests_hub")))
 
+    # NetworkPolicy enforcement is a cluster-contract item: every cluster, unless its
+    # secret explicitly opts out. The deny-all probe writes, so it only runs on request.
+    secret_of = {s.cluster_name: s for s in spokes}
+    suffix = datetime.now(timezone.utc).strftime("%H%M%S")
+    for c in clusters:
+        sec = hub_secret if c is hub else secret_of.get(c.name)
+        opted_out = netpol_opted_out(sec)
+        results.append(netpol_config_check(c, opted_out))
+        if probe_netpol:
+            if opted_out:
+                results.append(Result("networkpolicy.deny-all", c.name, SKIP,
+                                      f"cluster secret sets {NETPOL_OPT_OUT_LABEL}=false"))
+            else:
+                results.append(netpol_probe(c, workdir, suffix, image=probe_image,
+                                            timeout=probe_timeout, sleep=sleep))
+
     domain = inp.domain
     hub_domain = (hub_secret.annotations.get("ingress_domain_name", "") if hub_secret else "").strip()
     if domain and is_placeholder(domain):
@@ -1050,6 +1175,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--pending-grace", type=int, default=900, help="seconds before a Pending pod counts as failing")
     ap.add_argument("--json-out", help="also write the results as JSON to this file")
     ap.add_argument("--quiet", action="store_true", help="print details only for FAIL")
+    ap.add_argument("--probe-networkpolicy", action="store_true",
+                    help="also run the deny-all NetworkPolicy conformance probe on every cluster "
+                         "(WRITES: two scratch np-conformance-* namespaces per cluster, always deleted)")
+    ap.add_argument("--probe-image", default=NETPOL_PROBE_IMAGE,
+                    help="busybox-compatible image for the probe pods (httpd, wget, sleep)")
+    ap.add_argument("--probe-timeout", type=int, default=180,
+                    help="seconds to wait for probe pods and for the policy to take effect")
     a = ap.parse_args(argv)
     try:
         inp = inputs_from_config(load_config(a.config), a.profile)
@@ -1064,7 +1196,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         os.chmod(wd, 0o700)
         results = verify(inp, subprocess_runner(), http_get, resolve, wd, use_contexts=a.use_contexts,
                          argocd_ns=a.argocd_namespace, realm=a.keycloak_realm, skip_spokes=a.skip_spokes,
-                         pending_grace=a.pending_grace)
+                         pending_grace=a.pending_grace, probe_netpol=a.probe_networkpolicy,
+                         probe_image=a.probe_image, probe_timeout=a.probe_timeout)
     print(f"post-install-verify hub={inp.hub} region={inp.region} at {datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}")
     print(render(results, verbose=not a.quiet))
     if a.json_out:

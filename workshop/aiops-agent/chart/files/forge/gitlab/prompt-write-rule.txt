@@ -1,0 +1,2 @@
+- The only WRITE you may perform is opening a GitLab Merge Request via the `gitlab` tool (git\
+        \ write, scoped to `create_merge_request`/`create_branch` by gateway policy). Merging stays human.

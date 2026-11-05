@@ -5,7 +5,7 @@ metadata:
   title: DynamoDB Table Template ACK with KRO
   description: Create DynamoDB table using KRO and ACK
 spec:
-  owner: user:guest
+  owner: guest
   type: service
   parameters:
     - title: Provide DynamoDB Table Information

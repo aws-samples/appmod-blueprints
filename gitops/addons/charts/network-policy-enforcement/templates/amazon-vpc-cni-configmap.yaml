@@ -1,0 +1,36 @@
+{{- /*
+NetworkPolicy enforcement as part of the cluster contract (issue #1239).
+
+A NetworkPolicy is accepted by the API server on every cluster, but it only has an
+effect where the VPC CNI network policy controller is on. On EKS Auto Mode that
+controller is switched on by this one key in kube-system/amazon-vpc-cni
+(https://docs.aws.amazon.com/eks/latest/userguide/auto-net-pol.html). Verified on an
+Auto Mode spoke: enforcement starts within minutes, with no node roll or restart.
+
+Standard mode only: pods that no NetworkPolicy selects stay open, so this is a no-op
+for every workload that ships no policy. Nothing here touches the enforcing mode
+(strict / NodeClass networkPolicy: DefaultDeny), and no policy (allow-all or other)
+is shipped by this chart.
+
+Ownership. On a cluster where a vpc-cni EKS add-on is also managed (the karpenter
+chart's manageAddons, or the platform-cluster Composition on managed-node-group
+clusters), that add-on writes the same key from its configurationValues
+`enableNetworkPolicy: "true"`, which both of them already set. The two writers
+therefore always hold the SAME value, so they cannot fight:
+  - ServerSideApply makes Argo CD manage only this one field, never the other keys
+    the add-on keeps in the same ConfigMap.
+  - Delete=false / Prune=false: Argo CD never deletes the ConfigMap (deleting it
+    would also drop the add-on's own keys). Removing this addon leaves enforcement
+    as it is, i.e. fail-secure.
+On a pure Auto Mode cluster with no vpc-cni add-on (every spoke today), this chart is
+the only owner.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amazon-vpc-cni
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Prune=false,Delete=false
+data:
+  enable-network-policy-controller: "true"

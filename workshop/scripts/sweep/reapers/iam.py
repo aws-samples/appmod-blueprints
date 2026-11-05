@@ -23,12 +23,36 @@ def reap(ctx):
                 and not name.startswith(_stack_prefix)
             )
 
+        # Fixed-name roles outside the prefix (e.g. the HuggingFaceModel <model>-role, which keeps
+        # its legacy unprefixed name on the default prefix so existing stacks keep their roles) are
+        # owned by TAG, never by name: platform.gitops.io/prefix=<prefix> and no CloudFormation tag.
+        # Service-linked roles and the stack's own roles (_skip / _stack_prefix) are never taken.
+        def _tag_owned(role):
+            nonlocal tag_errors
+            n = role["RoleName"]
+            if role.get("Path", "/").startswith("/aws-service-role/"):
+                return False
+            if any(x in n for x in _skip) or n.startswith(_stack_prefix):
+                return False
+            try:
+                tags = {t["Key"]: t["Value"] for t in iam.list_role_tags(RoleName=n).get("Tags", [])}
+            except Exception as e:
+                tag_errors += 1
+                if tag_errors == 1:
+                    log(f"  IAM tag check ({n}): {e.__class__.__name__}")
+                return False
+            return (
+                tags.get(ctx.OWNER_PREFIX_TAG) == prefix
+                and not any(k.startswith("aws:cloudformation:") for k in tags)
+            )
+
+        tag_errors = 0
         count = 0
         for role in sum(
             [p["Roles"] for p in iam.get_paginator("list_roles").paginate()], []
         ):
             n = role["RoleName"]
-            if not _is_owned(n):
+            if not _is_owned(n) and not _tag_owned(role):
                 continue
             try:
                 for pol in iam.list_attached_role_policies(RoleName=n)["AttachedPolicies"]:
@@ -39,6 +63,8 @@ def reap(ctx):
                 count += 1
             except Exception:
                 pass
+        if tag_errors:
+            log(f"  IAM: {tag_errors} role tag lookup(s) failed — those roles were left alone")
         log(f"  Deleted {count} IAM roles")
 
         for pol in sum(
