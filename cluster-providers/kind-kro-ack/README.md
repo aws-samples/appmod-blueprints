@@ -61,6 +61,12 @@ platformTags:  # Optional AWS tags on the hub and every spoke (EKS, VPC, NAT, EI
 | `task destroy` | Full teardown: delete KRO instances, wait for ACK cleanup, delete Kind |
 | `task credentials:refresh` | Force-refresh AWS credentials secret |
 
+`task destroy-kind` (like `docker stop` on the kind nodes or `kind delete cluster`) only removes
+the kind reconciler and issues no AWS delete. `task destroy` and `task hub:destroy-addons` delete
+the hub's Applications while its controllers run, then the hub: they delete the spokes and
+everything the hub manages. Read what a target executes before running it. Details:
+[custom-install.md, Stopping the bootstrap reconciler vs running a destroy target](../../docs/install/custom-install.md#stopping-the-bootstrap-reconciler-vs-running-a-destroy-target).
+
 ## Bootstrap Flow
 
 ```

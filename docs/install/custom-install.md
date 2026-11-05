@@ -393,6 +393,39 @@ changing them while you do:
 5. Re-run the other hub's install, then turn on `fleetScopeByPrefix` with a unique
    `resourcePrefix` on the misconfigured hub before declaring its own spokes again.
 
+### Stopping the bootstrap reconciler vs running a destroy target
+
+Stopping the kind bootstrap cluster and running a destroy target look alike, but they have
+opposite effects on AWS (kind-kro-ack provider, `cluster-providers/kind-kro-ack/Taskfile.yaml`):
+
+- **Safe: these only remove the kind reconciler.** `docker stop` on the kind nodes,
+  `kind delete cluster` and `task destroy-kind` (which runs only `kind delete cluster`) issue no
+  AWS delete. No custom resource is gracefully deleted, so the ACK finalizers never run: the AWS
+  resources stay in place and are simply no longer reconciled from kind. `docker stop` is
+  recoverable; starting the nodes again resumes reconciliation of the spec kind holds.
+  `hub:update` also ends with `task destroy-kind`.
+- **Destructive by design: `task destroy` and `task hub:destroy-addons`.** `hub:destroy-addons`
+  runs against the **hub** EKS cluster (`private/hub-kubeconfig`), not kind. It deletes the
+  ApplicationSets, then every Application in `argocd`, while the hub controllers are still
+  running, so that ACK, kro and Crossplane delete the AWS resources they manage, spoke clusters
+  included. `task destroy` sets the hub's `deletionPolicy` back to `delete`, deletes kind, runs
+  `hub:destroy-addons`, then deletes the hub through the AWS API. Never run either of them to
+  "just stop kind", and never run them on a hub that has adopted or preempted another hub's
+  resources (see above): they would delete those resources too.
+- **What `task destroy` protects, and what it does not.** It sets `deletionPolicy: delete` only on
+  the hub's own kro instance. It never changes the policy of a spoke. `hub:destroy-addons` then
+  deletes, with cascade, every Application on the hub, including the `clusters-kro` ApplicationSet
+  and its `clusters-kro-<member>` Applications. Every member still in the hub's fleet, including
+  another hub's spoke adopted by mistake, is then protected only by its own
+  `deletionPolicy: retain`; with `delete`, the default, ACK deletes it. Before any destroy, remove
+  foreign members from the fleet branch explicitly, one at a time, and check that the hub no
+  longer has their `clusters-kro-<member>` Application.
+
+> [!NOTE]
+> Before you run a task, read what it executes (`task --summary <name>`, or its `cmds:` in the
+> Taskfile). A similar name is not enough: `destroy-kind` and `destroy` differ by one word and
+> by the whole fleet.
+
 ---
 
 ## 4. Install and verify
