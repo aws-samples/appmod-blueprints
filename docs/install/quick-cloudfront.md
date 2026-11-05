@@ -19,6 +19,10 @@ reuse‑or‑create a distribution. This path is **three gestures**, no code cha
   `aws sts get-caller-identity` (never echo the secret values).
 - An **IAM Identity Center** instance in the account (the platform's ArgoCD is an EKS ArgoCD
   Capability and requires one). Confirm: `aws sso-admin list-instances --region <region>`.
+- **Another hub already in the account, or a fleet repo forked from / shared with another hub?**
+  Set `fleetScopeByPrefix: true` and a unique `resourcePrefix` before installing, or the new hub
+  adopts and can delete the other hub's spokes:
+  [custom-install.md, section 3a](custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
 
 > **The CloudFront mode is selected by `insecure: true`, NOT by an empty `domain`.** An empty
 > `domain` makes the install **fail** (`hub:seed` exits). You must put the CloudFront hostname in
