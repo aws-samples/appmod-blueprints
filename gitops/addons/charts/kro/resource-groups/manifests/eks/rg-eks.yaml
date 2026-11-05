@@ -1082,7 +1082,15 @@ spec:
             argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
             argocd.argoproj.io/sync-options: Prune=false
         spec:
-          clusterName: ${schema.spec.name}
+          # ${ekscluster.spec.name} (not ${schema.spec.name}) makes this node depend on the
+          # ekscluster node, so kro creates the Capability only once the cluster is ACTIVE
+          # (ekscluster readyWhen), like the ack/kro Capabilities below. With
+          # ${schema.spec.name} there was no dependency: ACK called CreateCapability from the
+          # first second of cluster creation, got ResourceNotFound/InvalidRequest for ~12 min,
+          # and its exponential backoff then delayed the successful create by ~10 min after
+          # the cluster went ACTIVE (int1105: ACTIVE 14:40, argocd CreateCapability 14:50:20,
+          # last failed retry 14:39:23). Same value, so no diff on an existing cluster.
+          clusterName: ${ekscluster.spec.name}
           name: argocd
           type: ARGOCD
           roleARN: ${argocdCapabilityRole.status.ackResourceMetadata.arn}
@@ -1121,10 +1129,28 @@ spec:
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           clusterName: "${schema.spec.name}"
+          # ACK reconciles accessPolicies as the COMPLETE set: any policy associated in AWS
+          # but not listed here is drift and gets DisassociateAccessPolicy. When EKS creates
+          # the Argo CD capability it associates its two default policies to this same entry
+          # (capabilities-security.html "Default access entry policies by capability").
+          # They must be declared, or ACK strips them on its next resync (int1104 and int1105
+          # CloudTrail: EKS AssociateAccessPolicy at create, ACK DisassociateAccessPolicy
+          # ~5-6 min later). Same pattern as ackCapabilityAccessEntry (AmazonEKSACKPolicy) and
+          # the Crossplane platform-cluster composition. The namespace scope is the
+          # capability's Argo CD namespace: the Capability node sets none, so EKS uses its
+          # default "argocd".
           accessPolicies:
             - accessScope:
                 type: "cluster"
               policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            - accessScope:
+                type: "cluster"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDClusterPolicy"
+            - accessScope:
+                type: "namespace"
+                namespaces:
+                  - "argocd"
+              policyARN: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDPolicy"
           principalARN: "${argocdCapabilityRole.status.ackResourceMetadata.arn}"
           type: STANDARD
 

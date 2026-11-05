@@ -1431,8 +1431,13 @@ spec:
                     matchControllerRef: true
                   resolveConflictsOnCreate: OVERWRITE
                   resolveConflictsOnUpdate: OVERWRITE
+                  # enableNetworkPolicy is explicit (cluster contract, #1239): with
+                  # resolveConflictsOnUpdate OVERWRITE, leaving it out resets the
+                  # add-on to its default (off) and silently disables NetworkPolicy
+                  # enforcement. Same value as the network-policy-enforcement addon
+                  # writes into kube-system/amazon-vpc-cni, so the two never fight.
                   configurationValues: |
-                    {"tolerations":[{"operator":"Exists"}]}
+                    {"tolerations":[{"operator":"Exists"}],"enableNetworkPolicy":"true"}
             patches:
               - type: PatchSet
                 patchSetName: common

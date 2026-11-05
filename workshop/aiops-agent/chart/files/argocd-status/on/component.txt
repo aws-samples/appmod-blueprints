@@ -1,0 +1,193 @@
+  # ▶ARGOCD-STATUS: argocd-status-mcp — a small READ-ONLY MCP server (src/argocd-status-mcp)
+  # with ONE tool, argocd_unhealthy_applications: it lists every Argo CD Application on the
+  # hub (paginated, in-cluster) and returns totals plus one compact row per app that is not
+  # Synced and Healthy. It exists because eks-read-mcp (upstream eks-mcp-server, kept
+  # unforked) lists Applications without status and cannot filter on status, so a complete
+  # answer would mean reading every Application (~33 KB each).
+  # Identity: its OWN ServiceAccount, in-cluster token, no IAM / Pod Identity / AccessEntry.
+  # RBAC: a Role in the Argo CD namespace with get/list on applications.argoproj.io ONLY
+  # (no secrets, no write, no other namespace). Rendered only when
+  # images.argocdStatusMcp.tag is set (chart values), so an install never waits on an
+  # unpublished image; with no tag the agent keeps the prompt-only sweep rule.
+  - name: argocd-status-mcp
+    type: k8s-objects
+    properties:
+      objects:
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: argocd-status-mcp
+          namespace: aiops-agent
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-status-mcp
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: argocd-status-mcp
+            spec:
+              containers:
+              - env:
+                - name: ARGOCD_NAMESPACE
+                  value: argocd
+                image: REPLACE_REG_ARGOCD_STATUS_MCP/argocd-status-mcp:REPLACE_TAG_ARGOCD_STATUS_MCP
+                imagePullPolicy: IfNotPresent
+                name: argocd-status-mcp
+                ports:
+                - containerPort: 8000
+                  name: mcp
+                  protocol: TCP
+                # /health only says the process serves HTTP (no API-server call), so a
+                # slow API server never flaps the pod; the tool reports API errors itself.
+                readinessProbe:
+                  httpGet:
+                    path: /health
+                    port: 8000
+                  initialDelaySeconds: 3
+                  periodSeconds: 10
+                livenessProbe:
+                  httpGet:
+                    path: /health
+                    port: 8000
+                  initialDelaySeconds: 10
+                  periodSeconds: 20
+                resources:
+                  limits:
+                    memory: 256Mi
+                  requests:
+                    cpu: 50m
+                    memory: 96Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  readOnlyRootFilesystem: true
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+              restartPolicy: Always
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: argocd-status-mcp
+              terminationGracePeriodSeconds: 10
+      - apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: argocd-status-mcp
+          namespace: aiops-agent
+      # Read-only, namespaced: get/list Applications in the Argo CD namespace, nothing else.
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: aiops-agent-argocd-status-read
+          namespace: argocd
+        rules:
+        - apiGroups: ["argoproj.io"]
+          resources: ["applications"]
+          verbs: ["get", "list"]
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: aiops-agent-argocd-status-read
+          namespace: argocd
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: aiops-agent-argocd-status-read
+        subjects:
+        - kind: ServiceAccount
+          name: argocd-status-mcp
+          namespace: aiops-agent
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          labels:
+            agentgateway.dev/target: argocd-status-mcp
+            app.kubernetes.io/name: argocd-status-mcp
+          name: argocd-status-mcp-stable
+          namespace: aiops-agent
+        spec:
+          ports:
+          - appProtocol: agentgateway.dev/mcp
+            name: mcp
+            port: 80
+            protocol: TCP
+            targetPort: 8000
+          selector:
+            app.kubernetes.io/name: argocd-status-mcp
+          type: ClusterIP
+      - apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: argocd-status-mcp
+          namespace: aiops-agent
+        spec:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: agentgateway-proxy
+            namespace: agentgateway-system
+          rules:
+          - backendRefs:
+            - group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: argocd-status-mcp-backend
+              weight: 1
+            matches:
+            - path:
+                type: PathPrefix
+                value: /mcp/argocd-status-mcp
+      # The server is stateless (FastMCP stateless_http + JSON responses, like skills-mcp),
+      # so no per-session pinning is needed.
+      - apiVersion: agentgateway.dev/v1alpha1
+        kind: AgentgatewayBackend
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: argocd-status-mcp-backend
+          namespace: aiops-agent
+        spec:
+          mcp:
+            sessionRouting: Stateless
+            targets:
+            - name: argocd-status-mcp-target
+              selector:
+                services:
+                  matchLabels:
+                    agentgateway.dev/target: argocd-status-mcp
+      # Tool allow-list at the gateway, same shape as eks-read-mcp-tool-access (`Require`).
+      - apiVersion: agentgateway.dev/v1alpha1
+        kind: AgentgatewayPolicy
+        metadata:
+          labels:
+            app.kubernetes.io/name: argocd-status-mcp
+          name: argocd-status-mcp-tool-access
+          namespace: aiops-agent
+        spec:
+          targetRefs:
+          - group: agentgateway.dev
+            kind: AgentgatewayBackend
+            name: argocd-status-mcp-backend
+          backend:
+            mcp:
+              authorization:
+                action: Require
+                policy:
+                  matchExpressions:
+                  - 'mcp.tool.name in ["argocd_unhealthy_applications"]'

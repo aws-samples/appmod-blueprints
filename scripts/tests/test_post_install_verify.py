@@ -465,6 +465,10 @@ def test_http_get_no_follow_returns_redirect(server):
 # ---------------------------------------------------------------------------------------
 
 
+NETPOL_CM_ON = {"metadata": {"name": "amazon-vpc-cni", "namespace": "kube-system"},
+                "data": {"enable-network-policy-controller": "true"}}
+
+
 def fake_env(app_health="Healthy"):
     secrets = {"items": [
         secret_item("h", {"fleet_member": "control-plane", "enable_keycloak": "true",
@@ -489,6 +493,9 @@ def fake_env(app_health="Healthy"):
                 return 0, json.dumps({"items": [app("a", "Synced", app_health)]}), ""
             if res == "ingresses.networking.k8s.io":
                 return 0, json.dumps(INGRESSES), ""
+            if res == "configmap":
+                # every fake cluster honours the NetworkPolicy contract (#1239)
+                return 0, json.dumps(NETPOL_CM_ON), ""
             if res in ("pods", "deployments", "statefulsets", "daemonsets", "applicationsets.argoproj.io"):
                 return 0, json.dumps({"items": []}), ""
             return 1, "", f"error: the server doesn't have a resource type \"{res}\""
@@ -676,3 +683,176 @@ def test_kro_crd_missing_skips_when_hub_enables_no_kro_label(tmp_path):
     results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
     kro = [r for r in results if r.check == "kro.rgds"]
     assert kro and all(r.status == piv.SKIP for r in kro)
+
+
+# ---------------------------------------------------------------------------------------
+# NetworkPolicy enforcement contract (#1239): read-only config check + opt-in deny-all probe
+# ---------------------------------------------------------------------------------------
+
+
+def _cm_cluster(rc, out="", err=""):
+    calls = []
+
+    def run(argv):
+        calls.append(argv)
+        return rc, out, err
+    return piv.Cluster("c1", "r", "/tmp/kc", None, run), calls
+
+
+def test_netpol_config_pass_reads_one_configmap_read_only():
+    c, calls = _cm_cluster(0, json.dumps(NETPOL_CM_ON))
+    r = piv.netpol_config_check(c, opted_out=False)
+    assert r.status == piv.PASS
+    assert len(calls) == 1 and calls[0][calls[0].index("get"):] == [
+        "get", "configmap", "amazon-vpc-cni", "-n", "kube-system", "-o", "json"]
+
+
+@pytest.mark.parametrize("data", [{}, {"enable-network-policy-controller": "false"},
+                                  {"enable-network-policy-controller": ""}])
+def test_netpol_config_fails_when_controller_not_on(data):
+    c, _ = _cm_cluster(0, json.dumps({"data": data}))
+    assert piv.netpol_config_check(c, opted_out=False).status == piv.FAIL
+
+
+def test_netpol_config_fails_when_configmap_absent():
+    c, _ = _cm_cluster(1, "", 'Error from server (NotFound): configmaps "amazon-vpc-cni" not found')
+    r = piv.netpol_config_check(c, opted_out=False)
+    assert r.status == piv.FAIL and "absent" in r.reason
+
+
+def test_netpol_config_other_kubectl_error_is_a_fail_not_a_crash():
+    c, _ = _cm_cluster(1, "", "Unable to connect to the server: timeout")
+    r = piv.netpol_config_check(c, opted_out=False)
+    assert r.status == piv.FAIL and "kubectl error" in r.reason
+
+
+def test_netpol_opt_out_only_on_explicit_false():
+    mk = lambda labels: piv.ClusterSecret("s", labels, {})
+    assert piv.netpol_opted_out(mk({"enable_network_policy_enforcement": "false"}))
+    assert not piv.netpol_opted_out(mk({}))
+    assert not piv.netpol_opted_out(mk({"enable_network_policy_enforcement": "true"}))
+    assert not piv.netpol_opted_out(None)
+    c, calls = _cm_cluster(0, "")
+    assert piv.netpol_config_check(c, opted_out=True).status == piv.SKIP and calls == []
+
+
+def test_verify_flags_every_cluster_without_the_configmap(tmp_path):
+    run0, fetch, _ = fake_env()
+
+    def run(argv):
+        if argv[0] == "kubectl" and "get" in argv and argv[argv.index("get") + 1] == "configmap":
+            return 1, "", 'Error from server (NotFound): configmaps "amazon-vpc-cni" not found'
+        return run0(argv)
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    fails = {(r.check, r.scope) for r in results if r.status == piv.FAIL}
+    assert fails == {("networkpolicy.enforcement", "h"), ("networkpolicy.enforcement", "s1")}
+
+
+def test_verify_without_probe_flag_writes_nothing(tmp_path):
+    run, fetch, calls = fake_env()
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [], str(tmp_path))
+    assert not any(r.check == "networkpolicy.deny-all" for r in results)
+    assert not any(v in argv for argv in calls for v in ("create", "run", "apply", "delete", "exec"))
+
+
+class FakeNetpolCluster:
+    """kubectl double for the deny-all probe: enforcement kicks in after `enforce_after` probes."""
+
+    def __init__(self, enforce_after=None, baseline_ok=True, fail_on=None):
+        self.calls, self.policy, self.wgets = [], False, 0
+        self.enforce_after, self.baseline_ok, self.fail_on = enforce_after, baseline_ok, fail_on
+
+    def run(self, argv):
+        self.calls.append(argv)
+        args = argv[argv.index("--request-timeout=60s") + 1:]
+        verb = args[0]
+        if verb == self.fail_on:
+            return 1, "", "boom"
+        if verb == "apply":
+            with open(args[args.index("-f") + 1], encoding="utf-8") as fh:
+                doc = json.load(fh)
+            assert doc["kind"] == "NetworkPolicy" and doc["spec"] == {"podSelector": {}, "policyTypes": ["Ingress"]}
+            self.policy = True
+            return 0, "created", ""
+        if verb == "get":
+            return 0, "10.0.0.7", ""
+        if verb == "exec":
+            if not self.policy:
+                return (0, "ok", "") if self.baseline_ok else (1, "", "timeout")
+            self.wgets += 1
+            blocked = self.enforce_after is not None and self.wgets > self.enforce_after
+            return (1, "", "download timed out") if blocked else (0, "ok", "")
+        return 0, "", ""
+
+    def verbs(self):
+        return [a[a.index("--request-timeout=60s") + 1] for a in self.calls]
+
+
+def _probe(f, tmp_path, timeout=30):
+    c = piv.Cluster("c1", "r", "/tmp/kc", None, f.run)
+    return piv.netpol_probe(c, str(tmp_path), "t1", timeout=timeout, interval=10, sleep=lambda s: None)
+
+
+@pytest.mark.parametrize("after", [0, 2])
+def test_netpol_probe_passes_once_deny_all_blocks(tmp_path, after):
+    f = FakeNetpolCluster(enforce_after=after)
+    r = _probe(f, tmp_path)
+    assert r.status == piv.PASS, r.reason
+    assert f.verbs()[-1] == "delete"
+
+
+def test_netpol_probe_fails_when_policy_is_ignored(tmp_path):
+    f = FakeNetpolCluster(enforce_after=None)
+    r = _probe(f, tmp_path)
+    assert r.status == piv.FAIL and "NOT enforced" in r.reason
+    assert f.verbs()[-1] == "delete"
+
+
+def test_netpol_probe_baseline_unreachable_is_inconclusive_fail(tmp_path):
+    f = FakeNetpolCluster(enforce_after=0, baseline_ok=False)
+    r = _probe(f, tmp_path)
+    assert r.status == piv.FAIL and "inconclusive" in r.reason and not f.policy
+    assert f.verbs()[-1] == "delete"
+
+
+@pytest.mark.parametrize("verb", ["create", "run", "wait", "apply"])
+def test_netpol_probe_errors_still_clean_up(tmp_path, verb):
+    f = FakeNetpolCluster(enforce_after=0, fail_on=verb)
+    r = _probe(f, tmp_path)
+    assert r.status == piv.FAIL and "probe error" in r.reason
+    last = f.calls[-1]
+    assert f.verbs()[-1] == "delete" and "np-conformance-t1-srv" in last and "np-conformance-t1-cli" in last
+
+
+def test_netpol_probe_only_touches_scratch_namespaces(tmp_path):
+    f = FakeNetpolCluster(enforce_after=0)
+    _probe(f, tmp_path)
+    for argv in f.calls:
+        args = argv[argv.index("--request-timeout=60s") + 1:]
+        if args[0] in ("create", "run", "wait", "exec", "get"):
+            assert any(a.startswith("np-conformance-t1-") for a in args), args
+
+
+def test_verify_probe_flag_runs_probe_per_cluster_and_skips_opted_out(tmp_path):
+    run0, fetch, calls = fake_env()
+    f = FakeNetpolCluster(enforce_after=0)
+
+    def run(argv):
+        if argv[0] == "kubectl":
+            args = argv[argv.index("--request-timeout=60s") + 1:]
+            if args[0] == "get" and args[1] == "secrets":
+                _, out, _ = run0(argv)
+                doc = json.loads(out)
+                doc["items"][1]["metadata"]["labels"]["enable_network_policy_enforcement"] = "false"
+                return 0, json.dumps(doc), ""
+            if args[0] in ("create", "run", "wait", "apply", "exec", "delete") or (
+                    args[0] == "get" and args[1] == "pod"):
+                return f.run(argv)
+        return run0(argv)
+    results = piv.verify(piv.Inputs("h", "r1", None, "d.test", "p", False), run, fetch, lambda h: [],
+                         str(tmp_path), probe_netpol=True, sleep=lambda s: None)
+    by = {(r.check, r.scope): r.status for r in results if r.check.startswith("networkpolicy.")}
+    assert by == {("networkpolicy.enforcement", "h"): piv.PASS,
+                  ("networkpolicy.deny-all", "h"): piv.PASS,
+                  ("networkpolicy.enforcement", "s1"): piv.SKIP,
+                  ("networkpolicy.deny-all", "s1"): piv.SKIP}

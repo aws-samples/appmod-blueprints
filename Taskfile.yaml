@@ -65,6 +65,10 @@ tasks:
         sh: date +%s
     cmds:
       - echo "Using cluster provider {{.PROVIDER}}"
+      # Timing log: a standalone run starts a new one; under the workshop install
+      # (INSTALL_TIMING_T0 set) this keeps appending to the workshop's.
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" init {{.INSTALL_START}}'
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform {{.PROVIDER}}:install'
       - task: "{{.PROVIDER}}:install"
       # Activate EKS Capability (kro) controller log delivery for all provisioned
       # clusters. Idempotent; skips clusters whose kro capability is not yet
@@ -72,7 +76,9 @@ tasks:
       # NOTE: imperative for now because ACK/Crossplane lack DeliverySource/
       # DeliveryDestination/Delivery CRDs. Tracking issue to move this into the
       # RGD/composition (option 2) or declarative CRs (option 3).
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform enable-capability-logs'
       - task: enable-capability-logs
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform -'
       # Final, unmistakable completion marker + total elapsed time. This is the
       # LAST line of `task install`; anything after it means a step ran post-install.
       - |

@@ -44,7 +44,9 @@ tasks:
           else
             echo "  ▸ Building vLLM image in background (5-10 min)..."
             aws ecr get-login-password --region {{.AWS_REGION}} | docker login --username AWS --password-stdin {{.AWS_ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com >/dev/null 2>&1
-            nohup bash -c "docker build -t '$IMAGE_URI' -f '{{.DOCKERFILE_PATH}}' '$(dirname {{.DOCKERFILE_PATH}})' && docker push '$IMAGE_URI' && echo '[ray] ✓ vLLM image pushed' >> /tmp/ray-build.log" > /tmp/ray-build.log 2>&1 &
+            # Timing markers bracket the real build+push, so its end (and rc) is logged.
+            T="{{.ROOT_DIR}}/scripts/install-timing.sh"
+            nohup bash -c "sh '$T' start 'ray:vllm-image (bg)'; docker build -t '$IMAGE_URI' -f '{{.DOCKERFILE_PATH}}' '$(dirname {{.DOCKERFILE_PATH}})' && docker push '$IMAGE_URI' && echo '[ray] ✓ vLLM image pushed' >> /tmp/ray-build.log; rc=\$?; sh '$T' done 'ray:vllm-image (bg)' rc=\$rc" > /tmp/ray-build.log 2>&1 &
             echo "  ✓ Build started (PID $!, log: /tmp/ray-build.log)"
             echo "  Run 'task ray:wait-image' to wait for completion."
           fi

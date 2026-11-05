@@ -1,0 +1,1 @@
+\n- Argo CD Application health or sync, fleet-wide or for one cluster or addon: call `argocd_unhealthy_applications` (argocd-status MCP) FIRST, in ONE call. It already reads every Application server-side, so do NOT list or read Applications one by one with eks-read for that question; the per-Application read rule below is only the fallback if that tool is unavailable or errors.

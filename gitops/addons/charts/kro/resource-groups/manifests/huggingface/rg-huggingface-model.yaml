@@ -17,6 +17,10 @@ spec:
       # the legacy <name>-s3-policy / <name>-role. Two stacks in one account must not share
       # them: adopt-or-create would let the second stack adopt and rewrite the first one's.
       iamNamePrefix: string | default=""
+      # Stack resource prefix, used only for the platform.gitops.io/prefix ownership tag on the
+      # IAM role. The default-prefix role keeps its legacy unprefixed name, so the
+      # teardown sweep finds it by this tag instead of by name.
+      resourcePrefix: string | default="peeks"
   
   resources:
     # Kubernetes Role for Argo Workflows
@@ -100,6 +104,9 @@ spec:
             services.k8s.aws/adoption-policy: adopt-or-create
         spec:
           name: ${schema.spec.iamNamePrefix}${schema.metadata.name}-role
+          tags:
+            - key: platform.gitops.io/prefix
+              value: ${schema.spec.resourcePrefix}
           policyRefs:
             - from:
                 name: ${s3Policy.metadata.name}
