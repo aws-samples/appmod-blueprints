@@ -211,6 +211,18 @@ tasks:
       INSTALL_START:
         sh: date +%s
     cmds:
+      - task: install:hub
+      - task: install:complete
+      - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+
+  # The install in two phases, so a consumer can run its own work in between (e.g.
+  # declare spokes right after the hub bootstrap instead of after Keycloak):
+  #   install:hub      kind -> hub EKS -> seed/sync -> identities -> background settle
+  #   install:complete Keycloak-dependent finalize + observability converge
+  # `install` runs both, unchanged. Same split in every kind-* provider.
+  install:hub:
+    desc: "Install phase 1: hub bootstrap up to the background settle (consumers may declare spokes after it)"
+    cmds:
       - '{{.MARK}} step hub kind:create'
       - task: kind:create
       - '{{.MARK}} step hub kind:kubeconfig'
@@ -291,6 +303,11 @@ tasks:
       #    overlaps the hub settle instead of queuing after it.
       - '{{.MARK}} step hub install:hub-settle-bg'
       - task: install:hub-settle-bg
+      - '{{.MARK}} step hub -'
+
+  install:complete:
+    desc: "Install phase 2: Keycloak-dependent finalize (restarts, urls) + observability converge"
+    cmds:
       - '{{.MARK}} step hub install:finalize'
       - task: install:finalize
       # Seed inline now if AMP/AMG became ACTIVE but the keys are still missing (e.g. the
@@ -298,7 +315,6 @@ tasks:
       - '{{.MARK}} step hub observability:converge'
       - task: observability:converge
       - '{{.MARK}} step hub -'
-      - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
   install:post-sync:
     internal: true
@@ -2982,8 +2998,11 @@ tasks:
           # exit code and we keep polling, instead of letting empty output count as UNHEALTHY=0
           # → a false "all Healthy" pass on a transient read error (review #1053 r4, same as the
           # kind-crossplane gate).
-          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          # kubectl JSONPath rejects the nested filter this used to read
+          # ("unterminated filter", kubectl 1.37), so every poll "failed" and the gate always
+          # ran its full 15 min. Read the HEALTHY column (3rd) of the table instead.
           LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          NAMES=$(echo "$LIST" | awk 'NF>0 && $3!="True" {print $1}')
           UNHEALTHY=$(echo "$NAMES" | wc -w | tr -d ' ')
           TOTAL=$(echo "$LIST" | awk 'NF>0' | wc -l | tr -d ' ')
           if [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ]; then
