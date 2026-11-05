@@ -27,6 +27,7 @@ phases:
       - docker build -t "$REG/$ECR_PREFIX/gitlab-mcp:$TAG"     "$SRC/gitlab-mcp"
       - docker build -t "$REG/$ECR_PREFIX/skills-mcp-base:$TAG" "$SRC/skills-mcp"
       - docker build -t "$REG/$ECR_PREFIX/incident-bridge:$TAG" "$SRC/incident-bridge"
+      - docker build -t "$REG/$ECR_PREFIX/argocd-status-mcp:$TAG" "$SRC/argocd-status-mcp"
       # 2) PEEKS skills overlay (context = repo ROOT, to access .kiro/skills)
       - docker build -f workshop/aiops-agent/skills-overlay/Dockerfile
           --build-arg SKILLS_MCP_IMAGE="$REG/$ECR_PREFIX/skills-mcp-base:$TAG"
@@ -39,6 +40,8 @@ phases:
       - docker push "$REG/$ECR_PREFIX/skills-mcp-base:$TAG"
       - docker push "$REG/$ECR_PREFIX/skills-mcp:$TAG"
       - docker push "$REG/$ECR_PREFIX/incident-bridge:$TAG"
+      - docker push "$REG/$ECR_PREFIX/argocd-status-mcp:$TAG"
       - echo "Point the chart at these images via the fleet-config overlay (images.imageRegistry/imageTag) or aiops_agent_img_* annotations:"
       - echo "  imageRegistry -> $REG/$ECR_PREFIX"
       - echo "  imageTag      -> $TAG"
+      - echo "  images.argocdStatusMcp.tag -> $TAG (this one does not inherit imageTag; set it to turn the tool on)"
