@@ -74,10 +74,39 @@ command -v jq  >/dev/null 2>&1 || die "jq not found"
 ALB_WAIT="${ALB_WAIT_SECONDS:-1800}"
 ALB=""
 WAITED=0
+# Unstick the load balancer controller while we wait (install-time perf, R1). On a fresh
+# hub the API server answers 429 to part of the first big sync; when the create of the
+# controller's ServiceAccount is one of them, the ReplicaSet cannot create pods and the
+# app sits in Argo CD's sync-retry backoff for up to 10 min before it tries again (the ALB
+# then lands ~20 min after install instead of ~6). From 2 min on, every 60 s, if no ALB
+# exists yet, ask scripts/argocd-app-kick.sh to start a fresh sync of
+# aws-load-balancer-controller-<cluster>. The helper only acts when the app is not Healthy
+# AND parked in retry backoff (or has no operation); it never interrupts a running
+# attempt, so a healthy install sees no change. At most 3 kicks. Best-effort: without
+# kubectl or a kubeconfig the wait is unchanged.
+LBC_APP="aws-load-balancer-controller-${HUB_CLUSTER_NAME}"
+KICK="$(cd "$(dirname "$0")" && pwd)/argocd-app-kick.sh"
+KICKS=0
+KICK_KC=""
+trap '[ -n "$KICK_KC" ] && rm -f "$KICK_KC"' EXIT
+lbc_kick() {
+  [ "$KICKS" -lt 3 ] || return 0
+  [ -x "$KICK" ] && command -v kubectl >/dev/null 2>&1 || return 0
+  if [ -z "$KICK_KC" ]; then
+    KICK_KC=$(mktemp)
+    aws eks update-kubeconfig --name "$HUB_CLUSTER_NAME" --region "$REGION" --kubeconfig "$KICK_KC" >/dev/null 2>&1 \
+      || { log "LBC kick: no kubeconfig for $HUB_CLUSTER_NAME, waiting without it"; KICKS=3; return 0; }
+  fi
+  OUT=$(KUBECONFIG="$KICK_KC" "$KICK" "$LBC_APP" argocd 2>&1); RC=$?
+  log "$OUT"
+  [ "$RC" -eq 0 ] && KICKS=$((KICKS + 1))
+  return 0
+}
 while :; do
   ALB=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region "$REGION" \
     --query 'LoadBalancers[0].[LoadBalancerArn,DNSName,Scheme,State.Code]' --output text 2>/dev/null)
   case "$ALB" in ''|*None*) : ;; *) break ;; esac
+  if [ "$WAITED" -ge 120 ] && [ "$((WAITED % 60))" -eq 0 ]; then lbc_kick; fi
   if [ "$WAITED" -ge "$ALB_WAIT" ]; then
     die "load balancer '$ALB_NAME' not found in $REGION after ${ALB_WAIT}s.
      Run this AFTER 'task install' has finished and the platform ingresses have an address.
