@@ -465,6 +465,7 @@ tasks:
       # re-creates keep the spoke subnets/VPC from being deleted once the cluster is gone.
       # The provider freezes those syncs (hub:freeze-spokes) when it offers it.
       - |
+        printf '{{.C_STEP}}▸ Phase 1 — freezing Argo CD syncs to the spokes before the drain...{{.C_RESET}}\n'
         if ( cd {{.PLATFORM_DIR}} && task --list-all 2>/dev/null | grep -q '{{.PROVIDER}}:hub:freeze-spokes' ); then
           ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:freeze-spokes ) || \
             printf '{{.C_ERR}}  ⚠ hub:freeze-spokes failed; the drain may be undone by Argo CD self-heal.{{.C_RESET}}\n'
