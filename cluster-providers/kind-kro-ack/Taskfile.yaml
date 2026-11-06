@@ -1920,6 +1920,13 @@ tasks:
       # 7b polls every 15 s, so the cap is this rounded up to a multiple of 15
       # (1200 = 80 polls; 1210 would wait 1215 s).
       XP_DELETE_WAIT: '{{.XP_DELETE_WAIT | default "1200"}}'
+      # Upper bound (s) for step 7b only (6c keeps XP_DELETE_WAIT). With the slow addons
+      # started early (step 4.8), 7b only covers the tail of their deletion.
+      XP_7B_WAIT: '{{.XP_7B_WAIT | default "600"}}'
+      # Addons whose AWS deletion is long and serial (Argo CD prunes one sync wave at a
+      # time: AMP scrapers ~13 min, then the workspaces, then the AMG security group).
+      # Step 4.8 starts their delete before step 5, so it overlaps steps 5-7.
+      XP_EARLY_ADDONS: '{{.XP_EARLY_ADDONS | default "observability-aws"}}'
       # Step 7: how many addons of the same sync wave are deleted at the same time.
       ADDON_DELETE_PARALLEL: '{{.ADDON_DELETE_PARALLEL | default "8"}}'
     cmds:
@@ -2014,6 +2021,29 @@ tasks:
           for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '^platform-manifests-bootstrap-' || true); do
             {{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>&1 || true
             {{.KC}} delete application "$app" -n argocd --wait=false 2>&1 || true
+          done
+        ignore_error: true
+      # 4.8. Start the long, serial AWS deletions now (XP_EARLY_ADDONS, observability-aws):
+      #      pruned exactly as step 7 prunes an addon (preserveResourcesOnDeletion=false,
+      #      resources-finalizer on its Applications first), but not waited for, so their
+      #      ~15-20 min of AMP scraper -> workspaces -> AMG security group run during steps
+      #      5-7 instead of after them. Every controller they need (Crossplane, kro and its
+      #      hub RBAC) stays until step 8. Step 7 then finds them gone or going; 7b covers
+      #      the tail.
+      - cmd: |
+          for ADDON in {{.XP_EARLY_ADDONS}}; do
+            {{.KC}} get applicationset "$ADDON" -n argocd >/dev/null 2>&1 || continue
+            echo "Starting the deletion of $ADDON early (not waited for here)..."
+            {{.KC}} patch applicationset "$ADDON" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' >/dev/null 2>&1 || true
+            KIDS=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null || true)
+            if [ -n "$KIDS" ]; then
+              W=0; while [ $W -lt 30 ]; do
+                F=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.finalizers}{end}" 2>/dev/null || true)
+                if echo "$F" | grep -q resources-finalizer; then break; fi
+                sleep 2; W=$((W + 2))
+              done
+            fi
+            {{.KC}} delete applicationset "$ADDON" -n argocd --wait=false 2>&1 || true
           done
         ignore_error: true
       # 5. Delete APPLICATION WORKLOADS first — all ArgoCD Applications whose project is
@@ -2191,13 +2221,23 @@ tasks:
       #     Crossplane (*.upbound.io) resources and a provider is running to delete them.
       #     Best-effort: if the Applications can't be queried (kubectl or jq fails), 7b
       #     says so and does not wait; step 8 runs as it would without 7b.
+      #     Only resources that would otherwise stay in AWS are waited for: IAM roles,
+      #     policies and attachments (swept by prefix in destroy step 6b) and Pod Identity
+      #     associations (deleted with the hub cluster) are not. An app such as langfuse,
+      #     whose only Crossplane resources are its IAM role and Pod Identity association
+      #     (its lowest sync wave, pruned last, after its StatefulSets and Jobs), used to
+      #     hold 7b to its cap. The cap is XP_7B_WAIT (600 s): what is still deleting after
+      #     it (AMP/AMG workspaces, their security group) is removed by the AWS sweep.
       - cmd: |
           E=0
-          while [ "$E" -lt {{.XP_DELETE_WAIT}} ]; do
+          while [ "$E" -lt {{.XP_7B_WAIT}} ]; do
             OUT=$({{.KC}} get applications -n argocd -o json 2>/dev/null) || { echo "  7b: could not query Applications; not waiting"; break; }
             PENDING=$(printf '%s' "$OUT" | jq -r '[.items[]
               | select(.metadata.deletionTimestamp != null)
-              | select(any(.status.resources[]?; (.group // "") | endswith(".upbound.io")))
+              | select(any(.status.resources[]?;
+                  ((.group // "") | endswith(".upbound.io"))
+                  and (.group // "") != "iam.aws.upbound.io"
+                  and (.kind // "") != "PodIdentityAssociation"))
               | .metadata.name] | join(" ")' 2>/dev/null) || { echo "  7b: jq failed; not waiting"; break; }
             if [ -z "$PENDING" ]; then break; fi
             UP=$({{.KC}} get pods -n crossplane-system -l pkg.crossplane.io/provider \
