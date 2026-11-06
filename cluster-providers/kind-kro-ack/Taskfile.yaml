@@ -2932,7 +2932,21 @@ tasks:
     # *_knex_migrations_lock table, and Backstage then failed every start with
     # MigrationLocked while staying Running. scripts/restart-backstage.sh skips the restart
     # when it is not needed, waits for the current pod to finish initialising, and fails
-    # the task (after one repair restart) when the backend or the catalog is not healthy.
+    # (after one repair restart) when the backend or the catalog is not healthy.
+    #
+    # Backstage is often not deployed yet when install:finalize gets here: its Deployment
+    # is a late sync wave (seen live: this task at 15:23, the Deployment at 15:32). The
+    # script's probe says which case applies:
+    #   present   run the restart check + gate now; the task fails if Backstage is unhealthy.
+    #   expected  the Backstage Argo CD app exists (or the hub has enable_backstage=true) but
+    #             not the Deployment. Waiting here would hold the rest of the install for
+    #             up to ~10 min, so by default the same script runs DETACHED: it waits for
+    #             the Deployment (WAIT_DEPLOY_TIMEOUT, 15 min), then restart check + gate,
+    #             logging to BACKSTAGE_GATE_LOG with start/done markers (rc) in the install
+    #             timing log. BACKSTAGE_GATE_WAIT=foreground waits inline instead and fails
+    #             the task on an unhealthy Backstage.
+    #   absent    Backstage is not installed: skipped, said as such.
+    # "Backstage healthy" is printed only after the gate passed.
     # BACKSTAGE_GATE_TEMPLATE: catalog template the gate requires to be served.
     vars:
       BACKSTAGE_GATE_TEMPLATE: '{{.BACKSTAGE_GATE_TEMPLATE | default "cicd-pipeline-gitops"}}'
@@ -2941,11 +2955,40 @@ tasks:
       - defer: rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
       - printf '{{.C_STEP}}▸ Restarting Backstage if it predates the Keycloak config, then checking backend and catalog...{{.C_RESET}}\n'
       - |
-        KUBECONFIG='{{.ROOT_DIR}}/private/hub-kubeconfig' \
-        KEYCLOAK_APP='keycloak-{{.HUB_CLUSTER_NAME}}' \
-        GATE_TEMPLATE='{{.BACKSTAGE_GATE_TEMPLATE}}' \
-          bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/restart-backstage.sh'
-      - printf '{{.C_OK}}✓ Backstage healthy (OIDC fresh, catalog serving).{{.C_RESET}}\n'
+        S='{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/restart-backstage.sh'
+        export KUBECONFIG='{{.ROOT_DIR}}/private/hub-kubeconfig'
+        export KEYCLOAK_APP='keycloak-{{.HUB_CLUSTER_NAME}}'
+        export BACKSTAGE_APP='backstage-{{.HUB_CLUSTER_NAME}}'
+        export HUB_CLUSTER_SECRET='{{.HUB_CLUSTER_NAME}}'
+        export GATE_TEMPLATE='{{.BACKSTAGE_GATE_TEMPLATE}}'
+        STATE=$(bash "$S" probe)
+        if [ "$STATE" = expected ] && [ "${BACKSTAGE_GATE_WAIT:-background}" != foreground ]; then
+          # Detached like install:phase1-observability-bg: `&` inside sh -c, redirect on the
+          # subshell, stdin from /dev/null, so go-task neither kills the job nor waits on
+          # its stdout. It gets its own copy of the kubeconfig (the defer above removes
+          # this one) and removes it when done.
+          LOG="${BACKSTAGE_GATE_LOG:-/tmp/backstage-gate-{{.HUB_CLUSTER_NAME}}.log}"
+          BG_KC='{{.ROOT_DIR}}/private/hub-kubeconfig-backstage-gate'
+          # cp + chmod, not umask: go-task's shell (mvdan/sh) has no umask builtin.
+          cp "$KUBECONFIG" "$BG_KC" && chmod 600 "$BG_KC"
+          KUBECONFIG="$BG_KC" S="$S" LOG="$LOG" T='{{.ROOT_DIR}}/scripts/install-timing.sh' \
+            sh -c '( sh "$T" start "backstage-gate (bg)"; bash "$S"; rc=$?; rm -f "$KUBECONFIG"
+                     case $rc in
+                       0) echo "✓ Backstage healthy (OIDC fresh, catalog serving)." ;;
+                       3) echo "Backstage not installed: skipped." ;;
+                       *) echo "✗ Backstage gate FAILED (rc=$rc): see the ERROR lines above." ;;
+                     esac
+                     sh "$T" done "backstage-gate (bg)" "rc=$rc"; exit $rc ) >> "$LOG" 2>&1 < /dev/null &'
+          printf '{{.C_INFO}}  Backstage not deployed yet (Argo CD app present): restart check + health gate continue in the background, NOT verified yet (log: %s).{{.C_RESET}}\n' "$LOG"
+          exit 0
+        fi
+        rc=0
+        bash "$S" || rc=$?
+        case $rc in
+          0) printf '{{.C_OK}}✓ Backstage healthy (OIDC fresh, catalog serving).{{.C_RESET}}\n' ;;
+          3) printf '{{.C_INFO}}  Backstage not installed: skipped.{{.C_RESET}}\n' ;;
+          *) printf '{{.C_ERR}}✗ Backstage is not healthy (rc=%s), see the ERROR lines above.{{.C_RESET}}\n' "$rc"; exit 1 ;;
+        esac
 
 
   # ---- from kind-crossplane ----
