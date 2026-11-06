@@ -193,8 +193,10 @@ def test_disable_kro_prunes_via_kubectl_without_a_session(tmp_path):
     calls = log.read_text().splitlines()
 
     assert res.returncode == 0, out
-    assert f"argocd app sync clusters-kro-{CLUSTER} --prune --timeout 600" in calls
-    assert "Falling back to kubectl patch" in out
+    # Without a live Argo CD session the CLI is not even tried (it would only fail
+    # Unauthenticated): the prune goes through the Application resource.
+    assert not [c for c in calls if c.startswith(f"argocd app sync clusters-kro-{CLUSTER}")], calls
+    assert "No Argo CD CLI session" in out
     assert any(c.startswith(f"kubectl --kubeconfig {repo}/private/hub-kubeconfig patch application "
                             f"clusters-kro-{CLUSTER} -n argocd") and '"prune":true' in c for c in calls), calls
     assert f"De-registered {CLUSTER} from Argo CD" in out
