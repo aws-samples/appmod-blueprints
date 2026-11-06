@@ -95,6 +95,19 @@ def run(ctx):
                     _add(f"vpc:{v['VpcId']}")
         except Exception:
             pass
+        # Security groups left in the IDE VPC that CloudFormation does not own, tagged by us
+        # or not (the AMG workspace SG carries no prefix tag): CFN cannot delete the VPC
+        # while one remains, so the gate must not say DESTROY COMPLETE.
+        try:
+            ide_vpc = ctx.find_ide_vpc("[verify] ")
+            if ide_vpc:
+                left = ctx.leftover_vpc_sgs(ide_vpc)
+                if left is None:
+                    log(f"  [verify] cannot list the security groups of IDE VPC {ide_vpc}")
+                for sg in left or []:
+                    _add(f"sg:{ide_vpc}/{sg}")
+        except Exception as e:
+            log(f"  [verify] IDE VPC security groups: {e}")
         try:  # unassociated prefixed EIPs
             for a in ec2.describe_addresses().get("Addresses", []):
                 if a.get("AssociationId"):
