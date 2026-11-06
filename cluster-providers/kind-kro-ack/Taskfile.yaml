@@ -1845,6 +1845,8 @@ tasks:
       # 7b polls every 15 s, so the cap is this rounded up to a multiple of 15
       # (1200 = 80 polls; 1210 would wait 1215 s).
       XP_DELETE_WAIT: '{{.XP_DELETE_WAIT | default "1200"}}'
+      # Step 7: how many addons of the same sync wave are deleted at the same time.
+      ADDON_DELETE_PARALLEL: '{{.ADDON_DELETE_PARALLEL | default "8"}}'
     cmds:
       # Best-effort hub kubeconfig — if the hub EKS is already gone, every kubectl
       # below no-ops (2>/dev/null || true) and the task still completes cleanly.
@@ -2006,11 +2008,18 @@ tasks:
       #    here and removed last, without pruning (step 9b). platform-manifests-bootstrap
       #    is skipped as a backstop: step 4.7 already removed it without pruning, and
       #    step 7 must never prune it (its NodePools would go with it).
+      #    The addons of ONE wave are deleted in parallel (at most ADDON_DELETE_PARALLEL
+      #    at a time), and a wave starts only once the previous one is fully gone, so the
+      #    reverse-wave order is kept. One addon at a time took ~20-30 s each, i.e. more
+      #    than 20 min for the ~70 addons of an agentic hub; Argo CD itself syncs the
+      #    Applications of one wave in parallel, so nothing orders them within a wave.
       - cmd: |
           SKIP="{{.INFRA_STACK}} multi-acct platform-manifests-bootstrap bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
+          PAR="{{.ADDON_DELETE_PARALLEL}}"
+          case "$PAR" in ''|*[!0-9]*|0) PAR=1 ;; esac
           APP_WAVES=$({{.KC}} get applications -n argocd \
             -o jsonpath='{range .items[*]}{.metadata.ownerReferences[0].name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' 2>/dev/null || true)
-          ADDONS=$({{.KC}} get applicationsets -n argocd \
+          WAVED=$({{.KC}} get applicationsets -n argocd \
             -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.argocd\.argoproj\.io/sync-wave}{"\n"}{end}' 2>/dev/null \
           | while read name wave; do
             [ -z "$name" ] && continue
@@ -2020,28 +2029,47 @@ tasks:
             for s in $SKIP; do if [ "$name" = "$s" ]; then skip=true; break; fi; done
             [ "$skip" = "true" ] && continue
             echo "$wave $name"
-          done | sort -rn | awk '{print $2}' || true)
-          for ADDON in $ADDONS; do
-            {{.KC}} get applicationset "$ADDON" -n argocd >/dev/null 2>&1 || continue
-            echo "Deleting $ADDON..."
-            {{.KC}} patch applicationset "$ADDON" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
-            CHILDREN=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null)
-            if [ -n "$CHILDREN" ]; then
-              E=0; while [ $E -lt 30 ]; do
-                F=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.finalizers}{end}" 2>/dev/null)
-                echo "$F" | grep -q resources-finalizer && break
-                sleep 2; E=$((E + 2))
+          done | sort -rn | awk 'NF == 2 {print $1 ":" $2}' || true)
+          # One addon: prune its ApplicationSet and wait (bounded) for its Applications to go.
+          # Every read is guarded: under errexit a failed kubectl in $(...) would end this
+          # addon early and leave its Applications behind.
+          delete_addon() {
+            A="$1"
+            {{.KC}} get applicationset "$A" -n argocd >/dev/null 2>&1 || return 0
+            echo "Deleting $A..."
+            {{.KC}} patch applicationset "$A" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
+            KIDS=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$A\")]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null || true)
+            if [ -n "$KIDS" ]; then
+              W=0; while [ $W -lt 30 ]; do
+                F=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$A\")]}{.metadata.finalizers}{end}" 2>/dev/null || true)
+                if echo "$F" | grep -q resources-finalizer; then break; fi
+                sleep 2; W=$((W + 2))
               done
             fi
-            {{.KC}} delete applicationset "$ADDON" -n argocd --timeout=180s 2>&1 || true
-            if [ -n "$CHILDREN" ]; then
-              E=0; while [ $E -lt 120 ]; do
-                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
-                [ -z "$R" ] && break
-                sleep 5; E=$((E + 5))
+            {{.KC}} delete applicationset "$A" -n argocd --timeout=180s 2>&1 || true
+            if [ -n "$KIDS" ]; then
+              W=0; while [ $W -lt 120 ]; do
+                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$A\")]}{.metadata.name}{end}" 2>/dev/null || true)
+                if [ -z "$R" ]; then break; fi
+                sleep 5; W=$((W + 5))
               done
             fi
+            return 0
+          }
+          PREV=""; N=0; T0=$(date +%s)
+          for ENTRY in $WAVED; do
+            WAVE="${ENTRY%%:*}"; ADDON="${ENTRY#*:}"
+            if [ -n "$PREV" ] && [ "$WAVE" != "$PREV" ]; then
+              wait; N=0
+              echo "  step 7: wave $PREV done ($(( $(date +%s) - T0 ))s)"
+            fi
+            if [ "$N" -ge "$PAR" ]; then wait; N=0; fi
+            PREV="$WAVE"
+            delete_addon "$ADDON" &
+            N=$((N + 1))
           done
+          wait
+          if [ -n "$PREV" ]; then echo "  step 7: wave $PREV done ($(( $(date +%s) - T0 ))s)"; fi
         ignore_error: true
       # 7b. Crossplane must outlive the AWS resources it is still deleting. Argo CD deletes
       #     an Application's resources one sync wave at a time, and an AMP scraper

@@ -60,6 +60,10 @@ FAKE_KUBECTL = r'''#!{python} -I
 """Fake kubectl: ApplicationSets/Applications in argocd, Argo CD prune semantics."""
 import json, os, re, sys
 STATE, LOG = os.environ["FAKE_K8S_STATE"], os.environ["FAKE_K8S_LOG"]
+# Step 7 deletes the addons of one wave in parallel: serialize the fake API server.
+import fcntl
+_LOCK = open(STATE + ".lock", "a")
+fcntl.flock(_LOCK, fcntl.LOCK_EX)
 st = json.load(open(STATE))
 args = sys.argv[1:]
 def log(*ev):
