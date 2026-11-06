@@ -637,6 +637,17 @@ tasks:
                  -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null | grep -qx "$S"; then
               break
             fi
+            # Install perf R2: the fleet-secret ExternalSecret exists from the spoke
+            # declare, ~20 min before SM <spoke>/config, and fails on every reconcile
+            # until then, so ESO's error backoff (not the 1m refreshInterval) decides when
+            # it looks again: the Argo CD cluster secret appeared 0:49 to 6:24 after SM.
+            # Ask ESO to reconcile now, every 30 s while the secret is missing (same
+            # force-sync annotation as set-overlay-repo and the kro eks README). The
+            # cluster is ACTIVE at this point (step 1), so SM <spoke>/config follows
+            # within seconds. Harmless when the ExternalSecret is not there yet.
+            if [ $((i % 2)) -eq 1 ]; then
+              $KC_HUB -n argocd annotate externalsecret "fleet-secret-$S" force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
+            fi
             if [ "$i" = "60" ]; then
               printf '{{.C_ERR}}  ⚠ %s ArgoCD cluster secret not registered — continuing (non-fatal).{{.C_RESET}}\n' "$S"
             fi
