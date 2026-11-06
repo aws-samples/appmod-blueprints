@@ -806,7 +806,23 @@ tasks:
       # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
       - '{{.DESTROY_MARK}} "3 hub $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_STEP}}▸ Phase 3 — destroying hub platform ({{.PROVIDER}})...{{.C_RESET}}\n'
-      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy'
+      # Under the CloudFormation stack delete, the Bootstrap build writes
+      # /<prefix>/destroy-status before it starts this destroy, and the Clusters build
+      # that follows runs an AWS sweep that deletes the hub's capabilities and cluster.
+      # Waiting for them here (up to 45 min) only burns the build's SSM budget, so the
+      # provider is told not to (HUB_DELETE_WAIT=false). Anywhere else: wait, as before.
+      # HUB_DELETE_WAIT=true|false on the command line wins.
+      - cmd: |
+          WAIT="{{.HUB_DELETE_WAIT | default ""}}"
+          if [ -z "$WAIT" ]; then
+            WAIT=true
+            if aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/destroy-status" --region "{{.AWS_REGION}}" \
+                --cli-connect-timeout 5 --cli-read-timeout 10 >/dev/null 2>&1; then
+              WAIT=false
+              printf '{{.C_INFO}}  Stack delete in progress (/{{.RESOURCE_PREFIX}}/destroy-status set): the hub cluster deletion is not waited for; the stack sweep finishes it.{{.C_RESET}}\n'
+            fi
+          fi
+          cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy HUB_DELETE_WAIT="$WAIT"
 
       - '{{.DESTROY_MARK}} "done $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_OK}}✓ Workshop destroy complete.{{.C_RESET}}\n'

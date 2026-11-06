@@ -2263,6 +2263,12 @@ tasks:
     desc: Full teardown — delete KRO instances, wait for ACK to clean up AWS resources, delete Kind
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
+      # HUB_DELETE_WAIT=false: submit the hub's capability and cluster deletes but do not
+      # wait for them (up to 5 + 10 + 30 min). For a caller that removes them itself
+      # afterwards (the workshop's CloudFormation delete runs an AWS sweep that deletes the
+      # capabilities and the hub cluster). The final "hub still exists" check is then a
+      # warning, not a failure. Default true: wait, as before.
+      HUB_DELETE_WAIT: '{{.HUB_DELETE_WAIT | default "true"}}'
       # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
       # (step 2b) and take a final snapshot of the DevLake databases before they are
       # deleted (6eii). It does NOT protect AgentCore memories in a normal destroy:
@@ -2481,6 +2487,7 @@ tasks:
             fi
           done
           # Wait up to 5 min for all capabilities to be gone
+          if [ "{{.HUB_DELETE_WAIT}}" = false ]; then echo "  HUB_DELETE_WAIT=false: not waiting for the capabilities"; exit 0; fi
           for i in $(seq 1 20); do
             COUNT=$(aws eks list-capabilities --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
               --query 'length(capabilities)' --output text 2>/dev/null || echo 0)
@@ -2501,6 +2508,9 @@ tasks:
           # semantics (ignore_error) so later cleanup steps run; the check at the end of
           # destroy is what fails the task.
           TRIES="${HUB_DELETE_TRIES:-20}"; DELAY="${HUB_DELETE_RETRY_SEC:-30}"
+          # Not waiting: one attempt (the capabilities may still be going; the caller's
+          # sweep deletes the cluster once they are).
+          if [ "{{.HUB_DELETE_WAIT}}" = false ]; then TRIES=1; fi
           for i in $(seq 1 "$TRIES"); do
             STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
               --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
@@ -2513,13 +2523,14 @@ tasks:
             case "$OUT" in
               *ResourceInUseException*)
                 printf '  [%s/%s] hub cluster busy (ResourceInUseException), retrying in %ss...\n' "$i" "$TRIES" "$DELAY"
-                sleep "$DELAY" ;;
+                if [ "$i" -lt "$TRIES" ]; then sleep "$DELAY"; fi ;;
               *) break ;;
             esac
           done
         ignore_error: true
       - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
       - cmd: |
+          if [ "{{.HUB_DELETE_WAIT}}" = false ]; then echo "  HUB_DELETE_WAIT=false: not waiting for the hub cluster deletion"; exit 0; fi
           for i in $(seq 1 120); do
             STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
               --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
@@ -2950,8 +2961,12 @@ tasks:
       # error was swallowed). One check on the one outcome that matters.
       - cmd: |
           if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            if [ "{{.HUB_DELETE_WAIT}}" = false ]; then
+              printf '{{.C_INFO}}  EKS cluster {{.HUB_CLUSTER_NAME}} is still being deleted (HUB_DELETE_WAIT=false: the caller removes it).{{.C_RESET}}\n'
+            else
             printf '{{.C_ERR}}✗ Destroy incomplete: EKS cluster {{.HUB_CLUSTER_NAME}} still exists. Re-run task destroy.{{.C_RESET}}\n'
             exit 1
+            fi
           fi
           FAILED="{{.ROOT_DIR}}/private/destroy-sweep-failures"
           if [ -s "$FAILED" ]; then
