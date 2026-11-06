@@ -140,12 +140,16 @@ class _Client:
         return {"cluster": {"tags": self._a["clusters"][name], "status": "ACTIVE"}}
 
     def list_workspaces(self, **k):
+        # A workspace deleted earlier in this run is gone (the re-sweep lists them again).
+        gone = {c[2]["workspaceId"] for c in self._calls if c[0] == self._s and c[1] == "delete_workspace"}
         if self._s == "amp":
-            return {"workspaces": [{"workspaceId": f"ws-{n}", "alias": n} for n in self._a["amp"]]}
-        return {"workspaces": [{"id": f"g-{n}", "name": n} for n in self._a["grafana"]]}
+            return {"workspaces": [{"workspaceId": f"ws-{n}", "alias": n} for n in self._a["amp"]
+                                   if f"ws-{n}" not in gone]}
+        return {"workspaces": [{"id": f"g-{n}", "name": n} for n in self._a["grafana"] if f"g-{n}" not in gone]}
 
     def list_scrapers(self, **k):
         return {"scrapers": []}
+
 
     def describe_delivery_sources(self, **k):
         return {"deliverySources": [{"name": n} for n in self._a["delivery_sources"]]}
