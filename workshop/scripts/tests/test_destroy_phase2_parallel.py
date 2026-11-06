@@ -49,6 +49,9 @@ def _run(tmp, p2_rc=0):
     stand_in = f"echo P25-START; sleep {P25}; echo P25-END"
     tvars = {k: "" for k in ("C_ERR", "C_RESET", "C_OK", "C_INFO", "C_STEP")}
     tvars["REPO"] = str(tmp)
+    dvars = yaml.safe_load(open(WORKSHOP_TF))["tasks"]["destroy"]["vars"]
+    for k in ("DESTROY_DEADLINE_FILE", "DL_RESERVE_P3", "DL_FN"):  # no deadline file: no budget
+        tvars[k] = dvars[k]
     tf = {"version": "3", "set": ["errexit", "nounset", "pipefail"], "vars": tvars, "tasks": {
         "run": {"cmds": before + [stand_in] + after + ["echo PHASE3"]},
         "spokes:disable-all": {"cmds": [f"echo P2-START; sleep {P2}; echo P2-END; exit {p2_rc}"]},

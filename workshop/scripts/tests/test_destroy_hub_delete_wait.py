@@ -121,9 +121,9 @@ def _run_workshop(tmp, stack_delete, cli=None):
 
 
 @pytest.mark.parametrize("stack_delete, cli, expect", [
-    (True, None, "HUB_DELETE_WAIT=false"),
-    (False, None, "HUB_DELETE_WAIT=true"),
-    (True, ["HUB_DELETE_WAIT=true"], "HUB_DELETE_WAIT=true"),
+    (True, None, "HUB_DELETE_WAIT=false DESTROY_DEADLINE=0"),
+    (False, None, "HUB_DELETE_WAIT=true DESTROY_DEADLINE=0"),
+    (True, ["HUB_DELETE_WAIT=true"], "HUB_DELETE_WAIT=true DESTROY_DEADLINE=0"),
 ])
 def test_workshop_destroy_tells_the_provider(tmp_path, stack_delete, cli, expect):
     res, calls = _run_workshop(tmp_path, stack_delete, cli)
