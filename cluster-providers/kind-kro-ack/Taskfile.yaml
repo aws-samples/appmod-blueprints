@@ -1852,8 +1852,22 @@ tasks:
       # time: AMP scrapers ~13 min, then the workspaces, then the AMG security group).
       # Step 4.8 starts their delete before step 5, so it overlaps steps 5-7.
       XP_EARLY_ADDONS: '{{.XP_EARLY_ADDONS | default "observability-aws"}}'
-      # Step 7: how many addons of the same sync wave are deleted at the same time.
-      ADDON_DELETE_PARALLEL: '{{.ADDON_DELETE_PARALLEL | default "8"}}'
+      # Step 7: how many addons of the same sync wave are deleted at the same time. 16
+      # covers the widest wave of an agentic hub (12 addons) in one batch.
+      ADDON_DELETE_PARALLEL: '{{.ADDON_DELETE_PARALLEL | default "16"}}'
+      # DESTROY_DEADLINE: epoch seconds by which the caller needs destroy to be over (0,
+      # the default: none, every wait keeps its own cap). Waits stop DESTROY_TAIL_RESERVE
+      # seconds before it; what is left is then deleted without waiting, so the caller's
+      # own cleanup must remove what is still being deleted in AWS at that point.
+      DESTROY_DEADLINE: '{{.DESTROY_DEADLINE | default "0"}}'
+      DESTROY_TAIL_RESERVE: '{{.DESTROY_TAIL_RESERVE | default "240"}}'
+      # Shell helpers, prepended to the cmds that wait: dl_left = seconds left before the
+      # waits must stop (999999 without a deadline); dl_cap N = min(N, dl_left), >= 0.
+      DL_FN: >-
+        dl_left() { if [ "{{.DESTROY_DEADLINE}}" -gt 0 ] 2>/dev/null; then
+        echo $(( {{.DESTROY_DEADLINE}} - {{.DESTROY_TAIL_RESERVE}} - $(date +%s) )); else echo 999999; fi; };
+        dl_cap() { L=$(dl_left); if [ "$L" -lt 0 ]; then L=0; fi;
+        if [ "$1" -lt "$L" ]; then echo "$1"; else echo "$L"; fi; }
     cmds:
       # Best-effort hub kubeconfig — if the hub EKS is already gone, every kubectl
       # below no-ops (2>/dev/null || true) and the task still completes cleanly.
@@ -1955,6 +1969,15 @@ tasks:
       #      5-7 instead of after them. Every controller they need (Crossplane, kro and its
       #      hub RBAC) stays until step 8. Step 7 then finds them gone or going; 7b covers
       #      the tail.
+      #      Argo CD would then prune their resources one sync wave at a time, each wave
+      #      only once the previous one is gone in AWS: the AMP scrapers (~13 min), then the
+      #      rule groups, then the AMP/AMG workspaces, then the AMG security group, ~18 min
+      #      in all. So, once their Applications are being deleted (nothing syncs them any
+      #      more), the cloud resources they manage (Crossplane *.upbound.io, kro instances,
+      #      ACK *.services.k8s.aws) are deleted directly, all at once. That also means a
+      #      resource never stays live behind a slow wave: a live managed resource whose AWS
+      #      object disappears (the caller's sweep deleting it) is re-created by its
+      #      controller, one with a deletionTimestamp never is.
       - cmd: |
           for ADDON in {{.XP_EARLY_ADDONS}}; do
             {{.KC}} get applicationset "$ADDON" -n argocd >/dev/null 2>&1 || continue
@@ -1969,6 +1992,30 @@ tasks:
               done
             fi
             {{.KC}} delete applicationset "$ADDON" -n argocd --wait=false 2>&1 || true
+            if [ -z "$KIDS" ]; then continue; fi
+            # Its Applications, once all of them carry a deletionTimestamp (bounded).
+            W=0; APPS=""
+            while [ $W -lt 30 ]; do
+              APPS=$({{.KC}} get applications -n argocd -o json 2>/dev/null | jq -c --arg a "$ADDON" \
+                '[.items[] | select(((.metadata.ownerReferences // [])[0].name // "") == $a)]' 2>/dev/null || true)
+              if [ -n "$APPS" ] && [ "$(echo "$APPS" | jq '[.[] | select(.metadata.deletionTimestamp == null)] | length' 2>/dev/null)" = 0 ]; then break; fi
+              APPS=""; sleep 2; W=$((W + 2))
+            done
+            if [ -z "$APPS" ]; then echo "  $ADDON: its Applications are not being deleted yet; Argo CD prunes them"; continue; fi
+            MRS=$(echo "$APPS" | jq -r '[.[] | .status.resources[]?
+                | select(.name != null and ((.group // "") | test("(\\.upbound\\.io|^kro\\.run|\\.services\\.k8s\\.aws)$")))
+                | "\(.kind).\(.group)/\(.name)@\(.namespace // "")"] | unique | .[]' 2>/dev/null || true)
+            N=0
+            for M in $MRS; do
+              R="${M%@*}"; NS="${M##*@}"
+              if [ -n "$NS" ]; then
+                {{.KC}} delete "${R%%/*}" "${R#*/}" -n "$NS" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+              else
+                {{.KC}} delete "${R%%/*}" "${R#*/}" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+              fi
+              N=$((N + 1))
+            done
+            echo "  $ADDON: deletion of its $N cloud resource(s) started at once (no wave-by-wave prune)"
           done
         ignore_error: true
       # 5. Delete APPLICATION WORKLOADS first — all ArgoCD Applications whose project is
@@ -1987,6 +2034,7 @@ tasks:
       #    When the cluster Secrets cannot be read, every destination counts as live.
       - printf '{{.C_ERR}}▸ Deleting application workloads (non-default/platform projects)...{{.C_RESET}}\n'
       - cmd: |
+          {{.DL_FN}}
           CLUSTERS_OK=true
           CLUSTERS=$({{.KC}} get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null \
             | jq -r '.items[] | [((.data.name // "") | @base64d), ((.data.server // "") | @base64d), .metadata.name,
@@ -2017,8 +2065,15 @@ tasks:
               {{.KC}} delete application "$app" -n argocd --wait=false 2>/dev/null || true
               continue
             fi
+            T=$(dl_cap 300)
+            if [ "$T" -le 0 ]; then
+              # Past the deadline: the cascade runs on, nothing waits for it.
+              echo "Deleting workload $app (deadline reached: not waited for)..."
+              {{.KC}} delete application "$app" -n argocd --wait=false 2>/dev/null || true
+              continue
+            fi
             echo "Deleting workload $app..."
-            {{.KC}} delete application "$app" -n argocd --timeout=300s 2>/dev/null || \
+            {{.KC}} delete application "$app" -n argocd --timeout=${T}s 2>/dev/null || \
             ({{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
              {{.KC}} delete application "$app" -n argocd --wait=false 2>/dev/null) || true
           done
@@ -2040,9 +2095,11 @@ tasks:
       # Wait for spoke-provisioning apps to disappear (no common label — match by name),
       # then force-strip finalizers on any that are stuck.
       - cmd: |
+          {{.DL_FN}}
           for i in $(seq 1 40); do
             REMAIN=$({{.KC}} get applications -n argocd -o name 2>/dev/null | grep -Ec 'clusters-kro-|clusters-.*spoke') || REMAIN=0
             [ "$REMAIN" -eq 0 ] && break
+            if [ "$(dl_left)" -le 0 ]; then echo "  deadline reached: not waiting for $REMAIN spoke-provisioning app(s)"; break; fi
             echo "  waiting for $REMAIN spoke-provisioning app(s) to delete..."; sleep 15
           done
           for app in $({{.KC}} get applications -n argocd -o name 2>/dev/null | grep -E 'clusters-kro-|clusters-.*spoke' | sed 's|.*/||'); do
@@ -2059,8 +2116,9 @@ tasks:
       #     and queues stayed in AWS. Bounded by XP_DELETE_WAIT; best-effort.
       #     See scripts/drain-oam-apps.py.
       - cmd: |
+          {{.DL_FN}}
           KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 -u "{{.ROOT_DIR}}/scripts/drain-oam-apps.py" \
-            "{{.HUB_CLUSTER_NAME}}" "{{.XP_DELETE_WAIT}}" 2>&1 || true
+            "{{.HUB_CLUSTER_NAME}}" "$(dl_cap {{.XP_DELETE_WAIT}})" 2>&1 || true
         ignore_error: true
       # 7. Delete HUB ADDONS in reverse sync-wave order, SKIPPING the infra stack.
       #    Addons are discovered LIVE from the cluster (kubectl), not from the static
@@ -2080,6 +2138,7 @@ tasks:
       #    than 20 min for the ~70 addons of an agentic hub; Argo CD itself syncs the
       #    Applications of one wave in parallel, so nothing orders them within a wave.
       - cmd: |
+          {{.DL_FN}}
           SKIP="{{.INFRA_STACK}} multi-acct platform-manifests-bootstrap bootstrap cluster-addons agent-platform fleet-secrets hub-fleet-secret clusters clusters-kro abstractions pod-identities"
           PAR="{{.ADDON_DELETE_PARALLEL}}"
           case "$PAR" in ''|*[!0-9]*|0) PAR=1 ;; esac
@@ -2112,9 +2171,15 @@ tasks:
                 sleep 2; W=$((W + 2))
               done
             fi
-            {{.KC}} delete applicationset "$A" -n argocd --timeout=180s 2>&1 || true
+            # Past the deadline the prune is started and not waited for.
+            T=$(dl_cap 180)
+            if [ "$T" -le 0 ]; then
+              {{.KC}} delete applicationset "$A" -n argocd --wait=false 2>&1 || true
+              return 0
+            fi
+            {{.KC}} delete applicationset "$A" -n argocd --timeout=${T}s 2>&1 || true
             if [ -n "$KIDS" ]; then
-              W=0; while [ $W -lt 120 ]; do
+              W=0; while [ $W -lt "$(dl_cap 120)" ]; do
                 R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$A\")]}{.metadata.name}{end}" 2>/dev/null || true)
                 if [ -z "$R" ]; then break; fi
                 sleep 5; W=$((W + 5))
@@ -2122,12 +2187,16 @@ tasks:
             fi
             return 0
           }
-          PREV=""; N=0; T0=$(date +%s)
+          PREV=""; N=0; T0=$(date +%s); LATE=false
           for ENTRY in $WAVED; do
             WAVE="${ENTRY%%:*}"; ADDON="${ENTRY#*:}"
             if [ -n "$PREV" ] && [ "$WAVE" != "$PREV" ]; then
               wait; N=0
               echo "  step 7: wave $PREV done ($(( $(date +%s) - T0 ))s)"
+            fi
+            if [ "$LATE" = false ] && [ "$(dl_left)" -le 0 ]; then
+              LATE=true
+              echo "  step 7: deadline reached: the remaining addons are deleted without waiting (the caller's cleanup takes what is still being deleted)"
             fi
             if [ "$N" -ge "$PAR" ]; then wait; N=0; fi
             PREV="$WAVE"
@@ -2153,16 +2222,24 @@ tasks:
       #     (its lowest sync wave, pruned last, after its StatefulSets and Jobs), used to
       #     hold 7b to its cap. The cap is XP_7B_WAIT (600 s): what is still deleting after
       #     it (AMP/AMG workspaces, their security group) is removed by the AWS sweep.
+      #     AMP scrapers are not waited for either: once their delete is issued (step 4.8
+      #     issues it at once) AWS takes ~13 min to finish it whether or not the provider
+      #     is still there, nothing else waits behind them any more, and both sweeps (6ei
+      #     here, the caller's) delete a scraper the provider did not get to.
+      #     7b also stops at the deadline (DESTROY_DEADLINE), if any.
       - cmd: |
+          {{.DL_FN}}
           E=0
           while [ "$E" -lt {{.XP_7B_WAIT}} ]; do
+            if [ "$(dl_left)" -le 0 ]; then echo "  7b: deadline reached; not waiting longer"; break; fi
             OUT=$({{.KC}} get applications -n argocd -o json 2>/dev/null) || { echo "  7b: could not query Applications; not waiting"; break; }
             PENDING=$(printf '%s' "$OUT" | jq -r '[.items[]
               | select(.metadata.deletionTimestamp != null)
               | select(any(.status.resources[]?;
                   ((.group // "") | endswith(".upbound.io"))
                   and (.group // "") != "iam.aws.upbound.io"
-                  and (.kind // "") != "PodIdentityAssociation"))
+                  and (.kind // "") != "PodIdentityAssociation"
+                  and ((.group // "") != "amp.aws.upbound.io" or (.kind // "") != "Scraper")))
               | .metadata.name] | join(" ")' 2>/dev/null) || { echo "  7b: jq failed; not waiting"; break; }
             if [ -z "$PENDING" ]; then break; fi
             UP=$({{.KC}} get pods -n crossplane-system -l pkg.crossplane.io/provider \
@@ -2173,18 +2250,26 @@ tasks:
           done
         ignore_error: true
       # 8. Delete the INFRA-PROVISIONING STACK LAST, reverse order (consumers -> controllers).
+      #    Past the deadline (DESTROY_DEADLINE) each one is deleted without waiting.
       - cmd: |
+          {{.DL_FN}}
           for ADDON in kro-manifests-hub kro-manifests kro ack-efs ack-dynamodb ack-s3 ack-ecr ack-ec2 ack-eks ack-iam crossplane-base crossplane eks-capabilities-rbac-hub; do
             if {{.KC}} get applicationset $ADDON -n argocd >/dev/null 2>&1; then
               echo "Deleting $ADDON..."
               {{.KC}} patch applicationset $ADDON -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}' 2>&1 || true
-              sleep 3
-              {{.KC}} delete applicationset $ADDON -n argocd --timeout=180s 2>&1 || true
-              E=0; while [ $E -lt 120 ]; do
-                R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
-                [ -z "$R" ] && break
-                sleep 5; E=$((E + 5))
-              done
+              # (if/else, not `continue`: go-task's shell drops a `continue` nested in two ifs)
+              T=$(dl_cap 180)
+              if [ "$T" -le 0 ]; then
+                {{.KC}} delete applicationset $ADDON -n argocd --wait=false 2>&1 || true
+              else
+                sleep 3
+                {{.KC}} delete applicationset $ADDON -n argocd --timeout=${T}s 2>&1 || true
+                E=0; while [ $E -lt "$(dl_cap 120)" ]; do
+                  R=$({{.KC}} get applications -n argocd -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name==\"$ADDON\")]}{.metadata.name}{end}" 2>/dev/null)
+                  [ -z "$R" ] && break
+                  sleep 5; E=$((E + 5))
+                done
+              fi
             fi
           done
         ignore_error: true
@@ -2192,7 +2277,15 @@ tasks:
       - printf '{{.C_ERR}}▸ Deleting fleet-secrets...{{.C_RESET}}\n'
       - '{{.KC}} patch applicationset fleet-secrets -n argocd --type merge -p ''{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":false}}}'' 2>/dev/null || true'
       - sleep 3
-      - '{{.KC}} delete applicationset fleet-secrets -n argocd --timeout=180s 2>/dev/null || true'
+      - cmd: |
+          {{.DL_FN}}
+          T=$(dl_cap 180)
+          if [ "$T" -le 0 ]; then
+            {{.KC}} delete applicationset fleet-secrets -n argocd --wait=false 2>/dev/null || true
+          else
+            {{.KC}} delete applicationset fleet-secrets -n argocd --timeout=${T}s 2>/dev/null || true
+          fi
+        ignore_error: true
       # 9b. multi-acct LAST and WITHOUT pruning, like bootstrap/cluster-addons in steps 1-4.
       #     It owns the per-cluster Namespaces and the CARM IAMRoleSelectors that ACK needs
       #     to delete every other addon's AWS resources. After the #1033 pivot, Namespace
@@ -2253,6 +2346,14 @@ tasks:
       # capabilities and the hub cluster). The final "hub still exists" check is then a
       # warning, not a failure. Default true: wait, as before.
       HUB_DELETE_WAIT: '{{.HUB_DELETE_WAIT | default "true"}}'
+      # DESTROY_DEADLINE: see hub:destroy-addons (0 = none). Passed on to it; here, past the
+      # deadline, the sweep steps that can wait minutes (CloudFront disable, DevLake RDS
+      # delete, spoke and hub VPCs) are skipped or not waited for, and say so: the caller's
+      # cleanup must then remove what they would have.
+      DESTROY_DEADLINE: '{{.DESTROY_DEADLINE | default "0"}}'
+      DL_FN: >-
+        dl_left() { if [ "{{.DESTROY_DEADLINE}}" -gt 0 ] 2>/dev/null; then
+        echo $(( {{.DESTROY_DEADLINE}} - $(date +%s) )); else echo 999999; fi; }
       # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
       # (step 2b) and take a final snapshot of the DevLake databases before they are
       # deleted (6eii). It does NOT protect AgentCore memories in a normal destroy:
@@ -2457,6 +2558,8 @@ tasks:
       # Gracefully tear down the addon layer on the HUB EKS.
       # All-best-effort: a no-op if the hub is already gone.
       - task: hub:destroy-addons
+        vars:
+          DESTROY_DEADLINE: '{{.DESTROY_DEADLINE}}'
       # Delete EKS Capabilities (ack, argocd, kro) directly via AWS API.
       # aws eks delete-cluster fails with ResourceInUseException if capabilities exist.
       - printf '{{.C_ERR}}▸ Deleting EKS Capabilities (ack, argocd, kro)...{{.C_RESET}}\n'
@@ -2658,6 +2761,7 @@ tasks:
       - cmd: |
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
           HUB="{{.HUB_CLUSTER_NAME}}"
+          {{.DL_FN}}
           # The deletes below stay best-effort, but print ✓ only when the call succeeded.
           # A failed one prints ⚠ and the AWS error code (the full message carries ARNs),
           # or "unknown error" when there is no code (e.g. the endpoint was unreachable).
@@ -2667,7 +2771,12 @@ tasks:
           #     the internal ALB ingress. After the ALB is deleted, CloudFront VPC origin
           #     ENIs remain in the private subnets, blocking VPC deletion via CFN.
           #     Strategy: delete all ${HUB}-* VPC origins and their distributions.
-          python3 "{{.ROOT_DIR}}/scripts/sweep-cloudfront.py" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
+          #     It can wait ~5 min for a distribution to be disabled: skipped past the deadline.
+          if [ "$(dl_left)" -gt 330 ]; then
+            python3 "{{.ROOT_DIR}}/scripts/sweep-cloudfront.py" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
+          else
+            echo "  6a: deadline: CloudFront not swept here (the caller's cleanup removes it)"
+          fi
           # 6b. ALL remaining peeks-* IAM roles (not just ACK-tagged). Crossplane provider
           #     roles, ExternalDNS, LBC, Kargo, KeycloakConfig, argo-rollouts IRSA roles etc.
           #     are NOT ACK-tagged but are workshop-owned and cause EntityAlreadyExists on
@@ -2796,7 +2905,10 @@ tasks:
           #       DESTROY_KEEP_DATA=true takes a final snapshot of each database instead
           #       (the databases are still deleted: their ENIs would block the VPC sweep).
           KEEP_DATA_ARGS=""; [ "{{.DESTROY_KEEP_DATA}}" = true ] && KEEP_DATA_ARGS="--keep-data"
-          python3 "{{.ROOT_DIR}}/scripts/sweep-rds.py" "$PREFIX" "$REGION" $KEEP_DATA_ARGS 2>&1 || true
+          #       Past the deadline the deletes are issued and not waited for (up to 20 min).
+          RDS_WAIT_ARGS=""
+          if [ "$(dl_left)" -le 1200 ]; then RDS_WAIT_ARGS="--no-wait"; echo "  6eii: deadline: the DevLake RDS deletes are not waited for"; fi
+          python3 "{{.ROOT_DIR}}/scripts/sweep-rds.py" "$PREFIX" "$REGION" $KEEP_DATA_ARGS $RDS_WAIT_ARGS 2>&1 || true
           # 6f. EKS OIDC providers of THIS install. IRSA uses cluster-specific OIDC
           #     providers that accumulate across re-deploys (one per EKS cluster per run).
           #     Only providers whose URL matches ${REGION} are considered, and only those
@@ -2870,8 +2982,13 @@ tasks:
           #     Selected by the ownership tags (platform.gitops.io/prefix + /cluster) or the
           #     legacy names; never a CloudFormation-owned VPC (the IDE/hub VPC: 6i and CFN),
           #     a VPC with another prefix, one hosting a live EKS cluster, or a retained one.
-          python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" \
-            --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
+          #     Each VPC can wait ~10 min for its NAT gateways and ENIs: skipped past the deadline.
+          if [ "$(dl_left)" -gt 600 ]; then
+            python3 "{{.ROOT_DIR}}/scripts/sweep-spoke-vpcs.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" \
+              --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
+          else
+            echo "  6h: deadline: spoke VPCs not swept here (the caller's cleanup removes them)"
+          fi
           # 6h2. The hub's own VPC (kro/ACK-made, retained on kind, so nothing else deletes
           #      it): NAT + EIP, IGW, endpoints, subnets, route tables, SGs. Only once the
           #      hub cluster is gone, and never a CloudFormation-owned VPC (workshop: the hub
@@ -2881,6 +2998,8 @@ tasks:
           #      tags the sweep accepts, so the tags cannot tell them apart).
           if [ -n "{{.HUB_VPC_ID}}" ]; then
             echo "  skip hub VPC sweep: hub.network.vpcId is set ({{.HUB_VPC_ID}} was not created by this stack)"
+          elif [ "$(dl_left)" -le 600 ]; then
+            echo "  6h2: deadline: hub VPC not swept here (the caller's cleanup removes it)"
           else
             python3 "{{.ROOT_DIR}}/scripts/sweep-hub-vpc.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "{{.HUB_CLUSTER_NAME}}" \
               --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" 2>&1 || true
