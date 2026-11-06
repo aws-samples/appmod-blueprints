@@ -2924,14 +2924,28 @@ tasks:
       - printf '{{.C_OK}}✓ Langfuse restarted with Keycloak SSO credentials.{{.C_RESET}}\n'
 
   hub:restart-backstage:
-    desc: Restart Backstage to flush stale openid-client keep-alive sockets after Keycloak is fully configured
+    desc: Restart Backstage after Keycloak is configured (only when its pod predates it), then gate on a healthy backend and catalog
+    # The restart flushes stale openid-client keep-alive sockets and picks up the client
+    # secret the keycloak-config PostSync hook writes. It used to be an unconditional
+    # `rollout restart ... || true`: under RollingUpdate it started a second pod while the
+    # first was still migrating a fresh database, both inserted a row into a
+    # *_knex_migrations_lock table, and Backstage then failed every start with
+    # MigrationLocked while staying Running. scripts/restart-backstage.sh skips the restart
+    # when it is not needed, waits for the current pod to finish initialising, and fails
+    # the task (after one repair restart) when the backend or the catalog is not healthy.
+    # BACKSTAGE_GATE_TEMPLATE: catalog template the gate requires to be served.
+    vars:
+      BACKSTAGE_GATE_TEMPLATE: '{{.BACKSTAGE_GATE_TEMPLATE | default "cicd-pipeline-gitops"}}'
     cmds:
       - task: hub:kubeconfig
-      - printf '{{.C_STEP}}▸ Restarting Backstage to flush stale Keycloak OIDC sockets...{{.C_RESET}}\n'
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout restart deploy -n backstage backstage 2>/dev/null || true
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl rollout status deploy -n backstage backstage --timeout=180s 2>/dev/null || true
-      - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
-      - printf '{{.C_OK}}✓ Backstage restarted — OIDC sockets refreshed.{{.C_RESET}}\n'
+      - defer: rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
+      - printf '{{.C_STEP}}▸ Restarting Backstage if it predates the Keycloak config, then checking backend and catalog...{{.C_RESET}}\n'
+      - |
+        KUBECONFIG='{{.ROOT_DIR}}/private/hub-kubeconfig' \
+        KEYCLOAK_APP='keycloak-{{.HUB_CLUSTER_NAME}}' \
+        GATE_TEMPLATE='{{.BACKSTAGE_GATE_TEMPLATE}}' \
+          bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/restart-backstage.sh'
+      - printf '{{.C_OK}}✓ Backstage healthy (OIDC fresh, catalog serving).{{.C_RESET}}\n'
 
 
   # ---- from kind-crossplane ----

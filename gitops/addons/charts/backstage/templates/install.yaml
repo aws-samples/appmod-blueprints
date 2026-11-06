@@ -452,6 +452,14 @@ metadata:
     argocd.argoproj.io/sync-wave: "15"
 spec:
   replicas: 1
+  # Recreate, never RollingUpdate: two Backstage pods must not run against the same
+  # database. When a second pod starts while the first is still doing the first-boot
+  # migrations, both insert a row into the same *_knex_migrations_lock table. knex then
+  # expects exactly one row, so every later start fails with MigrationLocked: the pod stays
+  # Running but the catalog is empty or 503. Recreate stops the old pod before the new one
+  # starts, for an Argo CD sync and for `kubectl rollout restart` alike.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: backstage
@@ -560,6 +568,78 @@ spec:
               memory: 64Mi
             limits:
               memory: 256Mi
+        # Repair a duplicated knex migration lock before the backend starts. Each plugin
+        # database has a *_knex_migrations_lock table that must hold exactly one row: knex
+        # takes the lock with `UPDATE ... SET is_locked=1 WHERE is_locked=0` and expects one
+        # row updated. Two pods doing the first boot at the same time each insert a row, and
+        # from then on every start fails with MigrationLocked. With strategy Recreate (above)
+        # no other Backstage pod runs while this container runs, so keeping min(ctid) and
+        # deleting the other rows is safe. It changes nothing when every table has one row,
+        # and on a fresh install (no plugin database yet) it has nothing to do.
+        - name: dedupe-migration-locks
+          image: docker.io/library/postgres:17.4-alpine3.21
+          command:
+            - sh
+            - -c
+            - |
+              i=0
+              until pg_isready -q; do
+                i=$((i + 1))
+                if [ "$i" -ge 30 ]; then
+                  echo "dedupe-migration-locks: postgres not ready after 60s, skipping (the backend retries on its own)"
+                  exit 0
+                fi
+                sleep 2
+              done
+              DBS=$(psql -d postgres -Atc "SELECT datname FROM pg_database WHERE datname = '$PGDATABASE' OR datname LIKE 'backstage\_plugin\_%'") || {
+                echo "dedupe-migration-locks: cannot list databases, skipping"; exit 0; }
+              fixed=0
+              for db in $DBS; do
+                TABLES=$(psql -d "$db" -Atc "SELECT quote_ident(table_schema) || '.' || quote_ident(table_name) FROM information_schema.tables WHERE table_name LIKE '%knex\_migrations\_lock'") || continue
+                for t in $TABLES; do
+                  n=$(psql -d "$db" -Atc "SELECT count(*) FROM $t") || continue
+                  if [ "$n" -gt 1 ]; then
+                    psql -d "$db" -v ON_ERROR_STOP=1 -qc "DELETE FROM $t WHERE ctid NOT IN (SELECT min(ctid) FROM $t)" || exit 1
+                    echo "dedupe-migration-locks: $db $t had $n rows, kept 1"
+                    fixed=$((fixed + 1))
+                  fi
+                done
+              done
+              echo "dedupe-migration-locks: $fixed table(s) repaired"
+          env:
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: POSTGRES_HOST
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: POSTGRES_PORT
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: POSTGRES_USER
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-env-vars
+                  key: POSTGRES_DB
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backstage-postgres-vars
+                  key: POSTGRES_PASSWORD
+            - name: PGCONNECT_TIMEOUT
+              value: "5"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
       containers:
         - command:
             - node
