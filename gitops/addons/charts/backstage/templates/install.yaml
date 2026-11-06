@@ -125,6 +125,42 @@ data:
       baseUrl: https://{{ .Values.ingress_domain_name }}/backstage
     organization:
       name: Internal Developer Platform
+    # Homepage Quick Links. Set explicitly so the image's built-in fallback list is not
+    # used: it links Catalog to `/catalog` and Kargo to the bare domain root, and both
+    # escape the /backstage sub-path and land on whatever owns `/` on the shared ALB
+    # (Langfuse, when the agentic platform is enabled). Each URL points at the service's
+    # real path; icons map to bundled assets (/img/*.png, see
+    # backstage/patches/cnoe-customizations.patch) or to an icon the service serves itself.
+    homepage:
+      quickLinks:
+        - url: /backstage/catalog
+          label: Catalog
+          icon: catalog
+        {{- if .Values.gitlab_domain_name }}
+        - url: https://${GIT_HOSTNAME}
+          label: GitLab
+          iconUrl: /img/gitlab.png
+        {{- end }}
+        {{- /* argocd_hostname falls back to ingress_domain_name (registry) when there is no EKS ArgoCD capability URL; only then is Argo CD served under /argocd on the platform ALB. */}}
+        {{- $argocdHost := .Values.argocd_hostname | default .Values.ingress_domain_name | trimPrefix "https://" | trimSuffix "/" }}
+        - url: https://{{ $argocdHost }}{{ if eq $argocdHost .Values.ingress_domain_name }}/argocd{{ end }}
+          label: ArgoCD
+          iconUrl: /img/argocd.png
+        - url: https://{{ .Values.ingress_domain_name }}/argo-workflows
+          label: Argo Workflows
+          iconUrl: /img/argo-workflows.png
+        - url: https://{{ .Values.ingress_domain_name }}/kargo
+          label: Kargo
+          iconUrl: /img/kargo.png
+        - url: https://{{ .Values.ingress_domain_name }}/keycloak
+          label: Keycloak
+          iconUrl: /img/keycloak.png
+        {{- /* enable_langfuse arrives as the STRING "true"/"false"; compare explicitly. Langfuse (Next.js, no runtime basePath) is the "/" catch-all on the platform ALB, and serves its own logo at /icon.svg. */}}
+        {{- if eq (toString .Values.langfuse_enabled) "true" }}
+        - url: https://{{ .Values.ingress_domain_name }}/
+          label: Langfuse
+          iconUrl: https://{{ .Values.ingress_domain_name }}/icon.svg
+        {{- end }}
     backend:
       # Used for enabling authentication, secret is shared by all backend plugins
       # See https://backstage.io/docs/tutorials/backend-to-backend-auth for
