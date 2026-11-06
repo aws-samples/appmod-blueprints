@@ -370,8 +370,45 @@ tasks:
       DEVLAKE_RDS_NS: '{{.DEVLAKE_RDS_NS | default "devlake"}}'
       DEVLAKE_RDS_NAME: '{{.DEVLAKE_RDS_NAME | default "devlake-mysql"}}'
       RDS_DELETE_WAIT: '{{.RDS_DELETE_WAIT | default "900"}}'
+      # Time budget. Under the CloudFormation stack delete, the Bootstrap build runs this
+      # destroy over SSM with a 40 min executionTimeout (kept under the 60 min custom
+      # resource ServiceTimeout); when SSM kills it, the phases after the kill never run
+      # and the build cannot tell how far it got. So under the stack delete (the
+      # /<prefix>/destroy-status marker exists), destroy gets a deadline DESTROY_BUDGET
+      # seconds after its start (default 2100 = 35 min, 5 min under the SSM limit): each
+      # bounded wait also stops early enough to leave the later phases their share
+      # (DL_RESERVE_* below), and the provider stops waiting near the deadline. What is
+      # still being deleted then is the stack sweep's job (it runs right after and deletes
+      # the capabilities, the hub, and every AWS resource class this destroy creates).
+      # Anywhere else there is no deadline unless DESTROY_BUDGET=<s> is given.
+      DESTROY_DEADLINE_FILE: "{{.REPO}}/private/destroy-deadline"
+      # Seconds kept for what follows each phase's waits: Phase 1 keeps room for
+      # Phase 2/2.5 (~12 min live) and Phase 3; Phase 2.5 and the Phase 2 wait keep room
+      # for Phase 3 (steps 0-7 ~13 min live with fix 1 and the early observability delete).
+      DL_RESERVE_P1: '{{.DL_RESERVE_P1 | default "1500"}}'
+      DL_RESERVE_P3: '{{.DL_RESERVE_P3 | default "900"}}'
+      # dl_left R: seconds left before the deadline minus R (999999 without a deadline);
+      # dl_cap N R: min(N, dl_left R), never below 0.
+      DL_FN: >-
+        dl_left() { D=$(cat "{{.DESTROY_DEADLINE_FILE}}" 2>/dev/null || echo 0);
+        case "$D" in ''|*[!0-9]*|0) echo 999999 ;; *) echo $(( D - ${1:-0} - $(date +%s) )) ;; esac; };
+        dl_cap() { L=$(dl_left "${2:-0}"); if [ "$L" -lt 0 ]; then L=0; fi;
+        if [ "$1" -lt "$L" ]; then echo "$1"; else echo "$L"; fi; }
     cmds:
       - printf '{{.C_STEP}}▸ Workshop destroy starting (workloads → spokes → hub){{.C_RESET}}\n'
+      # The deadline (see DESTROY_BUDGET above). Written first, read by every phase.
+      - |
+        mkdir -p "{{.REPO}}/private"; rm -f "{{.DESTROY_DEADLINE_FILE}}"
+        B="{{.DESTROY_BUDGET | default ""}}"
+        if [ -z "$B" ] && aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/destroy-status" --region "{{.AWS_REGION}}" \
+            --cli-connect-timeout 5 --cli-read-timeout 10 >/dev/null 2>&1; then
+          B=2100
+        fi
+        case "$B" in ''|0|*[!0-9]*) printf '{{.C_INFO}}  No time budget: every wait keeps its own cap.{{.C_RESET}}\n' ;;
+          *) echo $(( $(date +%s) + B )) > "{{.DESTROY_DEADLINE_FILE}}"
+             printf '{{.C_INFO}}  Time budget: %ss (deadline %s UTC); what is still being deleted then is left to the stack sweep.{{.C_RESET}}\n' \
+               "$B" "$(date -u -d "@$(cat "{{.DESTROY_DEADLINE_FILE}}")" +%H:%M:%S 2>/dev/null || cat "{{.DESTROY_DEADLINE_FILE}}")" ;;
+        esac
 
       # Phase 0: hub kubeconfig
       - '{{.DESTROY_MARK}} "0 kubeconfig $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
@@ -386,6 +423,7 @@ tasks:
       # block the spoke VPC deletion.
       - '{{.DESTROY_MARK}} "1 drain $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
+        {{.DL_FN}}
         printf '{{.C_STEP}}▸ Phase 1 — draining workloads from spoke clusters...{{.C_RESET}}\n'
         PREFIX=$(yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}})
         REGION=$(yq '.aws.region' {{.CONFIG_FILE}})
@@ -395,11 +433,85 @@ tasks:
         if [ -z "$SPOKES" ]; then
           printf '{{.C_INFO}}  No spoke clusters found — skipping workload drain.{{.C_RESET}}\n'
         else
+          # Argo CD on the hub keeps automated sync + selfHeal on the addons targeting each
+          # spoke (gateway proxies, platform ingress): what the drain deletes is re-applied
+          # within seconds, the spoke's load balancer controller re-creates the NLB/ALB, and
+          # once the cluster is gone those LBs keep its subnets/VPC from being deleted.
+          # Patching the Applications does not hold (their ApplicationSet rewrites them), so
+          # deny automated syncs to the spoke with an AppProject sync window, in every
+          # project: it applies to every Application targeting the spoke, however it was
+          # generated. Deletes are not syncs, so the rest of the teardown is unaffected.
+          # Best-effort, idempotent; a project that cannot be patched is reported.
+          KH="kubectl --kubeconfig {{.HUB_KUBECONFIG}}"
+          deny_spoke_syncs() {
+            for P in $($KH get appprojects.argoproj.io -n argocd -o name 2>/dev/null || true); do
+              HAS=$($KH get "$P" -n argocd -o json 2>/dev/null | jq -r --arg c "$1" \
+                '[(.spec.syncWindows // [])[] | select(.kind == "deny" and ((.clusters // []) | index($c)))] | length' 2>/dev/null || echo 0)
+              if [ "${HAS:-0}" != 0 ]; then continue; fi
+              W="{\"kind\":\"deny\",\"schedule\":\"* * * * *\",\"duration\":\"24h\",\"clusters\":[\"$1\"],\"manualSync\":false}"
+              $KH patch "$P" -n argocd --type json -p "[{\"op\":\"add\",\"path\":\"/spec/syncWindows/-\",\"value\":$W}]" >/dev/null 2>&1 \
+                || $KH patch "$P" -n argocd --type merge -p "{\"spec\":{\"syncWindows\":[$W]}}" >/dev/null 2>&1 \
+                || printf '{{.C_ERR}}  ⚠ could not add a deny sync window for %s to %s.{{.C_RESET}}\n' "$1" "$P"
+            done
+          }
           for SPOKE in $SPOKES; do
             printf '{{.C_STEP}}  Draining %s...{{.C_RESET}}\n' "$SPOKE"
+            deny_spoke_syncs "$SPOKE"
             KC=$(mktemp)
             aws eks update-kubeconfig --name "$SPOKE" --region "$REGION" \
               --kubeconfig "$KC" 2>/dev/null || { rm -f "$KC"; continue; }
+            # Owners first. An Ingress or LoadBalancer Service rendered by an in-cluster
+            # controller (a kro instance such as AppmodService, a Gateway reconciled by the
+            # gateway controller) is re-created within seconds of its deletion, and its LB
+            # with it: the sync window above only stops Argo CD. So delete the objects that
+            # own them (read from their ownerReferences, walked up to the topmost owner, any
+            # API group but core/apps/batch), let their controllers remove the children,
+            # and wait (bounded) until those owners are gone. Generic: no kind, name or
+            # controller deployment is assumed, and nothing is scaled down (on a spoke, kro
+            # can be a managed capability with no pod to scale).
+            K="kubectl --kubeconfig $KC"
+            owner_of() {  # $1 = Kind.group/name@ns -> its topmost non-core owner (or itself)
+              CUR="$1"
+              for _l in 1 2 3; do
+                REF="${CUR%@*}"; ONS="${CUR##*@}"
+                UP=$($K get "${REF%%/*}" "${REF#*/}" -n "$ONS" -o json 2>/dev/null | jq -r --arg ns "$ONS" '
+                  [(.metadata.ownerReferences // [])[] | select((.apiVersion | contains("/"))
+                    and ((.apiVersion | split("/")[0]) | test("^(apps|batch)$") | not))][0]
+                  | if . then "\(.kind).\(.apiVersion | split("/")[0])/\(.name)@\($ns)" else empty end' 2>/dev/null || true)
+                if [ -z "$UP" ]; then break; fi
+                CUR="$UP"
+              done
+              echo "$CUR"
+            }
+            OWNERS=""
+            for O in $($K get ingress,svc -A -o json 2>/dev/null | jq -r '
+                .items[] | select(.kind == "Ingress" or .spec.type == "LoadBalancer")
+                | .metadata.namespace as $ns | (.metadata.ownerReferences // [])[]
+                | select((.apiVersion | contains("/")) and ((.apiVersion | split("/")[0]) | test("^(apps|batch)$") | not))
+                | "\(.kind).\(.apiVersion | split("/")[0])/\(.name)@\($ns)"' 2>/dev/null | sort -u || true); do
+              T=$(owner_of "$O")
+              case " $OWNERS " in *" $T "*) ;; *) OWNERS="$OWNERS $T" ;; esac
+            done
+            if [ -n "$(echo $OWNERS | tr -d ' ')" ]; then
+              printf '{{.C_INFO}}  Deleting the owners of its load balancers first:%s{{.C_RESET}}\n' "$OWNERS"
+              for T in $OWNERS; do
+                REF="${T%@*}"
+                $K delete "${REF%%/*}" "${REF#*/}" -n "${T##*@}" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+              done
+              W=0
+              while [ "$W" -lt "$(dl_cap {{.OWNER_DRAIN_WAIT | default "180"}} {{.DL_RESERVE_P1}})" ]; do
+                LEFT=""
+                for T in $OWNERS; do
+                  REF="${T%@*}"
+                  if $K get "${REF%%/*}" "${REF#*/}" -n "${T##*@}" >/dev/null 2>&1; then LEFT="$LEFT $T"; fi
+                done
+                if [ -z "$LEFT" ]; then break; fi
+                sleep 10; W=$((W + 10))
+              done
+              if [ -n "${LEFT:-}" ]; then
+                printf '{{.C_ERR}}  ⚠ still being deleted after %ss:%s (draining their children anyway).{{.C_RESET}}\n' "$W" "$LEFT"
+              fi
+            fi
             kubectl --kubeconfig "$KC" delete ingress --all-namespaces --all \
               --timeout=120s 2>/dev/null || true
             kubectl --kubeconfig "$KC" get svc --all-namespaces -o json 2>/dev/null \
@@ -408,9 +520,31 @@ tasks:
                   kubectl --kubeconfig "$KC" delete svc "$SVC" -n "$NS" \
                     --timeout=60s 2>/dev/null || true
                 done || true
+            # Not waited for: a PVC still mounted stays Terminating until its pod goes (live:
+            # 120 s lost per spoke on bifrost-postgresql), and its volume is released with
+            # the cluster either way (the sweep's PVC-volume net takes a stranded one).
             kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
-              --timeout=120s 2>/dev/null || true
+              --wait=false 2>/dev/null || true
             rm -f "$KC"
+            # Gate: the spoke's load balancers are really gone (bounded). An LB still in
+            # its VPC when the cluster goes blocks the subnet/VPC delete.
+            VPC=$(aws eks describe-cluster --name "$SPOKE" --region "$REGION" \
+              --query cluster.resourcesVpcConfig.vpcId --output text 2>/dev/null || true)
+            if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+              W=0; N=?
+              while true; do
+                N=$(aws elbv2 describe-load-balancers --region "$REGION" \
+                  --query "length(LoadBalancers[?VpcId=='$VPC'])" --output text 2>/dev/null || echo "?")
+                if [ "$N" = 0 ] || [ "$N" = "?" ]; then break; fi
+                if [ "$W" -ge "$(dl_cap {{.LB_DRAIN_WAIT | default "300"}} {{.DL_RESERVE_P1}})" ]; then break; fi
+                sleep 15; W=$((W + 15))
+              done
+              if [ "$N" = "?" ]; then
+                printf '{{.C_INFO}}  (could not list the load balancers of %s; not waiting){{.C_RESET}}\n' "$SPOKE"
+              elif [ "$N" != 0 ]; then
+                printf '{{.C_ERR}}  ⚠ %s load balancer(s) still in the VPC of %s after the drain; the sweep will have to remove them.{{.C_RESET}}\n' "$N" "$SPOKE"
+              fi
+            fi
             printf '{{.C_OK}}  ✓ %s drained.{{.C_RESET}}\n' "$SPOKE"
           done
         fi
@@ -471,8 +605,21 @@ tasks:
 
       # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
       - '{{.DESTROY_MARK}} "2 spokes $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
-      - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
-      - task: spokes:disable-all
+      # Phase 2 runs in the background, alongside Phase 2.5: both only need the hub
+      # controllers alive, and Phase 2.5 spends ~12 min waiting on the DevLake RDS delete
+      # while Phase 2 spends ~7 min waiting on the spoke clusters. Its output goes to
+      # private/destroy-phase2.log and is printed when it is waited for, before Phase 3.
+      # A failure still stops the destroy, as when it ran in the foreground.
+      - |
+        P="{{.REPO}}/private/destroy-phase2"
+        mkdir -p "{{.REPO}}/private"; rm -f "$P.rc" "$P.log" "$P.pid"
+        printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters (in the background, alongside Phase 2.5; log: %s.log)...{{.C_RESET}}\n' "$P"
+        # Started by a real sh in its own session (setsid), fds redirected: go-task's own
+        # shell neither gives a waitable OS pid for `&` nor lets a job outlive its cmd,
+        # and it stops the cmd's process group when the cmd ends.
+        printf '%s\n' 'task spokes:disable-all; echo $? > "$1"' > "$P.sh"
+        S=""; if command -v setsid >/dev/null 2>&1; then S=setsid; fi
+        sh -c '$1 sh "$2" "$3" > "$4" 2>&1 < /dev/null & echo $! > "$5"' _ "$S" "$P.sh" "$P.rc" "$P.log" "$P.pid"
 
       # Phase 2.5: release the DevLake RDS while the hub controllers are still alive,
       # and WAIT (bounded) for them to delete its AWS resources (DB cluster + instance,
@@ -495,6 +642,7 @@ tasks:
       # deleted, or when ACK objects owned by the instance are still present.
       - '{{.DESTROY_MARK}} "2.5 devlake-rds $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
+        {{.DL_FN}}
         printf '{{.C_STEP}}▸ Phase 2.5 — releasing the DevLake RDS...{{.C_RESET}}\n'
         export KUBECONFIG={{.HUB_KUBECONFIG}}
         NS="{{.DEVLAKE_RDS_NS}}"; RDB="{{.DEVLAKE_RDS_NAME}}"
@@ -670,7 +818,10 @@ tasks:
         fi
         # Wait for the controllers to delete the AWS resources, bounded by wall-clock time
         # (each poll also spends time in kubectl, so a poll count would overrun WAIT_MAX).
-        DEADLINE=$(( $(date +%s) + WAIT_MAX ))
+        # Under a destroy time budget (#1273), also stop early enough to leave Phase 3 its
+        # share: the wait is min(RDS_DELETE_WAIT, budget left minus DL_RESERVE_P3).
+        WAIT_CAP=$(dl_cap "$WAIT_MAX" {{.DL_RESERVE_P3}})
+        DEADLINE=$(( $(date +%s) + WAIT_CAP ))
         DONE=false
         while true; do
           REMAIN=0
@@ -685,13 +836,62 @@ tasks:
         if [ "$DONE" = true ]; then
           printf '{{.C_OK}}  ✓ DevLake RDS resources deleted.{{.C_RESET}}\n'
         else
-          printf '{{.C_ERR}}  ⚠ DevLake RDS resources still present after %ss; continuing (the consumer sweep catches leftovers).{{.C_RESET}}\n' "$WAIT_MAX"
+          if [ "$WAIT_CAP" -lt "$WAIT_MAX" ]; then
+            printf '{{.C_ERR}}  ⚠ time budget: not waiting longer than %ss for the DevLake RDS resources; continuing (the stack sweep deletes the RDS and its security group).{{.C_RESET}}\n' "$WAIT_CAP"
+          else
+            printf '{{.C_ERR}}  ⚠ DevLake RDS resources still present after %ss; continuing (the consumer sweep catches leftovers).{{.C_RESET}}\n' "$WAIT_MAX"
+          fi
+        fi
+
+      # Phase 2 (started before Phase 2.5) must be done before the hub goes.
+      - |
+        P="{{.REPO}}/private/destroy-phase2"
+        printf '{{.C_STEP}}▸ Phase 2 — waiting for the spoke deletion started before Phase 2.5...{{.C_RESET}}\n'
+        {{.DL_FN}}
+        # Done when its exit code is written (go-task's shell has no `kill -0`).
+        W=0; LATE=false
+        while [ -f "$P.pid" ] && [ ! -s "$P.rc" ]; do
+          if [ "$W" -ge {{.PHASE2_WAIT_MAX | default "3600"}} ]; then
+            printf '{{.C_ERR}}  ⚠ Phase 2 still running after %ss; not waiting longer.{{.C_RESET}}\n' "$W"; break
+          fi
+          # Time budget: the spoke deletes have been submitted by now (Phase 2 waits for
+          # them for up to 30 min); the stack sweep deletes a spoke that is still there.
+          if [ "$(dl_left {{.DL_RESERVE_P3}})" -le 0 ]; then
+            printf '{{.C_ERR}}  ⚠ time budget: Phase 2 still running after %ss; going on with Phase 3 (the stack sweep deletes what is left).{{.C_RESET}}\n' "$W"
+            LATE=true; break
+          fi
+          sleep 2; W=$((W + 2))
+        done
+        printf '%s\n' '----- Phase 2 (spokes:disable-all) -----'; cat "$P.log" 2>/dev/null || true
+        printf '%s\n' '----------------------------------------'
+        RC=$(cat "$P.rc" 2>/dev/null || echo 1)
+        if [ "$LATE" = true ] && [ ! -s "$P.rc" ]; then RC=0; fi
+        if [ "$RC" != 0 ]; then
+          printf '{{.C_ERR}}✗ Phase 2 (spokes:disable-all) failed (rc=%s).{{.C_RESET}}\n' "$RC"; exit "$RC"
         fi
 
       # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
       - '{{.DESTROY_MARK}} "3 hub $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_STEP}}▸ Phase 3 — destroying hub platform ({{.PROVIDER}})...{{.C_RESET}}\n'
-      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy'
+      # Under the CloudFormation stack delete, the Bootstrap build writes
+      # /<prefix>/destroy-status before it starts this destroy, and the Clusters build
+      # that follows runs an AWS sweep that deletes the hub's capabilities and cluster.
+      # Waiting for them here (up to 45 min) only burns the build's SSM budget, so the
+      # provider is told not to (HUB_DELETE_WAIT=false). Anywhere else: wait, as before.
+      # HUB_DELETE_WAIT=true|false on the command line wins.
+      - cmd: |
+          WAIT="{{.HUB_DELETE_WAIT | default ""}}"
+          if [ -z "$WAIT" ]; then
+            WAIT=true
+            if aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/destroy-status" --region "{{.AWS_REGION}}" \
+                --cli-connect-timeout 5 --cli-read-timeout 10 >/dev/null 2>&1; then
+              WAIT=false
+              printf '{{.C_INFO}}  Stack delete in progress (/{{.RESOURCE_PREFIX}}/destroy-status set): the hub cluster deletion is not waited for; the stack sweep finishes it.{{.C_RESET}}\n'
+            fi
+          fi
+          DL=$(cat "{{.DESTROY_DEADLINE_FILE}}" 2>/dev/null || echo 0)
+          case "$DL" in ''|*[!0-9]*) DL=0 ;; esac
+          cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy HUB_DELETE_WAIT="$WAIT" DESTROY_DEADLINE="$DL"
 
       - '{{.DESTROY_MARK}} "done $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_OK}}✓ Workshop destroy complete.{{.C_RESET}}\n'
@@ -1127,7 +1327,16 @@ tasks:
         # budget is spent (ROLLOUT_T clamped to 0) this would block forever (pnz1990
         # review #1136 point 1). Skip the wait instead and fall through to the CRD check.
         if [ "$ROLLOUT_T" -gt 0 ]; then
-          $KUBE rollout status deploy/workflow-controller -n argo --timeout=${ROLLOUT_T}s >/dev/null 2>&1 \
+          # `rollout status` fails at once when the Deployment does not exist yet, which
+          # is the case on a slow first hub sync (seen: created 41 min after its app).
+          # Wait for it to exist first, inside the same ROLLOUT_T budget.
+          RS=$(date +%s)
+          until $KUBE get deploy/workflow-controller -n argo >/dev/null 2>&1; do
+            [ $(( $(date +%s) - RS )) -ge "$ROLLOUT_T" ] && break
+            sleep 15
+          done
+          RT=$(( ROLLOUT_T - ($(date +%s) - RS) )); [ "$RT" -lt 1 ] && RT=1
+          $KUBE rollout status deploy/workflow-controller -n argo --timeout=${RT}s >/dev/null 2>&1 \
             || printf '{{.C_ERR}}  ⚠ workflow-controller not Ready in time — continuing anyway (non-fatal).{{.C_RESET}}\n'
         else
           printf '{{.C_ERR}}  ⚠ no budget left for the workflow-controller wait — continuing anyway (non-fatal).{{.C_RESET}}\n'
@@ -1186,28 +1395,132 @@ tasks:
             printf '{{.C_ERR}}  ⚠ could not resolve user1 password — skipping scaffold (non-fatal).{{.C_RESET}}\n'
             rm -f "$KC"; exit 0
           fi
+          # Backstage must answer before the scaffold. On a slow first hub sync the
+          # Backstage Deployment did not exist yet when this ran (created ~5 min later):
+          # the scaffold failed in 1 s, nothing retried it, and the wait below then spent
+          # its full PIPE_T on a CICDPipeline nobody would create (it was still absent
+          # the next day). Wait (bounded by the budget, keeping SCAFFOLD_RESERVE for the
+          # scaffold itself) for the Deployment to exist and the scaffolder API to answer
+          # through the platform URL: 2xx/401/403 means it is up, 000/5xx means not yet.
+          BS_T=600; BS_MAX=$(( $(left) - SCAFFOLD_RESERVE )); [ "$BS_MAX" -lt "$BS_T" ] && BS_T=$BS_MAX
+          BS_E=0; BS_CODE=000
+          while :; do
+            if $KUBE get deploy/backstage -n backstage >/dev/null 2>&1; then
+              BS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "${BACKSTAGE_URL}/api/scaffolder/v2/actions" 2>/dev/null || echo 000)
+              case "$BS_CODE" in 2??|401|403) break ;; esac
+            fi
+            if [ "$BS_E" -ge "$BS_T" ]; then
+              printf '{{.C_ERR}}  ⚠ Backstage not answering after %ss (last HTTP %s) — skipping scaffold (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n' "$BS_E" "$BS_CODE"
+              rm -f "$KC"; exit 0
+            fi
+            [ $((BS_E % 60)) -eq 0 ] && printf '{{.C_INFO}}  ▸ waiting for Backstage (%ss/%ss, HTTP %s)…{{.C_RESET}}\n' "$BS_E" "$BS_T" "$BS_CODE"
+            sleep 15; BS_E=$((BS_E + 15))
+          done
+          # The 401 above only proves the HTTP server answers: a backend whose startup
+          # failed (MigrationLocked on a duplicated knex lock row) still returns 401 on the
+          # scaffolder and 302 on the catalog, so 6 of 7 broken Backstages passed it and the
+          # scaffold then polled tasks/null. Also require an AUTHENTICATED catalog read of
+          # the template (same token as the scaffold, following redirects) to return 200.
+          # Not 200: a few spaced retries (a catalog still ingesting recovers on its own),
+          # but stop at once with the repair hint when the backend log shows the startup
+          # failed, since no retry cures that.
+          bs_backend_failed() {
+            BS_LOG=$($KUBE -n backstage logs deploy/backstage -c backstage --tail=2000 2>/dev/null \
+              || $KUBE -n backstage logs deploy/backstage --tail=2000 2>/dev/null)
+            printf '%s' "$BS_LOG" | grep -Eq 'MigrationLocked|Backend startup failed'
+          }
+          BS_RESTART_HINT="Backstage backend failed to start (MigrationLocked / Backend startup failed in its log) — restart Backstage (and dedupe the knex lock row: keep one row in each *_knex_migrations_lock table, with Backstage scaled to 0), then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd"
+          CAT_TRY=0
+          while :; do
+            CAT_TRY=$((CAT_TRY + 1))
+            CAT_CODE=$(BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
+              timeout 120 bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_template_status cicd-pipeline-gitops' \
+                _ "$BSAUTH" 2>/dev/null) || true
+            case "$CAT_CODE" in [0-9][0-9][0-9]) ;; *) CAT_CODE=000 ;; esac
+            [ "$CAT_CODE" = "200" ] && break
+            if bs_backend_failed; then
+              printf '{{.C_ERR}}  ⚠ catalog template read returned HTTP %s: %s — skipping scaffold (non-fatal).{{.C_RESET}}\n' "$CAT_CODE" "$BS_RESTART_HINT"
+              rm -f "$KC"; exit 0
+            fi
+            if [ "$CAT_TRY" -gt 3 ] || [ "$(left)" -le $(( 60 + SCAFFOLD_RESERVE )) ]; then
+              printf '{{.C_ERR}}  ⚠ template:default/cicd-pipeline-gitops not served by the Backstage catalog (authenticated read: HTTP %s, %s tries) — skipping scaffold (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n' "$CAT_CODE" "$CAT_TRY"
+              rm -f "$KC"; exit 0
+            fi
+            printf '{{.C_INFO}}  ▸ catalog template read returned HTTP %s — retrying in 60s (%s/3)…{{.C_RESET}}\n' "$CAT_CODE" "$CAT_TRY"
+            sleep 60
+          done
           # Bound the scaffold (pnz1990 review #1136 point 1): backstage-auth.sh's curls
-          # carry no --max-time and backstage_scaffolder polls 30x10s even when the POST
-          # returned no task id, so sourcing+calling it in-process is unbounded. Run it in
+          # carry no --max-time and backstage_scaffolder polls a created task 30x10s, so
+          # sourcing+calling it in-process is unbounded. Run it in
           # a subshell under `timeout`, clamped to the budget left (SCAFFOLD_RESERVE as the
           # ceiling). With no deadline (standalone run) left() is large, so the full reserve
           # applies. errexit from the sourced script dies with the subshell, so the task's
           # non-fatal contract (review S2) is preserved without a `set +e` dance here.
           printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s)…{{.C_RESET}}\n' "$APP"
           VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
-          SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
-          # Mark that this run submitted a scaffold attempt — used below to suppress the
-          # "delete the repo" instruction when the scaffold timed out but is still in flight
-          # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
-          # wired even if the timeout fires before backstage_scaffolder reports success).
-          SCAFFOLD_SUBMITTED=yes
-          if BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
-             timeout "$SC_T" bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_scaffolder "$2" "$3"' \
-               _ "$BSAUTH" "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>&1; then
-            printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
-          else
-            printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly (or hit the %ss budget) — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n' "$SC_T"
-          fi
+          # A scaffold that fails FAST (under 60 s: token or POST refused, task failed at
+          # once) has nothing in flight server-side, so waiting PIPE_T for a CICDPipeline
+          # afterwards is dead time. Retry it once after 30 s, then stop with a clear
+          # message. A SLOW failure (backstage_scaffolder's 30x10s poll ran out, or the
+          # timeout fired) may still be wiring the repo and Argo CD app, so it keeps the
+          # wait below.
+          # A POST refused with 503/404 (catalog not started or template not ingested yet)
+          # gets up to 3 retries 60 s apart instead of one after 30 s; a backend whose
+          # startup failed gets none (see BS_RESTART_HINT).
+          SC_TRY=0; SC_POST_TRY=0
+          SC_ERR=$(mktemp)
+          while :; do
+            SC_TRY=$((SC_TRY + 1))
+            SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
+            # Mark that this run submitted a scaffold attempt — used below to suppress the
+            # "delete the repo" instruction when the scaffold timed out but is still in flight
+            # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
+            # wired even if the timeout fires before backstage_scaffolder reports success).
+            SCAFFOLD_SUBMITTED=yes
+            SC_S=$(date +%s)
+            if BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
+               timeout "$SC_T" bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_scaffolder "$2" "$3"' \
+                 _ "$BSAUTH" "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>"$SC_ERR"; then
+              printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
+              rm -f "$SC_ERR"
+              break
+            fi
+            SC_D=$(( $(date +%s) - SC_S ))
+            # backstage_scaffolder prints "backstage_scaffolder: POST ... returned HTTP <code>: <body>"
+            # when the POST itself was refused (no task was created server-side).
+            SC_POST=$(grep -m1 '^backstage_scaffolder: POST ' "$SC_ERR" 2>/dev/null || true)
+            SC_POST_CODE=$(printf '%s' "$SC_POST" | sed -n 's/.* returned HTTP \([0-9][0-9][0-9]\):.*/\1/p')
+            if [ -n "$SC_POST" ]; then
+              printf '{{.C_ERR}}  ⚠ %s{{.C_RESET}}\n' "$SC_POST"
+              if bs_backend_failed; then
+                printf '{{.C_ERR}}  ⚠ scaffold refused: %s (non-fatal).{{.C_RESET}}\n' "$BS_RESTART_HINT"
+                rm -f "$KC" "$SC_ERR"; exit 0
+              fi
+              case "$SC_POST_CODE" in
+                503|404)
+                  SC_POST_TRY=$((SC_POST_TRY + 1))
+                  if [ "$SC_POST_TRY" -gt 3 ] || [ "$(left)" -le "$(( SC_D + 60 + 60 ))" ]; then
+                    printf '{{.C_ERR}}  ⚠ scaffold POST still HTTP %s after %s retries — not waiting for a CICDPipeline nothing will create (non-fatal). Check the Backstage pod log and catalog, then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd{{.C_RESET}}\n' "$SC_POST_CODE" "$((SC_POST_TRY - 1))"
+                    rm -f "$KC" "$SC_ERR"; exit 0
+                  fi
+                  printf '{{.C_INFO}}  ▸ scaffold POST returned HTTP %s — retrying in 60s (%s/3)…{{.C_RESET}}\n' "$SC_POST_CODE" "$SC_POST_TRY"
+                  SC_TRY=0
+                  sleep 60
+                  continue
+                  ;;
+              esac
+            fi
+            if [ "$SC_D" -ge 60 ]; then
+              printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly (or hit the %ss budget) — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n' "$SC_T"
+              rm -f "$SC_ERR"; break
+            fi
+            if [ "$SC_TRY" -ge 2 ] || [ "$(left)" -le "$(( SC_D + 30 + 60 ))" ]; then
+              printf '{{.C_ERR}}  ⚠ scaffold failed in %ss on attempt %s although Backstage answers — not waiting for a CICDPipeline nothing will create (non-fatal). Check the Backstage scaffolder task log; if GitLab repo %s/%s-cicd exists, delete it, then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd{{.C_RESET}}\n' "$SC_D" "$SC_TRY" "{{.GIT_USERNAME}}" "$APP"
+              rm -f "$KC" "$SC_ERR"; exit 0
+            fi
+            printf '{{.C_INFO}}  ▸ scaffold failed in %ss — retrying once in 30s…{{.C_RESET}}\n' "$SC_D"
+            sleep 30
+          done
         fi
 
         # Wait for the kro CICDPipeline to reach ACTIVE (ArgoCD syncs it from the
@@ -1478,11 +1791,20 @@ tasks:
           fi
           sleep 15; E=$((E + 15))
         done
-        # 1. The AppmodService API must be served on spoke-dev.
-        if ! $D get crd appmodservices.kro.run >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s — skipping (non-fatal).{{.C_RESET}}\n' "$DEV"
-          exit 0
-        fi
+        # 1. The AppmodService API must be served on spoke-dev. Bounded wait, same as
+        #    prewarm-pathA-frontend: this runs seconds after the spokes go ACTIVE, while
+        #    the spoke is still syncing its kro RGDs, so a single check skipped the whole
+        #    pre-deploy (the Rust backend was then missing on dev although the content
+        #    says it is already there).
+        T=300; [ "$(left)" -lt "$T" ] && T=$(left)
+        E=0
+        until $D get crd appmodservices.kro.run >/dev/null 2>&1; do
+          if [ "$E" -ge "$T" ]; then
+            printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "$DEV" "$E"
+            exit 0
+          fi
+          sleep 15; E=$((E + 15))
+        done
         # 1b. team-rust namespace on BOTH spokes, before anything is pushed. rust-dev-cd's
         #     CreateNamespace=true does not create it on the spoke in practice, and 30_CD
         #     has the participant create it by hand — but this prewarm runs at install
@@ -3162,27 +3484,65 @@ tasks:
 
         # PHASE 2: deliberate prune through the still-existing app.
         printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
-        PRUNED=false
+        PRUNED=false; TRIGGERED=false
         # The kubectl steps below need the hub kubeconfig; (re)write it the way `destroy` does.
-        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
-          --kubeconfig {{.REPO}}/private/hub-kubeconfig >/dev/null 2>&1 || true
+        # Written aside then renamed: destroy runs this alongside Phase 2.5, which reads
+        # the same file, and a rewrite in place can be seen half-written.
+        KCT="{{.REPO}}/private/hub-kubeconfig.$$"
+        if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --kubeconfig "$KCT" >/dev/null 2>&1 && [ -s "$KCT" ]; then
+          mv -f "$KCT" {{.REPO}}/private/hub-kubeconfig || true
+        else rm -f "$KCT"; fi
         KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
-        if command -v argocd >/dev/null 2>&1; then
-          # Uses the caller's existing Argo CD session, if any. No SSO sign-in here: the
-          # Identity Center identity source is account-wide and may be another stack's
-          # Keycloak. Without a session, the kubectl patch below does the prune.
+        # A prune is confirmed only by its effect: the kro EksclusterWithVpc instance the app
+        # renders (kro-clusters puts it in a namespace named after the cluster) is gone or
+        # being deleted. A triggered sync is not proof: an Unauthenticated argocd CLI, or an
+        # operation patch the controller ran against a stale revision, deletes nothing, and
+        # de-registering the app afterwards orphaned a live spoke (the CR never got a
+        # deletionTimestamp). Prints gone | deleting | live | unknown.
+        CR_NS="{{.CLUSTER}}"; CR_NAME="{{.CLUSTER}}"
+        cr_state() {
+          if ! $KC_HUB get crd eksclusterwithvpcs.kro.run >/dev/null 2>&1; then echo unknown; return 0; fi
+          J=$($KC_HUB get eksclusterwithvpcs.kro.run "$CR_NAME" -n "$CR_NS" -o json 2>&1) || {
+            case "$J" in *NotFound*|*"not found"*) echo gone ;; *) echo unknown ;; esac; return 0; }
+          R=$(printf '%s' "$J" | jq -r 'if .metadata.deletionTimestamp then "deleting" else "live" end' 2>/dev/null || true)
+          echo "${R:-unknown}"
+        }
+        # Wait up to $1 s for the instance to be gone or deleting.
+        wait_cr_deleting() {
+          W=0
+          while :; do
+            S=$(cr_state)
+            if [ "$S" = gone ] || [ "$S" = deleting ]; then return 0; fi
+            if [ "$W" -ge "$1" ]; then return 1; fi
+            sleep 10; W=$((W + 10))
+          done
+        }
+        CR_BEFORE=$(cr_state)
+        # Only with a live Argo CD session: an Unauthenticated CLI fails anyway, and its
+        # error used to be the only thing standing between the prune and the fallback.
+        if command -v argocd >/dev/null 2>&1 \
+            && argocd account get-user-info -o json 2>/dev/null | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+          # No SSO sign-in here: the Identity Center identity source is account-wide and
+          # may be another stack's Keycloak.
           argocd app get "$APP" --refresh >/dev/null 2>&1 || true
           if argocd app sync "$APP" --prune --timeout 600; then
-            PRUNED=true
+            TRIGGERED=true
           else
-            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Falling back to kubectl patch...{{.C_RESET}}\n'
+            printf '{{.C_ERR}}⚠ argocd prune failed. Falling back to kubectl patch...{{.C_RESET}}\n'
           fi
+        else
+          printf '{{.C_INFO}}  No Argo CD CLI session: pruning through the Application resource (kubectl).{{.C_RESET}}\n'
         fi
         # Fallback: use kubectl to patch the ArgoCD application resource directly,
         # injecting a sync operation with prune=true. This works even without the
         # argocd CLI or a valid ArgoCD auth token — it uses the IDE's cluster-admin
         # access entry that grant-ide-access sets up on the hub.
-        if [ "$PRUNED" = false ]; then
+        if [ "$TRIGGERED" = false ]; then
+          # Make the controller re-read Git first, so the operation's HEAD is the commit
+          # pushed above (the one without this cluster), not a cached older revision.
+          $KC_HUB annotate application "$APP" -n argocd argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+          sleep 5
           # Argo CD reads sync options from the operation, not from app.spec (argo-cd
           # controller/sync.go), so a bare .operation patch silently drops the app's
           # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
@@ -3190,10 +3550,27 @@ tasks:
           OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}'
           OP_BODY=$($KC_HUB get application "$APP" -n argocd -o json 2>/dev/null \
             | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
-          $KC_HUB patch application "$APP" -n argocd --type merge \
-            -p "${OP_BODY:-$OP_BASE}" \
-            2>/dev/null && PRUNED=true || \
-            printf '{{.C_ERR}}⚠ kubectl patch also failed. The spoke will be deleted when kind-kro-ack:destroy runs hub:destroy-addons.{{.C_RESET}}\n'
+          if $KC_HUB patch application "$APP" -n argocd --type merge -p "${OP_BODY:-$OP_BASE}" 2>/dev/null; then
+            TRIGGERED=true
+          else
+            printf '{{.C_ERR}}⚠ kubectl patch of %s failed.{{.C_RESET}}\n' "$APP"
+          fi
+        fi
+        # Confirm the prune by its effect (bounded). If the instance is still live, delete it
+        # directly: its spec is no longer in Git (pushed above), so a later sync of the app
+        # cannot re-create it. Then confirm again.
+        if [ "$CR_BEFORE" = unknown ]; then
+          # The hub cannot be read: keep the old behaviour (the triggered sync counts).
+          PRUNED="$TRIGGERED"
+        elif wait_cr_deleting "{{.PRUNE_CONFIRM_WAIT | default "180"}}"; then
+          PRUNED=true
+        else
+          printf '{{.C_ERR}}⚠ EksclusterWithVpc %s/%s still has no deletionTimestamp after the prune: deleting it directly.{{.C_RESET}}\n' "$CR_NS" "$CR_NAME"
+          $KC_HUB delete eksclusterwithvpcs.kro.run "$CR_NAME" -n "$CR_NS" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+          if wait_cr_deleting 60; then PRUNED=true; fi
+        fi
+        if [ "$PRUNED" != true ]; then
+          printf '{{.C_ERR}}✗ {{.CLUSTER}} is NOT being deleted (EksclusterWithVpc %s/%s: %s). %s is left registered so nothing orphans the live cluster.{{.C_RESET}}\n' "$CR_NS" "$CR_NAME" "$(cr_state)" "$APP"
         fi
 
         # PHASE 3: cleanup (only after a successful prune, so we never orphan a live
@@ -3247,6 +3624,8 @@ tasks:
         fi
         rm -rf "$REPO_DIR"
         printf '{{.C_INFO}}  When {{.CLUSTER}} is gone, delete what outlives it (IAM roles, CARM selectors, secrets, log group): task spokes:sweep-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
+        # Fail loud: a caller (spokes:disable-all) must not wait for a deletion that never started.
+        if [ "$PRUNED" != true ]; then exit 3; fi
 
   spokes:sweep-kro:
     desc: "After spokes:disable-kro: wait until a KRO spoke is deleted, then remove what outlives it (usage: task spokes:sweep-kro -- <cluster-name>)"
@@ -3414,7 +3793,7 @@ tasks:
         #    proceed to hub teardown — surviving spokes would be orphaned — so fall back
         #    to discovering them on the hub (step 1b).
         REPO_DIR=$(mktemp -d)
-        KRO_SPOKES=""; XP_SPOKES=""; SOURCE=overlay
+        KRO_SPOKES=""; XP_SPOKES=""; FAILED_KRO=""; SOURCE=overlay
         if CLONE_ERR=$(git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>&1); then
           KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
           XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
@@ -3494,7 +3873,10 @@ tasks:
         if [ "$SOURCE" = overlay ]; then
           for c in $KRO_SPOKES; do
             printf '{{.C_STEP}}▸ Disabling KRO spoke %s...{{.C_RESET}}\n' "$c"
-            task spokes:disable-kro -- "$c" || printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
+            if ! task spokes:disable-kro -- "$c"; then
+              printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
+              FAILED_KRO="$FAILED_KRO $c"
+            fi
           done
           for c in $XP_SPOKES; do
             printf '{{.C_STEP}}▸ Disabling Crossplane spoke %s...{{.C_RESET}}\n' "$c"
@@ -3552,8 +3934,10 @@ tasks:
             ENS=$(echo "$E" | cut -d/ -f1); EN=$(echo "$E" | cut -d/ -f2); POL=$(echo "$E" | cut -d/ -f4)
             if [ "$POL" = retain ]; then continue; fi
             printf '{{.C_ERR}}▸ Deleting EksclusterWithVpc %s/%s — this DELETES the live cluster + its VPC.{{.C_RESET}}\n' "$ENS" "$EN"
-            $KC_HUB delete eksclusterwithvpcs.kro.run "$EN" -n "$ENS" --wait=false --ignore-not-found \
-              || printf '{{.C_ERR}}⚠ delete failed for %s/%s (continuing).{{.C_RESET}}\n' "$ENS" "$EN"
+            if ! $KC_HUB delete eksclusterwithvpcs.kro.run "$EN" -n "$ENS" --wait=false --ignore-not-found; then
+              printf '{{.C_ERR}}⚠ delete failed for %s/%s (continuing).{{.C_RESET}}\n' "$ENS" "$EN"
+              FAILED_KRO="$FAILED_KRO $(echo "$E" | cut -d/ -f3)"
+            fi
           done
           for E in $HUB_XP; do
             ENS=$(echo "$E" | cut -d/ -f1); EN=$(echo "$E" | cut -d/ -f2)
@@ -3567,7 +3951,16 @@ tasks:
         # 3. Wait for the spoke EKS clusters to actually disappear from AWS BEFORE the
         #    hub teardown removes the controllers that reconcile their deletion. Without
         #    this, killing the hub mid-deletion leaves orphaned EKS clusters + VPCs.
-        ALL_SPOKES="$KRO_SPOKES $XP_SPOKES"
+        # A spoke whose deletion could not be started (disable-kro failed: its EksclusterWithVpc
+        # never got a deletionTimestamp) is not waited for: it will not disappear, and the
+        # wait only burned its full 30 min. It is reported below instead.
+        ALL_SPOKES=""
+        for c in $KRO_SPOKES $XP_SPOKES; do
+          case " ${FAILED_KRO:-} " in *" $c "*) ;; *) ALL_SPOKES="$ALL_SPOKES $c" ;; esac
+        done
+        if [ -n "$(echo ${FAILED_KRO:-} | tr -d ' ')" ]; then
+          printf '{{.C_ERR}}✗ Spoke deletion NOT started for:%s — not waiting for them. Proceeding with the hub teardown will ORPHAN them; fix first (task spokes:disable-kro -- <name>).{{.C_RESET}}\n' "$FAILED_KRO"
+        fi
         printf '{{.C_STEP}}▸ Waiting for spoke EKS clusters to delete in AWS (up to 30m)...{{.C_RESET}}\n'
         for i in $(seq 1 90); do
           LIVE=""

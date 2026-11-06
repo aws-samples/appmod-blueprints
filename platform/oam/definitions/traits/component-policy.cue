@@ -37,7 +37,9 @@ template: {
 	// The AWS name is account-global: without the cluster and hash, the same app on two
 	// clusters of one account (dev and prod spokes, or two installs) shares one policy.
 	// The aws-service-identity trait (accessFor) computes the same name for its
-	// policyArnRef (keep the two in step). Renaming the object, rather than only the AWS
+	// policyArnRef (keep the two in step), and so do the OAP components that emit IAM
+	// policies (awslabs/open-agentic-platform platform/oam/definitions/components/):
+	// run that repo's scripts/check-iam-names.sh <this checkout> after changing the rule. Renaming the object, rather than only the AWS
 	// name, matters on upgrade: a RolePolicyAttachment resolves policyArnRef once (and
 	// policy_arn cannot change in place), and an existing Policy object keeps reporting
 	// its old status.atProvider.arn until the provider has created the renamed policy.
@@ -49,13 +51,16 @@ template: {
 	_policyBase: strings.ToLower(strings.Replace(_cluster, "_", "-", -1)) + "-" + context.appName + "-" + context.name
 	_policyHead: [if len(_policyBase) > 100 {strings.SliceRunes(_policyBase, 0, 100)}, _policyBase][0]
 	_policyName: _policyHead + "-" + _policyHash + "-iam-policy"
-	// Without a cluster name (a bare render of the chart): the object keeps today's name
-	// <appName>-<component>-iam-policy and there is no external-name, byte for byte.
-	_policyObjName: [if _cluster == "" {"\(context.appName)-\(context.name)-iam-policy"}, _policyName][0]
-	_policyAnnotations: {
-		if _cluster != "" {
-			annotations: "crossplane.io/external-name": _policyName
-		}
+	_policyObjName: _policyName
+	_policyAnnotations: annotations: "crossplane.io/external-name": _policyName
+
+	// FAIL CLOSED without a cluster name: the policy would be named the same on every
+	// cluster of the account (shared, so one cluster can delete another's), and
+	// aws-service-identity, which requires the cluster name, would not find it. The two
+	// strings conflict on purpose: KubeVela prints both, so the error names the missing
+	// value.
+	if _cluster == "" {
+		_clusterIdentity: "set" & "global.clusterName is empty: set it on the kubevela chart (the cluster secret's aws_cluster_name annotation)"
 	}
 
 	outputs: {

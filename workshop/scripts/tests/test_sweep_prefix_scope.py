@@ -149,7 +149,9 @@ class _ScopeClient:
 
     def describe_security_groups(self, Filters=None, **k):
         vid = Filters[0]["Values"][0] if Filters and Filters[0]["Name"] == "vpc-id" else None
-        return {"SecurityGroups": self._a["sgs"].get(vid, [])}
+        # A deleted SG is gone (§16f re-lists the VPC's SGs after each delete pass).
+        gone = {k.get("GroupId") for _s, m, k in self._calls if m == "delete_security_group"}
+        return {"SecurityGroups": [s for s in self._a["sgs"].get(vid, []) if s["GroupId"] not in gone]}
 
     def describe_addresses(self, **k):
         return {"Addresses": self._a["addresses"]}

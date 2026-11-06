@@ -67,11 +67,30 @@ backstage_scaffolder() (
   local TOKEN
   TOKEN=$(backstage_get_token)
 
-  local TASK_ID
-  TASK_ID=$(curl -sLk -X POST "${BACKSTAGE_URL}/api/scaffolder/v2/tasks" \
+  # Fail at once when the POST is refused. A 503 (catalog not started, e.g. the backend
+  # failed with MigrationLocked) or a 404 (template not in the catalog) used to yield
+  # id=null, and the loop below then polled tasks/null for ~300 s before failing with
+  # no hint of the cause. Exit code 2 = the POST itself failed; the HTTP code and the
+  # start of the error body are printed on stderr as
+  # "backstage_scaffolder: POST ... returned HTTP <code>: <body>".
+  local RESP CODE BODY TASK_ID
+  RESP=$(curl -sLk --max-time 60 -w '\n%{http_code}' -X POST "${BACKSTAGE_URL}/api/scaffolder/v2/tasks" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"templateRef\": \"${TEMPLATE_REF}\", \"values\": ${VALUES}}" | jq -r '.id')
+    -d "{\"templateRef\": \"${TEMPLATE_REF}\", \"values\": ${VALUES}}" 2>/dev/null || true)
+  CODE=$(printf '%s\n' "$RESP" | tail -n 1)
+  BODY=$(printf '%s\n' "$RESP" | sed '$d')
+  case "$CODE" in [0-9][0-9][0-9]) ;; *) CODE=000 ;; esac
+  TASK_ID=$(printf '%s' "$BODY" | jq -r '.id // empty' 2>/dev/null || true)
+  case "$CODE" in
+    2??) ;;
+    *) TASK_ID="" ;;
+  esac
+  if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "null" ]; then
+    printf 'backstage_scaffolder: POST %s/api/scaffolder/v2/tasks returned HTTP %s: %.500s\n' \
+      "$BACKSTAGE_URL" "$CODE" "$(printf '%s' "$BODY" | tr '\r\n' '  ')" >&2
+    return 2
+  fi
 
   echo "Task ID: ${TASK_ID}" >&2
 
@@ -87,6 +106,22 @@ backstage_scaffolder() (
     sleep 10
   done
   echo "${TASK_ID}"; return 1
+)
+
+# Print the HTTP code of an AUTHENTICATED catalog read of a template (default
+# cicd-pipeline-gitops), following redirects. 200 means the backend started and the
+# catalog serves the template. An unauthenticated request is not a health signal: it
+# gets 401 on the scaffolder and 302 (login redirect) on the catalog whether or not the
+# backend started.
+#   backstage_template_status [template-name]   -> e.g. 200, 404, 503, 000
+backstage_template_status() (
+  set -uo pipefail
+  local NAME="${1:-cicd-pipeline-gitops}" TOKEN CODE
+  TOKEN=$(backstage_get_token 2>/dev/null || true)
+  CODE=$(curl -sLk -o /dev/null -w '%{http_code}' --max-time 20 \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "${BACKSTAGE_URL}/api/catalog/entities/by-name/template/default/${NAME}" 2>/dev/null || true)
+  case "$CODE" in [0-9][0-9][0-9]) echo "$CODE" ;; *) echo 000 ;; esac
 )
 
 # When sourced, export BS_TOKEN for direct use

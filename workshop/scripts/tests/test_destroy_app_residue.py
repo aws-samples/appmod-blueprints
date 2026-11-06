@@ -931,7 +931,8 @@ def test_drain_runs_after_the_spokes_and_before_the_per_addon_pass():
     cmds = _cmds("hub:destroy-addons")
     drain = _index(cmds, "drain-oam-apps.py")
     assert _index(cmds, "clusters-kro clusters") < drain < _index(cmds, 'SKIP="{{.INFRA_STACK}}')
-    assert '"{{.XP_DELETE_WAIT}}"' in cmds[drain], "bounded by the existing wait, no new parameter"
+    # Bounded by the existing wait (and by the caller's deadline, when it gives one).
+    assert '"$(dl_cap {{.XP_DELETE_WAIT}})"' in cmds[drain], "bounded by the existing wait"
     assert "python3 -u " in cmds[drain], "unbuffered: the log shows the wait while it happens"
 
 
