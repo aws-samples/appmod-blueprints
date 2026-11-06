@@ -15,7 +15,7 @@ import subprocess
 import pytest
 
 pytest.importorskip("yaml")
-from test_prewarm_rust_waits import fakes, lines, render  # noqa: E402
+from test_prewarm_rust_waits import TEMPLATE_STATUS_OK, fakes, lines, render  # noqa: E402
 
 
 def helper(plat, body):
@@ -23,7 +23,7 @@ def helper(plat, body):
         'backstage_scaffolder() {\n'
         '  C=$(cat "$FAKE_T/clock"); echo "$C scaffold" >> "$FAKE_T/scaffold.calls"\n'
         f'{body}\n'
-        '}\n')
+        '}\n' + TEMPLATE_STATUS_OK.format(backstage_at=0))
 
 
 def run(tmp_path, body):
