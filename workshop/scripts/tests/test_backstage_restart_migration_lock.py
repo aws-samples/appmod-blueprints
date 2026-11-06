@@ -83,6 +83,12 @@ def new_pod():
             "polls_to_init": 0}
 
 if args[:3] == ["get", "deploy", "backstage"]:
+    if not s["deploy"] and s["deploy_after"] > 0:
+        # The Argo CD app syncs the Deployment a few polls later (late sync wave).
+        s["deploy_after"] -= 1
+        if s["deploy_after"] == 0:
+            s["deploy"] = True
+            s["pods"] = [dict(s["appearing_pod"])]
     if not s["deploy"]:
         rc = 1
     elif any("strategy.type" in a for a in args):
@@ -96,7 +102,13 @@ elif args[:2] == ["get", "pod"]:
     p = pod(args[2])
     out = "True" if p and p["phase"] == "initialized" else "False"
 elif args[:1] == ["get"] and args[1] == "application.argoproj.io":
-    out = s["kc_finished"]
+    if args[2].startswith("backstage-"):
+        rc = 0 if s["backstage_app"] else 1
+        out = args[2] if s["backstage_app"] else ""
+    else:
+        out = s["kc_finished"]
+elif args[:2] == ["get", "secret"]:
+    out = s["hub_labels"].get("enable_backstage", "")
 elif args[:1] == ["logs"]:
     p = pod(args[1])
     if p is None:
@@ -144,7 +156,10 @@ def _state(**over):
           "pods": [{"name": "backstage-0", "start": BEFORE, "deleting": False,
                     "phase": "initialized", "polls_to_init": 0}],
           "seq": 0, "always_fail": False, "template_present": True,
-          "calls": [], "restarts": [], "catalog_paths": []}
+          "calls": [], "restarts": [], "catalog_paths": [],
+          "backstage_app": True, "hub_labels": {"enable_backstage": "true"}, "deploy_after": 0,
+          "appearing_pod": {"name": "backstage-new", "start": AFTER, "deleting": False,
+                            "phase": "starting", "polls_to_init": 2}}
     st.update(over)
     return st
 
@@ -160,15 +175,17 @@ def _env(tmp_path, state):
     sim.write_text(json.dumps(state))
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", SIM_STATE=str(sim),
                KUBECONFIG=str(tmp_path / "kubeconfig"))
-    for k in ("GATE_TEMPLATE", "KEYCLOAK_APP", "WAIT_INIT_TIMEOUT", "GATE_TIMEOUT"):
+    for k in ("GATE_TEMPLATE", "KEYCLOAK_APP", "WAIT_INIT_TIMEOUT", "GATE_TIMEOUT", "BACKSTAGE_APP",
+              "HUB_CLUSTER_SECRET", "WAIT_DEPLOY_TIMEOUT", "BACKSTAGE_GATE_WAIT", "BACKSTAGE_GATE_LOG"):
         env.pop(k, None)
     return env, sim
 
 
-def _run_script(tmp_path, state, **extra):
+def _run_script(tmp_path, state, *args, **extra):
     env, sim = _env(tmp_path, state)
-    env.update(KEYCLOAK_APP="keycloak-acme-hub", **extra)
-    res = subprocess.run(["bash", SCRIPT], env=env, capture_output=True, text=True, timeout=60)
+    env.update(KEYCLOAK_APP="keycloak-acme-hub", BACKSTAGE_APP="backstage-acme-hub",
+               HUB_CLUSTER_SECRET="acme-hub", **extra)
+    res = subprocess.run(["bash", SCRIPT, *args], env=env, capture_output=True, text=True, timeout=60)
     return res, json.loads(sim.read_text())
 
 
@@ -284,10 +301,58 @@ def test_catalog_read_is_authenticated_inside_the_pod(tmp_path):
     assert "-c backstage -- node -e" in call and "Bearer" in call and "BACKEND_SECRET" in call
 
 
-def test_no_backstage_is_a_no_op(tmp_path):
-    res, out = _run_script(tmp_path, _state(deploy=False))
-    assert res.returncode == 0, res.stderr
-    assert out["restarts"] == [] and "not installed" in res.stdout
+def test_no_backstage_is_an_honest_skip(tmp_path):
+    """Not installed (no Deployment, no Argo CD app, no hub label): exit 3, never 0, so the
+    task cannot report a healthy Backstage that was never checked."""
+    st = _state(deploy=False, backstage_app=False, hub_labels={}, pods=[])
+    res, out = _run_script(tmp_path, st)
+    assert res.returncode == 3, res.stdout + res.stderr
+    assert out["restarts"] == [] and out["catalog_paths"] == []
+    assert "Backstage not installed: skipped" in res.stdout
+    assert "gate passed" not in res.stdout
+
+
+def test_probe_reports_present_expected_absent(tmp_path):
+    cases = [(_state(), "present"),
+             (_state(deploy=False, pods=[]), "expected"),
+             (_state(deploy=False, pods=[], backstage_app=False), "expected"),  # hub label only
+             (_state(deploy=False, pods=[], hub_labels={}), "expected"),        # app only
+             (_state(deploy=False, pods=[], backstage_app=False, hub_labels={}), "absent")]
+    for i, (st, want) in enumerate(cases):
+        d = tmp_path / str(i); d.mkdir()
+        res, out = _run_script(d, st, "probe")
+        assert res.returncode == 0 and res.stdout.strip() == want, (want, res.stdout, res.stderr)
+        assert out["restarts"] == [] and out["catalog_paths"] == []
+
+
+def test_deploy_appearing_later_is_waited_for_and_gated(tmp_path):
+    """Live finding: the task ran at 15:23, the Deployment appeared at 15:32. The script
+    must wait for it, then run the restart decision and the gate (it used to exit 0 with
+    'nothing to restart')."""
+    st = _state(deploy=False, pods=[], deploy_after=4)
+    res, out = _run_script(tmp_path, st)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "waiting for deploy/backstage" in res.stdout
+    assert "restart not needed" in res.stdout  # its pod started after Keycloak
+    assert out["restarts"] == []
+    assert "gate passed" in res.stdout and out["catalog_paths"], res.stdout
+
+
+def test_deploy_appearing_with_a_stale_pod_is_restarted_then_gated(tmp_path):
+    st = _state(deploy=False, pods=[], deploy_after=2,
+                appearing_pod={"name": "backstage-early", "start": BEFORE, "deleting": False,
+                               "phase": "initialized", "polls_to_init": 0})
+    res, out = _run_script(tmp_path, st)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert len(out["restarts"]) == 1 and "gate passed" in res.stdout
+
+
+def test_expected_deploy_that_never_appears_fails_loud(tmp_path):
+    st = _state(deploy=False, pods=[], backstage_app=False)  # hub label says enabled
+    res, out = _run_script(tmp_path, st, WAIT_DEPLOY_TIMEOUT="60")
+    assert res.returncode == 1
+    assert "did not appear within 60s" in res.stderr
+    assert "gate passed" not in res.stdout
 
 
 def test_unknown_keycloak_time_restarts(tmp_path):
@@ -322,18 +387,36 @@ def _task_cmds():
     return cmds, defers
 
 
-def _run_task(tmp_path, state):
+HUB_KC = os.path.join(REPO, "private", "hub-kubeconfig")
+
+
+@pytest.fixture
+def hub_kubeconfig():
+    """`task: hub:kubeconfig` is not run here; stand in for its file (private/ is gitignored)."""
+    os.makedirs(os.path.dirname(HUB_KC), exist_ok=True)
+    created = not os.path.exists(HUB_KC)
+    if created:
+        open(HUB_KC, "w").write("# test stand-in\n")
+    yield
+    if created and os.path.exists(HUB_KC):
+        os.remove(HUB_KC)
+
+
+def _run_task(tmp_path, state, **extra):
     env, sim = _env(tmp_path, state)
+    env.update(INSTALL_TIMING_LOG=str(tmp_path / "timing.log"),
+               BACKSTAGE_GATE_LOG=str(tmp_path / "gate.log"), **extra)
     cmds, defers = _task_cmds()
-    rc = 0
+    rc, output = 0, ""
     for c in cmds:  # go-task stops at the first failing cmd
         r = subprocess.run(["bash", "-c", c], env=env, capture_output=True, text=True, timeout=60)
+        output += r.stdout + r.stderr
         if r.returncode:
             rc = r.returncode
             break
     for d in defers:
         assert "rm -f" in d  # only the kubeconfig cleanup; do not touch the repo
-    return rc, json.loads(sim.read_text())
+    return rc, json.loads(sim.read_text()), output
 
 
 def test_task_repairs_duplicated_lock(tmp_path):
@@ -342,7 +425,7 @@ def test_task_repairs_duplicated_lock(tmp_path):
     st = _state(locks={"backstage_plugin_proxy.lock": 2},
                 pods=[{"name": "backstage-0", "start": BEFORE, "deleting": False,
                        "phase": "failed", "polls_to_init": 0}])
-    rc, out = _run_task(tmp_path, st)
+    rc, out, _ = _run_task(tmp_path, st)
     assert rc == 0
     assert out["locks"] == {"backstage_plugin_proxy.lock": 1}
     assert [p["phase"] for p in out["pods"]] == ["initialized"]
@@ -353,16 +436,87 @@ def test_task_never_overlaps_first_boot(tmp_path):
     st = _state(strategy="RollingUpdate",
                 pods=[{"name": "backstage-0", "start": BEFORE, "deleting": False,
                        "phase": "starting", "polls_to_init": 2}])
-    rc, out = _run_task(tmp_path, st)
+    rc, out, _ = _run_task(tmp_path, st)
     assert rc == 0
     assert out["locks"] == {"backstage_plugin_proxy.lock": 1}
     assert all(r["strategy"] == "Recreate" for r in out["restarts"])
 
 
 def test_task_fails_when_backstage_stays_broken(tmp_path):
-    rc, out = _run_task(tmp_path, _state(always_fail=True))
+    rc, out, log = _run_task(tmp_path, _state(always_fail=True))
     assert rc != 0
     assert len(out["restarts"]) == 2
+    assert "Backstage healthy" not in log
+
+
+def test_task_says_healthy_only_after_the_gate(tmp_path):
+    rc, out, log = _run_task(tmp_path, _state(pods=[{"name": "backstage-0", "start": AFTER,
+                                                     "deleting": False, "phase": "initialized",
+                                                     "polls_to_init": 0}]))
+    assert rc == 0, log
+    assert "gate passed" in log and "Backstage healthy" in log
+    assert log.index("gate passed") < log.index("Backstage healthy")
+
+
+def test_task_not_installed_is_an_honest_skip(tmp_path):
+    """Fails on the first #1274 revision: it printed 'Backstage healthy' here."""
+    st = _state(deploy=False, pods=[], backstage_app=False, hub_labels={})
+    rc, out, log = _run_task(tmp_path, st)
+    assert rc == 0, log
+    assert "Backstage not installed: skipped" in log
+    assert "healthy" not in log and out["catalog_paths"] == []
+
+
+def test_task_foreground_waits_for_the_deployment_then_gates(tmp_path):
+    st = _state(deploy=False, pods=[], deploy_after=3)
+    rc, out, log = _run_task(tmp_path, st, BACKSTAGE_GATE_WAIT="foreground")
+    assert rc == 0, log
+    assert "gate passed" in log and out["catalog_paths"]
+    assert log.index("gate passed") < log.index("Backstage healthy")
+
+
+def test_task_foreground_deploy_never_appears_fails(tmp_path):
+    st = _state(deploy=False, pods=[])
+    rc, out, log = _run_task(tmp_path, st, BACKSTAGE_GATE_WAIT="foreground", WAIT_DEPLOY_TIMEOUT="30")
+    assert rc != 0
+    assert "did not appear" in log and "healthy" not in log.replace("not healthy", "")
+
+
+def _wait_for(path, needle, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(path) and needle in open(path).read():
+            return open(path).read()
+        time.sleep(0.2)
+    return open(path).read() if os.path.exists(path) else ""
+
+
+def test_task_background_gate_runs_when_the_deployment_appears(tmp_path, hub_kubeconfig):
+    """Default: the install does not wait. The task says the gate is NOT verified yet, and
+    the detached job waits for the Deployment, gates, and records the real result."""
+    st = _state(deploy=False, pods=[], deploy_after=3)
+    rc, _, log = _run_task(tmp_path, st)
+    assert rc == 0, log
+    assert "NOT verified yet" in log and "Backstage healthy" not in log
+    gate_log = _wait_for(tmp_path / "gate.log", "backstage-gate (bg) done")
+    assert "gate passed" in gate_log and "✓ Backstage healthy" in gate_log, gate_log
+    assert "rc=0" in gate_log
+    timing = open(tmp_path / "timing.log").read()
+    assert "backstage-gate (bg) start" in timing and "rc=0" in timing
+    assert json.loads((tmp_path / "state.json").read_text())["catalog_paths"]
+    # the job's kubeconfig copy is cleaned up
+    assert not os.path.exists(os.path.join(REPO, "private", "hub-kubeconfig-backstage-gate"))
+
+
+def test_task_background_gate_failure_is_recorded(tmp_path, hub_kubeconfig):
+    st = _state(deploy=False, pods=[], deploy_after=2, always_fail=True,
+                appearing_pod={"name": "backstage-new", "start": AFTER, "deleting": False,
+                               "phase": "failed", "polls_to_init": 0})
+    rc, _, log = _run_task(tmp_path, st)
+    assert rc == 0 and "Backstage healthy" not in log
+    gate_log = _wait_for(tmp_path / "gate.log", "backstage-gate (bg) done")
+    assert "Backstage gate FAILED (rc=1)" in gate_log and "rc=1" in gate_log, gate_log
+    assert "Backstage healthy" not in gate_log
 
 
 def test_task_has_no_silenced_restart():
@@ -449,3 +603,47 @@ def test_init_container_sql_on_a_fresh_database(postgres):
     _psql(name, "backstage", "CREATE DATABASE fresh_check")  # not a backstage db: ignored
     out = _dedupe(name, command)
     assert "table(s) repaired" in out, out
+
+
+# ── the same task under go-task's own shell (mvdan/sh), not bash ───────────────
+
+def _run_go_task(tmp_path, state, **extra):
+    """Run hub:restart-backstage's cmds with the real `task` binary: go-task's shell lacks
+    some builtins (umask) and kills plain background jobs, which bash -c would not show."""
+    if not shutil.which("task"):
+        pytest.skip("go-task not on PATH")
+    env, sim = _env(tmp_path, state)
+    env.update(INSTALL_TIMING_LOG=str(tmp_path / "timing.log"),
+               BACKSTAGE_GATE_LOG=str(tmp_path / "gate.log"), **extra)
+    task = yaml.safe_load(open(TASKFILE))["tasks"]["hub:restart-backstage"]
+    tf = {"version": "3",
+          "vars": {"HUB_CLUSTER_NAME": "acme-hub", "C_STEP": "", "C_OK": "", "C_RESET": "",
+                   "C_INFO": "", "C_WARN": "", "C_ERR": ""},
+          "tasks": {"go": {"vars": task["vars"], "cmds": [c for c in task["cmds"] if isinstance(c, str)]}}}
+    d = tmp_path / "tf"
+    d.mkdir()
+    (d / "Taskfile.yaml").write_text(yaml.safe_dump(tf, allow_unicode=True).replace("{{.ROOT_DIR}}", REPO))
+    r = subprocess.run(["task", "-d", str(d), "go"], env=env, capture_output=True, text=True, timeout=60)
+    return r, json.loads(sim.read_text())
+
+
+def test_go_task_background_gate(tmp_path, hub_kubeconfig):
+    t0 = time.time()
+    r, _ = _run_go_task(tmp_path, _state(deploy=False, pods=[], deploy_after=3))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert time.time() - t0 < 20  # the install is not held by the gate
+    assert "NOT verified yet" in r.stdout and "Backstage healthy" not in r.stdout
+    gate_log = _wait_for(tmp_path / "gate.log", "backstage-gate (bg) done")
+    assert "gate passed" in gate_log and "rc=0" in gate_log, gate_log
+
+
+def test_go_task_not_installed_and_present(tmp_path):
+    r, _ = _run_go_task(tmp_path, _state(deploy=False, pods=[], backstage_app=False, hub_labels={}))
+    assert r.returncode == 0 and "Backstage not installed: skipped" in r.stdout and "healthy" not in r.stdout
+    d = tmp_path / "present"; d.mkdir()
+    r, _ = _run_go_task(d, _state(pods=[{"name": "backstage-0", "start": AFTER, "deleting": False,
+                                         "phase": "initialized", "polls_to_init": 0}]))
+    assert r.returncode == 0 and "Backstage healthy" in r.stdout, r.stdout + r.stderr
+    d = tmp_path / "broken"; d.mkdir()
+    r, _ = _run_go_task(d, _state(always_fail=True))
+    assert r.returncode != 0 and "Backstage healthy" not in r.stdout
