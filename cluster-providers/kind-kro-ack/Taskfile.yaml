@@ -236,6 +236,18 @@ tasks:
       INSTALL_START:
         sh: date +%s
     cmds:
+      - task: install:hub
+      - task: install:complete
+      - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+
+  # The install in two phases, so a consumer can run its own work in between (e.g.
+  # declare spokes right after the hub bootstrap instead of after Keycloak):
+  #   install:hub      kind -> hub EKS -> seed/sync -> identities -> background settle
+  #   install:complete Keycloak-dependent finalize + observability converge
+  # `install` runs both, unchanged. Same split in every kind-* provider.
+  install:hub:
+    desc: "Install phase 1: hub bootstrap up to the background settle (consumers may declare spokes after it)"
+    cmds:
       - '{{.MARK}} step hub kind:create'
       - task: kind:create
       - '{{.MARK}} step hub kind:kubeconfig'
@@ -316,6 +328,11 @@ tasks:
       #    overlaps the hub settle instead of queuing after it.
       - '{{.MARK}} step hub install:hub-settle-bg'
       - task: install:hub-settle-bg
+      - '{{.MARK}} step hub -'
+
+  install:complete:
+    desc: "Install phase 2: Keycloak-dependent finalize (restarts, urls) + observability converge"
+    cmds:
       - '{{.MARK}} step hub install:finalize'
       - task: install:finalize
       # Seed inline now if AMP/AMG became ACTIVE but the keys are still missing (e.g. the
@@ -323,7 +340,6 @@ tasks:
       - '{{.MARK}} step hub observability:converge'
       - task: observability:converge
       - '{{.MARK}} step hub -'
-      - printf '{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
 
   install:post-sync:
     internal: true
@@ -1821,26 +1837,43 @@ tasks:
           if [ "$OUTOFSYNC" -gt 0 ]; then
             echo "$APP_OUTPUT" | awk '$2 != "Synced" && $2 != "Unknown" && NF>0 {printf "      - %s (%s/%s)\n", $1, $3, $2}'
           fi
-          # Remediation (ported from hub:wait-for-providers): if crossplane-base is
-          # still OutOfSync after ~5 min, force a sync once to unstick the provider
-          # credential bootstrap. Hub observability/agentcore only — not spokes.
+          # Crossplane providers, read from the table (HEALTHY = 3rd column): kubectl
+          # JSONPath rejects a nested filter, so a JSONPath read errors out and an empty
+          # result would look like "all Healthy" (same fix as hub:wait-for-providers).
+          PROV_OK=""
+          if PLIST=$(KUBECONFIG="$KC" kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null); then
+            PTOTAL=$(echo "$PLIST" | awk 'NF>0' | wc -l | tr -d ' ')
+            PBAD=$(echo "$PLIST" | awk 'NF>0 && $3!="True"' | wc -l | tr -d ' ')
+            [ "$PTOTAL" -gt 0 ] && [ "$PBAD" -eq 0 ] && PROV_OK=yes
+            printf '      providers: %s/%s Healthy\n' "$((PTOTAL - PBAD))" "$PTOTAL"
+          fi
+          # Remediation (ported from hub:wait-for-providers): after ~5 min, if
+          # crossplane-base is still OutOfSync or the providers are not all Healthy, start
+          # a fresh sync of crossplane-base once, to unstick the provider credential
+          # bootstrap (hub observability/agentcore, not a spoke precondition). Goes through
+          # scripts/argocd-app-kick.sh, which also works when the app is parked in Argo
+          # CD's retry backoff (a bare .operation patch is ignored then). FORCED records
+          # that the remediation had its chance, whatever the helper decided.
           if [ "$FORCED" -eq 0 ] && [ "$ELAPSED" -ge 300 ]; then
             CB=$(echo "$APP_OUTPUT" | awk -v n="crossplane-base-{{.HUB_CLUSTER_NAME}}" '$1==n && $2!="Synced"')
-            if [ -n "$CB" ]; then
-              printf '  Force-syncing crossplane-base (still OutOfSync after 5min)...\n'
-              # Argo CD reads sync options from the operation, not from app.spec (argo-cd
-              # controller/sync.go), so a bare .operation patch silently drops the app's
-              # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
-              # spec.syncPolicy.syncOptions; with none (or on any read error) the body is unchanged.
-              OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
-              OP_BODY=$(KUBECONFIG="$KC" kubectl get application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd -o json 2>/dev/null \
-                | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
-              KUBECONFIG="$KC" kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p "${OP_BODY:-$OP_BASE}" 2>/dev/null || true
+            if [ -n "$CB" ] || [ -z "$PROV_OK" ]; then
+              printf '  Force-syncing crossplane-base (OutOfSync or providers not Healthy after 5min)...\n'
+              # The helper exits 3 for "not needed" and 1 on a read error; under the
+              # Taskfile's errexit a bare KOUT=$(...) would abort the whole settle.
+              KOUT=$(KUBECONFIG="$KC" bash "{{.ROOT_DIR}}/scripts/argocd-app-kick.sh" "crossplane-base-{{.HUB_CLUSTER_NAME}}" argocd 2>&1) || true
+              printf '  %s\n' "$KOUT"
               FORCED=1
             fi
           fi
-          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
-            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC"
+          # Install perf R3: "apps within tolerance" alone is not enough. On a fresh hub
+          # it can be true at 3 s (few apps exist yet, Crossplane providers 0/0), and the
+          # settle then exited before the crossplane-base remediation could ever fire. With
+          # the providers gate gone from the kind-kro-ack spoke path, nothing else does it,
+          # and the providers (then AMP/AMG/Grafana) came up 20-35 min late on a sampled
+          # team. So also require the providers to be Healthy (at least one) OR the
+          # remediation to have had its chance. Still bounded by TIMEOUT; background.
+          if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ] && { [ -n "$PROV_OK" ] || [ "$FORCED" -eq 1 ]; }; then
+            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance; providers %s).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$( [ -n "$PROV_OK" ] && echo Healthy || echo 'not all Healthy, remediation done' )"
             printf 'ok\n' > "$STATUS"
             break
           fi
@@ -1856,11 +1889,20 @@ tasks:
         # "crossplane-base not Synced after 5min", which is weaker than the old
         # hub:wait-for-providers "providers not Healthy". Log the real provider Healthy
         # state at the end so that signal is preserved.
-        UNHEALTHY_PROVIDERS=$(KUBECONFIG="$KC" kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null || true)
-        if [ -n "$UNHEALTHY_PROVIDERS" ]; then
-          printf '  providers still not Healthy: %s\n' "$UNHEALTHY_PROVIDERS"
+        # Read from the table (see PROV_OK above): the old nested-filter JSONPath errored
+        # out, so this line always said "all Healthy".
+        if PLIST=$(KUBECONFIG="$KC" kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null); then
+          UNHEALTHY_PROVIDERS=$(echo "$PLIST" | awk 'NF>0 && $3!="True" {printf "%s ", $1}')
+          PTOTAL=$(echo "$PLIST" | awk 'NF>0' | wc -l | tr -d ' ')
+          if [ "$PTOTAL" -eq 0 ]; then
+            printf '  no Crossplane providers yet.\n'
+          elif [ -n "$UNHEALTHY_PROVIDERS" ]; then
+            printf '  providers still not Healthy: %s\n' "$UNHEALTHY_PROVIDERS"
+          else
+            printf '  all %s Crossplane providers Healthy.\n' "$PTOTAL"
+          fi
         else
-          printf '  all Crossplane providers Healthy.\n'
+          printf '  could not read Crossplane providers.\n'
         fi
         {{.MARK}} done "hub:settle (bg)" "status=$(cat "$STATUS" 2>/dev/null)"
         # $KC is removed by the EXIT trap set above.
@@ -3376,8 +3418,11 @@ tasks:
           # exit code and we keep polling, instead of letting empty output count as UNHEALTHY=0
           # → a false "all Healthy" pass on a transient read error (review #1053 r4, same as the
           # kind-crossplane gate).
-          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          # kubectl JSONPath rejects the nested filter this used to read
+          # ("unterminated filter", kubectl 1.37), so every poll "failed" and the gate always
+          # ran its full 15 min. Read the HEALTHY column (3rd) of the table instead.
           LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          NAMES=$(echo "$LIST" | awk 'NF>0 && $3!="True" {print $1}')
           UNHEALTHY=$(echo "$NAMES" | wc -w | tr -d ' ')
           TOTAL=$(echo "$LIST" | awk 'NF>0' | wc -l | tr -d ' ')
           if [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ]; then

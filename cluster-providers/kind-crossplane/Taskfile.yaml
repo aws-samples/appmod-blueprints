@@ -190,6 +190,20 @@ tasks:
       INSTALL_START:
         sh: date +%s
     cmds:
+      - task: install:hub
+      - task: install:complete
+      - 'printf "{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  # The install in two phases, so a consumer can run its own work in between
+  # (same split in every kind-* provider):
+  #   install:hub      kind -> hub -> seed/sync -> providers Healthy -> background settle
+  #   install:complete Keycloak-dependent finalize + observability converge
+  install:hub:
+    desc: "Install phase 1: hub bootstrap up to the background settle (consumers may declare spokes after it)"
+    vars:
+      INSTALL_START:
+        sh: date +%s
+    cmds:
       - task: init
       - 'printf "{{.C_INFO}}  [%ds] init done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       - task: kind:create
@@ -232,6 +246,10 @@ tasks:
       # straggler app names to /tmp/hub-full-sync-settle.log) and return immediately.
       - task: install:hub-settle-bg
       - 'printf "{{.C_INFO}}  [%ds] hub settle backgrounded{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  install:complete:
+    desc: "Install phase 2: Keycloak-dependent finalize (restarts, urls) + observability converge"
+    cmds:
       # Phase 1b (parallel): langfuse restart || urls — all independent
       - task: install:finalize
       # Seed inline now if AMP/AMG became ACTIVE but the keys are still missing (e.g. the
@@ -242,7 +260,6 @@ tasks:
       # hub only and exposes the PlatformCluster abstraction; consumers (e.g. the
       # workshop, or OAP) declare spokes against their own repo / via PlatformCluster
       # claims. See workshop/ for the reference consumer.
-      - 'printf "{{.C_OK}}✓ Platform hub bootstrap complete in %ds. Run task status.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   install:finalize:
     internal: true

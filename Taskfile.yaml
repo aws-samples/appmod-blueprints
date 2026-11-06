@@ -91,6 +91,36 @@ tasks:
         printf '\033[1;32m     Next: run `task status` to check the platform.\033[0m\n'
         printf '\033[1;32m============================================================\033[0m\n'
 
+  # `install` in two phases, for consumers that run their own steps in between
+  # (the workshop declares spokes after install:hub, before Keycloak finalizes).
+  # install:hub + install:complete == install.
+  install:hub:
+    desc: "Install phase 1 (hub bootstrap, returns before the Keycloak-dependent finalize)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
+    cmds:
+      - echo "Using cluster provider {{.PROVIDER}}"
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" init {{.INSTALL_START}}'
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform {{.PROVIDER}}:install:hub'
+      - task: "{{.PROVIDER}}:install:hub"
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform -'
+
+  install:complete:
+    desc: "Install phase 2 (Keycloak-dependent finalize, observability converge, capability logs)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    cmds:
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform {{.PROVIDER}}:install:complete'
+      - task: "{{.PROVIDER}}:install:complete"
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform enable-capability-logs'
+      - task: enable-capability-logs
+      - 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh" step platform -'
+      - printf '\033[1;32m✓ Platform install complete (install:hub + install:complete).\033[0m\n'
+
   status:
     desc: Check bootstrap and cluster status
     vars:
