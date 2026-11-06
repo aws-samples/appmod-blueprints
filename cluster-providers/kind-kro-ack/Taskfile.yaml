@@ -1726,6 +1726,7 @@ tasks:
         INTERVAL=30
         ELAPSED=0
         FORCED=0
+        LBC_KICKS=0
         while [ $ELAPSED -lt $TIMEOUT ]; do
           APP_OUTPUT=$(KUBECONFIG="$KC" kubectl get applications.argoproj.io -n argocd --no-headers 2>/dev/null || echo "")
           TOTAL=$(echo "$APP_OUTPUT" | awk 'NF>0' | wc -l | tr -d ' ')
@@ -1754,6 +1755,20 @@ tasks:
                 | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
               KUBECONFIG="$KC" kubectl patch application "crossplane-base-{{.HUB_CLUSTER_NAME}}" -n argocd --type merge -p "${OP_BODY:-$OP_BASE}" 2>/dev/null || true
               FORCED=1
+            fi
+          fi
+          # Remediation 2 (install perf R1): the load balancer controller app parked in
+          # Argo CD's sync-retry backoff after an API-server 429 on its ServiceAccount
+          # (no pods, so no platform ALB, so the CloudFront join and everything behind it
+          # wait up to ~10 min). From 2 min on, kick it while it is not Healthy; the helper
+          # only acts when the app is in retry backoff or has no operation, never during a
+          # running attempt. At most 3 kicks. Same helper as cloudfront-attach-origin.sh.
+          if [ "$LBC_KICKS" -lt 3 ] && [ "$ELAPSED" -ge 120 ]; then
+            LBC=$(echo "$APP_OUTPUT" | awk -v n="aws-load-balancer-controller-{{.HUB_CLUSTER_NAME}}" '$1==n && $3!="Healthy"')
+            if [ -n "$LBC" ]; then
+              KOUT=$(KUBECONFIG="$KC" bash "{{.ROOT_DIR}}/scripts/argocd-app-kick.sh" "aws-load-balancer-controller-{{.HUB_CLUSTER_NAME}}" argocd 2>&1) \
+                && LBC_KICKS=$((LBC_KICKS + 1))
+              printf '  %s\n' "$KOUT"
             fi
           fi
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ]; then
