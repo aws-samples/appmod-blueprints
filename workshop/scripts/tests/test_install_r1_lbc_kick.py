@@ -184,8 +184,12 @@ STUCK = "\n".join(["aws-load-balancer-controller-hub OutOfSync Progressing"] +
                   [f"app{i} OutOfSync Progressing" for i in range(8)]) + "\n"
 
 
+# Providers Healthy, so only the LBC remediation can patch (R3's crossplane-base one stays off).
+PROVIDERS_OK = "provider-aws-iam True True xpkg/iam 5m\n"
+
+
 def test_settle_kicks_lbc_at_most_three_times(tmp_path):
-    r = run_settle(tmp_path, settle_block(), BACKOFF, STUCK)
+    r = run_settle(tmp_path, settle_block(), BACKOFF, STUCK, PROVIDERS_OK)
     assert len(_patches(tmp_path)) == 3, r.stdout + r.stderr
     assert "kick aws-load-balancer-controller-hub: started a fresh sync" in r.stdout
 
@@ -193,5 +197,5 @@ def test_settle_kicks_lbc_at_most_three_times(tmp_path):
 def test_settle_no_lbc_kick_when_healthy(tmp_path):
     table = STUCK.replace("aws-load-balancer-controller-hub OutOfSync Progressing",
                           "aws-load-balancer-controller-hub Synced Healthy")
-    run_settle(tmp_path, settle_block(), HEALTHY, table)
+    run_settle(tmp_path, settle_block(), HEALTHY, table, PROVIDERS_OK)
     assert _patches(tmp_path) == []
