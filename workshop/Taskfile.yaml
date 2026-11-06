@@ -3261,27 +3261,60 @@ tasks:
 
         # PHASE 2: deliberate prune through the still-existing app.
         printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
-        PRUNED=false
+        PRUNED=false; TRIGGERED=false
         # The kubectl steps below need the hub kubeconfig; (re)write it the way `destroy` does.
         aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
           --kubeconfig {{.REPO}}/private/hub-kubeconfig >/dev/null 2>&1 || true
         KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
-        if command -v argocd >/dev/null 2>&1; then
-          # Uses the caller's existing Argo CD session, if any. No SSO sign-in here: the
-          # Identity Center identity source is account-wide and may be another stack's
-          # Keycloak. Without a session, the kubectl patch below does the prune.
+        # A prune is confirmed only by its effect: the kro EksclusterWithVpc instance the app
+        # renders (kro-clusters puts it in a namespace named after the cluster) is gone or
+        # being deleted. A triggered sync is not proof: an Unauthenticated argocd CLI, or an
+        # operation patch the controller ran against a stale revision, deletes nothing, and
+        # de-registering the app afterwards orphaned a live spoke (the CR never got a
+        # deletionTimestamp). Prints gone | deleting | live | unknown.
+        CR_NS="{{.CLUSTER}}"; CR_NAME="{{.CLUSTER}}"
+        cr_state() {
+          if ! $KC_HUB get crd eksclusterwithvpcs.kro.run >/dev/null 2>&1; then echo unknown; return 0; fi
+          J=$($KC_HUB get eksclusterwithvpcs.kro.run "$CR_NAME" -n "$CR_NS" -o json 2>&1) || {
+            case "$J" in *NotFound*|*"not found"*) echo gone ;; *) echo unknown ;; esac; return 0; }
+          R=$(printf '%s' "$J" | jq -r 'if .metadata.deletionTimestamp then "deleting" else "live" end' 2>/dev/null || true)
+          echo "${R:-unknown}"
+        }
+        # Wait up to $1 s for the instance to be gone or deleting.
+        wait_cr_deleting() {
+          W=0
+          while :; do
+            S=$(cr_state)
+            if [ "$S" = gone ] || [ "$S" = deleting ]; then return 0; fi
+            if [ "$W" -ge "$1" ]; then return 1; fi
+            sleep 10; W=$((W + 10))
+          done
+        }
+        CR_BEFORE=$(cr_state)
+        # Only with a live Argo CD session: an Unauthenticated CLI fails anyway, and its
+        # error used to be the only thing standing between the prune and the fallback.
+        if command -v argocd >/dev/null 2>&1 \
+            && argocd account get-user-info -o json 2>/dev/null | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+          # No SSO sign-in here: the Identity Center identity source is account-wide and
+          # may be another stack's Keycloak.
           argocd app get "$APP" --refresh >/dev/null 2>&1 || true
           if argocd app sync "$APP" --prune --timeout 600; then
-            PRUNED=true
+            TRIGGERED=true
           else
-            printf '{{.C_ERR}}⚠ argocd prune failed (auth?). Falling back to kubectl patch...{{.C_RESET}}\n'
+            printf '{{.C_ERR}}⚠ argocd prune failed. Falling back to kubectl patch...{{.C_RESET}}\n'
           fi
+        else
+          printf '{{.C_INFO}}  No Argo CD CLI session: pruning through the Application resource (kubectl).{{.C_RESET}}\n'
         fi
         # Fallback: use kubectl to patch the ArgoCD application resource directly,
         # injecting a sync operation with prune=true. This works even without the
         # argocd CLI or a valid ArgoCD auth token — it uses the IDE's cluster-admin
         # access entry that grant-ide-access sets up on the hub.
-        if [ "$PRUNED" = false ]; then
+        if [ "$TRIGGERED" = false ]; then
+          # Make the controller re-read Git first, so the operation's HEAD is the commit
+          # pushed above (the one without this cluster), not a cached older revision.
+          $KC_HUB annotate application "$APP" -n argocd argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+          sleep 5
           # Argo CD reads sync options from the operation, not from app.spec (argo-cd
           # controller/sync.go), so a bare .operation patch silently drops the app's
           # CreateNamespace/ServerSideApply/ApplyOutOfSyncOnly. Carry the app's own
@@ -3289,10 +3322,27 @@ tasks:
           OP_BASE='{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD","prune":true}}}'
           OP_BODY=$($KC_HUB get application "$APP" -n argocd -o json 2>/dev/null \
             | jq -c --argjson b "$OP_BASE" '(.spec.syncPolicy.syncOptions // []) as $o | if ($o | length) > 0 then $b | .operation.sync.syncOptions = $o else $b end' 2>/dev/null) || OP_BODY=""
-          $KC_HUB patch application "$APP" -n argocd --type merge \
-            -p "${OP_BODY:-$OP_BASE}" \
-            2>/dev/null && PRUNED=true || \
-            printf '{{.C_ERR}}⚠ kubectl patch also failed. The spoke will be deleted when kind-kro-ack:destroy runs hub:destroy-addons.{{.C_RESET}}\n'
+          if $KC_HUB patch application "$APP" -n argocd --type merge -p "${OP_BODY:-$OP_BASE}" 2>/dev/null; then
+            TRIGGERED=true
+          else
+            printf '{{.C_ERR}}⚠ kubectl patch of %s failed.{{.C_RESET}}\n' "$APP"
+          fi
+        fi
+        # Confirm the prune by its effect (bounded). If the instance is still live, delete it
+        # directly: its spec is no longer in Git (pushed above), so a later sync of the app
+        # cannot re-create it. Then confirm again.
+        if [ "$CR_BEFORE" = unknown ]; then
+          # The hub cannot be read: keep the old behaviour (the triggered sync counts).
+          PRUNED="$TRIGGERED"
+        elif wait_cr_deleting "{{.PRUNE_CONFIRM_WAIT | default "180"}}"; then
+          PRUNED=true
+        else
+          printf '{{.C_ERR}}⚠ EksclusterWithVpc %s/%s still has no deletionTimestamp after the prune: deleting it directly.{{.C_RESET}}\n' "$CR_NS" "$CR_NAME"
+          $KC_HUB delete eksclusterwithvpcs.kro.run "$CR_NAME" -n "$CR_NS" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+          if wait_cr_deleting 60; then PRUNED=true; fi
+        fi
+        if [ "$PRUNED" != true ]; then
+          printf '{{.C_ERR}}✗ {{.CLUSTER}} is NOT being deleted (EksclusterWithVpc %s/%s: %s). %s is left registered so nothing orphans the live cluster.{{.C_RESET}}\n' "$CR_NS" "$CR_NAME" "$(cr_state)" "$APP"
         fi
 
         # PHASE 3: cleanup (only after a successful prune, so we never orphan a live
@@ -3346,6 +3396,8 @@ tasks:
         fi
         rm -rf "$REPO_DIR"
         printf '{{.C_INFO}}  When {{.CLUSTER}} is gone, delete what outlives it (IAM roles, CARM selectors, secrets, log group): task spokes:sweep-kro -- {{.CLUSTER}}{{.C_RESET}}\n'
+        # Fail loud: a caller (spokes:disable-all) must not wait for a deletion that never started.
+        if [ "$PRUNED" != true ]; then exit 3; fi
 
   spokes:sweep-kro:
     desc: "After spokes:disable-kro: wait until a KRO spoke is deleted, then remove what outlives it (usage: task spokes:sweep-kro -- <cluster-name>)"
@@ -3513,7 +3565,7 @@ tasks:
         #    proceed to hub teardown — surviving spokes would be orphaned — so fall back
         #    to discovering them on the hub (step 1b).
         REPO_DIR=$(mktemp -d)
-        KRO_SPOKES=""; XP_SPOKES=""; SOURCE=overlay
+        KRO_SPOKES=""; XP_SPOKES=""; SOURCE=overlay; FAILED_KRO=""
         if CLONE_ERR=$(git clone "https://{{.GIT_USERNAME}}:{{.GIT_PASSWORD}}@{{.GIT_DOMAIN}}/{{.GIT_USERNAME}}/fleet-config.git" "$REPO_DIR" 2>&1); then
           KRO_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/kro-clusters/values.yaml"
           XP_VALUES="$REPO_DIR/gitops/fleet/spoke-values/tenants/workshop/crossplane-clusters/values.yaml"
@@ -3593,7 +3645,10 @@ tasks:
         if [ "$SOURCE" = overlay ]; then
           for c in $KRO_SPOKES; do
             printf '{{.C_STEP}}▸ Disabling KRO spoke %s...{{.C_RESET}}\n' "$c"
-            task spokes:disable-kro -- "$c" || printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
+            if ! task spokes:disable-kro -- "$c"; then
+              printf '{{.C_ERR}}⚠ disable-kro failed for %s (continuing).{{.C_RESET}}\n' "$c"
+              FAILED_KRO="$FAILED_KRO $c"
+            fi
           done
           for c in $XP_SPOKES; do
             printf '{{.C_STEP}}▸ Disabling Crossplane spoke %s...{{.C_RESET}}\n' "$c"
@@ -3666,7 +3721,16 @@ tasks:
         # 3. Wait for the spoke EKS clusters to actually disappear from AWS BEFORE the
         #    hub teardown removes the controllers that reconcile their deletion. Without
         #    this, killing the hub mid-deletion leaves orphaned EKS clusters + VPCs.
-        ALL_SPOKES="$KRO_SPOKES $XP_SPOKES"
+        # A spoke whose deletion could not be started (disable-kro failed: its EksclusterWithVpc
+        # never got a deletionTimestamp) is not waited for: it will not disappear, and the
+        # wait only burned its full 30 min. It is reported below instead.
+        ALL_SPOKES=""
+        for c in $KRO_SPOKES $XP_SPOKES; do
+          case " ${FAILED_KRO:-} " in *" $c "*) ;; *) ALL_SPOKES="$ALL_SPOKES $c" ;; esac
+        done
+        if [ -n "$(echo ${FAILED_KRO:-} | tr -d ' ')" ]; then
+          printf '{{.C_ERR}}✗ Spoke deletion NOT started for:%s — not waiting for them. Proceeding with the hub teardown will ORPHAN them; fix first (task spokes:disable-kro -- <name>).{{.C_RESET}}\n' "$FAILED_KRO"
+        fi
         printf '{{.C_STEP}}▸ Waiting for spoke EKS clusters to delete in AWS (up to 30m)...{{.C_RESET}}\n'
         for i in $(seq 1 90); do
           LIVE=""
