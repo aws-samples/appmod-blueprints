@@ -1127,7 +1127,16 @@ tasks:
         # budget is spent (ROLLOUT_T clamped to 0) this would block forever (pnz1990
         # review #1136 point 1). Skip the wait instead and fall through to the CRD check.
         if [ "$ROLLOUT_T" -gt 0 ]; then
-          $KUBE rollout status deploy/workflow-controller -n argo --timeout=${ROLLOUT_T}s >/dev/null 2>&1 \
+          # `rollout status` fails at once when the Deployment does not exist yet, which
+          # is the case on a slow first hub sync (seen: created 41 min after its app).
+          # Wait for it to exist first, inside the same ROLLOUT_T budget.
+          RS=$(date +%s)
+          until $KUBE get deploy/workflow-controller -n argo >/dev/null 2>&1; do
+            [ $(( $(date +%s) - RS )) -ge "$ROLLOUT_T" ] && break
+            sleep 15
+          done
+          RT=$(( ROLLOUT_T - ($(date +%s) - RS) )); [ "$RT" -lt 1 ] && RT=1
+          $KUBE rollout status deploy/workflow-controller -n argo --timeout=${RT}s >/dev/null 2>&1 \
             || printf '{{.C_ERR}}  ⚠ workflow-controller not Ready in time — continuing anyway (non-fatal).{{.C_RESET}}\n'
         else
           printf '{{.C_ERR}}  ⚠ no budget left for the workflow-controller wait — continuing anyway (non-fatal).{{.C_RESET}}\n'
@@ -1186,6 +1195,27 @@ tasks:
             printf '{{.C_ERR}}  ⚠ could not resolve user1 password — skipping scaffold (non-fatal).{{.C_RESET}}\n'
             rm -f "$KC"; exit 0
           fi
+          # Backstage must answer before the scaffold. On a slow first hub sync the
+          # Backstage Deployment did not exist yet when this ran (created ~5 min later):
+          # the scaffold failed in 1 s, nothing retried it, and the wait below then spent
+          # its full PIPE_T on a CICDPipeline nobody would create (it was still absent
+          # the next day). Wait (bounded by the budget, keeping SCAFFOLD_RESERVE for the
+          # scaffold itself) for the Deployment to exist and the scaffolder API to answer
+          # through the platform URL: 2xx/401/403 means it is up, 000/5xx means not yet.
+          BS_T=600; BS_MAX=$(( $(left) - SCAFFOLD_RESERVE )); [ "$BS_MAX" -lt "$BS_T" ] && BS_T=$BS_MAX
+          BS_E=0; BS_CODE=000
+          while :; do
+            if $KUBE get deploy/backstage -n backstage >/dev/null 2>&1; then
+              BS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "${BACKSTAGE_URL}/api/scaffolder/v2/actions" 2>/dev/null || echo 000)
+              case "$BS_CODE" in 2??|401|403) break ;; esac
+            fi
+            if [ "$BS_E" -ge "$BS_T" ]; then
+              printf '{{.C_ERR}}  ⚠ Backstage not answering after %ss (last HTTP %s) — skipping scaffold (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n' "$BS_E" "$BS_CODE"
+              rm -f "$KC"; exit 0
+            fi
+            [ $((BS_E % 60)) -eq 0 ] && printf '{{.C_INFO}}  ▸ waiting for Backstage (%ss/%ss, HTTP %s)…{{.C_RESET}}\n' "$BS_E" "$BS_T" "$BS_CODE"
+            sleep 15; BS_E=$((BS_E + 15))
+          done
           # Bound the scaffold (pnz1990 review #1136 point 1): backstage-auth.sh's curls
           # carry no --max-time and backstage_scaffolder polls 30x10s even when the POST
           # returned no task id, so sourcing+calling it in-process is unbounded. Run it in
@@ -1478,11 +1508,20 @@ tasks:
           fi
           sleep 15; E=$((E + 15))
         done
-        # 1. The AppmodService API must be served on spoke-dev.
-        if ! $D get crd appmodservices.kro.run >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s — skipping (non-fatal).{{.C_RESET}}\n' "$DEV"
-          exit 0
-        fi
+        # 1. The AppmodService API must be served on spoke-dev. Bounded wait, same as
+        #    prewarm-pathA-frontend: this runs seconds after the spokes go ACTIVE, while
+        #    the spoke is still syncing its kro RGDs, so a single check skipped the whole
+        #    pre-deploy (the Rust backend was then missing on dev although the content
+        #    says it is already there).
+        T=300; [ "$(left)" -lt "$T" ] && T=$(left)
+        E=0
+        until $D get crd appmodservices.kro.run >/dev/null 2>&1; do
+          if [ "$E" -ge "$T" ]; then
+            printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "$DEV" "$E"
+            exit 0
+          fi
+          sleep 15; E=$((E + 15))
+        done
         # 1b. team-rust namespace on BOTH spokes, before anything is pushed. rust-dev-cd's
         #     CreateNamespace=true does not create it on the spoke in practice, and 30_CD
         #     has the participant create it by hand — but this prewarm runs at install
