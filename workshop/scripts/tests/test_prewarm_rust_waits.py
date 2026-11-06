@@ -46,6 +46,15 @@ def render(task, plat, text=None):
     return re.sub(r"\{\{\s*\.([A-Z_]+)\s*\}\}", lambda m: VARS.get(m.group(1), ""), b)
 
 
+# Fake authenticated catalog read: 200 once Backstage is up. Tests that need another
+# answer append their own backstage_template_status after this one (last one wins).
+TEMPLATE_STATUS_OK = (
+    'backstage_template_status() {{\n'
+    '  C=$(cat "$FAKE_T/clock"); echo "$C template" >> "$FAKE_T/template.calls"\n'
+    '  if [ "$C" -ge {backstage_at} ]; then echo 200; else echo 503; fi\n'
+    '}}\n')
+
+
 def fakes(tmp_path, crd_at=0, backstage_at=0, wfc_at=0):
     """crd_at / backstage_at / wfc_at: virtual second at which the AppmodService CRD on
     spoke-dev, Backstage, and the workflow-controller Deployment appear."""
@@ -75,6 +84,7 @@ def fakes(tmp_path, crd_at=0, backstage_at=0, wfc_at=0):
         f'  *"get deploy/workflow-controller"*) [ "$C" -ge {wfc_at} ];;\n'
         f'  *"rollout status deploy/workflow-controller"*) [ "$C" -ge {wfc_at} ];;\n'
         '  *"get crd workflows.argoproj.io"*) exit 0;;\n'
+        '  *"logs deploy/backstage"*) cat "$FAKE_T/backstage.log" 2>/dev/null; exit 0;;\n'
         '  *"get cicdpipeline"*"jsonpath"*) [ -f "$FAKE_T/scaffolded" ] && echo ACTIVE; exit 0;;\n'
         '  *"get cicdpipeline"*) [ -f "$FAKE_T/scaffolded" ] && echo cicdpipeline/rust-cicd-pipeline; exit 0;;\n'
         '  *) exit 0;;\n'
@@ -86,7 +96,8 @@ def fakes(tmp_path, crd_at=0, backstage_at=0, wfc_at=0):
         'backstage_scaffolder() {\n'
         f'  {now}; echo "$C scaffold" >> "$FAKE_T/scaffold.calls"\n'
         f'  if [ "$C" -ge {backstage_at} ]; then touch "$FAKE_T/scaffolded"; return 0; fi; return 1\n'
-        '}\n')
+        '}\n'
+        + TEMPLATE_STATUS_OK.format(backstage_at=backstage_at))
     return b, plat
 
 
