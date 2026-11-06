@@ -8,6 +8,8 @@ the residue list. The orchestrator turns a non-empty residue into a non-zero exi
 """
 
 from ..context import name_is_ours
+from . import amp as amp_reaper
+from . import grafana as grafana_reaper
 from . import iam as iam_reaper
 from . import oidc as oidc_reaper
 from . import residue as residue_reaper
@@ -120,6 +122,18 @@ def run(ctx):
                 _add(f"iam-policy:{n}")
         except Exception as e:
             log(f"  [verify] IAM policies: {e}")
+        # AMP / AMG workspaces: Crossplane tags them without the prefix tag, so 17d misses
+        # one a still-running hub Crossplane re-created after the sweep deleted it.
+        try:
+            for ws in amp_reaper.owned_workspaces(ctx):
+                _add(f"amp-workspace:{ws['workspaceId']}({ws.get('alias')})")
+        except Exception as e:
+            log(f"  [verify] AMP workspaces: {e.__class__.__name__}")
+        try:
+            for ws in grafana_reaper.owned_workspaces(ctx):
+                _add(f"amg-workspace:{ws['id']}({ws.get('name')})")
+        except Exception as e:
+            log(f"  [verify] AMG workspaces: {e.__class__.__name__}")
         try:  # unassociated prefixed EIPs
             for a in ec2.describe_addresses().get("Addresses", []):
                 if a.get("AssociationId"):

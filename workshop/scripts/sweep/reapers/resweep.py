@@ -7,7 +7,9 @@ the IDE VPC SGs, retried while their ENIs release. Cheap when nothing was recrea
 import time
 
 from ..resilience import poll_until
+from . import amp as amp_reaper
 from . import elb
+from . import grafana as grafana_reaper
 from . import rds as rds_reaper
 
 
@@ -32,6 +34,16 @@ def run(ctx):
                     pass
         except Exception as e:
             log(f"  [re-sweep] AMP: {e}")
+        # 16a2. AMP and AMG workspaces. The hub's Crossplane keeps running until the hub
+        #       cluster is gone, and a managed resource that is still live when §5/§11
+        #       delete its workspace makes it CREATE a new one (live: a new
+        #       <prefix>-observability-amp 47 s after §5, left as residue). §6 has waited
+        #       for the hub to go by now, so what is found here was re-created.
+        try:
+            amp_reaper.delete_owned_workspaces(ctx, "[re-sweep] recreated ")
+        except Exception as e:
+            log(f"  [re-sweep] AMP workspaces: {e}")
+        grafana_reaper.reap(ctx, "[re-sweep] recreated ")
 
         # 16b. ALBs (recreated by the AWS Load Balancer Controller). Reuses the shared
         #      elb.lb_owned predicate (prefix name OR LB-controller/#914 ownership tag).
