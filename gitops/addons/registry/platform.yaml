@@ -16,6 +16,25 @@ crossplane:
         values: ['true']
   valuesObject:
     args: []
+    # Default ManagedResourceActivationPolicy (Crossplane v2). The chart default is ["*"],
+    # which makes every provider install BOTH CRD variants of every managed resource:
+    # the cluster-scoped `<kind>.<svc>.aws.upbound.io` and the namespaced
+    # `<kind>.<svc>.aws.m.upbound.io`. Nothing in this repo or its consumers uses the
+    # namespaced `.m.` variant, so on a fresh hub that is 188 CRDs (of ~830) created for
+    # nothing, in the same minutes as the first sync of ~140 Argo CD apps. CRD creation is
+    # a large part of what feeds the hub API server's "storage is (re)initializing" and
+    # etcd-throttle 429s at install time (ACK's ~270 CRDs, managed by EKS, are the rest);
+    # a 429 on the load balancer controller's first apply then left it without pods (and
+    # the platform ALB) for 12-13 min on sampled teams. Activate only what is
+    # used: the cluster-scoped AWS groups and provider-kubernetes (both variants, 4 CRDs).
+    # Patterns are filepath.Match globs on the MRD name. MRAPs only ever activate, so on an
+    # existing hub this changes nothing; it only stops the extra CRDs on new hubs.
+    # Guarded by workshop/scripts/tests/test_crossplane_default_activations.py.
+    provider:
+      defaultActivations:
+        - '*.aws.upbound.io'
+        - '*.kubernetes.crossplane.io'
+        - '*.kubernetes.m.crossplane.io'
   ignoreDifferences:
     - group: apiextensions.k8s.io
       kind: CustomResourceDefinition
