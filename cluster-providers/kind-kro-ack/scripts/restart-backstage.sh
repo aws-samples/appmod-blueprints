@@ -20,10 +20,29 @@
 #   4. On a failed gate: one restart (the init container repairs the lock), then the gate
 #      again, then a clear error. Nothing is hidden behind `|| true`.
 #
+# Backstage may not be deployed yet when this runs: install:finalize comes right after
+# Keycloak is configured, and the Backstage Deployment is a late sync wave of its Argo CD
+# app (seen live: the task ran at 15:23, the Deployment appeared at 15:32). So the script
+# first decides whether Backstage is expected (`probe` prints the answer):
+#   present   deploy/<BACKSTAGE_DEPLOY> exists
+#   expected  no Deployment yet, but the Argo CD app BACKSTAGE_APP exists or the hub
+#             cluster secret HUB_CLUSTER_SECRET carries enable_backstage=true
+#   absent    neither: Backstage is not installed
+# When expected, it waits up to WAIT_DEPLOY_TIMEOUT for the Deployment and a scheduled pod,
+# then runs steps 1-4. When absent, it exits 3 (skipped), so the caller never reports a
+# healthy Backstage that was not checked.
+#
+# Usage: restart-backstage.sh          restart if needed + gate (exit 0 healthy, 1 unhealthy
+#                                      or never deployed, 3 not installed)
+#        restart-backstage.sh probe    print present | expected | absent, exit 0
+#
 # Environment (all optional except KUBECONFIG, which kubectl reads):
 #   BACKSTAGE_NS (backstage), BACKSTAGE_DEPLOY (backstage), BACKSTAGE_BASE_PATH (/backstage)
 #   KEYCLOAK_APP          Argo CD Application of Keycloak (keycloak-<hub>)
+#   BACKSTAGE_APP         Argo CD Application of Backstage (backstage-<hub>); empty = not used
+#   HUB_CLUSTER_SECRET    Argo CD cluster secret of the hub (<hub>); empty = not used
 #   ARGOCD_NS             (argocd)
+#   WAIT_DEPLOY_TIMEOUT   seconds to wait for an expected Deployment and its pod (900)
 #   GATE_TEMPLATE         catalog template the gate requires (cicd-pipeline-gitops); empty
 #                         = only require the catalog to answer 200
 #   WAIT_INIT_TIMEOUT     seconds to wait for the current pod to finish init (600)
@@ -36,7 +55,10 @@ NS=${BACKSTAGE_NS:-backstage}
 DEPLOY=${BACKSTAGE_DEPLOY:-backstage}
 BASE_PATH=${BACKSTAGE_BASE_PATH:-/backstage}
 KEYCLOAK_APP=${KEYCLOAK_APP:-}
+BACKSTAGE_APP=${BACKSTAGE_APP:-}
+HUB_CLUSTER_SECRET=${HUB_CLUSTER_SECRET:-}
 ARGOCD_NS=${ARGOCD_NS:-argocd}
+WAIT_DEPLOY_TIMEOUT=${WAIT_DEPLOY_TIMEOUT:-900}
 GATE_TEMPLATE=${GATE_TEMPLATE-cicd-pipeline-gitops}
 WAIT_INIT_TIMEOUT=${WAIT_INIT_TIMEOUT:-600}
 ROLLOUT_TIMEOUT=${ROLLOUT_TIMEOUT:-420}
@@ -173,11 +195,66 @@ report_dedupe() {
   return 0
 }
 
+deploy_exists() {
+  kubectl -n "$NS" get deploy "$DEPLOY" >/dev/null 2>&1
+}
+
+# present | expected | absent (see the header).
+backstage_state() {
+  if deploy_exists; then
+    echo present; return
+  fi
+  if [ -n "$BACKSTAGE_APP" ] &&
+     kubectl -n "$ARGOCD_NS" get application.argoproj.io "$BACKSTAGE_APP" >/dev/null 2>&1; then
+    echo expected; return
+  fi
+  if [ -n "$HUB_CLUSTER_SECRET" ] &&
+     [ "$(kubectl -n "$ARGOCD_NS" get secret "$HUB_CLUSTER_SECRET" \
+          -o jsonpath='{.metadata.labels.enable_backstage}' 2>/dev/null)" = "true" ]; then
+    echo expected; return
+  fi
+  echo absent
+}
+
+# Wait for the Deployment and a scheduled pod (one with a startTime), so the restart
+# decision below compares a real pod start with the Keycloak config time.
+wait_deployed() {
+  local waited=0 line
+  while [ "$waited" -lt "$WAIT_DEPLOY_TIMEOUT" ]; do
+    if deploy_exists; then
+      line=$(current_pod)
+      # current_pod prints " <name>" (empty first field) for a pod without a startTime.
+      if [ -n "${line%% *}" ]; then
+        info "deploy/$DEPLOY and pod ${line%% *} present after ${waited}s"
+        return 0
+      fi
+    fi
+    if [ $((waited % 60)) -eq 0 ]; then
+      info "[${waited}s] waiting for deploy/$DEPLOY and its pod in namespace $NS (up to ${WAIT_DEPLOY_TIMEOUT}s)"
+    fi
+    sleep "$POLL_INTERVAL"; waited=$((waited + POLL_INTERVAL))
+  done
+  return 1
+}
+
 # ── main ────────────────────────────────────────────────────────────────────────
-if ! kubectl -n "$NS" get deploy "$DEPLOY" >/dev/null 2>&1; then
-  info "deploy/$DEPLOY not found in namespace $NS: Backstage is not installed, nothing to restart"
+STATE=$(backstage_state)
+if [ "${1:-}" = probe ]; then
+  echo "$STATE"
   exit 0
 fi
+case "$STATE" in
+  absent)
+    info "Backstage not installed: skipped (no deploy/$DEPLOY in $NS${BACKSTAGE_APP:+, no Argo CD app $BACKSTAGE_APP}${HUB_CLUSTER_SECRET:+, hub label enable_backstage is not true})"
+    exit 3 ;;
+  expected)
+    info "Backstage is expected but deploy/$DEPLOY does not exist yet: waiting for it"
+    if ! wait_deployed; then
+      err "deploy/$DEPLOY or its pod did not appear within ${WAIT_DEPLOY_TIMEOUT}s; Backstage was not checked"
+      err "inspect: kubectl -n $ARGOCD_NS get application.argoproj.io ${BACKSTAGE_APP:-<backstage app>}"
+      exit 1
+    fi ;;
+esac
 
 LINE=$(current_pod)
 POD=${LINE%% *}
