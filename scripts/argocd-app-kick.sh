@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Start a fresh Argo CD sync of one Application, without the argocd CLI.
 #
-# Used by the install's background remediations (hub:settle, cloudfront-attach-origin.sh)
-# to unstick an app that is parked in Argo CD's sync-retry backoff. On a fresh hub the API
-# server throttles hard during the first big sync (HTTP 429), so one create can fail (for
-# example the aws-load-balancer-controller ServiceAccount). The sync then fails, and the
-# retry policy (backoff 5s x2, maxDuration 10m) parks the next attempt up to 10 min away.
+# Used by hub:settle's once-only crossplane-base remediation (kind-kro-ack) to unstick an
+# app that is parked in Argo CD's sync-retry backoff. On a fresh hub the API server
+# throttles hard during the first big sync (HTTP 429), so one create can fail and the sync
+# with it. An app with no per-addon syncPolicy inherits the default retry (backoff 5s x2,
+# maxDuration 10m), which can park its next attempt up to 10 min away; crossplane-base is
+# such an app. Apps whose registry entry caps maxDuration lower (the load balancer
+# controller: 1m) are not parked by the backoff and are not kicked.
 #
 # Why a plain `.operation` patch is not enough: while an operation is in progress
 # (status.operationState.phase=Running) the controller resumes the EXISTING operation state

@@ -1,17 +1,17 @@
-"""Hermetic tests for install perf R1: unstick the aws-load-balancer-controller app while the
-platform ALB is late.
+"""Hermetic tests for scripts/argocd-app-kick.sh, the helper hub:settle uses for its
+once-only crossplane-base remediation.
 
 Covers:
-  * scripts/argocd-app-kick.sh: when it patches, and what it patches (a plain `.operation`
-    patch is ignored by Argo CD while an operation sits in retry backoff, so the helper must
-    also clear status.operationState in that case, and must never interrupt a running attempt);
-  * scripts/cloudfront-attach-origin.sh: the ALB wait loop kicks the LBC app from 2 min on,
-    at most 3 times, and never when the app is Healthy;
-  * hub:settle (kind-kro-ack): the same once-capped LBC remediation.
+  * when it patches, and what it patches (a plain `.operation` patch is ignored by Argo CD
+    while an operation sits in retry backoff, so the helper must also clear
+    status.operationState in that case, and must never interrupt a running attempt);
+  * the load balancer controller is NOT kicked any more: neither the ALB wait in
+    scripts/cloudfront-attach-origin.sh nor hub:settle (kind-kro-ack) touch it. Its retry is
+    already capped at 1m, so a kick bypasses a timer the app does not wait on (PR #1256 review).
 
 Everything runs with bash against fake `kubectl`/`aws` and a no-op `sleep`. No cluster.
 
-Run:  python -m pytest workshop/scripts/tests/test_install_r1_lbc_kick.py -q
+Run:  python -m pytest workshop/scripts/tests/test_argocd_app_kick.py -q
 """
 import json
 import os
@@ -106,60 +106,14 @@ def test_kick_unreadable_app_is_rc1(tmp_path):
     assert r.returncode == 1
 
 
-# ── cloudfront-attach-origin.sh: ALB wait loop ─────────────────────────────────────────
-def _attach_bin(tmp_path, app_json, alb_after):
-    b = _fake_bin(tmp_path, app_json)
-    # aws: ALB missing for the first `alb_after` describe calls, then present; the
-    # distribution already points at it, so the script exits 0 right after the wait.
-    (b / "aws").write_text(
-        '#!/usr/bin/env bash\n'
-        'case "$*" in\n'
-        '  *"eks update-kubeconfig"*) exit 0;;\n'
-        '  *"describe-load-balancers"*)\n'
-        '     N=$(cat "$T/n" 2>/dev/null || echo 0); echo $((N+1)) > "$T/n"\n'
-        f'     if [ "$N" -lt {alb_after} ]; then echo None; else printf "arn:alb\\tdns\\tinternal\\tactive\\n"; fi;;\n'
-        '  *"list-distributions"*) echo E123;;\n'
-        '  *"get-distribution "*) echo vo_123;;\n'
-        '  *"get-vpc-origin"*) echo arn:alb;;\n'
-        '  *) :;;\n'
-        'esac\n')
-    os.chmod(b / "aws", 0o755)
-    return b
+# ── cloudfront-attach-origin.sh: no LBC kick ───────────────────────────────────────────
+def test_attach_does_not_kick_lbc():
+    text = open(ATTACH).read()
+    assert "argocd-app-kick" not in text
+    assert "lbc_kick" not in text
 
 
-def _run_attach(tmp_path, b):
-    env = _env(tmp_path, b, HUB_CLUSTER_NAME="hub", AWS_REGION="r", PLATFORM_CONFIG_FILE="/nonexistent")
-    return subprocess.run(["bash", ATTACH], env=env, capture_output=True, text=True, timeout=60)
-
-
-def test_attach_kicks_lbc_in_backoff_at_most_three_times(tmp_path):
-    # ALB appears after 40 polls (600 s of fake time): kicks at 120, 180, 240 s, then capped.
-    b = _attach_bin(tmp_path, BACKOFF, alb_after=40)
-    r = _run_attach(tmp_path, b)
-    assert r.returncode == 0, r.stderr
-    assert len(_patches(tmp_path)) == 3, r.stderr
-    assert "already pointed at the current ALB" in r.stderr
-    assert "kick aws-load-balancer-controller-hub: started a fresh sync" in r.stderr
-
-
-def test_attach_no_kick_before_two_minutes(tmp_path):
-    # ALB after 6 polls (90 s): the kick window is never reached.
-    b = _attach_bin(tmp_path, BACKOFF, alb_after=6)
-    r = _run_attach(tmp_path, b)
-    assert r.returncode == 0, r.stderr
-    assert _patches(tmp_path) == []
-    assert not (tmp_path / "kubectl.calls").exists()
-
-
-def test_attach_no_kick_when_lbc_healthy(tmp_path):
-    b = _attach_bin(tmp_path, HEALTHY, alb_after=20)
-    r = _run_attach(tmp_path, b)
-    assert r.returncode == 0, r.stderr
-    assert _patches(tmp_path) == []
-    assert "Healthy, nothing to do" in r.stderr
-
-
-# ── hub:settle: LBC remediation ────────────────────────────────────────────────────────
+# ── hub:settle: no LBC kick, crossplane-base only ────────────────────────────────────────────────────────
 def settle_block(text=None):
     tasks = yaml.safe_load(text if text is not None else open(PROVIDER_TF))["tasks"]
     b = tasks["hub:settle"]["cmds"][0]
@@ -188,14 +142,9 @@ STUCK = "\n".join(["aws-load-balancer-controller-hub OutOfSync Progressing"] +
 PROVIDERS_OK = "provider-aws-iam True True xpkg/iam 5m\n"
 
 
-def test_settle_kicks_lbc_at_most_three_times(tmp_path):
+def test_settle_never_kicks_lbc(tmp_path):
+    # LBC parked in backoff and Progressing for the whole settle; providers Healthy, so the
+    # crossplane-base remediation stays off too: no patch at all.
     r = run_settle(tmp_path, settle_block(), BACKOFF, STUCK, PROVIDERS_OK)
-    assert len(_patches(tmp_path)) == 3, r.stdout + r.stderr
-    assert "kick aws-load-balancer-controller-hub: started a fresh sync" in r.stdout
-
-
-def test_settle_no_lbc_kick_when_healthy(tmp_path):
-    table = STUCK.replace("aws-load-balancer-controller-hub OutOfSync Progressing",
-                          "aws-load-balancer-controller-hub Synced Healthy")
-    run_settle(tmp_path, settle_block(), HEALTHY, table, PROVIDERS_OK)
-    assert _patches(tmp_path) == []
+    assert _patches(tmp_path) == [], r.stdout + r.stderr
+    assert "aws-load-balancer-controller" not in settle_block()
