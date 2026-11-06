@@ -586,8 +586,21 @@ tasks:
 
       # Phase 2: delete spoke clusters via fleet overlay + wait for AWS deletion
       - '{{.DESTROY_MARK}} "2 spokes $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
-      - printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters...{{.C_RESET}}\n'
-      - task: spokes:disable-all
+      # Phase 2 runs in the background, alongside Phase 2.5: both only need the hub
+      # controllers alive, and Phase 2.5 spends ~12 min waiting on the DevLake RDS delete
+      # while Phase 2 spends ~7 min waiting on the spoke clusters. Its output goes to
+      # private/destroy-phase2.log and is printed when it is waited for, before Phase 3.
+      # A failure still stops the destroy, as when it ran in the foreground.
+      - |
+        P="{{.REPO}}/private/destroy-phase2"
+        mkdir -p "{{.REPO}}/private"; rm -f "$P.rc" "$P.log" "$P.pid"
+        printf '{{.C_STEP}}▸ Phase 2 — deleting spoke clusters (in the background, alongside Phase 2.5; log: %s.log)...{{.C_RESET}}\n' "$P"
+        # Started by a real sh in its own session (setsid), fds redirected: go-task's own
+        # shell neither gives a waitable OS pid for `&` nor lets a job outlive its cmd,
+        # and it stops the cmd's process group when the cmd ends.
+        printf '%s\n' 'task spokes:disable-all; echo $? > "$1"' > "$P.sh"
+        S=""; if command -v setsid >/dev/null 2>&1; then S=setsid; fi
+        sh -c '$1 sh "$2" "$3" > "$4" 2>&1 < /dev/null & echo $! > "$5"' _ "$S" "$P.sh" "$P.rc" "$P.log" "$P.pid"
 
       # Phase 2.5: release the DevLake RDS while the hub controllers are still alive,
       # and WAIT (bounded) for them to delete its AWS resources (DB cluster + instance,
@@ -801,6 +814,25 @@ tasks:
           printf '{{.C_OK}}  ✓ DevLake RDS resources deleted.{{.C_RESET}}\n'
         else
           printf '{{.C_ERR}}  ⚠ DevLake RDS resources still present after %ss; continuing (the consumer sweep catches leftovers).{{.C_RESET}}\n' "$WAIT_MAX"
+        fi
+
+      # Phase 2 (started before Phase 2.5) must be done before the hub goes.
+      - |
+        P="{{.REPO}}/private/destroy-phase2"
+        printf '{{.C_STEP}}▸ Phase 2 — waiting for the spoke deletion started before Phase 2.5...{{.C_RESET}}\n'
+        # Done when its exit code is written (go-task's shell has no `kill -0`).
+        W=0
+        while [ -f "$P.pid" ] && [ ! -s "$P.rc" ]; do
+          if [ "$W" -ge {{.PHASE2_WAIT_MAX | default "3600"}} ]; then
+            printf '{{.C_ERR}}  ⚠ Phase 2 still running after %ss; not waiting longer.{{.C_RESET}}\n' "$W"; break
+          fi
+          sleep 2; W=$((W + 2))
+        done
+        printf '%s\n' '----- Phase 2 (spokes:disable-all) -----'; cat "$P.log" 2>/dev/null || true
+        printf '%s\n' '----------------------------------------'
+        RC=$(cat "$P.rc" 2>/dev/null || echo 1)
+        if [ "$RC" != 0 ]; then
+          printf '{{.C_ERR}}✗ Phase 2 (spokes:disable-all) failed (rc=%s).{{.C_RESET}}\n' "$RC"; exit "$RC"
         fi
 
       # Phase 3: destroy the hub (addons → EKS → Kind → IAM → Secrets)
@@ -3431,8 +3463,13 @@ tasks:
         printf '{{.C_ERR}}▸ Pruning app %s — this DELETES the live cluster {{.CLUSTER}} + its VPC.{{.C_RESET}}\n' "$APP"
         PRUNED=false; TRIGGERED=false
         # The kubectl steps below need the hub kubeconfig; (re)write it the way `destroy` does.
-        aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
-          --kubeconfig {{.REPO}}/private/hub-kubeconfig >/dev/null 2>&1 || true
+        # Written aside then renamed: destroy runs this alongside Phase 2.5, which reads
+        # the same file, and a rewrite in place can be seen half-written.
+        KCT="{{.REPO}}/private/hub-kubeconfig.$$"
+        if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
+            --kubeconfig "$KCT" >/dev/null 2>&1 && [ -s "$KCT" ]; then
+          mv -f "$KCT" {{.REPO}}/private/hub-kubeconfig || true
+        else rm -f "$KCT"; fi
         KC_HUB="kubectl --kubeconfig {{.REPO}}/private/hub-kubeconfig"
         # A prune is confirmed only by its effect: the kro EksclusterWithVpc instance the app
         # renders (kro-clusters puts it in a namespace named after the cluster) is gone or
