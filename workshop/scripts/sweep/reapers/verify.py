@@ -8,6 +8,7 @@ the residue list. The orchestrator turns a non-empty residue into a non-zero exi
 """
 
 from ..context import name_is_ours
+from . import oidc as oidc_reaper
 from . import residue as residue_reaper
 from .logs import log_group_is_ours
 
@@ -108,6 +109,11 @@ def run(ctx):
                     _add(f"sg:{ide_vpc}/{sg}")
         except Exception as e:
             log(f"  [verify] IDE VPC security groups: {e}")
+        try:  # IAM OIDC providers of our deleted clusters (no prefix tag: 17d misses them)
+            for arn in oidc_reaper.owned_providers(ctx) or []:
+                _add(f"oidc-provider:{arn.rsplit('/', 1)[-1]}")
+        except Exception as e:
+            log(f"  [verify] OIDC providers: {e}")
         try:  # unassociated prefixed EIPs
             for a in ec2.describe_addresses().get("Addresses", []):
                 if a.get("AssociationId"):
