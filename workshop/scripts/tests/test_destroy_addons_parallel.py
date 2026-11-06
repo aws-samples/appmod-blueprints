@@ -77,6 +77,7 @@ def run(tmp_path_factory):
         pytest.skip("go-task not on PATH")
     tmp = tmp_path_factory.mktemp("destroy-addons-parallel")
     tvars, cmd = _step7()
+    tvars = dict(tvars, ADDON_DELETE_PARALLEL="8")  # the cap under test (default: 16)
     bindir = tmp / "bin"
     bindir.mkdir()
     (bindir / "kubectl").write_text(TIMED_FAKE.replace("{python}", sys.executable))
@@ -141,3 +142,10 @@ def test_parallelism_is_capped(run):
         cur += d
         peak = max(peak, cur)
     assert peak <= 8, f"{peak} addons deleted at once (cap 8)"
+
+
+def test_default_parallelism_covers_the_widest_live_wave():
+    # Live (agentic hub): wave 5 has 12 addons. With 8 at a time it took two batches.
+    import re
+    default = int(re.search(r'default "(\d+)"', _step7()[0]["ADDON_DELETE_PARALLEL"]).group(1))
+    assert default >= 12, default
