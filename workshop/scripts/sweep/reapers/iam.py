@@ -67,19 +67,69 @@ def reap(ctx):
             log(f"  IAM: {tag_errors} role tag lookup(s) failed — those roles were left alone")
         log(f"  Deleted {count} IAM roles")
 
+        tag_owned_deleted = 0
         for pol in sum(
             [p["Policies"] for p in iam.get_paginator("list_policies").paginate(Scope="Local")],
             [],
         ):
             n = pol["PolicyName"]
+            by_tag = False
             if not _is_owned(n):
-                continue
+                if any(x in n for x in _skip) or n.startswith(_stack_prefix):
+                    continue
+                if not policy_tag_owned(ctx, pol):
+                    continue
+                by_tag = True
             try:
                 for v in iam.list_policy_versions(PolicyArn=pol["Arn"])["Versions"]:
                     if not v["IsDefaultVersion"]:
                         iam.delete_policy_version(PolicyArn=pol["Arn"], VersionId=v["VersionId"])
                 iam.delete_policy(PolicyArn=pol["Arn"])
+                if by_tag:
+                    tag_owned_deleted += 1
+                    log(f"  Deleted IAM policy {n} (owned by tag, no attachment)")
             except Exception:
                 pass
+        if tag_owned_deleted:
+            log(f"  Deleted {tag_owned_deleted} unprefixed IAM policy(ies) owned by tag")
     except Exception as e:
         log(f"IAM: {e}")
+
+
+def policy_tag_owned(ctx, pol):
+    """A customer-managed policy whose NAME is outside our prefix (the HuggingFaceModel
+    <model>-s3-policy keeps its legacy unprefixed name on the default prefix) is ours only
+    when BOTH hold:
+      * it carries platform.gitops.io/prefix=<prefix>, or it was created by OUR hub's ACK
+        capability (eks:eks-capability-arn naming exactly <prefix>-hub), and no
+        aws:cloudformation:* tag;
+      * it is attached to nothing (AttachmentCount 0): a fixed name can be adopted by a
+        second stack in the account (adopt-or-create), and a policy still attached may be
+        that stack's, so it is never taken.
+    The live listing's AttachmentCount is used; a failed tag lookup means "not ours"."""
+    if pol.get("AttachmentCount", 1) != 0:
+        return False
+    try:
+        tags = {t["Key"]: t["Value"]
+                for t in ctx.iam.list_policy_tags(PolicyArn=pol["Arn"]).get("Tags", [])}
+    except Exception:
+        return False
+    if any(k.startswith("aws:cloudformation:") for k in tags):
+        return False
+    if tags.get(ctx.OWNER_PREFIX_TAG) == ctx.prefix:
+        return True
+    cap = tags.get("eks:eks-capability-arn", "")
+    return ":capability/" in cap and cap.split(":capability/", 1)[1].split("/", 1)[0] == ctx.hub
+
+
+def owned_orphan_policies(ctx):
+    """Names of the unprefixed, tag-owned, unattached policies still present (§17)."""
+    out = []
+    for p in ctx.iam.get_paginator("list_policies").paginate(Scope="Local"):
+        for pol in p.get("Policies", []):
+            n = pol["PolicyName"]
+            if n.startswith(ctx.prefix + "-"):
+                continue  # prefix-named: deleted by name in §7 (not re-checked here)
+            if policy_tag_owned(ctx, pol):
+                out.append(n)
+    return out
