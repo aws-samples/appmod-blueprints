@@ -15,6 +15,11 @@ workload_repo_url: ""
 # (kubernetes.clusters), kubernetesIngestor.clusters, and the k8s-config.yaml
 # ConfigMap consumed by Argo CD. Empty list (default) means hub-only mode.
 spoke_clusters: []
+# Argo CD host (no scheme). Set by the registry to the EKS capability URL host, or to
+# ingress_domain_name when there is none (Argo CD then lives under /argocd).
+argocd_hostname: ""
+# "true" when the cluster carries enable_langfuse=true; adds the Langfuse homepage Quick Link.
+langfuse_enabled: "false"
 global:
   aws_cluster_name: ""
   clusterName: ""
