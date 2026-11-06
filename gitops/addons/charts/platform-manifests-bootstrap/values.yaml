@@ -36,6 +36,61 @@ customNodepools:
   pools: []
 #
 # ─────────────────────────────────────────────────────────────────────────────
+# customNodeClasses.classes -- the CONSUMER's custom EKS Auto Mode NodeClasses.
+# ALWAYS rendered, on every cluster, exactly like customNodepools.pools above:
+# same shape, same contract, no gate. Empty by default, so the generic solution
+# is unchanged and keeps relying on the Auto Mode built-in `default` NodeClass.
+#
+# WHY THIS KEY EXISTS. A consumer that needs its own NodeClass -- an ODCR
+# selector, a single-subnet pin, a larger ephemeral disk -- had NO GitOps route
+# to ship one. Nothing in gitops/ rendered a NodeClass, and the appset-chart
+# cannot deliver a bare manifest from an arbitrary git repo: both
+# `chartConfig.path` and `additionalResources` resolve against
+# `$values.repoURLGit`, i.e. this repository. The only route left was a manual
+# `kubectl apply`, which no cluster rebuild replays -- so any NodePool naming
+# that NodeClass came back `NodeClassReady=False: NodeClass not found on
+# cluster` and provisioned nothing.
+#
+# SYNC WAVE. A NodePool whose nodeClassRef names a missing NodeClass stays
+# NotReady. Both objects are in the SAME Application, and Helm's render order
+# guarantees no ordering, so each NodeClass is stamped with
+# `argocd.argoproj.io/sync-wave: "-1"` -- lower than the implicit 0 of the
+# NodePools. Override via `customNodeClasses.syncWave` only if an even earlier
+# wave is required.
+#
+#   OPT-OUT NOTE: emptying this on a cluster whose NodePools reference one of
+#   these NodeClasses makes those pools NotReady -- only empty it once nothing
+#   references them.
+#
+# Each entry: { name, labels (optional), annotations (optional),
+#               spec: <eks.amazonaws.com/v1 NodeClass spec> }.
+# `default` is rejected by the template: it is the Auto Mode built-in NodeClass
+# and the pools of this chart reference it.
+#
+# Example (values supplied by the consumer's overlay, never shipped here):
+#   customNodeClasses:
+#     classes:
+#       - name: gpu-reserved
+#         labels:
+#           node-class: gpu-reserved
+#         spec:
+#           role: <node role NAME, not ARN>
+#           subnetSelectorTerms:
+#             - tags:
+#                 Name: <subnet tag>
+#           securityGroupSelectorTerms:
+#             - tags:
+#                 kubernetes.io/cluster/<cluster>: owned
+#           ephemeralStorage:
+#             size: 100Gi
+# ─────────────────────────────────────────────────────────────────────────────
+customNodeClasses:
+  # syncWave -- applied to every rendered NodeClass. Must stay LOWER than the
+  # NodePools' wave (implicit 0) so the NodeClasses exist first.
+  syncWave: "-1"
+  classes: []
+#
+# ─────────────────────────────────────────────────────────────────────────────
 # fallbackNodepools.pools -- the generic REPLACEMENT pool, appended to the consumer
 # list ONLY when enableGeneralPurposeNodePool == "false" (the EKS Auto Mode built-in
 # general-purpose pool was dropped at cluster creation). Any name the consumer already
