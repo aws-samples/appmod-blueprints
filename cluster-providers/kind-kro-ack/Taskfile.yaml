@@ -1964,13 +1964,49 @@ tasks:
       #    AppmodService/CICDPipeline/RayService CRs so kro/ACK (still alive on the hub)
       #    delete the app-owned AWS resources (IAM roles/policies, ECR repos, DynamoDB) and
       #    the Rollouts/Services on the spokes. MUST happen before spoke-cluster deletion.
+      #    A workload whose destination cluster no longer exists (a spoke the caller
+      #    already deleted, e.g. agents-dev-cd on peeks-spoke-dev) can never complete its
+      #    resources-finalizer: its resources went with the cluster. Waiting 300 s for it
+      #    only burns the caller's timeout, so its finalizer is dropped at once. A
+      #    destination counts as gone only on positive evidence: no Argo CD cluster Secret
+      #    names it, or the EKS cluster its Secret names (aws_cluster_name) is not found.
+      #    When the cluster Secrets cannot be read, every destination counts as live.
       - printf '{{.C_ERR}}▸ Deleting application workloads (non-default/platform projects)...{{.C_RESET}}\n'
       - cmd: |
-          for app in $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.project}{"\n"}{end}' 2>/dev/null | awk '$2!="default" && $2!="platform" && $2!=""{print $1}'); do
+          CLUSTERS_OK=true
+          CLUSTERS=$({{.KC}} get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null \
+            | jq -r '.items[] | [((.data.name // "") | @base64d), ((.data.server // "") | @base64d), .metadata.name,
+                ((.metadata.labels // {}).aws_cluster_name // (.metadata.annotations // {}).aws_cluster_name // "")] | @tsv' 2>/dev/null) \
+            || CLUSTERS_OK=false
+          # 0 = reachable (or unknown), 1 = gone. $1 = destination name, $2 = destination server.
+          dest_gone() {
+            [ "$CLUSTERS_OK" = true ] || return 1
+            if [ -z "$1" ] && [ -z "$2" ]; then return 1; fi
+            if [ "$1" = in-cluster ] || [ "$2" = https://kubernetes.default.svc ]; then return 1; fi
+            ROW=$(printf '%s\n' "$CLUSTERS" | awk -F '\t' -v n="$1" -v s="$2" \
+              '(n != "" && ($1 == n || $3 == n)) || (s != "" && $2 == s) {print; exit}')
+            [ -n "$ROW" ] || return 0
+            EKS=$(printf '%s\n' "$ROW" | cut -f4)
+            [ -n "$EKS" ] || return 1
+            ERR=$(aws eks describe-cluster --name "$EKS" --region "{{.AWS_REGION}}" \
+              --query cluster.status --output text 2>&1) && return 1
+            case "$ERR" in *ResourceNotFoundException*) return 0 ;; esac
+            return 1
+          }
+          WORKLOADS=$({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.project}{" "}{.spec.destination.name}{"|"}{.spec.destination.server}{"\n"}{end}' 2>/dev/null \
+            | awk '$2!="default" && $2!="platform" && $2!=""{print $1 " " $3}' || true)
+          printf '%s\n' "$WORKLOADS" | while read app dest; do
+            [ -n "$app" ] || continue
+            if dest_gone "${dest%%|*}" "${dest#*|}"; then
+              echo "Deleting workload $app (its destination cluster is gone: dropping its finalizer)..."
+              {{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+              {{.KC}} delete application "$app" -n argocd --wait=false 2>/dev/null || true
+              continue
+            fi
             echo "Deleting workload $app..."
-            {{.KC}} delete application $app -n argocd --timeout=300s 2>/dev/null || \
-            ({{.KC}} patch application $app -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
-             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null) || true
+            {{.KC}} delete application "$app" -n argocd --timeout=300s 2>/dev/null || \
+            ({{.KC}} patch application "$app" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null && \
+             {{.KC}} delete application "$app" -n argocd --wait=false 2>/dev/null) || true
           done
         ignore_error: true
       # 6. Delete SPOKE CLUSTERS (after their workloads, before hub addons): the hub
