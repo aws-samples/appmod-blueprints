@@ -61,6 +61,12 @@ platformTags:  # Optional AWS tags on the hub and every spoke (EKS, VPC, NAT, EI
 | `task destroy` | Full teardown: delete KRO instances, wait for ACK cleanup, delete Kind |
 | `task credentials:refresh` | Force-refresh AWS credentials secret |
 
+`task destroy-kind` (like `docker stop` on the kind nodes or `kind delete cluster`) only removes
+the kind reconciler and issues no AWS delete. `task destroy` and `task hub:destroy-addons` delete
+the hub's Applications while its controllers run, then the hub: they delete the spokes and
+everything the hub manages. Read what a target executes before running it. Details:
+[custom-install.md, Stopping the bootstrap reconciler vs running a destroy target](../../docs/install/custom-install.md#stopping-the-bootstrap-reconciler-vs-running-a-destroy-target).
+
 ## Bootstrap Flow
 
 ```
@@ -104,6 +110,18 @@ task install
 ## Multi-hub fleet scoping (opt-in)
 
 Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `config.local.yaml`. `hub:seed` then writes `fleet_scope_by_prefix: "true"` into the `<hub>/config` metadata, which ESO copies onto the hub cluster-secret, and the hub discovers only `clusters/<resourcePrefix>/*.json` and `fleet/members/<resourcePrefix>/*/values.yaml`. When the key is absent or `false`, nothing is written and the flat `clusters/*.json` / `fleet/members/*/values.yaml` layout is used, exactly as before. A value set by hand on `<hub>/config` is kept on re-seed; to turn it off, remove the key from `<hub>/config` too.
+
+> [!WARNING]
+> Turn it on, with a unique non-empty `resourcePrefix`, **before the first install** whenever
+> another hub runs in the same AWS account or the fleet repo is a fork of, or shared with, another
+> hub's fleet repo. Without it this hub provisions the other hubs' spoke entries: ACK adopts their
+> EKS clusters (`adopt-or-create`, `deletion-policy: delete`), duplicates their VPC, NAT gateways
+> and subnets, and any delete on this hub deletes their clusters. When those spokes do not exist
+> yet, the likely case on a new account, this hub creates them under their names instead, and the
+> other hub's install fails on names already taken. An empty `resourcePrefix` falls
+> back to the flat layout, and spoke names must still be unique in the account and region.
+> Prevention and recovery steps:
+> [custom-install.md, section 3a](../../docs/install/custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
 
 ## Credentials on Kind
 

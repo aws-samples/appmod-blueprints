@@ -244,6 +244,8 @@ Providers read shared configuration from `gitops/config.yaml`:
 | `aws.accountId` | AWS account ID |
 | `domain` | Ingress hostname. Must be known before install (see Domain handling above) |
 | `insecure` | ALB serves plain HTTP because TLS is terminated upstream (e.g. CloudFront). Also makes the platform ALB `internal` and names it `<clusterName>-platform` |
+| `resourcePrefix` | Prefix of account/region-global resource names. Must be unique per hub when several hubs share an account |
+| `fleetScopeByPrefix` | `kind-kro-ack` only, default `false`. When `true`, the hub reads only `clusters/<resourcePrefix>/*.json` and `fleet/members/<resourcePrefix>/*/values.yaml`. Set it before the first install when another hub runs in the same account or the fleet repo is a fork of, or shared with, another hub's: otherwise the hub adopts the other hubs' spokes and its teardown deletes them ([custom-install.md, section 3a](../docs/install/custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet)) |
 | `identityCenter.*` | AWS Identity Center config (for EKS ArgoCD Capability) |
 | `argocdCapability.*` | ArgoCD capability config |
 
