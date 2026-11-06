@@ -164,6 +164,10 @@ def _run(tmp):
     gvars = {k: "" for k in ("C_ERR", "C_RESET", "C_OK", "C_INFO", "C_STEP")}
     gvars.update({"CONFIG_FILE": str(tmp / "config.yaml"), "HUB_KUBECONFIG": str(hub_kc),
                   "AWS_REGION": "eu-west-3", "RESOURCE_PREFIX": "acme", "LB_DRAIN_WAIT": "60"})
+    # The destroy task's deadline helpers (no deadline file here: no time budget).
+    _dv = src["tasks"]["destroy"]["vars"]
+    gvars.update({k: _dv[k] for k in ("DESTROY_DEADLINE_FILE", "DL_RESERVE_P1", "DL_RESERVE_P3", "DL_FN") if k in _dv})
+    gvars["DESTROY_DEADLINE_FILE"] = str(tmp / "no-deadline")
     tf = {"version": "3", "set": ["errexit", "nounset", "pipefail"], "vars": gvars,
           "tasks": {"run": {"cmds": [_phase1(src)]}}}
     (tmp / "Taskfile.yml").write_text(yaml.safe_dump(tf, sort_keys=False))
