@@ -1,7 +1,8 @@
 """Final authoritative re-sweep (§16): re-delete CloudFront/ALB/RDS/AMP that the
-still-alive hub controllers may have RE-CREATED before §6/§6b killed them, re-clear
-the IDE VPC SGs, then wait (ENI gate) for service-managed ENIs to detach so CFN can
-delete the subnets. Cheap when nothing was recreated (the common case)."""
+still-alive hub controllers may have RE-CREATED before §6/§6b killed them, wait (ENI
+gate) for service-managed ENIs to detach so CFN can delete the subnets, then re-clear
+the IDE VPC SGs, retried while their ENIs release. Cheap when nothing was recreated
+(the common case)."""
 
 import time
 
@@ -110,14 +111,12 @@ def run(ctx):
         except Exception as e:
             log(f"  [re-sweep] CloudFront: {e}")
 
-        # 16e. Re-clear leftover SGs in the IDE VPC (recreated / missed by §15)
-        if ide_vpc:
-            n = _delete_vpc_sgs(ide_vpc)
-            if n:
-                log(f"  [re-sweep] Cleared {n} more leftover SG(s) in IDE VPC {ide_vpc}")
-
-        # 16f. ENI gate — wait for the service-managed ENIs that block subnet deletion
+        # 16e. ENI gate — wait for the service-managed ENIs that block subnet deletion
         #      (cloudfront_managed / amp_collector / RDSNetworkInterface) to detach.
+        #      It runs BEFORE the SG re-clear (16f): an SG still attached to an ENI that
+        #      is being released (e.g. the AMG workspace SG, whose ENIs go minutes after
+        #      DeleteWorkspace) fails with DependencyViolation, and a single attempt then
+        #      leaves it to block the IDE VPC delete.
         if ide_vpc:
             def _blocking_enis():
                 out = []
@@ -145,6 +144,24 @@ def run(ctx):
                 return False
 
             poll_until(_enis_cleared, attempts=36, delay=20)
+
+        # 16f. Re-clear leftover SGs in the IDE VPC (recreated / missed by §15), retried
+        #      (bounded, ~5 min) while ENIs not covered by the gate above still release.
+        if ide_vpc:
+            _sg = {"n": 0}
+
+            def _sgs_cleared():
+                _sg["n"] += _delete_vpc_sgs(ide_vpc)
+                left = ctx.leftover_vpc_sgs(ide_vpc)
+                if left is None or not left:
+                    return True
+                log(f"  [re-sweep] {len(left)} SG(s) still in IDE VPC {ide_vpc} "
+                    f"({', '.join(left)}), retrying...")
+                return False
+
+            poll_until(_sgs_cleared, attempts=15, delay=20)
+            if _sg["n"]:
+                log(f"  [re-sweep] Cleared {_sg['n']} more leftover SG(s) in IDE VPC {ide_vpc}")
         else:
             log("  [re-sweep] IDE VPC not found — skipping final re-sweep")
     except Exception as e:

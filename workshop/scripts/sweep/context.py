@@ -257,19 +257,33 @@ class SweepContext:
             except Exception:
                 pass
 
+    def _non_cfn_vpc_sgs(self, vpc_id):
+        """The non-default security groups of a VPC that CloudFormation does not own (no
+        aws:cloudformation:* tag), tagged by us or not. Raises when the call fails."""
+        return [
+            s for s in self.ec2.describe_security_groups(
+                Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+            )["SecurityGroups"]
+            if s["GroupName"] != "default"
+            and not any(t["Key"].startswith("aws:cloudformation:") for t in s.get("Tags", []))
+        ]
+
+    def leftover_vpc_sgs(self, vpc_id):
+        """'sg-…(name)' for each SG delete_vpc_sgs() would still have to delete in this VPC
+        (an SG CloudFormation does not own blocks the CFN delete of that VPC), or None when
+        they cannot be listed."""
+        try:
+            return [f"{s['GroupId']}({s.get('GroupName', '')})" for s in self._non_cfn_vpc_sgs(vpc_id)]
+        except Exception:
+            return None
+
     def delete_vpc_sgs(self, vpc_id):
         """Delete every non-default, non-CloudFormation-owned security group in a VPC.
         Two passes (revoke all rules, then delete all) to survive circular references.
         Leaves CFN-owned SGs (aws:cloudformation:* tag) and the VPC itself untouched.
         Returns the number of SGs deleted."""
         try:
-            sgs = [
-                s for s in self.ec2.describe_security_groups(
-                    Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
-                )["SecurityGroups"]
-                if s["GroupName"] != "default"
-                and not any(t["Key"].startswith("aws:cloudformation:") for t in s.get("Tags", []))
-            ]
+            sgs = self._non_cfn_vpc_sgs(vpc_id)
         except Exception:
             return 0
         for s in sgs:
