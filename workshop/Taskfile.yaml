@@ -445,8 +445,45 @@ tasks:
       DEVLAKE_RDS_NS: '{{.DEVLAKE_RDS_NS | default "devlake"}}'
       DEVLAKE_RDS_NAME: '{{.DEVLAKE_RDS_NAME | default "devlake-mysql"}}'
       RDS_DELETE_WAIT: '{{.RDS_DELETE_WAIT | default "900"}}'
+      # Time budget. Under the CloudFormation stack delete, the Bootstrap build runs this
+      # destroy over SSM with a 40 min executionTimeout (kept under the 60 min custom
+      # resource ServiceTimeout); when SSM kills it, the phases after the kill never run
+      # and the build cannot tell how far it got. So under the stack delete (the
+      # /<prefix>/destroy-status marker exists), destroy gets a deadline DESTROY_BUDGET
+      # seconds after its start (default 2100 = 35 min, 5 min under the SSM limit): each
+      # bounded wait also stops early enough to leave the later phases their share
+      # (DL_RESERVE_* below), and the provider stops waiting near the deadline. What is
+      # still being deleted then is the stack sweep's job (it runs right after and deletes
+      # the capabilities, the hub, and every AWS resource class this destroy creates).
+      # Anywhere else there is no deadline unless DESTROY_BUDGET=<s> is given.
+      DESTROY_DEADLINE_FILE: "{{.REPO}}/private/destroy-deadline"
+      # Seconds kept for what follows each phase's waits: Phase 1 keeps room for
+      # Phase 2/2.5 (~12 min live) and Phase 3; Phase 2.5 and the Phase 2 wait keep room
+      # for Phase 3 (steps 0-7 ~13 min live with fix 1 and the early observability delete).
+      DL_RESERVE_P1: '{{.DL_RESERVE_P1 | default "1500"}}'
+      DL_RESERVE_P3: '{{.DL_RESERVE_P3 | default "900"}}'
+      # dl_left R: seconds left before the deadline minus R (999999 without a deadline);
+      # dl_cap N R: min(N, dl_left R), never below 0.
+      DL_FN: >-
+        dl_left() { D=$(cat "{{.DESTROY_DEADLINE_FILE}}" 2>/dev/null || echo 0);
+        case "$D" in ''|*[!0-9]*|0) echo 999999 ;; *) echo $(( D - ${1:-0} - $(date +%s) )) ;; esac; };
+        dl_cap() { L=$(dl_left "${2:-0}"); if [ "$L" -lt 0 ]; then L=0; fi;
+        if [ "$1" -lt "$L" ]; then echo "$1"; else echo "$L"; fi; }
     cmds:
       - printf '{{.C_STEP}}▸ Workshop destroy starting (workloads → spokes → hub){{.C_RESET}}\n'
+      # The deadline (see DESTROY_BUDGET above). Written first, read by every phase.
+      - |
+        mkdir -p "{{.REPO}}/private"; rm -f "{{.DESTROY_DEADLINE_FILE}}"
+        B="{{.DESTROY_BUDGET | default ""}}"
+        if [ -z "$B" ] && aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/destroy-status" --region "{{.AWS_REGION}}" \
+            --cli-connect-timeout 5 --cli-read-timeout 10 >/dev/null 2>&1; then
+          B=2100
+        fi
+        case "$B" in ''|0|*[!0-9]*) printf '{{.C_INFO}}  No time budget: every wait keeps its own cap.{{.C_RESET}}\n' ;;
+          *) echo $(( $(date +%s) + B )) > "{{.DESTROY_DEADLINE_FILE}}"
+             printf '{{.C_INFO}}  Time budget: %ss (deadline %s UTC); what is still being deleted then is left to the stack sweep.{{.C_RESET}}\n' \
+               "$B" "$(date -u -d "@$(cat "{{.DESTROY_DEADLINE_FILE}}")" +%H:%M:%S 2>/dev/null || cat "{{.DESTROY_DEADLINE_FILE}}")" ;;
+        esac
 
       # Phase 0: hub kubeconfig
       - '{{.DESTROY_MARK}} "0 kubeconfig $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
@@ -461,6 +498,7 @@ tasks:
       # block the spoke VPC deletion.
       - '{{.DESTROY_MARK}} "1 drain $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
+        {{.DL_FN}}
         printf '{{.C_STEP}}▸ Phase 1 — draining workloads from spoke clusters...{{.C_RESET}}\n'
         PREFIX=$(yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}})
         REGION=$(yq '.aws.region' {{.CONFIG_FILE}})
@@ -536,7 +574,7 @@ tasks:
                 $K delete "${REF%%/*}" "${REF#*/}" -n "${T##*@}" --wait=false --ignore-not-found >/dev/null 2>&1 || true
               done
               W=0
-              while [ "$W" -lt {{.OWNER_DRAIN_WAIT | default "180"}} ]; do
+              while [ "$W" -lt "$(dl_cap {{.OWNER_DRAIN_WAIT | default "180"}} {{.DL_RESERVE_P1}})" ]; do
                 LEFT=""
                 for T in $OWNERS; do
                   REF="${T%@*}"
@@ -557,8 +595,11 @@ tasks:
                   kubectl --kubeconfig "$KC" delete svc "$SVC" -n "$NS" \
                     --timeout=60s 2>/dev/null || true
                 done || true
+            # Not waited for: a PVC still mounted stays Terminating until its pod goes (live:
+            # 120 s lost per spoke on bifrost-postgresql), and its volume is released with
+            # the cluster either way (the sweep's PVC-volume net takes a stranded one).
             kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
-              --timeout=120s 2>/dev/null || true
+              --wait=false 2>/dev/null || true
             rm -f "$KC"
             # Gate: the spoke's load balancers are really gone (bounded). An LB still in
             # its VPC when the cluster goes blocks the subnet/VPC delete.
@@ -566,10 +607,11 @@ tasks:
               --query cluster.resourcesVpcConfig.vpcId --output text 2>/dev/null || true)
             if [ -n "$VPC" ] && [ "$VPC" != None ]; then
               W=0; N=?
-              while [ "$W" -le {{.LB_DRAIN_WAIT | default "300"}} ]; do
+              while true; do
                 N=$(aws elbv2 describe-load-balancers --region "$REGION" \
                   --query "length(LoadBalancers[?VpcId=='$VPC'])" --output text 2>/dev/null || echo "?")
                 if [ "$N" = 0 ] || [ "$N" = "?" ]; then break; fi
+                if [ "$W" -ge "$(dl_cap {{.LB_DRAIN_WAIT | default "300"}} {{.DL_RESERVE_P1}})" ]; then break; fi
                 sleep 15; W=$((W + 15))
               done
               if [ "$N" = "?" ]; then
@@ -675,6 +717,7 @@ tasks:
       # deleted, or when ACK objects owned by the instance are still present.
       - '{{.DESTROY_MARK}} "2.5 devlake-rds $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - |
+        {{.DL_FN}}
         printf '{{.C_STEP}}▸ Phase 2.5 — releasing the DevLake RDS...{{.C_RESET}}\n'
         export KUBECONFIG={{.HUB_KUBECONFIG}}
         NS="{{.DEVLAKE_RDS_NS}}"; RDB="{{.DEVLAKE_RDS_NAME}}"
@@ -851,7 +894,7 @@ tasks:
         # Wait for the controllers to delete the AWS resources, bounded by wall-clock time
         # (each poll also spends time in kubectl, so a poll count would overrun WAIT_MAX).
         DEADLINE=$(( $(date +%s) + WAIT_MAX ))
-        DONE=false
+        DONE=false; BUDGET_STOP=false
         while true; do
           REMAIN=0
           if [ "$KRO_WAIT" = true ]; then REMAIN=$((REMAIN + $(ack_left))); fi
@@ -859,11 +902,19 @@ tasks:
           if [ "$REMAIN" = "0" ]; then DONE=true; break; fi
           LEFT=$(( DEADLINE - $(date +%s) ))
           if [ "$LEFT" -le 0 ]; then break; fi
+          # Time budget (stack delete): keep DL_RESERVE_P3 for Phase 3; the stack sweep
+          # deletes the RDS and its security group.
+          if [ "$(dl_left {{.DL_RESERVE_P3}})" -le 0 ]; then
+            printf '{{.C_ERR}}  ⚠ time budget: not waiting longer for %s DevLake RDS resource(s) (the stack sweep deletes the RDS and its security group).{{.C_RESET}}\n' "$REMAIN"
+            BUDGET_STOP=true; break
+          fi
           printf '{{.C_INFO}}  [%ss left] waiting for %s DevLake RDS resource(s) to be deleted...{{.C_RESET}}\n' "$LEFT" "$REMAIN"
           if [ "$LEFT" -lt "$POLL" ]; then sleep "$LEFT"; else sleep "$POLL"; fi
         done
         if [ "$DONE" = true ]; then
           printf '{{.C_OK}}  ✓ DevLake RDS resources deleted.{{.C_RESET}}\n'
+        elif [ "$BUDGET_STOP" = true ]; then
+          :
         else
           printf '{{.C_ERR}}  ⚠ DevLake RDS resources still present after %ss; continuing (the consumer sweep catches leftovers).{{.C_RESET}}\n' "$WAIT_MAX"
         fi
@@ -872,17 +923,25 @@ tasks:
       - |
         P="{{.REPO}}/private/destroy-phase2"
         printf '{{.C_STEP}}▸ Phase 2 — waiting for the spoke deletion started before Phase 2.5...{{.C_RESET}}\n'
+        {{.DL_FN}}
         # Done when its exit code is written (go-task's shell has no `kill -0`).
-        W=0
+        W=0; LATE=false
         while [ -f "$P.pid" ] && [ ! -s "$P.rc" ]; do
           if [ "$W" -ge {{.PHASE2_WAIT_MAX | default "3600"}} ]; then
             printf '{{.C_ERR}}  ⚠ Phase 2 still running after %ss; not waiting longer.{{.C_RESET}}\n' "$W"; break
+          fi
+          # Time budget: the spoke deletes have been submitted by now (Phase 2 waits for
+          # them for up to 30 min); the stack sweep deletes a spoke that is still there.
+          if [ "$(dl_left {{.DL_RESERVE_P3}})" -le 0 ]; then
+            printf '{{.C_ERR}}  ⚠ time budget: Phase 2 still running after %ss; going on with Phase 3 (the stack sweep deletes what is left).{{.C_RESET}}\n' "$W"
+            LATE=true; break
           fi
           sleep 2; W=$((W + 2))
         done
         printf '%s\n' '----- Phase 2 (spokes:disable-all) -----'; cat "$P.log" 2>/dev/null || true
         printf '%s\n' '----------------------------------------'
         RC=$(cat "$P.rc" 2>/dev/null || echo 1)
+        if [ "$LATE" = true ] && [ ! -s "$P.rc" ]; then RC=0; fi
         if [ "$RC" != 0 ]; then
           printf '{{.C_ERR}}✗ Phase 2 (spokes:disable-all) failed (rc=%s).{{.C_RESET}}\n' "$RC"; exit "$RC"
         fi
@@ -906,7 +965,9 @@ tasks:
               printf '{{.C_INFO}}  Stack delete in progress (/{{.RESOURCE_PREFIX}}/destroy-status set): the hub cluster deletion is not waited for; the stack sweep finishes it.{{.C_RESET}}\n'
             fi
           fi
-          cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy HUB_DELETE_WAIT="$WAIT"
+          DL=$(cat "{{.DESTROY_DEADLINE_FILE}}" 2>/dev/null || echo 0)
+          case "$DL" in ''|*[!0-9]*) DL=0 ;; esac
+          cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy HUB_DELETE_WAIT="$WAIT" DESTROY_DEADLINE="$DL"
 
       - '{{.DESTROY_MARK}} "done $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
       - printf '{{.C_OK}}✓ Workshop destroy complete.{{.C_RESET}}\n'
