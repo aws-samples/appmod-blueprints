@@ -22,6 +22,7 @@ from .reapers import (
     grafana,
     iam,
     logs,
+    oidc,
     rds,
     residue,
     resweep,
@@ -43,6 +44,7 @@ def main(region="us-west-2", prefix="peeks"):
     eks.reap_hub(ctx)                 # 6.   Hub EKS cluster (sets ctx.hub_vpc_id)
     eks.reap_orphan_spokes(ctx)       # 6b.  Orphaned spoke EKS clusters
     iam.reap(ctx)                     # 7.   IAM roles + customer-managed policies
+    oidc.reap(ctx)                    # 7b.  IAM OIDC providers of our deleted clusters
     secrets.reap(ctx)                 # 8.   Secrets Manager
     ecr.reap(ctx)                     # 8b.  ECR (Ray/vLLM repo)
     s3.reap(ctx)                      # 8c.  S3 (Ray model cache + deploy staging)

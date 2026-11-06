@@ -963,8 +963,11 @@ tasks:
           # exit code (|| { sleep; continue; }) and we keep polling — instead of piping straight
           # into `wc`, which would mask the failure and count empty output as UNHEALTHY=0 → a
           # false "all Healthy" pass on a transient read error (review #1053 r4).
-          NAMES=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          # kubectl JSONPath rejects the nested filter this used to read
+          # ("unterminated filter", kubectl 1.37), so every poll "failed" and the gate always
+          # ran to its cap. Read the HEALTHY column (3rd) of the table instead.
           LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) || { [ $((i % 4)) -eq 0 ] && printf '{{.C_WARN}}  [%ds] provider read failed, retrying...{{.C_RESET}}\n' "$((i*15))"; sleep 15; continue; }
+          NAMES=$(echo "$LIST" | awk 'NF>0 && $3!="True" {print $1}')
           UNHEALTHY=$(echo "$NAMES" | wc -w | tr -d ' ')
           TOTAL=$(echo "$LIST" | awk 'NF>0' | wc -l | tr -d ' ')
           [ "$UNHEALTHY" = "0" ] && [ "$TOTAL" -gt 0 ] &&             printf '{{.C_OK}}✓ All %s Crossplane providers Healthy.{{.C_RESET}}\n' "$TOTAL" && exit 0
@@ -987,7 +990,8 @@ tasks:
           fi
           sleep 15
         done
-        UNHEALTHY_LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Healthy")].status!="True")].metadata.name}' 2>/dev/null) || UNHEALTHY_LIST="<read failed>"
+        LIST=$(KUBECONFIG=$KC kubectl get providers.pkg.crossplane.io --no-headers 2>/dev/null) \
+          && UNHEALTHY_LIST=$(echo "$LIST" | awk 'NF>0 && $3!="True" {print $1}' | xargs) || UNHEALTHY_LIST="<read failed>"
         printf '{{.C_ERR}}⚠ Crossplane providers NOT all Healthy after 30min — continuing, but spoke provisioning may stall. Unhealthy: %s{{.C_RESET}}\n' "${UNHEALTHY_LIST:-<none-listed>}"
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 

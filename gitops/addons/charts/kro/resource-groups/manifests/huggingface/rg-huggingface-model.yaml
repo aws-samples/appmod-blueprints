@@ -71,6 +71,11 @@ spec:
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.iamNamePrefix}${schema.metadata.name}-s3-policy"}
         spec:
           name: ${schema.spec.iamNamePrefix}${schema.metadata.name}-s3-policy
+          # Same ownership tag as the role: on the default prefix the policy keeps its
+          # legacy unprefixed name, so the teardown sweep finds it by this tag.
+          tags:
+            - key: platform.gitops.io/prefix
+              value: ${schema.spec.resourcePrefix}
           policyDocument: |
             {
               "Version": "2012-10-17",

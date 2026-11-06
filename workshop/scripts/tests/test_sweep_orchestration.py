@@ -160,6 +160,7 @@ class SweepOrchestrationTest(unittest.TestCase):
             "Hub EKS cluster already gone",            # §6
             "No orphaned spoke clusters to delete",    # §6b
             "Deleted 0 IAM roles",                     # §7
+            "No orphaned OIDC providers to delete",    # §7b
             "force-deleted 0 secret",                  # §8
             "ECR: force-deleted 0",                    # §8b
             "No orphaned S3 buckets to delete",        # §8c

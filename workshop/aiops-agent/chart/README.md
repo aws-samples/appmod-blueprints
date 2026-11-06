@@ -6,6 +6,7 @@ Strands agent stack as **one** KubeVela `Application`:
 - `aiops-agent` (agent) — the agent brain (Bedrock via bifrost, 2-mode)
 - `skills-mcp` — PEEKS `.kiro/skills` served to the agent
 - `eks-read-mcp` — read-only EKS MCP (supergateway → awslabs eks-mcp-server)
+- `argocd-status-mcp` — read-only "Argo CD Applications not Synced+Healthy" tool; rendered only when `images.argocdStatusMcp.tag` is set (see below)
 - `chat-ui` — Keycloak-gated A2A chat front-end
 - `aiops-agent-memory` — AgentCore session memory (Crossplane `bedrockagentcore` provider)
 - incident bridge (SNS/SQS + AMP `AlertManagerDefinition` + `incident-bridge`) — autonomous-remediation demo
@@ -207,6 +208,33 @@ value fails the render. It is a chart value only (overlay values of the addon): 
 A GitLab install without the bot token (`aiops_agent_git_token`) still renders the GitLab
 variant; making that case fail-soft is a separate change.
 
+## argocd-status-mcp (Argo CD Application health, on with the pinned image)
+
+`eks-read-mcp` (upstream eks-mcp-server, kept unforked) lists Applications without status
+and cannot filter on status, so a complete "which apps are not Synced and Healthy?" answer
+means reading every Application (about 33 KB each: 183 Applications were 6.1 MB on a live hub). `argocd-status-mcp`
+(`src/argocd-status-mcp`, FastMCP) has ONE tool, `argocd_unhealthy_applications(cluster?,
+addon?)`: it lists every Application in `argocd` page by page and returns `total`,
+`unhealthy`, counts per `<sync>/<health>` and one compact row per not-green app (name,
+destination cluster and namespace, sync, health, `operationState.phase`, first condition
+message ≤ 200 chars), at most 50 rows (`MAX_ROWS`; counts and `truncated` stay exact). A
+missing status counts as `Unknown`. On 183 Applications with one unhealthy, the answer is
+about 350 characters; with every app broken it stays near 4.5k tokens.
+
+- Identity: its own ServiceAccount and in-cluster token; no IAM, Pod Identity or AccessEntry.
+- RBAC: a Role in `argocd` with `get`/`list` on `applications.argoproj.io` only (no secrets,
+  no write, nothing cluster-wide), bound to that ServiceAccount.
+- Gateway: route `/mcp/argocd-status-mcp`, stateless backend, `Require` allow-list with the
+  one tool.
+- **On/off**: `images.argocdStatusMcp.tag`, pinned to `v1` by default (on). Empty = the component is not rendered,
+  it is not in the agent's `mcpServers` (the OAP `/ready` set) or `dependsOn`, and the prompt
+  keeps the per-Application sweep rule; the render is byte-identical to the chart without
+  this feature. It does NOT inherit `imageTag`, so an install never waits on an unpublished
+  image. With a tag set (image built by `buildspec*.yaml`), it is on: the agent then waits
+  for it like any other MCP server, and its prompt prefers this tool for Application
+  health/sync questions: a note placed right before the per-Application sweep rule tells it
+  to call the tool first, in one call, and to keep the per-Application read as the fallback.
+
 ## gitlab-mcp (agent write path)
 
 The `gitlab-mcp` component (supergateway wrapping upstream `@zereight/gitlab-mcp`,
@@ -241,7 +269,7 @@ RGD compiles to `Active`/`GraphAccepted`.
 |---|---|---|
 | `imageRegistry` | `aiops_agent_image_registry` | default `public.ecr.aws/seb-demo` |
 | `imageTag` | `aiops_agent_image_tag` | default `v1` |
-| `images.<component>.{registry,tag}` | `aiops_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images) |
+| `images.<component>.{registry,tag}` | `aiops_agent_img_<component>_{registry,tag}` | per-component override; empty ⇒ inherit global. `incidentBridge.tag` defaults to `v1.1` (see Images). Exception: `argocdStatusMcp.tag` empty ⇒ that component is off (no inheritance) |
 | `accountId` | `aws_account_id` | required |
 | `clusterPrefix` | `resource_prefix` | required |
 | `cloudfrontDomain` | `ingress_domain_name` | chat-ui ingress host |
