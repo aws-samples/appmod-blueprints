@@ -916,7 +916,16 @@ tasks:
         # budget is spent (ROLLOUT_T clamped to 0) this would block forever (pnz1990
         # review #1136 point 1). Skip the wait instead and fall through to the CRD check.
         if [ "$ROLLOUT_T" -gt 0 ]; then
-          $KUBE rollout status deploy/workflow-controller -n argo --timeout=${ROLLOUT_T}s >/dev/null 2>&1 \
+          # `rollout status` fails at once when the Deployment does not exist yet, which
+          # is the case on a slow first hub sync (seen: created 41 min after its app).
+          # Wait for it to exist first, inside the same ROLLOUT_T budget.
+          RS=$(date +%s)
+          until $KUBE get deploy/workflow-controller -n argo >/dev/null 2>&1; do
+            [ $(( $(date +%s) - RS )) -ge "$ROLLOUT_T" ] && break
+            sleep 15
+          done
+          RT=$(( ROLLOUT_T - ($(date +%s) - RS) )); [ "$RT" -lt 1 ] && RT=1
+          $KUBE rollout status deploy/workflow-controller -n argo --timeout=${RT}s >/dev/null 2>&1 \
             || printf '{{.C_ERR}}  ⚠ workflow-controller not Ready in time — continuing anyway (non-fatal).{{.C_RESET}}\n'
         else
           printf '{{.C_ERR}}  ⚠ no budget left for the workflow-controller wait — continuing anyway (non-fatal).{{.C_RESET}}\n'
@@ -975,28 +984,132 @@ tasks:
             printf '{{.C_ERR}}  ⚠ could not resolve user1 password — skipping scaffold (non-fatal).{{.C_RESET}}\n'
             rm -f "$KC"; exit 0
           fi
+          # Backstage must answer before the scaffold. On a slow first hub sync the
+          # Backstage Deployment did not exist yet when this ran (created ~5 min later):
+          # the scaffold failed in 1 s, nothing retried it, and the wait below then spent
+          # its full PIPE_T on a CICDPipeline nobody would create (it was still absent
+          # the next day). Wait (bounded by the budget, keeping SCAFFOLD_RESERVE for the
+          # scaffold itself) for the Deployment to exist and the scaffolder API to answer
+          # through the platform URL: 2xx/401/403 means it is up, 000/5xx means not yet.
+          BS_T=600; BS_MAX=$(( $(left) - SCAFFOLD_RESERVE )); [ "$BS_MAX" -lt "$BS_T" ] && BS_T=$BS_MAX
+          BS_E=0; BS_CODE=000
+          while :; do
+            if $KUBE get deploy/backstage -n backstage >/dev/null 2>&1; then
+              BS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "${BACKSTAGE_URL}/api/scaffolder/v2/actions" 2>/dev/null || echo 000)
+              case "$BS_CODE" in 2??|401|403) break ;; esac
+            fi
+            if [ "$BS_E" -ge "$BS_T" ]; then
+              printf '{{.C_ERR}}  ⚠ Backstage not answering after %ss (last HTTP %s) — skipping scaffold (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n' "$BS_E" "$BS_CODE"
+              rm -f "$KC"; exit 0
+            fi
+            [ $((BS_E % 60)) -eq 0 ] && printf '{{.C_INFO}}  ▸ waiting for Backstage (%ss/%ss, HTTP %s)…{{.C_RESET}}\n' "$BS_E" "$BS_T" "$BS_CODE"
+            sleep 15; BS_E=$((BS_E + 15))
+          done
+          # The 401 above only proves the HTTP server answers: a backend whose startup
+          # failed (MigrationLocked on a duplicated knex lock row) still returns 401 on the
+          # scaffolder and 302 on the catalog, so 6 of 7 broken Backstages passed it and the
+          # scaffold then polled tasks/null. Also require an AUTHENTICATED catalog read of
+          # the template (same token as the scaffold, following redirects) to return 200.
+          # Not 200: a few spaced retries (a catalog still ingesting recovers on its own),
+          # but stop at once with the repair hint when the backend log shows the startup
+          # failed, since no retry cures that.
+          bs_backend_failed() {
+            BS_LOG=$($KUBE -n backstage logs deploy/backstage -c backstage --tail=2000 2>/dev/null \
+              || $KUBE -n backstage logs deploy/backstage --tail=2000 2>/dev/null)
+            printf '%s' "$BS_LOG" | grep -Eq 'MigrationLocked|Backend startup failed'
+          }
+          BS_RESTART_HINT="Backstage backend failed to start (MigrationLocked / Backend startup failed in its log) — restart Backstage (and dedupe the knex lock row: keep one row in each *_knex_migrations_lock table, with Backstage scaled to 0), then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd"
+          CAT_TRY=0
+          while :; do
+            CAT_TRY=$((CAT_TRY + 1))
+            CAT_CODE=$(BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
+              timeout 120 bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_template_status cicd-pipeline-gitops' \
+                _ "$BSAUTH" 2>/dev/null) || true
+            case "$CAT_CODE" in [0-9][0-9][0-9]) ;; *) CAT_CODE=000 ;; esac
+            [ "$CAT_CODE" = "200" ] && break
+            if bs_backend_failed; then
+              printf '{{.C_ERR}}  ⚠ catalog template read returned HTTP %s: %s — skipping scaffold (non-fatal).{{.C_RESET}}\n' "$CAT_CODE" "$BS_RESTART_HINT"
+              rm -f "$KC"; exit 0
+            fi
+            if [ "$CAT_TRY" -gt 3 ] || [ "$(left)" -le $(( 60 + SCAFFOLD_RESERVE )) ]; then
+              printf '{{.C_ERR}}  ⚠ template:default/cicd-pipeline-gitops not served by the Backstage catalog (authenticated read: HTTP %s, %s tries) — skipping scaffold (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n' "$CAT_CODE" "$CAT_TRY"
+              rm -f "$KC"; exit 0
+            fi
+            printf '{{.C_INFO}}  ▸ catalog template read returned HTTP %s — retrying in 60s (%s/3)…{{.C_RESET}}\n' "$CAT_CODE" "$CAT_TRY"
+            sleep 60
+          done
           # Bound the scaffold (pnz1990 review #1136 point 1): backstage-auth.sh's curls
-          # carry no --max-time and backstage_scaffolder polls 30x10s even when the POST
-          # returned no task id, so sourcing+calling it in-process is unbounded. Run it in
+          # carry no --max-time and backstage_scaffolder polls a created task 30x10s, so
+          # sourcing+calling it in-process is unbounded. Run it in
           # a subshell under `timeout`, clamped to the budget left (SCAFFOLD_RESERVE as the
           # ceiling). With no deadline (standalone run) left() is large, so the full reserve
           # applies. errexit from the sourced script dies with the subshell, so the task's
           # non-fatal contract (review S2) is preserved without a `set +e` dance here.
           printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s)…{{.C_RESET}}\n' "$APP"
           VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
-          SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
-          # Mark that this run submitted a scaffold attempt — used below to suppress the
-          # "delete the repo" instruction when the scaffold timed out but is still in flight
-          # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
-          # wired even if the timeout fires before backstage_scaffolder reports success).
-          SCAFFOLD_SUBMITTED=yes
-          if BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
-             timeout "$SC_T" bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_scaffolder "$2" "$3"' \
-               _ "$BSAUTH" "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>&1; then
-            printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
-          else
-            printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly (or hit the %ss budget) — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n' "$SC_T"
-          fi
+          # A scaffold that fails FAST (under 60 s: token or POST refused, task failed at
+          # once) has nothing in flight server-side, so waiting PIPE_T for a CICDPipeline
+          # afterwards is dead time. Retry it once after 30 s, then stop with a clear
+          # message. A SLOW failure (backstage_scaffolder's 30x10s poll ran out, or the
+          # timeout fired) may still be wiring the repo and Argo CD app, so it keeps the
+          # wait below.
+          # A POST refused with 503/404 (catalog not started or template not ingested yet)
+          # gets up to 3 retries 60 s apart instead of one after 30 s; a backend whose
+          # startup failed gets none (see BS_RESTART_HINT).
+          SC_TRY=0; SC_POST_TRY=0
+          SC_ERR=$(mktemp)
+          while :; do
+            SC_TRY=$((SC_TRY + 1))
+            SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
+            # Mark that this run submitted a scaffold attempt — used below to suppress the
+            # "delete the repo" instruction when the scaffold timed out but is still in flight
+            # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
+            # wired even if the timeout fires before backstage_scaffolder reports success).
+            SCAFFOLD_SUBMITTED=yes
+            SC_S=$(date +%s)
+            if BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
+               timeout "$SC_T" bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_scaffolder "$2" "$3"' \
+                 _ "$BSAUTH" "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>"$SC_ERR"; then
+              printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
+              rm -f "$SC_ERR"
+              break
+            fi
+            SC_D=$(( $(date +%s) - SC_S ))
+            # backstage_scaffolder prints "backstage_scaffolder: POST ... returned HTTP <code>: <body>"
+            # when the POST itself was refused (no task was created server-side).
+            SC_POST=$(grep -m1 '^backstage_scaffolder: POST ' "$SC_ERR" 2>/dev/null || true)
+            SC_POST_CODE=$(printf '%s' "$SC_POST" | sed -n 's/.* returned HTTP \([0-9][0-9][0-9]\):.*/\1/p')
+            if [ -n "$SC_POST" ]; then
+              printf '{{.C_ERR}}  ⚠ %s{{.C_RESET}}\n' "$SC_POST"
+              if bs_backend_failed; then
+                printf '{{.C_ERR}}  ⚠ scaffold refused: %s (non-fatal).{{.C_RESET}}\n' "$BS_RESTART_HINT"
+                rm -f "$KC" "$SC_ERR"; exit 0
+              fi
+              case "$SC_POST_CODE" in
+                503|404)
+                  SC_POST_TRY=$((SC_POST_TRY + 1))
+                  if [ "$SC_POST_TRY" -gt 3 ] || [ "$(left)" -le "$(( SC_D + 60 + 60 ))" ]; then
+                    printf '{{.C_ERR}}  ⚠ scaffold POST still HTTP %s after %s retries — not waiting for a CICDPipeline nothing will create (non-fatal). Check the Backstage pod log and catalog, then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd{{.C_RESET}}\n' "$SC_POST_CODE" "$((SC_POST_TRY - 1))"
+                    rm -f "$KC" "$SC_ERR"; exit 0
+                  fi
+                  printf '{{.C_INFO}}  ▸ scaffold POST returned HTTP %s — retrying in 60s (%s/3)…{{.C_RESET}}\n' "$SC_POST_CODE" "$SC_POST_TRY"
+                  SC_TRY=0
+                  sleep 60
+                  continue
+                  ;;
+              esac
+            fi
+            if [ "$SC_D" -ge 60 ]; then
+              printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly (or hit the %ss budget) — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n' "$SC_T"
+              rm -f "$SC_ERR"; break
+            fi
+            if [ "$SC_TRY" -ge 2 ] || [ "$(left)" -le "$(( SC_D + 30 + 60 ))" ]; then
+              printf '{{.C_ERR}}  ⚠ scaffold failed in %ss on attempt %s although Backstage answers — not waiting for a CICDPipeline nothing will create (non-fatal). Check the Backstage scaffolder task log; if GitLab repo %s/%s-cicd exists, delete it, then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd{{.C_RESET}}\n' "$SC_D" "$SC_TRY" "{{.GIT_USERNAME}}" "$APP"
+              rm -f "$KC" "$SC_ERR"; exit 0
+            fi
+            printf '{{.C_INFO}}  ▸ scaffold failed in %ss — retrying once in 30s…{{.C_RESET}}\n' "$SC_D"
+            sleep 30
+          done
         fi
 
         # Wait for the kro CICDPipeline to reach ACTIVE (ArgoCD syncs it from the
@@ -1267,11 +1380,20 @@ tasks:
           fi
           sleep 15; E=$((E + 15))
         done
-        # 1. The AppmodService API must be served on spoke-dev.
-        if ! $D get crd appmodservices.kro.run >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s — skipping (non-fatal).{{.C_RESET}}\n' "$DEV"
-          exit 0
-        fi
+        # 1. The AppmodService API must be served on spoke-dev. Bounded wait, same as
+        #    prewarm-pathA-frontend: this runs seconds after the spokes go ACTIVE, while
+        #    the spoke is still syncing its kro RGDs, so a single check skipped the whole
+        #    pre-deploy (the Rust backend was then missing on dev although the content
+        #    says it is already there).
+        T=300; [ "$(left)" -lt "$T" ] && T=$(left)
+        E=0
+        until $D get crd appmodservices.kro.run >/dev/null 2>&1; do
+          if [ "$E" -ge "$T" ]; then
+            printf '{{.C_ERR}}  ⚠ AppmodService CRD not served on %s after %ss — skipping (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro).{{.C_RESET}}\n' "$DEV" "$E"
+            exit 0
+          fi
+          sleep 15; E=$((E + 15))
+        done
         # 1b. team-rust namespace on BOTH spokes, before anything is pushed. rust-dev-cd's
         #     CreateNamespace=true does not create it on the spoke in practice, and 30_CD
         #     has the participant create it by hand — but this prewarm runs at install
