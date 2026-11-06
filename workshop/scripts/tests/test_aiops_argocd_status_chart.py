@@ -1,11 +1,11 @@
 """Hermetic `helm template` tests for the argocd-status-mcp component of the aiops-agent chart.
 
-Off (images.argocdStatusMcp.tag empty, the default): nothing rendered, the agent's
-mcpServers (= the OAP /ready set) and dependsOn are unchanged, and the prompt keeps the
-prompt-only per-Application sweep rule (#1230). On (tag set): the component with its own
-ServiceAccount, a namespaced read-only Role on applications.argoproj.io in argocd, the
-gateway route/backend and a one-tool allow-list, plus a mcpServers/dependsOn entry and a
-prompt note. No cluster, no AWS.
+The chart pins images.argocdStatusMcp.tag (v1, #1246), so the default render has the tool ON.
+Off (tag set to ""): nothing rendered, the agent's mcpServers (= the OAP /ready set) and
+dependsOn are unchanged, and the prompt keeps the prompt-only per-Application sweep rule
+(#1230). On (tag set): the component with its own ServiceAccount, a namespaced read-only
+Role on applications.argoproj.io in argocd, the gateway route/backend and a one-tool
+allow-list, plus a mcpServers/dependsOn entry and a prompt note. No cluster, no AWS.
 
 Run:  python -m pytest workshop/scripts/tests/test_aiops_argocd_status_chart.py -q
 """
@@ -22,6 +22,8 @@ CHART = os.path.join(REPO, "workshop", "aiops-agent", "chart")
 TOOL = "argocd_unhealthy_applications"
 SWEEP_NOTE = "(argocd-status MCP) FIRST, in ONE call"
 SWEEP_RULE = "- Assess ArgoCD health from the Application custom resources"
+PINNED = "v1"  # images.argocdStatusMcp.tag in chart/values.yaml
+OFF = ("--set-string", "images.argocdStatusMcp.tag=")
 BASE = ["--set-string", "accountId=111122223333", "--set", "clusterPrefix=peeks-x",
         "--set", "gitlabDomain=gitlab.example.com"]
 
@@ -41,8 +43,17 @@ def objs(comp, kind):
     return [o for o in comp["properties"]["objects"] if o["kind"] == kind]
 
 
-def test_off_by_default_nothing_rendered():
+def test_on_by_default_with_the_pinned_image():
     comps, servers, agent = render()
+    assert "argocd-status-mcp" in comps
+    assert "argocd-status-mcp" in servers and "argocd-status-mcp" in agent["dependsOn"]
+    ctr = objs(comps["argocd-status-mcp"], "Deployment")[0]["spec"]["template"]["spec"]["containers"][0]
+    assert ctr["image"] == f"public.ecr.aws/seb-demo/argocd-status-mcp:{PINNED}"
+    assert TOOL in agent["properties"]["systemMessage"]
+
+
+def test_off_when_tag_is_empty_nothing_rendered():
+    comps, servers, agent = render(*OFF)
     assert "argocd-status-mcp" not in comps
     assert "argocd-status-mcp" not in servers
     assert "argocd-status-mcp" not in agent["dependsOn"]
@@ -53,13 +64,19 @@ def test_off_by_default_nothing_rendered():
 
 
 def test_global_image_tag_does_not_turn_it_on():
-    comps, servers, _ = render("--set", "imageTag=v9")
+    comps, servers, _ = render(*OFF, "--set", "imageTag=v9")
     assert "argocd-status-mcp" not in comps and "argocd-status-mcp" not in servers
 
 
+def test_global_image_tag_does_not_override_the_pin():
+    comps, _, _ = render("--set", "imageTag=v9")
+    ctr = objs(comps["argocd-status-mcp"], "Deployment")[0]["spec"]["template"]["spec"]["containers"][0]
+    assert ctr["image"].endswith(f"/argocd-status-mcp:{PINNED}")
+
+
 def test_on_adds_server_dependency_and_prompt_note():
-    off_comps, off_servers, _ = render()
-    comps, servers, agent = render("--set", "images.argocdStatusMcp.tag=v1")
+    off_comps, off_servers, _ = render(*OFF)
+    comps, servers, agent = render()
     # the /ready set differs by exactly this server
     assert servers == off_servers + ["argocd-status-mcp"]
     assert "argocd-status-mcp" in agent["dependsOn"]
