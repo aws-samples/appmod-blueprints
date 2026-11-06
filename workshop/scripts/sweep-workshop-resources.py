@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sweep.orchestrator import main  # noqa: E402
 
 if __name__ == "__main__":
-    region = sys.argv[1] if len(sys.argv) > 1 else "us-west-2"
+    region = sys.argv[1] if len(sys.argv) > 1 else (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2")
     prefix = sys.argv[2] if len(sys.argv) > 2 else "peeks"
     # An explicit empty prefix is never a stack's: every "-x"/"/x" name would pass
     # name_is_ours. Refuse it before any AWS client is built.

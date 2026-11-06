@@ -112,17 +112,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 [ -f /etc/profile.d/workshop.sh ] && source /etc/profile.d/workshop.sh 2>/dev/null || true
 
+# --- Detect the deployment region ONCE ------------------------------------------
+# env (AWS_DEFAULT_REGION, AWS_REGION; the IDE shell exports both from its instance
+# metadata) -> CLI profile -> us-west-2 only as a last resort. Resolved once so the
+# VPC/subnet discovery below and config.local.yaml always agree on the same region.
+REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null || true)}}"
+REGION="${REGION:-us-west-2}"
+
 # Fallback: if HUB_VPC_ID still unset, detect the IDE VPC by its CDK name tag.
 # CDK creates it with Name="<stackName>/IDE-VPC" — detect by the /IDE-VPC suffix.
 if [ -z "${HUB_VPC_ID:-}" ]; then
-  _REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+  _REGION="$REGION"
   HUB_VPC_ID=$(aws ec2 describe-vpcs --region "$_REGION" \
     --filters "Name=tag:Name,Values=*IDE-VPC*" \
     --query 'Vpcs[0].VpcId' --output text 2>/dev/null | grep -v "^None$" || true)
 fi
 # Fallback: detect private subnets from the IDE VPC (tagged kubernetes.io/role/internal-elb)
 if [ -n "${HUB_VPC_ID:-}" ] && [ -z "${HUB_SUBNET_IDS:-}" ]; then
-  _REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+  _REGION="$REGION"
   _SUBS=$(aws ec2 describe-subnets --region "$_REGION" \
     --filters "Name=vpc-id,Values=$HUB_VPC_ID" \
               "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
@@ -190,7 +197,7 @@ if printf '%s' "$REPO_REVISION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
 fi
 
 # --- Detect AWS context ----------------------------------------------------
-REGION="${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}"
+# REGION was resolved once, right after sourcing /etc/profile.d/workshop.sh.
 
 echo "▸ Detecting AWS account..."
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"

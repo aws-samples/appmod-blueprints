@@ -12,12 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]:-${(%):-%x}}")")" &
 AUTOMATION_SCRIPT="$SCRIPT_DIR/argocd_token_automation.py"
 
 CLUSTER_NAME="${RESOURCE_PREFIX:-peeks}-hub"
-USER_PASSWORD="${IDE_PASSWORD:-$(aws secretsmanager get-secret-value --secret-id ${CLUSTER_NAME}/keycloak --region ${AWS_DEFAULT_REGION:-us-west-2} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password' 2>/dev/null)}"
+USER_PASSWORD="${IDE_PASSWORD:-$(aws secretsmanager get-secret-value --secret-id ${CLUSTER_NAME}/keycloak --region ${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}} --query 'SecretString' --output text 2>/dev/null | jq -r '.user_password' 2>/dev/null)}"
 
 SERVER_URL=$(aws eks describe-capability \
   --cluster-name "$CLUSTER_NAME" \
   --capability-name argocd \
-  --region "${AWS_DEFAULT_REGION:-us-west-2}" \
+  --region "${AWS_DEFAULT_REGION:-${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}" \
   --query 'capability.configuration.argoCd.serverUrl' \
   --output text 2>/dev/null)
 

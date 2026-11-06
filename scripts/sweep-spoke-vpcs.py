@@ -31,7 +31,7 @@ import sweep_lib as sl  # noqa: E402
 def main(argv, ec2=None, eks=None):
     pos, o = sl.parse_common(argv, __doc__)
     prefix = pos[0] if len(pos) > 0 else 'peeks'
-    region = pos[1] if len(pos) > 1 else 'us-west-2'
+    region = pos[1] if len(pos) > 1 else (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2")
     hub = pos[2] if len(pos) > 2 else ''
     ec2 = ec2 or sl.client('ec2', region)
     eks = eks or sl.client('eks', region)

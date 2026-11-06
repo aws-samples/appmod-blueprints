@@ -12,7 +12,6 @@ spec:
       required:
         - table_name
         - environment
-        - region
         - attributeName
         - attributeType
       properties:
@@ -29,7 +28,7 @@ spec:
           title: Region
           type: string
           description: AWS region for the DynamoDB table
-          default: us-west-2
+          ui:help: Leave empty to use the platform's own AWS region (recommended).
         accountId:
           title: AWS Account ID
           type: string
@@ -64,7 +63,7 @@ spec:
           table_name: ${{ parameters.table_name }}
           namespace: ${{ parameters.namespace }}
           environment: ${{ parameters.environment }}
-          region: ${{ parameters.region }}
+          region: ${{ parameters.region or steps['fetchSystem'].output.entity.spec.aws_region }}
           accountId: ${{ parameters.accountId | default(steps['fetchSystem'].output.entity.spec.aws_account_id) }}
           attributeName: ${{ parameters.attributeName }}
           attributeType: ${{ parameters.attributeType }}
