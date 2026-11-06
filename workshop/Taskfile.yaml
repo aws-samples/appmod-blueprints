@@ -376,8 +376,30 @@ tasks:
         if [ -z "$SPOKES" ]; then
           printf '{{.C_INFO}}  No spoke clusters found — skipping workload drain.{{.C_RESET}}\n'
         else
+          # Argo CD on the hub keeps automated sync + selfHeal on the addons targeting each
+          # spoke (gateway proxies, platform ingress): what the drain deletes is re-applied
+          # within seconds, the spoke's load balancer controller re-creates the NLB/ALB, and
+          # once the cluster is gone those LBs keep its subnets/VPC from being deleted.
+          # Patching the Applications does not hold (their ApplicationSet rewrites them), so
+          # deny automated syncs to the spoke with an AppProject sync window, in every
+          # project: it applies to every Application targeting the spoke, however it was
+          # generated. Deletes are not syncs, so the rest of the teardown is unaffected.
+          # Best-effort, idempotent; a project that cannot be patched is reported.
+          KH="kubectl --kubeconfig {{.HUB_KUBECONFIG}}"
+          deny_spoke_syncs() {
+            for P in $($KH get appprojects.argoproj.io -n argocd -o name 2>/dev/null || true); do
+              HAS=$($KH get "$P" -n argocd -o json 2>/dev/null | jq -r --arg c "$1" \
+                '[(.spec.syncWindows // [])[] | select(.kind == "deny" and ((.clusters // []) | index($c)))] | length' 2>/dev/null || echo 0)
+              if [ "${HAS:-0}" != 0 ]; then continue; fi
+              W="{\"kind\":\"deny\",\"schedule\":\"* * * * *\",\"duration\":\"24h\",\"clusters\":[\"$1\"],\"manualSync\":false}"
+              $KH patch "$P" -n argocd --type json -p "[{\"op\":\"add\",\"path\":\"/spec/syncWindows/-\",\"value\":$W}]" >/dev/null 2>&1 \
+                || $KH patch "$P" -n argocd --type merge -p "{\"spec\":{\"syncWindows\":[$W]}}" >/dev/null 2>&1 \
+                || printf '{{.C_ERR}}  ⚠ could not add a deny sync window for %s to %s.{{.C_RESET}}\n' "$1" "$P"
+            done
+          }
           for SPOKE in $SPOKES; do
             printf '{{.C_STEP}}  Draining %s...{{.C_RESET}}\n' "$SPOKE"
+            deny_spoke_syncs "$SPOKE"
             KC=$(mktemp)
             aws eks update-kubeconfig --name "$SPOKE" --region "$REGION" \
               --kubeconfig "$KC" 2>/dev/null || { rm -f "$KC"; continue; }
@@ -392,6 +414,24 @@ tasks:
             kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
               --timeout=120s 2>/dev/null || true
             rm -f "$KC"
+            # Gate: the spoke's load balancers are really gone (bounded). An LB still in
+            # its VPC when the cluster goes blocks the subnet/VPC delete.
+            VPC=$(aws eks describe-cluster --name "$SPOKE" --region "$REGION" \
+              --query cluster.resourcesVpcConfig.vpcId --output text 2>/dev/null || true)
+            if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+              W=0; N=?
+              while [ "$W" -le {{.LB_DRAIN_WAIT | default "300"}} ]; do
+                N=$(aws elbv2 describe-load-balancers --region "$REGION" \
+                  --query "length(LoadBalancers[?VpcId=='$VPC'])" --output text 2>/dev/null || echo "?")
+                if [ "$N" = 0 ] || [ "$N" = "?" ]; then break; fi
+                sleep 15; W=$((W + 15))
+              done
+              if [ "$N" = "?" ]; then
+                printf '{{.C_INFO}}  (could not list the load balancers of %s; not waiting){{.C_RESET}}\n' "$SPOKE"
+              elif [ "$N" != 0 ]; then
+                printf '{{.C_ERR}}  ⚠ %s load balancer(s) still in the VPC of %s after the drain; the sweep will have to remove them.{{.C_RESET}}\n' "$N" "$SPOKE"
+              fi
+            fi
             printf '{{.C_OK}}  ✓ %s drained.{{.C_RESET}}\n' "$SPOKE"
           done
         fi
