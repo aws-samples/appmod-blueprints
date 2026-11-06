@@ -15,13 +15,30 @@ def reap(ctx):
                 log(f"  Deleted AMP scraper {s['scraperId']}")
             except Exception:
                 pass
-        for ws in amp.list_workspaces()["workspaces"]:
-            if name_is_ours(ws.get("alias", ""), prefix):
-                try:
-                    amp.delete_workspace(workspaceId=ws["workspaceId"])
-                except Exception:
-                    pass
+        delete_owned_workspaces(ctx)
         if not scrapers:
             log("No AMP scrapers to delete")
     except Exception as e:
         log(f"AMP: {e}")
+
+
+def owned_workspaces(ctx):
+    """Our AMP workspaces (alias <prefix>-...) that are not already being deleted."""
+    return [ws for ws in ctx.amp.list_workspaces().get("workspaces", [])
+            if name_is_ours(ws.get("alias", ""), ctx.prefix)
+            and (ws.get("status") or {}).get("statusCode") != "DELETING"]
+
+
+def delete_owned_workspaces(ctx, label=""):
+    """Delete our AMP workspaces; returns how many deletes were accepted."""
+    n = 0
+    for ws in owned_workspaces(ctx):
+        try:
+            ctx.amp.delete_workspace(workspaceId=ws["workspaceId"])
+            n += 1
+            if label:
+                ctx.log(f"  {label}Deleted AMP workspace {ws['workspaceId']} ({ws.get('alias')})")
+        except Exception as e:
+            if label:
+                ctx.log(f"  {label}AMP workspace {ws['workspaceId']}: {e.__class__.__name__}")
+    return n
