@@ -8,6 +8,7 @@ the residue list. The orchestrator turns a non-empty residue into a non-zero exi
 """
 
 from ..context import name_is_ours
+from . import iam as iam_reaper
 from . import oidc as oidc_reaper
 from . import residue as residue_reaper
 from .logs import log_group_is_ours
@@ -114,6 +115,11 @@ def run(ctx):
                 _add(f"oidc-provider:{arn.rsplit('/', 1)[-1]}")
         except Exception as e:
             log(f"  [verify] OIDC providers: {e}")
+        try:  # unprefixed IAM policies we own by tag and nothing uses (HuggingFaceModel)
+            for n in iam_reaper.owned_orphan_policies(ctx):
+                _add(f"iam-policy:{n}")
+        except Exception as e:
+            log(f"  [verify] IAM policies: {e}")
         try:  # unassociated prefixed EIPs
             for a in ec2.describe_addresses().get("Addresses", []):
                 if a.get("AssociationId"):
