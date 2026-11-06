@@ -1838,6 +1838,65 @@ tasks:
     cmds:
       - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
 
+  hub:freeze-spokes:
+    desc: >-
+      Teardown helper for a consumer that drains its spokes before deleting them: stop
+      Argo CD from re-applying anything on the SPOKES (automated sync / selfHeal), so a
+      drain sticks. Stops the top-level generators the way hub:destroy-addons steps 1-4.5
+      do (bootstrap, cluster-addons, agent-platform: never cascading), then turns automated
+      sync off on every ApplicationSet that generates an Application targeting a spoke, and
+      on those Applications. The hub's own Applications from those ApplicationSets lose
+      automated sync too; only a teardown should call this. Idempotent, best-effort; safe
+      when the hub is gone. hub:destroy-addons still runs afterwards as usual.
+    vars:
+      KC: "KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig kubectl"
+    cmds:
+      - cmd: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig {{.ROOT_DIR}}/private/hub-kubeconfig >/dev/null 2>&1
+        ignore_error: true
+      - cmd: |
+          printf '{{.C_STEP}}▸ Freezing Argo CD syncs to the spokes...{{.C_RESET}}\n'
+          # 1. Top-level generators, as hub:destroy-addons steps 1-4.5: nothing may rewrite
+          #    the ApplicationSets patched below (cluster-addons renders the addon ones,
+          #    agent-platform the OAP ones). Applications orphaned, never pruned.
+          for AS in bootstrap cluster-addons agent-platform; do
+            if {{.KC}} get applicationset "$AS" -n argocd >/dev/null 2>&1; then
+              {{.KC}} patch applicationset "$AS" -n argocd --type merge -p '{"spec":{"syncPolicy":{"preserveResourcesOnDeletion":true}}}' >/dev/null 2>&1 || true
+              sleep 3
+              {{.KC}} delete applicationset "$AS" -n argocd --timeout=30s >/dev/null 2>&1 || true
+            fi
+          done
+          for A in bootstrap cluster-addons $({{.KC}} get applications -n argocd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '^agent-platform-' || true); do
+            if {{.KC}} get application "$A" -n argocd >/dev/null 2>&1; then
+              {{.KC}} patch application "$A" -n argocd --type merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+              {{.KC}} delete application "$A" -n argocd --wait=false >/dev/null 2>&1 || true
+            fi
+          done
+          # 2. Applications targeting a spoke: any destination that is not the hub.
+          APPS=$({{.KC}} get applications -n argocd -o json 2>/dev/null) || { echo "  hub unreachable: nothing frozen"; exit 0; }
+          SPOKE_APPS=$(printf '%s' "$APPS" | jq -r --arg h "{{.HUB_CLUSTER_NAME}}" '
+            .items[] | select(.spec.destination as $d
+              | ($d.name // "") != $h and ($d.name // "") != "in-cluster"
+                and ($d.server // "") != "https://kubernetes.default.svc"
+                and (($d.name // "") != "" or ($d.server // "") != ""))
+            | "\(.metadata.name) \([(.metadata.ownerReferences // [])[] | select(.kind == "ApplicationSet") | .name][0] // "")"' 2>/dev/null || true)
+          # 3. Their ApplicationSets first (a patched Application would be rewritten from the
+          #    template), then the Applications themselves.
+          N_AS=0; N_APP=0
+          for AS in $(printf '%s\n' "$SPOKE_APPS" | awk 'NF == 2 {print $2}' | sort -u); do
+            if {{.KC}} patch applicationset "$AS" -n argocd --type json \
+                -p '[{"op":"remove","path":"/spec/template/spec/syncPolicy/automated"}]' >/dev/null 2>&1; then
+              N_AS=$((N_AS + 1))
+            fi
+          done
+          for A in $(printf '%s\n' "$SPOKE_APPS" | awk 'NF >= 1 {print $1}'); do
+            if {{.KC}} patch application "$A" -n argocd --type json \
+                -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]' >/dev/null 2>&1; then
+              N_APP=$((N_APP + 1))
+            fi
+          done
+          printf '{{.C_OK}}✓ Automated sync off on %s ApplicationSet(s) and %s Application(s) targeting the spokes.{{.C_RESET}}\n' "$N_AS" "$N_APP"
+        ignore_error: true
+
   hub:destroy-addons:
     desc: >-
       Gracefully remove all addons from the HUB EKS cluster (no git changes) so the

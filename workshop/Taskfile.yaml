@@ -460,6 +460,17 @@ tasks:
       # from every spoke BEFORE deleting the spoke clusters, so no ENI-locked VPCs
       # block the spoke VPC deletion.
       - '{{.DESTROY_MARK}} "1 drain $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
+      # The hub's Argo CD keeps automated sync + selfHeal on the addons targeting each
+      # spoke: what the drain deletes would be re-applied within seconds, and the LBs it
+      # re-creates keep the spoke subnets/VPC from being deleted once the cluster is gone.
+      # The provider freezes those syncs (hub:freeze-spokes) when it offers it.
+      - |
+        if ( cd {{.PLATFORM_DIR}} && task --list-all 2>/dev/null | grep -q '{{.PROVIDER}}:hub:freeze-spokes' ); then
+          ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:freeze-spokes ) || \
+            printf '{{.C_ERR}}  ⚠ hub:freeze-spokes failed; the drain may be undone by Argo CD self-heal.{{.C_RESET}}\n'
+        else
+          printf '{{.C_INFO}}  Provider {{.PROVIDER}} has no hub:freeze-spokes; draining without it.{{.C_RESET}}\n'
+        fi
       - |
         printf '{{.C_STEP}}▸ Phase 1 — draining workloads from spoke clusters...{{.C_RESET}}\n'
         PREFIX=$(yq '.resourcePrefix // "peeks"' {{.CONFIG_FILE}})
@@ -486,6 +497,24 @@ tasks:
             kubectl --kubeconfig "$KC" delete pvc --all-namespaces --all \
               --timeout=120s 2>/dev/null || true
             rm -f "$KC"
+            # Gate: the spoke's load balancers are really gone (bounded). An LB still in
+            # its VPC when the cluster goes blocks the subnet/VPC delete.
+            VPC=$(aws eks describe-cluster --name "$SPOKE" --region "$REGION" \
+              --query cluster.resourcesVpcConfig.vpcId --output text 2>/dev/null || true)
+            if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+              W=0; N=?
+              while [ "$W" -le {{.LB_DRAIN_WAIT | default "300"}} ]; do
+                N=$(aws elbv2 describe-load-balancers --region "$REGION" \
+                  --query "length(LoadBalancers[?VpcId=='$VPC'])" --output text 2>/dev/null || echo "?")
+                if [ "$N" = 0 ] || [ "$N" = "?" ]; then break; fi
+                sleep 15; W=$((W + 15))
+              done
+              if [ "$N" = "?" ]; then
+                printf '{{.C_INFO}}  (could not list the load balancers of %s; not waiting){{.C_RESET}}\n' "$SPOKE"
+              elif [ "$N" != 0 ]; then
+                printf '{{.C_ERR}}  ⚠ %s load balancer(s) still in the VPC of %s after the drain; the sweep will have to remove them.{{.C_RESET}}\n' "$N" "$SPOKE"
+              fi
+            fi
             printf '{{.C_OK}}  ✓ %s drained.{{.C_RESET}}\n' "$SPOKE"
           done
         fi
