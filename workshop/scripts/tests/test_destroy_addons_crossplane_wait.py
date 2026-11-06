@@ -63,6 +63,11 @@ def xp_pending():
                   and any(g.split("/")[0].endswith(".upbound.io") and not g.startswith("iam.aws.upbound.io")
                           and not g.endswith("/PodIdentityAssociation") for g in a.get("groups", [])))
 progress()
+if os.path.basename(sys.argv[0]) == "date":
+    if sys.argv[1:] == ["+%s"]:
+        print(int(float(os.environ.get("FAKE_EPOCH", "1800000000")) + st["clock"]))
+        save(); sys.exit(0)
+    os.execv("/bin/date", ["date"] + sys.argv[1:])
 if os.path.basename(sys.argv[0]) == "sleep":
     st["clock"] += float(sys.argv[1])
     log("sleep", float(sys.argv[1]), st["clock"])
@@ -87,9 +92,11 @@ elif verb == "get" and what == "applications" and "json" in args:
         md = {"name": n, "ownerReferences": [{"name": a["owner"]}]}
         if a.get("deleting_since") is not None:
             md["deletionTimestamp"] = "2026-10-16T21:59:34Z"
-        items.append({"metadata": md, "status": {"resources": [
-            ({"group": g.split("/")[0], "kind": g.split("/")[1]} if "/" in g else {"group": g, "kind": "X"})
-            if g else {"kind": "X"} for g in a.get("groups", [])]}})
+        res = [({"group": g.split("/")[0], "kind": g.split("/")[1]} if "/" in g else {"group": g, "kind": "X"})
+               if g else {"kind": "X"} for g in a.get("groups", [])]
+        res += [dict({"group": r[0], "kind": r[1], "name": r[2]}, **({"namespace": r[3]} if len(r) > 3 else {}))
+                for r in a.get("res", [])]
+        items.append({"metadata": md, "status": {"resources": res}})
     print(json.dumps({"items": items}))
 elif verb == "get" and what == "applications" and jp:
     owner = re.search(r'name=="([^"]+)"', jp).group(1)
@@ -105,13 +112,16 @@ elif verb == "patch":
     pass
 elif verb == "delete" and what == "applicationset":
     n = args[2]
-    log("delete-appset", n, st["clock"], xp_pending())
+    log("delete-appset", n, st["clock"], xp_pending(), "--wait=false" in args)
     st["appsets"].pop(n, None)
     for k, a in list(st["apps"].items()):
         if a["owner"] == n and a.get("deleting_since") is None:
             a["deleting_since"] = st["clock"]
             if a.get("takes") == 0:
                 del st["apps"][k]
+elif verb == "delete":
+    log("delete-cr", what, args[2], st["clock"], [a for a in args[3:] if a in ("-n", "--wait=false")]
+        + ([args[args.index("-n") + 1]] if "-n" in args else []))
 else:
     log("unexpected", args)
 save()
@@ -131,12 +141,14 @@ def _slice():
     return tf.get("set", []), dict(task.get("vars", {})), cmds[first:last + 1]
 
 
-def _run(tmp_path, apps, providers_running=True, apps_query_fails=False, jq_fails=False):
+def _run(tmp_path, apps, providers_running=True, apps_query_fails=False, jq_fails=False,
+         extra_vars=None):
     opts, tvars, cmds = _slice()
+    tvars = dict(tvars, **(extra_vars or {}))
     bindir = tmp_path / "bin"
     bindir.mkdir()
     fake = FAKE.replace("{python}", sys.executable)
-    for b in ("kubectl", "sleep"):
+    for b in ("kubectl", "sleep", "date"):
         (bindir / b).write_text(fake)
         (bindir / b).chmod(0o755)
     if jq_fails:
@@ -151,7 +163,7 @@ def _run(tmp_path, apps, providers_running=True, apps_query_fails=False, jq_fail
                                  "apps_query_fails": apps_query_fails}))
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
-               FAKE_STATE=str(state), FAKE_LOG=str(log))
+               FAKE_STATE=str(state), FAKE_LOG=str(log), FAKE_EPOCH="1800000000")
     tvars["KC"] = f"KUBECONFIG={tmp_path}/hub-kubeconfig kubectl"
     if TASK:
         t = tmp_path / "Taskfile.yml"
@@ -275,3 +287,106 @@ def test_slow_addon_deletion_starts_before_step_5(tmp_path, monkeypatch):
     d = _deletes(events)
     assert list(d) == ["observability-aws"], d   # only the early addons, nothing else
     assert not [e for e in events if e[0] == "sleep" and e[1] >= 15], "4.8 waited for the deletion"
+
+
+# ── Round 3 (three live teardowns) ──────────────────────────────────────────────
+# observability-aws: Argo CD pruned it one sync wave at a time (scrapers 12:46:30, rule
+# groups 13:00:27, workspaces 13:01:23, AMG SG 13:04:43 on one run), and on another the
+# AMP workspace MR was still live when the stack sweep deleted the workspace in AWS:
+# Crossplane re-created it 47 s later and it stayed as residue.
+OBS_RES = [
+    ["amp.aws.upbound.io", "Scraper", "acme-hub-scraper"],
+    ["amp.aws.upbound.io", "RuleGroupNamespace", "acme-recording-rules"],
+    ["amp.aws.upbound.io", "Workspace", "acme-amp"],
+    ["grafana.aws.upbound.io", "WorkspaceSAMLConfiguration", "acme-amg-saml"],
+    ["kro.run", "GrafanaWorkspaceWithVpc", "acme-amg", "observability"],
+    ["iam.aws.upbound.io", "Role", "acme-amg-role"],
+    ["", "ConfigMap", "acme-dashboards", "observability"],
+    ["apps", "Deployment", "something", "observability"],
+]
+
+
+def test_early_addon_cloud_resources_are_deleted_at_once(tmp_path, monkeypatch):
+    opts, tvars, cmds = _early_slice()
+    monkeypatch.setattr(sys.modules[__name__], "_slice", lambda: (opts, tvars, cmds))
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": dict(_obs(780), res=OBS_RES)})
+    assert res.returncode == 0, res.stdout + res.stderr
+    t_appset = next(e[2] for e in events if e[0] == "delete-appset" and e[1] == "observability-aws")
+    crs = [e for e in events if e[0] == "delete-cr"]
+    got = sorted(f"{e[1]}/{e[2]}" for e in crs)
+    assert got == sorted([
+        "Scraper.amp.aws.upbound.io/acme-hub-scraper",
+        "RuleGroupNamespace.amp.aws.upbound.io/acme-recording-rules",
+        "Workspace.amp.aws.upbound.io/acme-amp",
+        "WorkspaceSAMLConfiguration.grafana.aws.upbound.io/acme-amg-saml",
+        "GrafanaWorkspaceWithVpc.kro.run/acme-amg",
+        "Role.iam.aws.upbound.io/acme-amg-role",
+    ]), got                                  # no core/apps object is touched
+    assert all("--wait=false" in e[4] for e in crs), crs   # nothing waited for here
+    assert all(e[3] >= t_appset for e in crs), "deleted before its Applications stopped syncing"
+    kro = next(e for e in crs if e[1].startswith("GrafanaWorkspaceWithVpc"))
+    assert kro[4][-1] == "observability", kro  # namespaced: -n <ns>
+    assert "cloud resource(s) started at once" in res.stdout, res.stdout
+
+
+def test_early_addon_resources_untouched_while_its_apps_still_sync(tmp_path, monkeypatch):
+    # The ApplicationSet delete did not reach the Applications (no deletionTimestamp):
+    # deleting their resources now would only get them re-applied. Leave them to Argo CD.
+    opts, tvars, cmds = _early_slice()
+    monkeypatch.setattr(sys.modules[__name__], "_slice", lambda: (opts, tvars, cmds))
+    app = dict(_obs(780), res=OBS_RES, owner="observability-aws")
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": dict(app, owner="other-appset")})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not [e for e in events if e[0] == "delete-cr"], events
+
+
+def test_7b_does_not_wait_for_amp_scrapers(tmp_path):
+    # Scraper deletes are issued at step 4.8 and take ~13 min in AWS whatever happens;
+    # both sweeps take a scraper the provider did not get to.
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": {
+        "owner": "observability-aws", "takes": None,
+        "groups": ["amp.aws.upbound.io/Scraper", "iam.aws.upbound.io/Role", ""]}})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not [e for e in events if e[0] == "sleep" and e[1] == 15], res.stdout
+
+
+def test_7b_still_waits_for_the_amp_workspace(tmp_path):
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": {
+        "owner": "observability-aws", "takes": 400,
+        "groups": ["amp.aws.upbound.io/Scraper", "amp.aws.upbound.io/Workspace"]}})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert [e for e in events if e[0] == "sleep" and e[1] == 15], res.stdout
+
+
+def test_deadline_stops_7b_before_its_cap(tmp_path):
+    # Live: task destroy was killed by the SSM timeout in step 7/7b on teams 40, 50, 54.
+    # With a deadline, 7b stops DESTROY_TAIL_RESERVE before it and step 8 still runs.
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": _obs(None)},
+                       extra_vars={"DESTROY_DEADLINE": str(1800000000 + 300 + 240)})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "7b: deadline reached" in res.stdout, res.stdout
+    end = max(e[2] for e in events if e[0] == "delete-appset")
+    assert end <= 300 + 60, f"step 8 ran at {end:.0f}s (deadline at 300s)"
+    assert "crossplane" in _deletes(events)
+
+
+def test_past_deadline_nothing_waits_and_everything_is_deleted(tmp_path):
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": _obs(None),
+                                  f"kargo-{HUB}": {"owner": "kargo", "groups": [""], "takes": None}},
+                       extra_vars={"DESTROY_DEADLINE": "1800000000"})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "deadline reached: the remaining addons are deleted without waiting" in res.stdout
+    d = [e for e in events if e[0] == "delete-appset"]
+    assert {e[1] for e in d} >= {"observability-aws", "kargo", "crossplane", "crossplane-base",
+                                 "kro-manifests-hub", "eks-capabilities-rbac-hub"}, d
+    assert all(e[4] for e in d), [e[1] for e in d if not e[4]]   # all --wait=false
+    waited = sum(e[1] for e in events if e[0] == "sleep")
+    assert waited <= 30, f"{waited}s of waits past the deadline"
+
+
+def test_no_deadline_keeps_the_old_waits(tmp_path):
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": _obs(None)},
+                       extra_vars={"DESTROY_DEADLINE": "0"})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "deadline" not in res.stdout, res.stdout
+    assert sum(e[1] for e in events if e[0] == "sleep" and e[1] == 15) >= 600
