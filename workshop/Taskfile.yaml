@@ -403,6 +403,58 @@ tasks:
             KC=$(mktemp)
             aws eks update-kubeconfig --name "$SPOKE" --region "$REGION" \
               --kubeconfig "$KC" 2>/dev/null || { rm -f "$KC"; continue; }
+            # Owners first. An Ingress or LoadBalancer Service rendered by an in-cluster
+            # controller (a kro instance such as AppmodService, a Gateway reconciled by the
+            # gateway controller) is re-created within seconds of its deletion, and its LB
+            # with it: the sync window above only stops Argo CD. So delete the objects that
+            # own them (read from their ownerReferences, walked up to the topmost owner, any
+            # API group but core/apps/batch), let their controllers remove the children,
+            # and wait (bounded) until those owners are gone. Generic: no kind, name or
+            # controller deployment is assumed, and nothing is scaled down (on a spoke, kro
+            # can be a managed capability with no pod to scale).
+            K="kubectl --kubeconfig $KC"
+            owner_of() {  # $1 = Kind.group/name@ns -> its topmost non-core owner (or itself)
+              CUR="$1"
+              for _l in 1 2 3; do
+                REF="${CUR%@*}"; ONS="${CUR##*@}"
+                UP=$($K get "${REF%%/*}" "${REF#*/}" -n "$ONS" -o json 2>/dev/null | jq -r --arg ns "$ONS" '
+                  [(.metadata.ownerReferences // [])[] | select((.apiVersion | contains("/"))
+                    and ((.apiVersion | split("/")[0]) | test("^(apps|batch)$") | not))][0]
+                  | if . then "\(.kind).\(.apiVersion | split("/")[0])/\(.name)@\($ns)" else empty end' 2>/dev/null || true)
+                if [ -z "$UP" ]; then break; fi
+                CUR="$UP"
+              done
+              echo "$CUR"
+            }
+            OWNERS=""
+            for O in $($K get ingress,svc -A -o json 2>/dev/null | jq -r '
+                .items[] | select(.kind == "Ingress" or .spec.type == "LoadBalancer")
+                | .metadata.namespace as $ns | (.metadata.ownerReferences // [])[]
+                | select((.apiVersion | contains("/")) and ((.apiVersion | split("/")[0]) | test("^(apps|batch)$") | not))
+                | "\(.kind).\(.apiVersion | split("/")[0])/\(.name)@\($ns)"' 2>/dev/null | sort -u || true); do
+              T=$(owner_of "$O")
+              case " $OWNERS " in *" $T "*) ;; *) OWNERS="$OWNERS $T" ;; esac
+            done
+            if [ -n "$(echo $OWNERS | tr -d ' ')" ]; then
+              printf '{{.C_INFO}}  Deleting the owners of its load balancers first:%s{{.C_RESET}}\n' "$OWNERS"
+              for T in $OWNERS; do
+                REF="${T%@*}"
+                $K delete "${REF%%/*}" "${REF#*/}" -n "${T##*@}" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+              done
+              W=0
+              while [ "$W" -lt {{.OWNER_DRAIN_WAIT | default "180"}} ]; do
+                LEFT=""
+                for T in $OWNERS; do
+                  REF="${T%@*}"
+                  if $K get "${REF%%/*}" "${REF#*/}" -n "${T##*@}" >/dev/null 2>&1; then LEFT="$LEFT $T"; fi
+                done
+                if [ -z "$LEFT" ]; then break; fi
+                sleep 10; W=$((W + 10))
+              done
+              if [ -n "${LEFT:-}" ]; then
+                printf '{{.C_ERR}}  ⚠ still being deleted after %ss:%s (draining their children anyway).{{.C_RESET}}\n' "$W" "$LEFT"
+              fi
+            fi
             kubectl --kubeconfig "$KC" delete ingress --all-namespaces --all \
               --timeout=120s 2>/dev/null || true
             kubectl --kubeconfig "$KC" get svc --all-namespaces -o json 2>/dev/null \
