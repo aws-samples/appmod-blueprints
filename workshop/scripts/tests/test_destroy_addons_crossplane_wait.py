@@ -60,7 +60,8 @@ def progress():
             del st["apps"][n]
 def xp_pending():
     return sorted(n for n, a in st["apps"].items() if a.get("deleting_since") is not None
-                  and any(g.endswith(".upbound.io") for g in a.get("groups", [])))
+                  and any(g.split("/")[0].endswith(".upbound.io") and not g.startswith("iam.aws.upbound.io")
+                          and not g.endswith("/PodIdentityAssociation") for g in a.get("groups", [])))
 progress()
 if os.path.basename(sys.argv[0]) == "sleep":
     st["clock"] += float(sys.argv[1])
@@ -87,7 +88,8 @@ elif verb == "get" and what == "applications" and "json" in args:
         if a.get("deleting_since") is not None:
             md["deletionTimestamp"] = "2026-10-16T21:59:34Z"
         items.append({"metadata": md, "status": {"resources": [
-            {"group": g, "kind": "X"} if g else {"kind": "X"} for g in a.get("groups", [])]}})
+            ({"group": g.split("/")[0], "kind": g.split("/")[1]} if "/" in g else {"group": g, "kind": "X"})
+            if g else {"kind": "X"} for g in a.get("groups", [])]}})
     print(json.dumps({"items": items}))
 elif verb == "get" and what == "applications" and jp:
     owner = re.search(r'name=="([^"]+)"', jp).group(1)
@@ -206,7 +208,8 @@ def test_kro_keeps_its_hub_rbac_until_crossplane_is_gone(tmp_path):
 
 
 def test_the_wait_is_bounded(tmp_path):
-    limit = int(re.search(r'default "(\d+)"', str(_slice()[1].get("XP_DELETE_WAIT", 'default "0"'))).group(1))
+    limit = int(re.search(r'default "(\d+)"', str(_slice()[1].get("XP_7B_WAIT", 'default "0"'))).group(1))
+    assert limit <= 600, f"7b cap {limit}s: the sweep removes what is still deleting after it"
     res, events = _run(tmp_path, {f"observability-aws-{HUB}": _obs(None)})
     assert res.returncode == 0, res.stdout + res.stderr
     waited = sum(e[1] for e in events if e[0] == "sleep" and e[1] == 15)
@@ -242,3 +245,33 @@ def test_no_wait_and_says_why_when_the_query_fails(tmp_path, broken, says):
     assert says in res.stdout, res.stdout
     assert not [e for e in events if e[0] == "sleep" and e[1] == 15], res.stdout
     assert "crossplane" in _deletes(events), "step 8 never ran"
+
+
+def test_iam_and_pod_identity_only_apps_are_not_waited_for(tmp_path):
+    # langfuse: its only Crossplane resources are an IAM Role and a Pod Identity
+    # association, pruned last (lowest wave) after StatefulSets/Jobs that can hang. The
+    # destroy's IAM sweep and the hub cluster delete remove them: 7b must not wait.
+    res, events = _run(tmp_path, {f"langfuse-{HUB}": {"owner": "kargo", "takes": None,
+        "groups": ["iam.aws.upbound.io/Role", "eks.aws.upbound.io/PodIdentityAssociation", "apps"]}})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not [e for e in events if e[0] == "sleep" and e[1] == 15], res.stdout
+
+
+def _early_slice():
+    with open(TASKFILE) as f:
+        tf = yaml.safe_load(f)
+    task = tf["tasks"]["hub:destroy-addons"]
+    cmds = task["cmds"]
+    text = lambda c: c.get("cmd", "") if isinstance(c, dict) else str(c)
+    i = next(i for i, c in enumerate(cmds) if "XP_EARLY_ADDONS" in text(c))
+    return tf.get("set", []), dict(task.get("vars", {})), [cmds[i]]
+
+
+def test_slow_addon_deletion_starts_before_step_5(tmp_path, monkeypatch):
+    opts, tvars, cmds = _early_slice()
+    monkeypatch.setattr(sys.modules[__name__], "_slice", lambda: (opts, tvars, cmds))
+    res, events = _run(tmp_path, {f"observability-aws-{HUB}": _obs(780)})
+    assert res.returncode == 0, res.stdout + res.stderr
+    d = _deletes(events)
+    assert list(d) == ["observability-aws"], d   # only the early addons, nothing else
+    assert not [e for e in events if e[0] == "sleep" and e[1] >= 15], "4.8 waited for the deletion"
