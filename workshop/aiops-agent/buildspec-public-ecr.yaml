@@ -7,7 +7,11 @@
 #   Images published (each at its OWN pinned tag below — MUST match chart/values.yaml
 #   images.*.tag so the pinned set is reproducible; never overwrite a mutable tag in place):
 #   chat-ui, eks-mcp, gitlab-mcp, incident-bridge, skills-mcp (PEEKS .kiro/skills baked in),
-#   strands-agent, argocd-status-mcp
+#   argocd-status-mcp
+#
+#   NOT built here: the agent runtime image (strands-agent). OAP owns it and publishes it
+#   from an OAP release tag to public.ecr.aws/z0a4o2j5/strands-agent; chart/values.yaml
+#   images.agent pins that image directly.
 #
 # Run in the account that owns the public ECR alias (<account-id>), us-east-1
 # region for the ecr-public control plane. Requires privilegedMode (Docker) + a service role
@@ -15,14 +19,9 @@
 #
 # Env vars (CodeBuild project or override):
 #   <COMPONENT>_TAG (CHAT_UI_TAG, EKS_MCP_TAG, GITLAB_MCP_TAG, INCIDENT_BRIDGE_TAG,
-#                SKILLS_MCP_TAG, STRANDS_TAG) — per-component pinned tags; defaults below
+#                SKILLS_MCP_TAG, ARGOCD_STATUS_MCP_TAG) — per-component pinned tags; defaults below
 #                MUST match chart/values.yaml images.*.tag. Override just one to bump it.
 #   APPMOD_REF   (default feat/peeks-agent-instance, on the allamand fork = PR #926 head)  — appmod-blueprints branch/tag
-#   OAP_REF      (default v0.1.0-rc4 = awslabs/open-agentic-platform main 649c7a1c) — the
-#                upstream OAP tag the pinned strands-agent image is cut from. It carries the
-#                temperature-omitted-by-default fix (#64), the MCP first-boot retry, the
-#                configurable max_tokens and the /ready probe that the fork branch used to carry.
-#                Pin to an upstream tag/SHA, never a moving branch.
 version: 0.2
 env:
   variables:
@@ -40,30 +39,23 @@ env:
     # argocd-status-mcp: chart/values.yaml images.argocdStatusMcp.tag is EMPTY until this is
     # published (empty = component not rendered); set it to this value once pushed.
     ARGOCD_STATUS_MCP_TAG: "v1"
-    # v1.16 was built from the OAP #138 head (ed63bb3d), not from OAP_REF below. Its agent
-    # code ships in OAP v0.1.0, but a rebuild from v0.1.0 would not be byte-identical.
-    STRANDS_TAG: "v1.16"
     # TODO(pre-publish): APPMOD_REF is a MOVING fork ref; pin it to a tag/SHA. Tracked in the
-    # B2/B4 build-pin issue (#964). OAP_REPO/OAP_REF already point at upstream awslabs on a tag.
+    # B2/B4 build-pin issue (#964).
     # APPMOD_REPO/REF point at the PR #926 branch (allamand fork) so the pinned
     # incident-bridge:v1.6 (poller NACK + ceiling + breaker + ceiling-skip DLQ-safe backoff) is reproducible from this
     # buildspec. feat/peeks-agent-instance lives on the fork (not yet on aws-samples);
     # repoint to aws-samples + a tag/SHA once #926 merges — tracked in #964.
     APPMOD_REPO: "https://github.com/allamand/appmod-blueprints.git"
     APPMOD_REF: "feat/peeks-agent-instance"
-    # Upstream OAP, pinned to a tag (649c7a1c). git clone -b accepts a tag.
-    OAP_REPO: "https://github.com/awslabs/open-agentic-platform.git"
-    OAP_REF: "v0.1.0-rc4"
 phases:
   pre_build:
     commands:
       - aws --version && docker --version
       - git clone --depth 1 -b "$APPMOD_REF" "$APPMOD_REPO" /src
-      - git clone --depth 1 -b "$OAP_REF" "$OAP_REPO" /oap
       # public ECR login (control plane is always us-east-1); also raises anonymous pull limits
       - aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
       - REG="$PUBLIC_REGISTRY"; SRC=/src/workshop/aiops-agent/src
-      - echo "Publishing PEEKS agent images to $REG (chat-ui:$CHAT_UI_TAG eks-mcp:$EKS_MCP_TAG gitlab-mcp:$GITLAB_MCP_TAG incident-bridge:$INCIDENT_BRIDGE_TAG skills-mcp:$SKILLS_MCP_TAG strands-agent:$STRANDS_TAG)"
+      - echo "Publishing PEEKS agent images to $REG (chat-ui:$CHAT_UI_TAG eks-mcp:$EKS_MCP_TAG gitlab-mcp:$GITLAB_MCP_TAG incident-bridge:$INCIDENT_BRIDGE_TAG skills-mcp:$SKILLS_MCP_TAG argocd-status-mcp:$ARGOCD_STATUS_MCP_TAG)"
   build:
     commands:
       # 1) generic services, built from in-repo sources
@@ -77,8 +69,6 @@ phases:
       - docker build -f /src/workshop/aiops-agent/skills-overlay/Dockerfile
           --build-arg SKILLS_MCP_IMAGE="skills-mcp-base:$SKILLS_MCP_TAG"
           -t "$REG/skills-mcp:$SKILLS_MCP_TAG" /src
-      # 3) agent runtime from upstream OAP (v0.1.0-rc4 — temperature omitted by default #64, MCP retry, max_tokens, /ready)
-      - docker build -t "$REG/strands-agent:$STRANDS_TAG" /oap/applications/strands-agent-base
   post_build:
     commands:
       - docker push "$REG/chat-ui:$CHAT_UI_TAG"
@@ -87,5 +77,4 @@ phases:
       - docker push "$REG/incident-bridge:$INCIDENT_BRIDGE_TAG"
       - docker push "$REG/argocd-status-mcp:$ARGOCD_STATUS_MCP_TAG"
       - docker push "$REG/skills-mcp:$SKILLS_MCP_TAG"
-      - docker push "$REG/strands-agent:$STRANDS_TAG"
-      - echo "Published chat-ui:$CHAT_UI_TAG eks-mcp:$EKS_MCP_TAG gitlab-mcp:$GITLAB_MCP_TAG incident-bridge:$INCIDENT_BRIDGE_TAG skills-mcp:$SKILLS_MCP_TAG strands-agent:$STRANDS_TAG to $REG"
+      - echo "Published chat-ui:$CHAT_UI_TAG eks-mcp:$EKS_MCP_TAG gitlab-mcp:$GITLAB_MCP_TAG incident-bridge:$INCIDENT_BRIDGE_TAG skills-mcp:$SKILLS_MCP_TAG argocd-status-mcp:$ARGOCD_STATUS_MCP_TAG to $REG"
