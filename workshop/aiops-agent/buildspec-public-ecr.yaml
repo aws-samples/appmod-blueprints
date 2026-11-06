@@ -40,7 +40,9 @@ env:
     # argocd-status-mcp: chart/values.yaml images.argocdStatusMcp.tag is EMPTY until this is
     # published (empty = component not rendered); set it to this value once pushed.
     ARGOCD_STATUS_MCP_TAG: "v1"
-    STRANDS_TAG: "v1.15"
+    # v1.16 was built from the OAP #138 head (ed63bb3d), not from OAP_REF below. Its agent
+    # code ships in OAP v0.1.0, but a rebuild from v0.1.0 would not be byte-identical.
+    STRANDS_TAG: "v1.16"
     # TODO(pre-publish): APPMOD_REF is a MOVING fork ref; pin it to a tag/SHA. Tracked in the
     # B2/B4 build-pin issue (#964). OAP_REPO/OAP_REF already point at upstream awslabs on a tag.
     # APPMOD_REPO/REF point at the PR #926 branch (allamand fork) so the pinned
