@@ -230,6 +230,9 @@ def _run_step6(tmp_path, fx, prefix, hub):
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", PYTHONPATH=str(tmp_path / "pylib"),
                FAKE_AWS_FIXTURE=str(fixture), FAKE_AWS_LOG=str(log))
     tvars = {"AWS_REGION": REGION, "RESOURCE_PREFIX": prefix, "HUB_CLUSTER_NAME": hub}
+    # The deadline helpers of the destroy task (no deadline: nothing is skipped).
+    dvars = tf["tasks"]["destroy"].get("vars", {})
+    tvars.update({k: dvars[k] for k in ("DESTROY_DEADLINE", "DL_FN") if k in dvars})
     opts = tf.get("set", [])
     if TASK:
         t = tmp_path / "Taskfile.yml"
@@ -238,8 +241,9 @@ def _run_step6(tmp_path, fx, prefix, hub):
         res = subprocess.run([TASK, "-s", "-t", str(t), "run"], cwd=tmp_path, env=env,
                              capture_output=True, text=True, timeout=180)
     else:
+        tvars["DESTROY_DEADLINE"] = "0"
         for k, v in tvars.items():
-            cmd = cmd.replace("{{.%s}}" % k, v)
+            cmd = cmd.replace("{{.%s}}" % k, v.replace("{{.DESTROY_DEADLINE}}", "0"))
         script = tmp_path / "step6.sh"
         script.write_text("".join(f"set -o {o}\n" for o in opts) + cmd)
         res = subprocess.run(["bash", str(script)], cwd=tmp_path, env=env,
