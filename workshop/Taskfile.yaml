@@ -1337,19 +1337,40 @@ tasks:
           # non-fatal contract (review S2) is preserved without a `set +e` dance here.
           printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s)…{{.C_RESET}}\n' "$APP"
           VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
-          SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
-          # Mark that this run submitted a scaffold attempt — used below to suppress the
-          # "delete the repo" instruction when the scaffold timed out but is still in flight
-          # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
-          # wired even if the timeout fires before backstage_scaffolder reports success).
-          SCAFFOLD_SUBMITTED=yes
-          if BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
-             timeout "$SC_T" bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_scaffolder "$2" "$3"' \
-               _ "$BSAUTH" "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>&1; then
-            printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
-          else
-            printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly (or hit the %ss budget) — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n' "$SC_T"
-          fi
+          # A scaffold that fails FAST (under 60 s: token or POST refused, task failed at
+          # once) has nothing in flight server-side, so waiting PIPE_T for a CICDPipeline
+          # afterwards is dead time. Retry it once after 30 s, then stop with a clear
+          # message. A SLOW failure (backstage_scaffolder's 30x10s poll ran out, or the
+          # timeout fired) may still be wiring the repo and Argo CD app, so it keeps the
+          # wait below.
+          SC_TRY=0
+          while :; do
+            SC_TRY=$((SC_TRY + 1))
+            SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
+            # Mark that this run submitted a scaffold attempt — used below to suppress the
+            # "delete the repo" instruction when the scaffold timed out but is still in flight
+            # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
+            # wired even if the timeout fires before backstage_scaffolder reports success).
+            SCAFFOLD_SUBMITTED=yes
+            SC_S=$(date +%s)
+            if BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" \
+               timeout "$SC_T" bash -c '. "$1" >/dev/null 2>&1; set +e; backstage_scaffolder "$2" "$3"' \
+                 _ "$BSAUTH" "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>&1; then
+              printf '{{.C_OK}}  ✓ scaffolder task completed.{{.C_RESET}}\n'
+              break
+            fi
+            SC_D=$(( $(date +%s) - SC_S ))
+            if [ "$SC_D" -ge 60 ]; then
+              printf '{{.C_ERR}}  ⚠ scaffolder task did not complete cleanly (or hit the %ss budget) — continuing to wait for the pipeline anyway (non-fatal).{{.C_RESET}}\n' "$SC_T"
+              break
+            fi
+            if [ "$SC_TRY" -ge 2 ] || [ "$(left)" -le "$(( SC_D + 30 + 60 ))" ]; then
+              printf '{{.C_ERR}}  ⚠ scaffold failed in %ss on attempt %s although Backstage answers — not waiting for a CICDPipeline nothing will create (non-fatal). Check the Backstage scaffolder task log; if GitLab repo %s/%s-cicd exists, delete it, then: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd{{.C_RESET}}\n' "$SC_D" "$SC_TRY" "{{.GIT_USERNAME}}" "$APP"
+              rm -f "$KC"; exit 0
+            fi
+            printf '{{.C_INFO}}  ▸ scaffold failed in %ss — retrying once in 30s…{{.C_RESET}}\n' "$SC_D"
+            sleep 30
+          done
         fi
 
         # Wait for the kro CICDPipeline to reach ACTIVE (ArgoCD syncs it from the
