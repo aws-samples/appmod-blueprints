@@ -40,7 +40,7 @@ def settle_block():
              .replace("{{.MARK}}", "true"))
 
 
-def run(tmp_path, apps, providers, app_json=CB_BACKOFF, providers_after=None):
+def run(tmp_path, apps, providers, app_json=CB_BACKOFF, providers_after=None, errexit=False):
     """providers: table returned by `get providers`; providers_after=(n, table) switches
     the table after n provider reads."""
     b = tmp_path / "bin"
@@ -64,6 +64,8 @@ def run(tmp_path, apps, providers, app_json=CB_BACKOFF, providers_after=None):
     for f in ("kubectl", "aws", "sleep"):
         os.chmod(b / f, 0o755)
     block = settle_block().replace("/tmp/hub-full-sync-settle.status", str(tmp_path / "status"))
+    if errexit:  # the Taskfile sets errexit/nounset/pipefail for every cmd, as go-task runs it
+        block = "set -euo pipefail\n" + block
     env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", T=str(tmp_path))
     r = subprocess.run(["bash", "-c", block], env=env, capture_output=True, text=True, timeout=120)
     patches = [json.loads(l) for l in (tmp_path / "patches").read_text().splitlines()] \
@@ -107,3 +109,25 @@ def test_final_line_names_unhealthy_provider(tmp_path):
     r, _, _ = run(tmp_path, SETTLED, PROV_BAD)
     assert "providers still not Healthy: provider-aws-iam" in r.stdout, r.stdout
     assert "all 2 Crossplane providers Healthy" not in r.stdout
+
+
+CB_RUNNING = {"spec": {}, "status": {"health": {"status": "Progressing"},
+                                     "operationState": {"phase": "Running"}}}
+
+
+@pytest.mark.parametrize("app_json", [CB_RUNNING, CB_BACKOFF])
+def test_remediation_survives_errexit(tmp_path, app_json):
+    # Live E2E on this branch: the helper answered "not needed" (exit 3) and, under the
+    # Taskfile's errexit, the bare KOUT=$(...) aborted hub:settle at 300 s, leaving its
+    # status at "running". The remediation must never end the settle.
+    r, _, last = run(tmp_path, CB_OUT, "", app_json=app_json, errexit=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Force-syncing crossplane-base" in r.stdout
+    assert last >= 300, r.stdout
+    assert "Hub settled" in r.stdout and "Healthyyes" not in r.stdout
+    assert (tmp_path / "status").read_text().strip() == "ok"
+
+
+def test_settled_line_names_provider_state(tmp_path):
+    r, _, _ = run(tmp_path, SETTLED, PROV_OK)
+    assert "providers Healthy)." in r.stdout, r.stdout

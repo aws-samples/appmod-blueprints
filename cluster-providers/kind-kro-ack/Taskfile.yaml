@@ -1858,7 +1858,9 @@ tasks:
             CB=$(echo "$APP_OUTPUT" | awk -v n="crossplane-base-{{.HUB_CLUSTER_NAME}}" '$1==n && $2!="Synced"')
             if [ -n "$CB" ] || [ -z "$PROV_OK" ]; then
               printf '  Force-syncing crossplane-base (OutOfSync or providers not Healthy after 5min)...\n'
-              KOUT=$(KUBECONFIG="$KC" bash "{{.ROOT_DIR}}/scripts/argocd-app-kick.sh" "crossplane-base-{{.HUB_CLUSTER_NAME}}" argocd 2>&1)
+              # The helper exits 3 for "not needed" and 1 on a read error; under the
+              # Taskfile's errexit a bare KOUT=$(...) would abort the whole settle.
+              KOUT=$(KUBECONFIG="$KC" bash "{{.ROOT_DIR}}/scripts/argocd-app-kick.sh" "crossplane-base-{{.HUB_CLUSTER_NAME}}" argocd 2>&1) || true
               printf '  %s\n' "$KOUT"
               FORCED=1
             fi
@@ -1871,7 +1873,7 @@ tasks:
           # team. So also require the providers to be Healthy (at least one) OR the
           # remediation to have had its chance. Still bounded by TIMEOUT; background.
           if [ "$TOTAL" -gt 0 ] && [ "$OUTOFSYNC" -le {{.MAX_OUTOFSYNC}} ] && { [ -n "$PROV_OK" ] || [ "$FORCED" -eq 1 ]; }; then
-            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance; providers %s).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "${PROV_OK:+Healthy}${PROV_OK:-not all Healthy, remediation done}"
+            printf '✓ Hub settled: %s/%s synced (%s unknown/spoke, %s within tolerance; providers %s).\n' "$SYNCED" "$TOTAL" "$UNKNOWN" "$OUTOFSYNC" "$( [ -n "$PROV_OK" ] && echo Healthy || echo 'not all Healthy, remediation done' )"
             printf 'ok\n' > "$STATUS"
             break
           fi
