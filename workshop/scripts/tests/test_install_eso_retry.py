@@ -194,3 +194,31 @@ def test_vendored_chart_matches_core_yaml_default_version():
     assert name == os.path.basename(tgz)
     with open(tgz, "rb") as f:
         assert hashlib.sha256(f.read()).hexdigest() == want, "vendored tgz does not match its .sha256"
+
+
+# --- kind-crossplane / byoc: same script, same fallback chain -------------------------------
+PROVIDERS = ["kind-crossplane", "byoc"]
+
+
+def _provider_cmd(provider):
+    with open(os.path.join(REPO, "cluster-providers", provider, "Taskfile.yaml")) as f:
+        t = yaml.safe_load(f)["tasks"]["hub:install-eso"]
+    body = "\n".join(c for c in t["cmds"] if isinstance(c, str))
+    assert "helm upgrade" not in body and "helm repo add" not in body
+    cmd = [l for l in body.splitlines() if "install-eso.sh" in l][0].lstrip("- ").strip()
+    return (cmd.replace("{{.ROOT_DIR}}", REPO).replace("{{.ESO_VERSION}}", "9.9.9"))
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("repo,oci,source", [(0, 0, "repo"), ("all", 0, "oci"), ("all", "all", "vendored")])
+def test_provider_task_uses_fallback_chain(env, provider, repo, oci, source):
+    e, tmp = env
+    e["FAKE_REPO_FAILS"], e["FAKE_OCI_FAILS"] = str(repo), str(oci)
+    e["ESO_RETRY_ATTEMPTS"] = e["ESO_OCI_ATTEMPTS"] = "2"
+    p = subprocess.run(["bash", "-c", _provider_cmd(provider)], env=e, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert f"installed (source={source})" in p.stdout
+    log = open(e["FAKE_LOG"]).read()
+    install = [l for l in log.splitlines() if l.startswith("helm upgrade")][0]
+    assert "--set serviceAccount.name=external-secrets-sa" in install
+    assert install.endswith("--wait --timeout 5m")
