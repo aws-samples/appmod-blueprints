@@ -5,9 +5,11 @@ Covers:
   * when it patches, and what it patches (a plain `.operation` patch is ignored by Argo CD
     while an operation sits in retry backoff, so the helper must also clear
     status.operationState in that case, and must never interrupt a running attempt);
-  * the load balancer controller is NOT kicked any more: neither the ALB wait in
-    scripts/cloudfront-attach-origin.sh nor hub:settle (kind-kro-ack) touch it. Its retry is
-    already capped at 1m, so a kick bypasses a timer the app does not wait on (PR #1256 review).
+  * the load balancer controller is NOT kicked on a timer any more: neither the ALB wait in
+    scripts/cloudfront-attach-origin.sh nor hub:settle (kind-kro-ack) touch it directly. Its retry
+    is already capped at 1m, so a kick bypasses a timer the app does not wait on (PR #1256 review).
+    The only LBC action is scripts/lbc-unstick.sh, which acts on a diagnosed symptom after 480 s
+    (see test_lbc_unstick.py).
 
 Everything runs with bash against fake `kubectl`/`aws` and a no-op `sleep`. No cluster.
 
