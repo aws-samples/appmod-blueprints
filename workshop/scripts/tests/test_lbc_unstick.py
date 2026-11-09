@@ -24,11 +24,8 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")
 HELPER = os.path.join(REPO, "scripts", "lbc-unstick.sh")
 ATTACH = os.path.join(REPO, "scripts", "cloudfront-attach-origin.sh")
 
-NOW = datetime.datetime.now(datetime.timezone.utc)
-
-
 def ts(age_s):
-    return (NOW - datetime.timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def dep(avail, age=1000):
