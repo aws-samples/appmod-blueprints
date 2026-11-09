@@ -16,23 +16,29 @@
 #   rsfailed  Deployment has no available pod AND its newest
 #             ReplicaSet reports ReplicaFailure                -> B: rollout restart the Deployment
 #   noaddr    Deployment Available for >= LBC_UNSTICK_GAP s but an ALB Ingress has no address
-#                                                              -> B
+#             (ALB Ingress = its class has controller ingress.k8s.aws/alb, resolved from the
+#             IngressClass objects, or the cluster default ALB class when it names none;
+#             LBC_INGRESS_CLASSES="a,b" overrides the lookup)       -> B
 #   anything else (unreadable hub, pods still starting)        -> no action
 #
 # Bounds: at most LBC_UNSTICK_MAX actions (default 2), at least LBC_UNSTICK_GAP seconds apart
 # (default 180), never before LBC_UNSTICK_AFTER seconds (default 480). Time is the caller's
-# own wait counter, passed as the first argument, so the tests need no real clock.
+# own wait counter, passed as the first argument, so the tests need no real clock. The caller
+# polls about once a minute, so GAP/AFTER that are not multiples of 60 act on the next minute.
 # State (action count, time of the last action) lives in LBC_UNSTICK_STATE; the caller removes
-# it when its wait starts. Each evaluation prints one line:
+# it when its wait starts (fixed shared path on purpose: the caller and the helper must agree;
+# the IDE is single-user, and a tampered file can only skip or trigger the bounded actions).
+# Each evaluation prints one line:
 #   lbc-unstick: <diagnosis> -> <action|none> (<rc|->)
 #
-# Never fails: a hub that cannot be read, or an action that fails, only logs. The ALB wait
+# Never fails (exit 0): a hub that cannot be read, invalid JSON, a corrupted state file or an
+# action that fails only logs. The ALB wait
 # keeps its own deadline. Generic: reads only the hub it is given, no consumer git host.
 #
 # Usage:  lbc-unstick.sh <seconds-waited>
 # Env:    HUB_CLUSTER_NAME (required), AWS_REGION (required), LBC_UNSTICK_AFTER=480,
 #         LBC_UNSTICK_GAP=180, LBC_UNSTICK_MAX=2, LBC_UNSTICK_STATE=/tmp/lbc-unstick.state,
-#         LBC_NAMESPACE=kube-system
+#         LBC_NAMESPACE=kube-system, LBC_INGRESS_CLASSES=<comma list, default: discovered>
 set -euo pipefail
 
 WAITED="${1:?usage: lbc-unstick.sh <seconds-waited>}"
@@ -49,10 +55,13 @@ APP="aws-load-balancer-controller-${HUB}"
 
 say() { printf 'lbc-unstick: %s\n' "$1"; }
 
+int() { case "$1" in ''|*[!0-9]*) return 1;; esac; }
+if ! { int "$WAITED" && int "$AFTER" && int "$GAP" && int "$MAX"; }; then say "bad-number -> none (-)"; exit 0; fi
 [ "$WAITED" -ge "$AFTER" ] || exit 0
 
 COUNT=0; LAST=0
 if [ -s "$STATE" ]; then read -r COUNT LAST < "$STATE" || true; fi
+if ! { int "$COUNT" && int "$LAST"; }; then COUNT=0; LAST=0; fi  # corrupted state file: start over
 [ "$COUNT" -lt "$MAX" ] || exit 0
 if [ "$COUNT" -gt 0 ] && [ "$((WAITED - LAST))" -lt "$GAP" ]; then exit 0; fi
 
@@ -72,10 +81,12 @@ if [ -z "$DIAG" ]; then
   DEP_JSON=$($K -n "$NS" get deploy "$DEP" -o json --ignore-not-found 2>/dev/null) || DIAG=unreadable
 fi
 if [ -z "$DIAG" ]; then
-  if [ -z "$SA_OUT" ] || [ -z "$DEP_JSON" ]; then
+  if [ -n "$DEP_JSON" ] && ! printf '%s' "$DEP_JSON" | jq -e . >/dev/null 2>&1; then
+    DIAG=unreadable
+  elif [ -z "$SA_OUT" ] || [ -z "$DEP_JSON" ]; then
     DIAG=missing
   else
-    AVAIL=$(printf '%s' "$DEP_JSON" | jq -r '.status.availableReplicas // 0')
+    AVAIL=$(printf '%s' "$DEP_JSON" | jq -r '.status.availableReplicas // 0' 2>/dev/null) || AVAIL=0
     if [ "$AVAIL" = 0 ]; then
       RS_JSON=$($K -n "$NS" get rs -l "app.kubernetes.io/name=$DEP" -o json 2>/dev/null) || RS_JSON=""
       [ -n "$RS_JSON" ] || RS_JSON='{}'
@@ -87,11 +98,28 @@ if [ -z "$DIAG" ]; then
       SINCE=$(printf '%s' "$DEP_JSON" | jq -r '[.status.conditions // [] | .[] | select(.type == "Available" and .status == "True") | .lastTransitionTime][0] // ""')
       AGE=0
       if [ -n "$SINCE" ] && TS=$(date -u -d "$SINCE" +%s 2>/dev/null); then AGE=$(( $(date -u +%s) - TS )); fi
+      # ALB classes: [{n: name, d: is-default}], from IngressClass.spec.controller (not the name).
+      if [ -n "${LBC_INGRESS_CLASSES:-}" ]; then
+        CLS=$(jq -cn --arg s "$LBC_INGRESS_CLASSES" '[$s | split(",")[] | {n: ., d: false}]' 2>/dev/null) || CLS='[]'
+      else
+        IC_JSON=$($K get ingressclass -o json 2>/dev/null) || IC_JSON=""
+        [ -n "$IC_JSON" ] || IC_JSON='{}'
+        CLS=$(printf '%s' "$IC_JSON" | jq -c '[.items // [] | .[]
+          | select(.spec.controller == "ingress.k8s.aws/alb")
+          | {n: .metadata.name,
+             d: (.metadata.annotations["ingressclass.kubernetes.io/is-default-class"] == "true")}]' 2>/dev/null) || CLS='[]'
+      fi
       ING_JSON=$($K get ingress -A -o json 2>/dev/null) || ING_JSON=""
       [ -n "$ING_JSON" ] || ING_JSON='{}'
-      NOADDR=$(printf '%s' "$ING_JSON" | jq -r '
-        [.items // [] | .[] | select(((.spec.ingressClassName // "") | test("alb"))
-           and ((.status.loadBalancer.ingress // []) | length == 0))] | length' 2>/dev/null) || NOADDR=0
+      NOADDR=0
+      if [ "$CLS" != "[]" ]; then
+        NOADDR=$(printf '%s' "$ING_JSON" | jq -r --argjson c "$CLS" '
+          ($c | map(.n)) as $names | ($c | any(.d)) as $def
+          | [.items // [] | .[]
+             | (.spec.ingressClassName // .metadata.annotations["kubernetes.io/ingress.class"] // "") as $k
+             | select((if $k == "" then $def else (($names | index($k)) != null) end)
+                      and ((.status.loadBalancer.ingress // []) | length == 0))] | length' 2>/dev/null) || NOADDR=0
+      fi
       if [ "$AGE" -ge "$GAP" ] && [ "${NOADDR:-0}" -gt 0 ]; then DIAG=noaddr; else DIAG=running; fi
     fi
   fi

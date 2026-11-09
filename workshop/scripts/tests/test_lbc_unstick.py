@@ -39,8 +39,12 @@ RS_FAILED = {"items": [
     {"metadata": {"creationTimestamp": "2026-01-01T00:05:00Z"},
      "status": {"conditions": [{"type": "ReplicaFailure", "status": "True"}]}}]}
 RS_OK = {"items": [{"metadata": {"creationTimestamp": "2026-01-01T00:00:00Z"}, "status": {"conditions": []}}]}
-ING_NOADDR = {"items": [{"spec": {"ingressClassName": "alb"}, "status": {"loadBalancer": {}}}]}
-ING_ADDR = {"items": [{"spec": {"ingressClassName": "alb"},
+# The platform's real class is named "platform" (not "alb"): it is found by its controller.
+IC_ALB = {"items": [
+    {"metadata": {"name": "other"}, "spec": {"controller": "example.com/other"}},
+    {"metadata": {"name": "platform"}, "spec": {"controller": "ingress.k8s.aws/alb"}}]}
+ING_NOADDR = {"items": [{"spec": {"ingressClassName": "platform"}, "status": {"loadBalancer": {}}}]}
+ING_ADDR = {"items": [{"spec": {"ingressClassName": "platform"},
                        "status": {"loadBalancer": {"ingress": [{"hostname": "x"}]}}}]}
 APP_OUTOFSYNC = {"spec": {}, "status": {"health": {"status": "Missing"}}}
 APP_HEALTHY = {"spec": {}, "status": {"health": {"status": "Healthy"}}}
@@ -49,7 +53,7 @@ APP_HEALTHY = {"spec": {}, "status": {"health": {"status": "Healthy"}}}
 class Hub:
     """Fake hub: files under tmp_path drive fake kubectl; every call is logged."""
 
-    def __init__(self, tmp_path, sa=True, deploy=None, rs=RS_OK, ing=ING_NOADDR, app=APP_OUTOFSYNC,
+    def __init__(self, tmp_path, sa=True, deploy=None, rs=RS_OK, ing=ING_NOADDR, ic=IC_ALB, app=APP_OUTOFSYNC,
                  kubectl_fails=False, kubeconfig_fails=False, restart_rc=0):
         self.t = tmp_path
         self.bin = tmp_path / "bin"
@@ -58,6 +62,7 @@ class Hub:
         (tmp_path / "dep.json").write_text(json.dumps(deploy) if deploy is not None else "")
         (tmp_path / "rs.json").write_text(json.dumps(rs))
         (tmp_path / "ing.json").write_text(json.dumps(ing))
+        (tmp_path / "ic.json").write_text(json.dumps(ic))
         (tmp_path / "app.json").write_text(json.dumps(app))
         self._fake("kubectl",
                    '#!/usr/bin/env bash\n'
@@ -67,6 +72,7 @@ class Hub:
                    '  *"get sa "*) cat "$T/sa";;\n'
                    '  *"get deploy "*) cat "$T/dep.json";;\n'
                    '  *"get rs "*) cat "$T/rs.json";;\n'
+                   '  *"get ingressclass"*) cat "$T/ic.json";;\n'
                    '  *"get ingress"*) cat "$T/ing.json";;\n'
                    '  *"get applications.argoproj.io"*) cat "$T/app.json";;\n'
                    '  *"patch applications.argoproj.io"*) echo patched >> "$T/patches";;\n'
@@ -176,6 +182,35 @@ def test_available_but_young_controller_is_not_restarted(tmp_path):
     assert "running -> none (-)" in r.stdout and h.count("restarts") == 0
 
 
+def test_noaddr_ignores_ingress_of_non_alb_class_and_ingress_with_address(tmp_path):
+    ing = {"items": [{"spec": {"ingressClassName": "other"}, "status": {"loadBalancer": {}}},
+                     {"spec": {"ingressClassName": "platform"},
+                      "status": {"loadBalancer": {"ingress": [{"hostname": "x"}]}}}]}
+    h = Hub(tmp_path, deploy=dep(1, age=300), ing=ing)
+    assert "running -> none (-)" in h.run(500).stdout and h.count("restarts") == 0
+
+
+def test_noaddr_counts_legacy_annotation_and_default_class(tmp_path):
+    ic = {"items": [{"metadata": {"name": "d", "annotations": {"ingressclass.kubernetes.io/is-default-class": "true"}},
+                     "spec": {"controller": "ingress.k8s.aws/alb"}}]}
+    ing = {"items": [{"spec": {}, "status": {"loadBalancer": {}}}]}
+    h = Hub(tmp_path, deploy=dep(1, age=300), ing=ing, ic=ic)
+    assert "noaddr -> rollout-restart (0)" in h.run(500).stdout
+    ing = {"items": [{"metadata": {"annotations": {"kubernetes.io/ingress.class": "platform"}},
+                      "spec": {}, "status": {"loadBalancer": {}}}]}
+    sub = tmp_path / "b"
+    sub.mkdir()
+    h2 = Hub(sub, deploy=dep(1, age=300), ing=ing)
+    assert "noaddr -> rollout-restart (0)" in h2.run(500).stdout
+
+
+def test_noaddr_class_list_override(tmp_path):
+    ing = {"items": [{"spec": {"ingressClassName": "custom"}, "status": {"loadBalancer": {}}}]}
+    h = Hub(tmp_path, deploy=dep(1, age=300), ing=ing, ic={"items": []})
+    assert "running -> none (-)" in h.run(500).stdout
+    assert "noaddr -> rollout-restart (0)" in h.run(500, LBC_INGRESS_CLASSES="custom,x").stdout
+
+
 # ── bounds ─────────────────────────────────────────────────────────────────────────────────
 def test_max_two_actions_and_gap_180(tmp_path):
     h = Hub(tmp_path, deploy=dep(0), rs=RS_FAILED)
@@ -233,6 +268,27 @@ def test_garbage_rs_json_is_not_a_failure(tmp_path):
     (tmp_path / "rs.json").write_text("not json")
     r = h.run(500)
     assert r.returncode == 0 and "starting -> none (-)" in r.stdout
+
+
+def test_invalid_deployment_json_is_unreadable_rc0(tmp_path):
+    h = Hub(tmp_path)
+    (tmp_path / "dep.json").write_text("{oops")
+    r = h.run(500)
+    assert r.returncode == 0 and "unreadable -> none (-)" in r.stdout and h.count("restarts") == 0
+
+
+@pytest.mark.parametrize("content", ["garbage here", "1", "x 5", "2 notanumber"])
+def test_corrupted_state_file_does_not_crash(tmp_path, content):
+    h = Hub(tmp_path, deploy=dep(0), rs=RS_FAILED)
+    (tmp_path / "state").write_text(content + "\n")
+    r = h.run(900)
+    assert r.returncode == 0, r.stderr
+
+
+def test_non_numeric_wait_argument_is_rc0(tmp_path):
+    h = Hub(tmp_path)
+    r = h.run("abc")
+    assert r.returncode == 0 and "bad-number" in r.stdout
 
 
 def test_temp_kubeconfig_is_removed(tmp_path):
