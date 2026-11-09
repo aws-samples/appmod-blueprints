@@ -15,7 +15,8 @@
 #   2. oci       helm pull from oci://ghcr.io/external-secrets/charts (ghcr.io, not the
 #                github.com release CDN; ESO_OCI_ATTEMPTS tries)
 #   3. vendored  gitops/vendor/charts/external-secrets-<version>.tgz committed in the repo
-#                (no network; a test fails if it drifts from core.yaml defaultVersion)
+#                (no network; sha256 checked against the sibling .sha256; a test fails
+#                if it drifts from core.yaml defaultVersion)
 # Then `helm upgrade --install <chart.tgz> --wait --timeout $ESO_TIMEOUT`, once.
 #
 # Consumer-agnostic: no cluster, GitLab or workshop specifics. Cluster targeting comes only
@@ -75,8 +76,17 @@ else
   VENDORED="$ESO_VENDORED_DIR/external-secrets-$ESO_VERSION.tgz"
   log "falling back to vendored chart $VENDORED"
   if [ -s "$VENDORED" ]; then
+    # Integrity: the committed tgz must match its .sha256 (sha256sum format) before use.
+    if [ ! -s "$VENDORED.sha256" ]; then
+      log "ERROR: missing checksum file $VENDORED.sha256; refusing to use the vendored chart" >&2
+      exit 1
+    fi
+    if ! (cd "$(dirname "$VENDORED")" && sha256sum -c "$(basename "$VENDORED").sha256" >/dev/null 2>&1); then
+      log "ERROR: sha256 mismatch for $VENDORED (expected per $VENDORED.sha256); refusing to use a modified chart" >&2
+      exit 1
+    fi
     CHART="$VENDORED"; SOURCE=vendored
-    log "source=vendored: using committed chart (no network)"
+    log "source=vendored: sha256 verified, using committed chart (no network)"
   else
     log "ERROR: repo and OCI failed and no vendored chart for $ESO_VERSION at $VENDORED" >&2
     exit 1

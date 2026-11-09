@@ -7,6 +7,7 @@ tasks' cmds, and the vendored chart is pinned to core.yaml defaultVersion.
 Run:  python -m pytest workshop/scripts/tests/test_install_eso_retry.py -q
 """
 import os
+import hashlib
 import re
 import shutil
 import subprocess
@@ -54,6 +55,8 @@ def env(tmp_path):
     vend = tmp_path / "vendor"
     vend.mkdir()
     (vend / "external-secrets-9.9.9.tgz").write_text("vendored")
+    (vend / "external-secrets-9.9.9.tgz.sha256").write_text(
+        hashlib.sha256(b"vendored").hexdigest() + "  external-secrets-9.9.9.tgz\n")
     e = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "log"),
              FAKE_DIR=str(tmp_path), ESO_VERSION="9.9.9", ESO_SLEEP=str(sl),
              ESO_VENDORED_DIR=str(vend), ESO_RETRY_BASE="5")
@@ -108,6 +111,24 @@ def test_all_network_sources_fail_uses_vendored(env):
     assert "falling back to vendored" in p.stdout and "installed (source=vendored)" in p.stdout
     install = [l for l in log.splitlines() if l.startswith("helm upgrade")][0]
     assert install.split()[4].endswith("/vendor/external-secrets-9.9.9.tgz")
+
+
+def test_vendored_tampered_tgz_is_rejected(env):
+    e, tmp = env
+    e["FAKE_REPO_FAILS"] = e["FAKE_OCI_FAILS"] = "all"
+    (tmp / "vendor" / "external-secrets-9.9.9.tgz").write_text("tampered")
+    p, log = run(env)
+    assert p.returncode != 0
+    assert "sha256 mismatch" in p.stderr and "helm upgrade" not in log
+
+
+def test_vendored_without_sha256_file_is_rejected(env):
+    e, tmp = env
+    e["FAKE_REPO_FAILS"] = e["FAKE_OCI_FAILS"] = "all"
+    (tmp / "vendor" / "external-secrets-9.9.9.tgz.sha256").unlink()
+    p, log = run(env)
+    assert p.returncode != 0
+    assert "missing checksum file" in p.stderr and "helm upgrade" not in log
 
 
 def test_no_source_available_fails_nonzero_without_install(env):
@@ -167,3 +188,9 @@ def test_vendored_chart_matches_core_yaml_default_version():
     with tarfile.open(tgz) as t:
         chart = yaml.safe_load(t.extractfile("external-secrets/Chart.yaml"))
     assert str(chart["version"]) == ver
+    sumfile = tgz + ".sha256"
+    assert os.path.isfile(sumfile), f"missing {sumfile}: sha256sum {os.path.basename(tgz)} > {os.path.basename(sumfile)}"
+    want, name = open(sumfile).read().split()
+    assert name == os.path.basename(tgz)
+    with open(tgz, "rb") as f:
+        assert hashlib.sha256(f.read()).hexdigest() == want, "vendored tgz does not match its .sha256"

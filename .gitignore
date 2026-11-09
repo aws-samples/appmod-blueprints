@@ -184,6 +184,3 @@ config.local.yaml
 # Python bytecode
 __pycache__/
 *.pyc
-
-# Vendored ESO chart (install-eso.sh last-resort fallback; version pinned to core.yaml by a test)
-!gitops/vendor/charts/*.tgz
