@@ -815,12 +815,9 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
       - task: hub:kubeconfig
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
-          --namespace external-secrets --create-namespace
-          --version {{.ESO_VERSION}}
-          --set serviceAccount.name=external-secrets-sa
-          --wait --timeout 5m
+      # Chart fetch is retried and falls back repo -> OCI (ghcr.io); see the script.
+      # The script is shared with kind-kro-ack (consumer-agnostic, cluster set only via KUBECONFIG).
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh'
       - printf '{{.C_OK}}✓ External Secrets Operator installed on hub{{.C_RESET}}\n'
 
   hub:cluster-secret-store:
