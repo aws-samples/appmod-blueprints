@@ -946,18 +946,25 @@ spec:
     name: backstage-session-vars
     creationPolicy: Owner
     deletionPolicy: Retain
-  data:
-    # Backstage auth.session.secret (app-config: ${BACKSTAGE_SESSION_SECRET}). Never
-    # inline it in the backstage-config ConfigMap. Seeded by the cluster providers
-    # (backstage_session_secret in <hub>/secrets); rotate by changing that SM value.
-    - secretKey: BACKSTAGE_SESSION_SECRET
-      remoteRef:
+    template:
+      engineVersion: v2
+      data:
+        # Backstage auth.session.secret (app-config: ${BACKSTAGE_SESSION_SECRET}), never
+        # inlined in the backstage-config ConfigMap. Seeded by the cluster providers as
+        # backstage_session_secret in <hub>/secrets. UPGRADE SAFETY: a hub upgraded by
+        # GitOps before it re-ran secrets-manager:seed-secrets has no such key, and the
+        # Deployment strategy is Recreate, so a missing Secret would be an outage. Until
+        # the key is seeded, fall back to a value derived (sha256) from backstage_postgres_password,
+        # which is in the same SM secret and not in git. To rotate: set backstage_session_secret
+        # in <hub>/secrets, then `kubectl -n backstage rollout restart deploy/backstage`
+        # (env is read at start; the Secret refresh alone does not roll the pod).
+        BACKSTAGE_SESSION_SECRET: {{ "'{{ .backstage_session_secret | toString | default (.backstage_postgres_password | toString | sha256sum) }}'" }}
+  dataFrom:
+    - extract:
         conversionStrategy: Default
         decodingStrategy: None
         key: {{ .Values.global.aws_cluster_name }}/secrets
         metadataPolicy: None
-        nullBytePolicy: Ignore
-        property: backstage_session_secret
 ---
 apiVersion: v1
 kind: Secret

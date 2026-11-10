@@ -1649,8 +1649,8 @@ tasks:
         fi
         # backstage_session_secret: Backstage auth.session.secret, read by the
         # backstage-session ExternalSecret (never inlined in the ConfigMap). Generated
-        # once and kept on re-runs so live sessions are not invalidated; to rotate,
-        # delete the key from <hub>/secrets and re-run (see docs).
+        # once and kept on re-runs so live sessions are not invalidated. To rotate, set a new
+        # value in <hub>/secrets, then restart the backstage Deployment (env is read at start).
         if ! echo "$UPDATED" | jq -e 'has("backstage_session_secret")' >/dev/null; then
           BS_SESSION=$(openssl rand -base64 32)
           UPDATED=$(echo "$UPDATED" | jq --arg p "$BS_SESSION" '. + {backstage_session_secret: $p}')
