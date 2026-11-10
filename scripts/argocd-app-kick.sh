@@ -7,7 +7,9 @@
 # with it. An app with no per-addon syncPolicy inherits the default retry (backoff 5s x2,
 # maxDuration 10m), which can park its next attempt up to 10 min away; crossplane-base is
 # such an app. Apps whose registry entry caps maxDuration lower (the load balancer
-# controller: 1m) are not parked by the backoff and are not kicked.
+# controller: 1m) are not parked by the backoff, so hub:settle does not kick them on a
+# timer; scripts/lbc-unstick.sh does reuse this script, once, when the LBC Application or
+# its Deployment is still missing late in the ALB wait.
 #
 # Why a plain `.operation` patch is not enough: while an operation is in progress
 # (status.operationState.phase=Running) the controller resumes the EXISTING operation state
