@@ -100,10 +100,10 @@ tasks:
       # it before writing the GitLab PAT to Secrets Manager.
       - |
         # The subshell records the task exit code in /tmp/gitlab-init.rc (next to the pid file) so
-        # the waiter can fail on it (set +e: go-task runs with errexit, which would skip the echo); the
-        # redirects on the subshell detach all of its fds.
+        # the waiter can fail on it (set +e: go-task runs with errexit, which would skip the echo). `task -x`
+        # passes the failing command's own exit code (10/11/12) instead of 201. The redirects on the subshell detach all of its fds.
         rm -f /tmp/gitlab-init.rc
-        ( set +e; task gitlab:init-ec2; echo $? > /tmp/gitlab-init.rc ) > /tmp/gitlab-init.log 2>&1 < /dev/null &
+        ( set +e; task -x gitlab:init-ec2; echo $? > /tmp/gitlab-init.rc ) > /tmp/gitlab-init.log 2>&1 < /dev/null &
         echo $! > /tmp/gitlab-init.pid
         printf '{{.C_INFO}}  gitlab:init-ec2 started in background (PID=%s, log: /tmp/gitlab-init.log){{.C_RESET}}\n' "$(cat /tmp/gitlab-init.pid)"
       # Platform install as a black box (OAP model): prepare the platform artifact
@@ -2583,7 +2583,8 @@ tasks:
             NEW=$(echo "$CURRENT" | jq -c --arg pat "$USER1_PAT" '.git_token = $pat')
             aws secretsmanager put-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets \
               --region {{.AWS_REGION}} --secret-string "$NEW" >/dev/null 2>&1 && \
-              printf '  Updated peeks-hub/secrets.git_token with real GitLab PAT\n'
+              printf '  Updated peeks-hub/secrets.git_token with real GitLab PAT\n' || \
+              printf '  ⚠ Could not update peeks-hub/secrets.git_token (non-fatal)\n'
           fi
         fi
         WORKSHOP_DIR="$HOME/environment/{{.WORKING_REPO}}"
@@ -2760,7 +2761,8 @@ tasks:
         elif [ -n "$BOT_SM" ]; then
           NEW_SM=$(echo "$BOT_SM" | jq -c --arg p "$BOT_TOKEN" '.aiops_agent_git_token = $p')
           aws secretsmanager put-secret-value --secret-id {{.HUB_CLUSTER_NAME}}/secrets --region {{.AWS_REGION}} --secret-string "$NEW_SM" >/dev/null 2>&1 \
-            && printf '  Updated %s/secrets.aiops_agent_git_token (matches bot PAT)\n' "{{.HUB_CLUSTER_NAME}}"
+            && printf '  Updated %s/secrets.aiops_agent_git_token (matches bot PAT)\n' "{{.HUB_CLUSTER_NAME}}" \
+            || printf '  ⚠ Could not update %s/secrets.aiops_agent_git_token (non-fatal)\n' "{{.HUB_CLUSTER_NAME}}"
         fi
       # After init, clone repos locally
       - task: gitlab:clone-repos

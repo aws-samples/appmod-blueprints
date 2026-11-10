@@ -1,6 +1,8 @@
 #!/bin/bash
 # ensure-gitlab-compose.sh: precondition for the workshop `gitlab:init-ec2` task (workshop layer,
 # NOT a cluster provider). Idempotent; a no-op when the docker compose plugin works and GitLab runs.
+#   0. docker must be installed (else exit 10); a GitLab container (gitlab-gitlab-1) that is already
+#      healthy ends the script at once (exit 0).
 #   1. `docker compose version` must work, else install the pinned plugin (sha256-verified, retried)
 #      into the user plugin dir (no sudo).
 #   2. `docker compose up -d` for $GITLAB_HOME when the GitLab container is not running (rc propagates).
@@ -77,6 +79,15 @@ install_plugin() {
   if [ "$ok" -eq 0 ]; then chmod 755 "$tmp" && mv -f "$tmp" "$dest"; return; fi
   rm -f "$tmp"; return 1
 }
+
+command -v docker >/dev/null 2>&1 || fail 10 "docker is not installed"
+
+# A GitLab that already runs and is healthy needs nothing from the compose plugin or from $GITLAB_HOME
+# (another $HOME, plugin missing for this user): do not fail an install that works today.
+if [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' gitlab-gitlab-1 2>/dev/null)" = healthy ]; then
+  log "gitlab-gitlab-1 already running and healthy, nothing to do"
+  exit 0
+fi
 
 if compose_ok; then
   log "docker compose present: $(docker compose version 2>/dev/null)"

@@ -29,6 +29,7 @@ GOOD_SHA = hashlib.sha256(GOOD).hexdigest()
 
 FAKE_DOCKER = r"""#!/bin/bash
 echo "docker $*" >> "$MOCK/calls.log"
+if [ "$1" = inspect ] && [ "$4" = gitlab-gitlab-1 ]; then cat "$MOCK/gl_health" 2>/dev/null || exit 1; exit 0; fi
 if [ "$1" = inspect ]; then cat "$MOCK/health" 2>/dev/null || echo healthy; exit 0; fi
 [ "$1" = compose ] || exit 1
 grep -qx GOOD "$PLUGIN_DIR/docker-compose" 2>/dev/null || { echo "docker: 'compose' is not a docker command." >&2; exit 1; }
@@ -267,7 +268,8 @@ def _prep(block, d):
 def _stub_task(d, rc, log_line):
     bindir = d / "stubbin"
     bindir.mkdir()
-    _exe(bindir / "task", f"#!/bin/bash\necho '{log_line}'\nsleep 1\nexit {rc}\n")
+    # like go-task: a failing cmd exits 201 unless `-x` is given
+    _exe(bindir / "task", f"#!/bin/bash\necho '{log_line}'\nsleep 1\n[ \"$1\" = -x ] || [ {rc} -eq 0 ] || exit 201\nexit {rc}\n")
     return bindir
 
 
@@ -314,3 +316,54 @@ def test_init_ec2_runs_ensure_script_first():
         cmds = yaml.safe_load(f)["tasks"]["gitlab:init-ec2"]["cmds"]
     real = [str(c) for c in cmds if "{{.MARK}}" not in str(c)]
     assert "ensure-gitlab-compose.sh" in real[0]
+
+
+def test_healthy_gitlab_exits_0_without_plugin_or_compose_file(env):
+    e, mock, plugins = env
+    (mock / "gl_health").write_text("healthy\n")  # plugin absent, curl would fail
+    e.update(CURL_MODE="fail", GITLAB_HOME=str(mock / "nope"))
+    r = run(e)
+    assert r.returncode == 0, r.stderr
+    assert n_calls(mock, "curl") == 0 and "up -d" not in calls(mock)
+
+
+def test_no_docker_fails_10_without_download(env):
+    e, mock, plugins = env
+    (mock.parent / "bin" / "docker").unlink()
+    e["PATH"] = str(mock.parent / "bin") + ":/nonexistent"
+    r = subprocess.run(["/bin/bash", SCRIPT], env=e, capture_output=True, text=True)
+    assert r.returncode == 10 and "docker is not installed" in r.stderr
+    assert n_calls(mock, "curl") == 0
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_waiter_stale_virtual_pid_without_rc_fails_fast(tmp_path):
+    wait = _prep(_cmd_block("cluster-providers/kind-kro-ack/Taskfile.yaml",
+                            "hub:wait-for-gitlab-init", "PID_FILE="), tmp_path)
+    for n in ("gitlab-init.pid", "gitlab-init.log"):
+        f = tmp_path / n
+        f.write_text("g1\n" if n.endswith("pid") else "old\n")
+        os.utime(f, (1, 1))  # ancient
+    w = _run_taskfile(tmp_path, [wait])
+    assert w.returncode != 0
+    assert "left no exit code" in w.stdout + w.stderr
+    assert "background job complete" not in w.stdout
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_secret_put_failure_is_not_fatal_under_go_task(tmp_path):
+    with open(os.path.join(ROOT, "workshop/Taskfile.yaml")) as f:
+        cmds = yaml.safe_load(f)["tasks"]["gitlab:init-ec2"]["cmds"]
+    blk = next(c for c in cmds if isinstance(c, str) and "put-secret-value" in c and "USER1_PAT" in c)
+    # both put-secret-value ... && printf lines must carry a `|| printf` warning
+    assert blk.count("put-secret-value") == 2 and blk.count("Could not update") == 2
+    bindir = tmp_path / "b"
+    bindir.mkdir()
+    _exe(bindir / "aws", "#!/bin/sh\nexit 1\n")
+    shell = "ISOK=1\n" + "\n".join(
+        l for l in ("if true; then", "  if true; then",
+                    "    aws secretsmanager put-secret-value >/dev/null 2>&1 && \\",
+                    "      printf 'ok\\n' || \\",
+                    "      printf 'Could not update\\n'", "  fi", "fi", "echo AFTER"))
+    w = _run_taskfile(tmp_path, [shell], str(bindir))
+    assert w.returncode == 0 and "AFTER" in w.stdout
