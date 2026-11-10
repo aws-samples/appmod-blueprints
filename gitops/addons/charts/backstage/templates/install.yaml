@@ -228,7 +228,7 @@ data:
     auth:
       environment: production
       session:
-        secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
+        secret: ${BACKSTAGE_SESSION_SECRET}
       signInPage: keycloak-oidc
       providers:
         keycloak-oidc:
@@ -715,6 +715,8 @@ spec:
             - secretRef:
                 name: backstage-postgres-vars
             - secretRef:
+                name: backstage-session-vars
+            - secretRef:
                 name: git-credentials
                 # optional: this secret exists only when a remote git host is configured
                 # (see argocd-secrets.yaml). Without it Backstage must still boot and serve
@@ -926,6 +928,36 @@ spec:
         metadataPolicy: None
         nullBytePolicy: Ignore
         property: backstage_postgres_password
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backstage-session
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  refreshInterval: "30s"
+  target:
+    name: backstage-session-vars
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    # Backstage auth.session.secret (app-config: ${BACKSTAGE_SESSION_SECRET}). Never
+    # inline it in the backstage-config ConfigMap. Seeded by the cluster providers
+    # (backstage_session_secret in <hub>/secrets); rotate by changing that SM value.
+    - secretKey: BACKSTAGE_SESSION_SECRET
+      remoteRef:
+        conversionStrategy: Default
+        decodingStrategy: None
+        key: {{ .Values.global.aws_cluster_name }}/secrets
+        metadataPolicy: None
+        nullBytePolicy: Ignore
+        property: backstage_session_secret
 ---
 apiVersion: v1
 kind: Secret
