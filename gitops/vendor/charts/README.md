@@ -4,6 +4,9 @@ Last-resort fallback used by `cluster-providers/kind-kro-ack/scripts/install-eso
 when both the Helm repo and OCI are unreachable. Each `*.tgz` has a sibling `*.tgz.sha256`
 (sha256sum format); the script refuses a chart whose hash differs or whose `.sha256` is missing.
 
+Scope: the vendored chart covers the github.com release-CDN 504 (chart download only). Its images
+still come from `ghcr.io/external-secrets/external-secrets`, so it does not cover a ghcr.io outage.
+
 ## external-secrets-2.4.1.tgz
 
 - Version: pinned to `gitops/addons/registry/core.yaml` `external-secrets.defaultVersion` (a test enforces it).
@@ -19,4 +22,6 @@ helm pull oci://ghcr.io/external-secrets/charts/external-secrets --version <v> -
 (cd gitops/vendor/charts && sha256sum external-secrets-<v>.tgz > external-secrets-<v>.tgz.sha256)
 ```
 
-Remove the old `.tgz` and `.sha256`, and update the digest above.
+Remove the old `.tgz` and `.sha256`, and update the digest above. `.gitignore` re-includes
+`gitops/vendor/charts/*.tgz` after the global `*.tgz`; check the new file is not ignored before
+committing: `git check-ignore --no-index gitops/vendor/charts/external-secrets-<v>.tgz` must print nothing.
