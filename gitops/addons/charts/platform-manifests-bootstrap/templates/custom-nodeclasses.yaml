@@ -1,0 +1,59 @@
+{{- /*
+EKS Auto Mode NodeClasses for the platform.
+
+customNodeClasses.classes — the CONSUMER's list, ALWAYS rendered, on every
+  cluster. Symmetric to customNodepools.pools: same shape, same contract, no
+  gate. The generic solution leaves it empty and relies on the EKS Auto Mode
+  built-in `default` NodeClass, so nothing changes for a consumer that does not
+  set this key.
+
+WHY THIS TEMPLATE EXISTS. A consumer that needs a NodeClass of its own — an ODCR
+  selector, a single-subnet pin, a larger ephemeral disk — had no way to ship one
+  through GitOps. Nothing in gitops/ rendered a NodeClass, and the appset-chart
+  cannot deliver a bare manifest from an arbitrary git repo: both
+  `chartConfig.path` and `additionalResources` resolve against
+  `$values.repoURLGit`, i.e. this repository. The only remaining route was a
+  manual `kubectl apply`, which no cluster rebuild replays — so the NodePools
+  referencing that NodeClass came back NotReady with
+  `NodeClassReady=False: NodeClass not found on cluster`.
+
+SYNC WAVE — the reason this is not merely a copy of custom-nodepools.yaml.
+  A NodePool whose nodeClassRef names a missing NodeClass stays NotReady and
+  provisions nothing. Both objects live in the SAME Application here, and Helm's
+  render order carries no ordering guarantee, so the NodeClasses are stamped with
+  a LOWER sync-wave than the default 0 used by the NodePools. Argo CD then applies
+  every NodeClass, waits for it to be healthy, and only then applies the NodePools.
+  `syncWave` is overridable per consumer for the rare case where an even earlier
+  wave is required; the default of "-1" is enough to precede the NodePools.
+
+Each entry: { name: <string>, labels: <optional map>, annotations: <optional map>,
+              spec: <eks.amazonaws.com/v1 NodeClass spec> }.
+
+NAME COLLISION: do not name an entry `default` — that is the Auto Mode built-in
+  NodeClass, and the NodePools of this chart reference it. Reusing the name would
+  make this chart fight the cluster over an object it does not own.
+*/ -}}
+{{- $cfg := (.Values.customNodeClasses | default dict) }}
+{{- $classes := $cfg.classes | default list }}
+{{- $wave := $cfg.syncWave | default "-1" | toString }}
+{{- range $classes }}
+{{- if eq .name "default" }}
+{{- fail "customNodeClasses.classes: `default` is the EKS Auto Mode built-in NodeClass and must not be redefined; pick another name" }}
+{{- end }}
+---
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: {{ .name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $wave | quote }}
+    {{- with .annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- toYaml .spec | nindent 2 }}
+{{- end }}
