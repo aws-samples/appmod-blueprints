@@ -5,7 +5,7 @@ version: "3"
 set: [errexit, nounset, pipefail]
 
 vars:
-  GITOPS_ROOT: "{{.ROOT_DIR}}"
+  GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kubectl, helm, yq, aws]
   AWS_REGION:
     sh: yq '.aws.region' {{.CONFIG_FILE}}
@@ -90,8 +90,8 @@ tasks:
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
       # Chart fetch is retried and falls back repo -> OCI (ghcr.io); see the script.
-      # The script is shared with kind-kro-ack (consumer-agnostic, cluster set only via KUBECONFIG).
-      - KUBECONFIG=/tmp/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh'
+      # The script is shared by every provider via cluster-providers/common/scripts (consumer-agnostic, cluster set only via KUBECONFIG).
+      - KUBECONFIG=/tmp/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/common/scripts/install-eso.sh'
       - echo "External Secrets Operator installed on hub"
 
   hub:cluster-secret-store:

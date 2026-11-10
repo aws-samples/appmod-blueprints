@@ -816,8 +816,8 @@ tasks:
     cmds:
       - task: hub:kubeconfig
       # Chart fetch is retried and falls back repo -> OCI (ghcr.io); see the script.
-      # The script is shared with kind-kro-ack (consumer-agnostic, cluster set only via KUBECONFIG).
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh'
+      # The script is shared by every provider, in cluster-providers/common/scripts (consumer-agnostic, cluster set only via KUBECONFIG).
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/common/scripts/install-eso.sh'
       - printf '{{.C_OK}}✓ External Secrets Operator installed on hub{{.C_RESET}}\n'
 
   hub:cluster-secret-store:
