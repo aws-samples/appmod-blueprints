@@ -4,15 +4,19 @@
 #   1. `docker compose version` must work, else install the pinned plugin (sha256-verified, retried)
 #      into the user plugin dir (no sudo).
 #   2. `docker compose up -d` for $GITLAB_HOME when the GitLab container is not running (rc propagates).
-#   3. Wait (bounded) for the container to report healthy.
+#   3. Wait (bounded, HEALTH_TIMEOUT) for the container to report healthy. A timeout is only a
+#      warning (exit 0): a slow first boot is normal and the later sign_in wait of gitlab:init-ec2
+#      is the authoritative, bounded readiness check.
 #
 # Plugin source, from PEEKS_TOOLS_SOURCE:
 #   (unset)|github  GitHub release only
 #   s3-first        S3 mirror first (needs ASSETS_BUCKET_NAME), then GitHub
 #   s3-only         S3 mirror only; never contacts GitHub
+# NOTE: the S3 leg is dormant until the PEEKS side publishes the object and exports these variables
+# (PEEKS branch feat/v041-peeks-fetch); nothing in this repo sets PEEKS_TOOLS_SOURCE, so only GitHub is live.
 # S3 object: s3://$ASSETS_BUCKET_NAME/${ASSETS_BUCKET_PREFIX}tools/v1/docker-compose-<ver>-linux-x86_64
 #
-# Exit: 0 ok | 10 plugin not installable | 11 compose file missing | 12 up -d failed | 13 not healthy in time
+# Exit: 0 ok (also: not healthy in time, warning only) | 10 plugin not installable | 11 compose file missing | 12 up -d failed
 # Every failure prints one line starting with PEEKS_PRECONDITION_FAILED.
 # shortcut: x86_64 only (IDE is x86_64), upgrade when an arm64 IDE is supported.
 set -u
@@ -23,7 +27,7 @@ GITLAB_HOME=${GITLAB_HOME:-$HOME/gitlab}
 PLUGIN_DIR=${PLUGIN_DIR:-$HOME/.docker/cli-plugins}
 ATTEMPTS=${ATTEMPTS:-5}
 BACKOFF_BASE=${BACKOFF_BASE:-2}
-HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-1200}
+HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-600}
 HEALTH_INTERVAL=${HEALTH_INTERVAL:-10}
 SOURCE=${PEEKS_TOOLS_SOURCE:-github}
 
@@ -84,6 +88,7 @@ else
 fi
 
 CF="$GITLAB_HOME/docker-compose.yml"
+log "GITLAB_HOME=$GITLAB_HOME"
 [ -f "$CF" ] || fail 11 "$CF missing (bootstrap did not reach the GitLab section)"
 
 if [ -z "$(docker compose -f "$CF" ps -q --status running 2>/dev/null)" ]; then
@@ -105,6 +110,9 @@ while :; do
   cid=$(docker compose -f "$CF" ps -q 2>/dev/null | head -n1)
   st=$([ -n "$cid" ] && docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null)
   case "$st" in healthy|none) log "GitLab container status: $st"; exit 0 ;; esac
-  [ "$waited" -ge "$HEALTH_TIMEOUT" ] && fail 13 "GitLab container not healthy after ${HEALTH_TIMEOUT}s (status: ${st:-absent})"
+  if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
+    log "WARNING: GitLab container not healthy after ${HEALTH_TIMEOUT}s (status: ${st:-absent}), continuing; later readiness waits decide"
+    exit 0
+  fi
   sleep "$HEALTH_INTERVAL"; waited=$((waited + HEALTH_INTERVAL))
 done

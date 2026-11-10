@@ -922,7 +922,22 @@ tasks:
         fi
         echo "[$(date +%H:%M:%S)] ▸ Waiting for gitlab:init-ec2 background job (PID=$GITLAB_PID)..."
         _LOG_LINES=0
-        while kill -0 "$GITLAB_PID" 2>/dev/null; do
+        RC_FILE="${PID_FILE%.pid}.rc"
+        # go-task runs these blocks in its embedded shell: `kill` is an unsupported builtin there
+        # and `$!` is a virtual id ("g1"), so a plain `kill -0` returns at once and the wait was a
+        # no-op. Use the external kill for a numeric pid; for a non-numeric id the .rc file (written
+        # by the launcher when the job ends) is the completion signal.
+        # shortcut: no rc file and no real pid = wait at most BG_JOB_WAIT_TIMEOUT (3600s), then go on.
+        _WAITED=0
+        _TIMEOUT="${BG_JOB_WAIT_TIMEOUT:-3600}"
+        _job_alive() {
+          [ -f "$RC_FILE" ] && return 1
+          case "$GITLAB_PID" in
+            ''|*[!0-9]*) [ "$_WAITED" -lt "$_TIMEOUT" ] ;;
+            *) env kill -0 "$GITLAB_PID" 2>/dev/null ;;
+          esac
+        }
+        while _job_alive; do
           if [ -f "$LOG_FILE" ]; then
             _TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
             if [ "$_TOTAL" -gt "$_LOG_LINES" ]; then
@@ -931,12 +946,23 @@ tasks:
             fi
           fi
           sleep 3
+          _WAITED=$((_WAITED + 3))
         done
         if [ -f "$LOG_FILE" ]; then
           tail -n +$((_LOG_LINES + 1)) "$LOG_FILE" 2>/dev/null || true
         fi
-        echo "[$(date +%H:%M:%S)] ✓ gitlab:init-ec2 background job complete"
         rm -f "$PID_FILE"
+        # Optional exit code written by the launcher next to the pid file (<pid file base>.rc).
+        # Absent file = launcher without rc support: keep the old behaviour (success).
+        JOB_RC=0
+        if [ -f "$RC_FILE" ]; then JOB_RC=$(cat "$RC_FILE" 2>/dev/null); fi
+        case "$JOB_RC" in ''|*[!0-9]*) JOB_RC=0 ;; esac
+        if [ "$JOB_RC" -ne 0 ]; then
+          if [ -f "$LOG_FILE" ]; then grep -h 'PEEKS_PRECONDITION_FAILED' "$LOG_FILE" | tail -n 3 || true; fi
+          echo "[$(date +%H:%M:%S)] ✗ gitlab:init-ec2 background job failed (exit $JOB_RC, log: $LOG_FILE)"
+          exit "$JOB_RC"
+        fi
+        echo "[$(date +%H:%M:%S)] ✓ gitlab:init-ec2 background job complete"
 
   hub:claim:
     desc: Apply hub cluster claim (EksCluster or EksclusterWithVpc depending on hub.network)

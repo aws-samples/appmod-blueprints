@@ -99,7 +99,11 @@ tasks:
       # and the 14-min EKS hub creation. The background PID is saved; hub:seed waits for
       # it before writing the GitLab PAT to Secrets Manager.
       - |
-        task gitlab:init-ec2 > /tmp/gitlab-init.log 2>&1 &
+        # The subshell records the task exit code in /tmp/gitlab-init.rc (next to the pid file) so
+        # the waiter can fail on it (set +e: go-task runs with errexit, which would skip the echo); the
+        # redirects on the subshell detach all of its fds.
+        rm -f /tmp/gitlab-init.rc
+        ( set +e; task gitlab:init-ec2; echo $? > /tmp/gitlab-init.rc ) > /tmp/gitlab-init.log 2>&1 < /dev/null &
         echo $! > /tmp/gitlab-init.pid
         printf '{{.C_INFO}}  gitlab:init-ec2 started in background (PID=%s, log: /tmp/gitlab-init.log){{.C_RESET}}\n' "$(cat /tmp/gitlab-init.pid)"
       # Platform install as a black box (OAP model): prepare the platform artifact
