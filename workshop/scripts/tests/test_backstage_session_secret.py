@@ -61,12 +61,70 @@ def test_external_secret_feeds_session_vars_and_tolerates_missing_key(rendered):
     spec = es["spec"]
     assert spec["target"]["name"] == "backstage-session-vars"
     assert spec["dataFrom"][0]["extract"]["key"] == "peeks-hub/secrets"
-    expr = spec["target"]["template"]["data"]["BACKSTAGE_SESSION_SECRET"]
-    assert "backstage_session_secret" in expr
-    # missing key -> derived fallback, not an empty value and not a failed sync
-    assert "default" in expr and "sha256sum" in expr
-    # a per-property remoteRef would make ESO fail when the key is absent
-    assert "data" not in spec
+    assert "data" not in spec  # a per-property remoteRef would fail when the key is absent
+
+
+GO_HARNESS = """package main
+import ("encoding/json";"fmt";"os";"text/template";"github.com/Masterminds/sprig/v3")
+func main(){
+ var d map[string]string
+ json.Unmarshal([]byte(os.Args[2]),&d)
+ t,err:=template.New("x").Option("missingkey=error").Funcs(sprig.TxtFuncMap()).Parse(os.Args[1])
+ if err!=nil{fmt.Print("ERR:",err);return}
+ var b bytesBuf
+ if err:=t.Execute(&b,d);err!=nil{fmt.Print("ERR:",err);return}
+ fmt.Print(b.s)
+}
+type bytesBuf struct{s string}
+func (b *bytesBuf) Write(p []byte)(int,error){b.s+=string(p);return len(p),nil}
+"""
+GO_MOD = """module t
+go 1.21
+require github.com/Masterminds/sprig/v3 v3.3.0
+"""
+
+
+@pytest.fixture(scope="module")
+def eso_render(rendered, tmp_path_factory):
+    """Execute the ExternalSecret template exactly as ESO does (Go text/template, sprig,
+    missingkey=error, map[string]string). Skipped when go or the sprig module is unavailable."""
+    if shutil.which("go") is None:
+        pytest.skip("go not installed")
+    d = tmp_path_factory.mktemp("eso")
+    (d / "main.go").write_text(GO_HARNESS)
+    (d / "go.mod").write_text(GO_MOD)
+    env = dict(os.environ, GOFLAGS="-mod=mod", GONOSUMDB="*", GOPROXY="off")
+    b = subprocess.run(["go", "build", "-o", "h", "."], cwd=d, env=env, capture_output=True, text=True)
+    if b.returncode:
+        pytest.skip("harness build failed: " + b.stderr[-200:])
+    _, docs = rendered
+    expr = _find(docs, "ExternalSecret", "backstage-session")["spec"]["target"]["template"]["data"][
+        "BACKSTAGE_SESSION_SECRET"]
+    return lambda data, e=None: subprocess.run(
+        [str(d / "h"), e or expr, __import__("json").dumps(data)], check=True, capture_output=True, text=True).stdout
+
+
+def test_eso_template_uses_index_form(rendered):
+    _, docs = rendered
+    expr = _find(docs, "ExternalSecret", "backstage-session")["spec"]["target"]["template"]["data"][
+        "BACKSTAGE_SESSION_SECRET"]
+    assert 'index . "backstage_session_secret"' in expr
+    assert ".backstage_session_secret" not in expr  # field access errors under missingkey=error
+
+
+def test_eso_template_execution(eso_render):
+    import hashlib
+    pg = "pw"
+    sha = hashlib.sha256(pg.encode()).hexdigest()
+    out = eso_render({"backstage_postgres_password": pg})
+    assert re.fullmatch(r"[0-9a-f]{64}", out) and out == sha
+    assert eso_render({"backstage_postgres_password": pg, "backstage_session_secret": "S"}) == "S"
+    assert eso_render({"backstage_postgres_password": pg, "backstage_session_secret": ""}) == sha
+
+
+def test_eso_template_old_expression_fails_on_missing_key(eso_render):
+    old = "{{ .backstage_session_secret | toString | default (.backstage_postgres_password | toString | sha256sum) }}"
+    assert eso_render({"backstage_postgres_password": "pw"}, old).startswith("ERR:")
 
 
 @pytest.mark.parametrize("taskfile", TASKFILES)

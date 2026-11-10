@@ -955,10 +955,11 @@ spec:
         # GitOps before it re-ran secrets-manager:seed-secrets has no such key, and the
         # Deployment strategy is Recreate, so a missing Secret would be an outage. Until
         # the key is seeded, fall back to a value derived (sha256) from backstage_postgres_password,
-        # which is in the same SM secret and not in git. To rotate: set backstage_session_secret
+        # which is in the same SM secret and not in git. ESO renders with missingkey=error, so
+        # the key is read with `index .` (a plain `.key` on a missing key fails the sync). To rotate: set backstage_session_secret
         # in <hub>/secrets, then `kubectl -n backstage rollout restart deploy/backstage`
         # (env is read at start; the Secret refresh alone does not roll the pod).
-        BACKSTAGE_SESSION_SECRET: {{ "'{{ .backstage_session_secret | toString | default (.backstage_postgres_password | toString | sha256sum) }}'" }}
+        BACKSTAGE_SESSION_SECRET: {{ "'{{ index . \"backstage_session_secret\" | default (.backstage_postgres_password | sha256sum) }}'" }}
   dataFrom:
     - extract:
         conversionStrategy: Default
