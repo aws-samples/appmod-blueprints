@@ -47,8 +47,8 @@ spec:
   # IAM policy. Its object name is its AWS name (external-name), computed per cluster by the
   # component-iam-policy rule: <hub>-aiops-agent-hub-aiops-agent-memory-<hash>-iam-policy
   # (hub cluster part sanitized, hash = sha256 of region/cluster/ns/app/component, first 8).
-  # The attachment (accessFor: aiops-agent-memory) resolves that name only once
-  # awslabs/open-agentic-platform#131 is on the hub: merge it together with this change.
+  # The attachment (accessFor: aiops-agent-memory) resolves that name only once the hub
+  # runs OAP v0.1.0 or later (awslabs/open-agentic-platform#131 is in v0.1.0).
   # Its memoryId output is injected into the
   # aiops-agent component below (properties.memory.config.memoryId) and the policy is
   # attached to the agent's Pod Identity role via the aws-service-identity accessFor.
