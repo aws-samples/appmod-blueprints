@@ -40,6 +40,12 @@ is migrated without deleting anything, are in the
 Omit `accountId` in the spoke's entry. The selectors inherit the hub's account (`global.accountId`,
 which the hub passes from its own cluster‑secret), so **no account ID ever enters your repo**.
 
+> [!WARNING]
+> If another hub already runs in this account, every hub must use `fleetScopeByPrefix: true`, a
+> unique `resourcePrefix` and spoke names that are unique in the account and region. A spoke entry
+> that names another hub's cluster makes this hub adopt it, with `deletion-policy: delete`. See
+> [custom-install.md, section 3a](custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
+
 ## Case B — cross-account spokes
 
 Set `accountId: "<spoke-account-id>"` in the spoke's entry (keep that repo **private** if it carries

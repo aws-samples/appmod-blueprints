@@ -97,6 +97,15 @@ resourcePrefix: "<prefix>"                   # Used for KRO tenant-facing resour
 # clusters/<resourcePrefix>/*.json and fleet/members/<resourcePrefix>/*/values.yaml.
 # Default false: the flat clusters/*.json + fleet/members/*/values.yaml layout.
 # A value set by hand on <hub>/config is kept across re-seeds.
+# SET IT TO true, with a unique non-empty resourcePrefix, BEFORE the first install
+# when several hubs share this AWS account, or when the fleet repo is a fork of
+# another hub's fleet repo or is shared by several hubs. Otherwise this hub
+# provisions every spoke entry it finds: it adopts the other hubs' EKS clusters
+# (ACK adopt-or-create, deletion-policy=delete), creates duplicate VPC/NAT/subnets,
+# and any delete on this hub deletes their clusters. If those spokes do not exist
+# yet (the likely case on a new account), it creates them under their names
+# instead, and the other hub's install then fails on names already taken. See
+# docs/install/custom-install.md, section 3a.
 fleetScopeByPrefix: false
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
