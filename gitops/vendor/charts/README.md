@@ -1,6 +1,6 @@
 # Vendored charts
 
-Last-resort fallback used by `cluster-providers/kind-kro-ack/scripts/install-eso.sh`
+Last-resort fallback used by `cluster-providers/common/scripts/install-eso.sh`
 when both the Helm repo and OCI are unreachable. Each `*.tgz` has a sibling `*.tgz.sha256`
 (sha256sum format); the script refuses a chart whose hash differs or whose `.sha256` is missing.
 
