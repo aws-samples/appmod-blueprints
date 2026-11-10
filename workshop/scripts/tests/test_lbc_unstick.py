@@ -182,6 +182,22 @@ def test_available_but_young_controller_is_not_restarted(tmp_path):
     assert "running -> none (-)" in r.stdout and h.count("restarts") == 0
 
 
+def _ing_aged(age):
+    return {"items": [{"metadata": {"creationTimestamp": ts(age)}, "spec": {"ingressClassName": "platform"},
+                       "status": {"loadBalancer": {}}}]}
+
+
+def test_noaddr_ignores_ingress_younger_than_gap(tmp_path):
+    h = Hub(tmp_path, deploy=dep(1, age=300), ing=_ing_aged(10))
+    r = h.run(500)
+    assert "running -> none (-)" in r.stdout and h.count("restarts") == 0
+
+
+def test_noaddr_counts_ingress_older_than_gap(tmp_path):
+    h = Hub(tmp_path, deploy=dep(1, age=300), ing=_ing_aged(600))
+    assert "noaddr -> rollout-restart (0)" in h.run(500).stdout and h.count("restarts") == 1
+
+
 def test_noaddr_ignores_ingress_of_non_alb_class_and_ingress_with_address(tmp_path):
     ing = {"items": [{"spec": {"ingressClassName": "other"}, "status": {"loadBalancer": {}}},
                      {"spec": {"ingressClassName": "platform"},

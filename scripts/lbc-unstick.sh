@@ -15,7 +15,8 @@
 #   missing   ServiceAccount or Deployment absent             -> A: argocd-app-kick.sh <lbc app>
 #   rsfailed  Deployment has no available pod AND its newest
 #             ReplicaSet reports ReplicaFailure                -> B: rollout restart the Deployment
-#   noaddr    Deployment Available for >= LBC_UNSTICK_GAP s but an ALB Ingress has no address
+#   noaddr    Deployment Available for >= LBC_UNSTICK_GAP s but an ALB Ingress, itself at least
+#             LBC_UNSTICK_GAP s old, has no address
 #             (ALB Ingress = its class has controller ingress.k8s.aws/alb, resolved from the
 #             IngressClass objects, or the cluster default ALB class when it names none;
 #             LBC_INGRESS_CLASSES="a,b" overrides the lookup)       -> B
@@ -95,9 +96,10 @@ if [ -z "$DIAG" ]; then
          | select(.type == "ReplicaFailure" and .status == "True")] | length' 2>/dev/null) || FAILED=0
       if [ "${FAILED:-0}" -gt 0 ]; then DIAG=rsfailed; else DIAG=starting; fi
     else
-      SINCE=$(printf '%s' "$DEP_JSON" | jq -r '[.status.conditions // [] | .[] | select(.type == "Available" and .status == "True") | .lastTransitionTime][0] // ""')
-      AGE=0
-      if [ -n "$SINCE" ] && TS=$(date -u -d "$SINCE" +%s 2>/dev/null); then AGE=$(( $(date -u +%s) - TS )); fi
+      # Seconds Available (jq fromdateiso8601: portable, unlike GNU-only `date -d`); 0 if unreadable.
+      AGE=$(printf '%s' "$DEP_JSON" | jq -r '[.status.conditions // [] | .[] | select(.type == "Available" and .status == "True") | .lastTransitionTime][0]
+        | if . == null then 0 else (now - fromdateiso8601 | floor) end' 2>/dev/null) || AGE=0
+      case "$AGE" in ''|*[!0-9]*) AGE=0 ;; esac
       # ALB classes: [{n: name, d: is-default}], from IngressClass.spec.controller (not the name).
       if [ -n "${LBC_INGRESS_CLASSES:-}" ]; then
         CLS=$(jq -cn --arg s "$LBC_INGRESS_CLASSES" '[$s | split(",")[] | {n: ., d: false}]' 2>/dev/null) || CLS='[]'
@@ -113,11 +115,13 @@ if [ -z "$DIAG" ]; then
       [ -n "$ING_JSON" ] || ING_JSON='{}'
       NOADDR=0
       if [ "$CLS" != "[]" ]; then
-        NOADDR=$(printf '%s' "$ING_JSON" | jq -r --argjson c "$CLS" '
-          ($c | map(.n)) as $names | ($c | any(.d)) as $def
+        NOADDR=$(printf '%s' "$ING_JSON" | jq -r --argjson c "$CLS" --argjson gap "$GAP" '
+          ($c | map(.n)) as $names | ($c | any(.d)) as $dflt
           | [.items // [] | .[]
+             | select((.metadata.creationTimestamp // null) as $t
+                      | $t == null or (now - ($t | fromdateiso8601) >= $gap))
              | (.spec.ingressClassName // .metadata.annotations["kubernetes.io/ingress.class"] // "") as $k
-             | select((if $k == "" then $def else (($names | index($k)) != null) end)
+             | select((if $k == "" then $dflt else (($names | index($k)) != null) end)
                       and ((.status.loadBalancer.ingress // []) | length == 0))] | length' 2>/dev/null) || NOADDR=0
       fi
       if [ "$AGE" -ge "$GAP" ] && [ "${NOADDR:-0}" -gt 0 ]; then DIAG=noaddr; else DIAG=running; fi
