@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from sweep import resilience as r  # noqa: E402
 from sweep.reapers import ecr as ecr_reaper  # noqa: E402
 from sweep.reapers import s3 as s3_reaper  # noqa: E402
+from sweep.reapers import verify as verify_reaper  # noqa: E402
 from sweep.reapers import logs as logs_reaper  # noqa: E402
 from sweep.reapers import iam as iam_reaper  # noqa: E402
 from sweep.reapers import rds as rds_reaper  # noqa: E402
@@ -207,6 +208,50 @@ def test_s3_bucket_vanishing_during_tag_read_is_skipped():
     ctx = _ctx(prefix="peeks", region="us-west-2", s3=fake)
     s3_reaper.reap(ctx)
     assert "No orphaned S3 buckets to delete" in _joined(ctx)
+
+
+def _verify_ctx(s3):
+    from unittest import mock
+    ctx = _ctx(prefix="peeks", hub="peeks-hub", region="us-west-2", s3=s3,
+               OWNER_PREFIX_TAG="platform.gitops.io/prefix", spokes=[],
+               ec2=mock.MagicMock(), ecr=mock.MagicMock(), logs=mock.MagicMock(),
+               eks=mock.MagicMock(), sm=mock.MagicMock(), ddb=mock.MagicMock(),
+               ssm=mock.MagicMock(), iam=mock.MagicMock())
+    ctx.discover_by_tag = lambda: []
+    ctx.owned_clusters = lambda: set()
+    ctx.eip_is_ours = lambda tags: False
+    return ctx
+
+
+def _s3_residue(s3):
+    from unittest import mock
+    ctx = _verify_ctx(s3)
+    with mock.patch.object(verify_reaper.iam_reaper, "owned_orphan_policies", return_value=[]), \
+         mock.patch.object(verify_reaper.amp_reaper, "owned_workspaces", return_value=[]), \
+         mock.patch.object(verify_reaper.grafana_reaper, "owned_workspaces", return_value=[]), \
+         mock.patch.object(verify_reaper.residue_reaper, "enumerate_families", return_value=({}, {})):
+        return [r for r in verify_reaper.run(ctx) if r.startswith("s3:")]
+
+
+def test_verify_ignores_cfn_owned_bucket():
+    # Fails on the old code: 17c listed every prefixed bucket, including the stack's own
+    # bucket that the reaper now leaves to CloudFormation -> permanent false residue.
+    fake = _FakeS3(["peeks-workshop-bootstrap-abc", "peeks-ray-models-1"], lambda b: None,
+                   tags={"peeks-workshop-bootstrap-abc": {"aws:cloudformation:stack-name": "peeks-workshop"}})
+    assert _s3_residue(fake) == ["s3:peeks-ray-models-1"]
+
+
+def test_verify_counts_bucket_with_unreadable_tags():
+    # The reaper fails closed on these (leaves them), so they are real residue.
+    fake = _FakeS3(["peeks-ray-models-1"], lambda b: None,
+                   tags={"peeks-ray-models-1": FakeClientError("AccessDenied")})
+    assert _s3_residue(fake) == ["s3:peeks-ray-models-1"]
+
+
+def test_verify_skips_bucket_vanishing_during_tag_read():
+    fake = _FakeS3(["peeks-gone"], lambda b: None,
+                   tags={"peeks-gone": FakeClientError("NoSuchBucket")})
+    assert _s3_residue(fake) == []
 
 
 # ── CloudWatch Logs ───────────────────────────────────────────────────────────
