@@ -307,3 +307,10 @@ def test_waiter_without_rc_file_keeps_old_behaviour(tmp_path):
     w = _run_taskfile(tmp_path, [wait])
     assert w.returncode == 0, w.stdout + w.stderr
     assert "background job complete" in w.stdout
+
+
+def test_init_ec2_runs_ensure_script_first():
+    with open(os.path.join(ROOT, "workshop/Taskfile.yaml")) as f:
+        cmds = yaml.safe_load(f)["tasks"]["gitlab:init-ec2"]["cmds"]
+    real = [str(c) for c in cmds if "{{.MARK}}" not in str(c)]
+    assert "ensure-gitlab-compose.sh" in real[0]
