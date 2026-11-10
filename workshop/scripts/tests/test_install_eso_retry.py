@@ -18,7 +18,7 @@ if not shutil.which("bash"):
     pytest.skip("bash not available", allow_module_level=True)
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-SCRIPT = os.path.join(REPO, "cluster-providers", "kind-kro-ack", "scripts", "install-eso.sh")
+SCRIPT = os.path.join(REPO, "cluster-providers", "common", "scripts", "install-eso.sh")
 TASKFILE = os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")
 
 # Fake helm: `pull` succeeds/fails per FAKE_REPO_FAILS / FAKE_OCI_FAILS (number of leading
@@ -146,3 +146,70 @@ def test_tasks_use_script_hub_timeout_10m_bootstrap_5m():
     assert "ESO_TIMEOUT=10m" in hub and "--timeout 5m" not in hub
     assert "ESO_TIMEOUT=5m" in boot
     assert "CriticalAddonsOnly" in hub  # seed-safe tolerations preserved
+
+
+# --- kind-crossplane / byoc: same script, same fallback chain (repo -> OCI) -------------------------------
+PROVIDERS = ["kind-crossplane", "byoc"]
+
+
+def _provider_taskfile(provider):
+    with open(os.path.join(REPO, "cluster-providers", provider, "Taskfile.yaml")) as f:
+        return yaml.safe_load(f)
+
+
+def _provider_eso_version(provider):
+    """Resolve ESO_VERSION exactly as the Taskfile does (GITOPS_ROOT + yq path), no stub value."""
+    t = _provider_taskfile(provider)
+    root = t["vars"]["GITOPS_ROOT"].replace("{{.ROOT_DIR}}", REPO)
+    m = re.search(r"yq '(\.[\w.-]+)' \{\{\.GITOPS_ROOT\}\}(\S+)", t["tasks"]["hub:install-eso"]["vars"]["ESO_VERSION"]["sh"])
+    assert m, "ESO_VERSION sh no longer matches the expected yq form"
+    path = root + m.group(2)
+    assert os.path.isfile(path), f"{provider}: ESO_VERSION reads {path}, which does not exist"
+    doc = yaml.safe_load(open(path))
+    for k in m.group(1).strip(".").split("."):
+        doc = doc[k]
+    return str(doc)
+
+
+def _provider_cmd(provider):
+    t = _provider_taskfile(provider)["tasks"]["hub:install-eso"]
+    body = "\n".join(c for c in t["cmds"] if isinstance(c, str))
+    assert "helm upgrade" not in body and "helm repo add" not in body
+    cmd = [l for l in body.splitlines() if "install-eso.sh" in l][0].lstrip("- ").strip()
+    return (cmd.replace("{{.ROOT_DIR}}", REPO).replace("{{.ESO_VERSION}}", _provider_eso_version(provider)))
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("repo,oci,source", [(0, 0, "repo"), ("all", 0, "oci")])
+def test_provider_task_uses_fallback_chain(env, provider, repo, oci, source):
+    e, tmp = env
+    e["FAKE_REPO_FAILS"], e["FAKE_OCI_FAILS"] = str(repo), str(oci)
+    e["ESO_RETRY_ATTEMPTS"] = e["ESO_OCI_ATTEMPTS"] = "2"
+    cmd = _provider_cmd(provider)  # real ESO_VERSION, resolved from the provider's own GITOPS_ROOT
+    p = subprocess.run(["bash", "-c", cmd], env=e, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert f"installed (source={source})" in p.stdout
+    log = open(e["FAKE_LOG"]).read()
+    install = [l for l in log.splitlines() if l.startswith("helm upgrade")][0]
+    assert "--set serviceAccount.name=external-secrets-sa" in install
+    assert install.endswith("--wait --timeout 5m")
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_provider_task_fails_clearly_when_all_sources_fail(env, provider):
+    e, tmp = env
+    e["FAKE_REPO_FAILS"] = e["FAKE_OCI_FAILS"] = "all"
+    e["ESO_RETRY_ATTEMPTS"] = e["ESO_OCI_ATTEMPTS"] = "2"
+    p = subprocess.run(["bash", "-c", _provider_cmd(provider)], env=e, capture_output=True, text=True)
+    assert p.returncode != 0
+    assert "could not fetch external-secrets chart" in p.stderr
+    assert "helm upgrade" not in open(e["FAKE_LOG"]).read()
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_provider_gitops_paths_exist(provider):
+    """Every {{.GITOPS_ROOT}}/<path> the provider applies/reads must exist (byoc had GITOPS_ROOT one level too high)."""
+    raw = open(os.path.join(REPO, "cluster-providers", provider, "Taskfile.yaml")).read()
+    root = _provider_taskfile(provider)["vars"]["GITOPS_ROOT"].replace("{{.ROOT_DIR}}", REPO)
+    for rel in set(re.findall(r"\{\{\.GITOPS_ROOT\}\}(/(?:addons/registry|bootstrap)/[\w.-]+\.yaml)", raw)):
+        assert os.path.isfile(root + rel), f"{provider}: {root + rel} missing"
