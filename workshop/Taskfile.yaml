@@ -2478,6 +2478,9 @@ tasks:
         sh: echo "fleet-config java rust golang dotnet next-js"
     cmds:
       - '{{.MARK}} start "gitlab:init-ec2 (bg)"'
+      # Precondition: docker compose plugin present + GitLab container up (idempotent, no-op when healthy).
+      # Without it a missing plugin leaves GitLab down and the failure only surfaces much later.
+      - bash {{.ROOT_DIR}}/scripts/ensure-gitlab-compose.sh
       - printf '{{.C_STEP}}▸ Waiting for GitLab CE on EC2 to be ready...{{.C_RESET}}\n'
       - |
         set -e
