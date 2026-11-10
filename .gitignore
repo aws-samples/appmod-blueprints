@@ -184,7 +184,3 @@ config.local.yaml
 # Python bytecode
 __pycache__/
 *.pyc
-
-# Vendored charts (install-eso.sh last-resort fallback). Must stay after `*.tgz` above,
-# otherwise a new vendored tgz is silently left out of `git add`.
-!gitops/vendor/charts/*.tgz

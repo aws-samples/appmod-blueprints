@@ -14,9 +14,7 @@
 #                exponential back-off + jitter)
 #   2. oci       helm pull from oci://ghcr.io/external-secrets/charts (ghcr.io, not the
 #                github.com release CDN; ESO_OCI_ATTEMPTS tries)
-#   3. vendored  gitops/vendor/charts/external-secrets-<version>.tgz committed in the repo
-#                (no network; sha256 checked against the sibling .sha256; a test fails
-#                if it drifts from core.yaml defaultVersion)
+# If both fail the script exits 1 with a clear error and installs nothing.
 # Then `helm upgrade --install <chart.tgz> --wait --timeout $ESO_TIMEOUT`, once.
 #
 # Consumer-agnostic: no cluster, GitLab or workshop specifics. Cluster targeting comes only
@@ -25,7 +23,7 @@
 # Usage: ESO_VERSION=2.4.1 [KUBECONFIG=...] install-eso.sh [-- <extra helm upgrade args>]
 # Env:   ESO_VERSION (required), ESO_TIMEOUT (5m), ESO_RETRY_ATTEMPTS (5), ESO_OCI_ATTEMPTS (2),
 #        ESO_RETRY_BASE (5, seconds; sleep = base*2^(n-1) + jitter in [0,base)), ESO_SLEEP (sleep),
-#        ESO_VENDORED_DIR (<repo>/gitops/vendor/charts), ESO_REPO_URL, ESO_OCI_URL.
+#        ESO_REPO_URL, ESO_OCI_URL.
 set -euo pipefail
 
 ESO_VERSION="${ESO_VERSION:?set ESO_VERSION (core.yaml external-secrets.defaultVersion)}"
@@ -36,8 +34,6 @@ ESO_RETRY_BASE="${ESO_RETRY_BASE:-5}"
 ESO_SLEEP="${ESO_SLEEP:-sleep}"
 ESO_REPO_URL="${ESO_REPO_URL:-https://charts.external-secrets.io}"
 ESO_OCI_URL="${ESO_OCI_URL:-oci://ghcr.io/external-secrets/charts/external-secrets}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ESO_VENDORED_DIR="${ESO_VENDORED_DIR:-$HERE/../../../gitops/vendor/charts}"
 
 [ "${1:-}" = "--" ] && shift
 
@@ -73,24 +69,8 @@ if pull_with_retry repo "$ESO_RETRY_ATTEMPTS" external-secrets --repo "$ESO_REPO
 elif log "falling back to OCI"; pull_with_retry oci "$ESO_OCI_ATTEMPTS" "$ESO_OCI_URL"; then
   CHART="$WORK/external-secrets-$ESO_VERSION.tgz"; SOURCE=oci
 else
-  VENDORED="$ESO_VENDORED_DIR/external-secrets-$ESO_VERSION.tgz"
-  log "falling back to vendored chart $VENDORED"
-  if [ -s "$VENDORED" ]; then
-    # Integrity: the committed tgz must match its .sha256 (sha256sum format) before use.
-    if [ ! -s "$VENDORED.sha256" ]; then
-      log "ERROR: missing checksum file $VENDORED.sha256; refusing to use the vendored chart" >&2
-      exit 1
-    fi
-    if ! (cd "$(dirname "$VENDORED")" && sha256sum -c "$(basename "$VENDORED").sha256" >/dev/null 2>&1); then
-      log "ERROR: sha256 mismatch for $VENDORED (expected per $VENDORED.sha256); refusing to use a modified chart" >&2
-      exit 1
-    fi
-    CHART="$VENDORED"; SOURCE=vendored
-    log "source=vendored: sha256 verified, using committed chart (no network)"
-  else
-    log "ERROR: repo and OCI failed and no vendored chart for $ESO_VERSION at $VENDORED" >&2
-    exit 1
-  fi
+  log "ERROR: could not fetch external-secrets chart $ESO_VERSION from the Helm repo ($ESO_REPO_URL, $ESO_RETRY_ATTEMPTS attempts) or OCI ($ESO_OCI_URL, $ESO_OCI_ATTEMPTS attempts); nothing was installed" >&2
+  exit 1
 fi
 
 log "installing from source=$SOURCE chart=$CHART timeout=$ESO_TIMEOUT"
