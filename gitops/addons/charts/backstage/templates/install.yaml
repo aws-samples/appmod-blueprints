@@ -228,7 +228,7 @@ data:
     auth:
       environment: production
       session:
-        secret: MW2sV-sIPngEl26vAzatV-6VqfsgAx4bPIz7PuE_2Lk=
+        secret: ${BACKSTAGE_SESSION_SECRET}
       signInPage: keycloak-oidc
       providers:
         keycloak-oidc:
@@ -715,6 +715,8 @@ spec:
             - secretRef:
                 name: backstage-postgres-vars
             - secretRef:
+                name: backstage-session-vars
+            - secretRef:
                 name: git-credentials
                 # optional: this secret exists only when a remote git host is configured
                 # (see argocd-secrets.yaml). Without it Backstage must still boot and serve
@@ -926,6 +928,44 @@ spec:
         metadataPolicy: None
         nullBytePolicy: Ignore
         property: backstage_postgres_password
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backstage-session
+  namespace: backstage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  refreshInterval: "30s"
+  target:
+    name: backstage-session-vars
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      data:
+        # Backstage auth.session.secret (app-config: ${BACKSTAGE_SESSION_SECRET}), never
+        # inlined in the backstage-config ConfigMap. Seeded by the cluster providers as
+        # backstage_session_secret in <hub>/secrets. UPGRADE SAFETY: a hub upgraded by
+        # GitOps before it re-ran secrets-manager:seed-secrets has no such key, and the
+        # Deployment strategy is Recreate, so a missing Secret would be an outage. Until
+        # the key is seeded, fall back to a value derived (sha256) from backstage_postgres_password,
+        # which is in the same SM secret and not in git. ESO renders with missingkey=error, so
+        # the key is read with `index .` (a plain `.key` on a missing key fails the sync). To rotate: set backstage_session_secret
+        # in <hub>/secrets, then `kubectl -n backstage rollout restart deploy/backstage`
+        # (env is read at start; the Secret refresh alone does not roll the pod).
+        BACKSTAGE_SESSION_SECRET: {{ "'{{ index . \"backstage_session_secret\" | default (.backstage_postgres_password | sha256sum) }}'" }}
+  dataFrom:
+    - extract:
+        conversionStrategy: Default
+        decodingStrategy: None
+        key: {{ .Values.global.aws_cluster_name }}/secrets
+        metadataPolicy: None
 ---
 apiVersion: v1
 kind: Secret
