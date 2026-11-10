@@ -723,12 +723,8 @@ tasks:
     status:
       - helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
-      - helm repo add external-secrets https://charts.external-secrets.io --force-update
-      - helm upgrade --install external-secrets external-secrets/external-secrets
-          --namespace external-secrets --create-namespace
-          --version {{.ESO_VERSION}}
-          --set serviceAccount.name=external-secrets-sa
-          --wait --timeout 5m
+      # Chart fetch is retried and falls back repo -> OCI (ghcr.io) -> vendored tgz; see the script.
+      - ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh'
       - printf '{{.C_OK}}✓ ESO installed on bootstrap cluster.{{.C_RESET}}\n'
 
   kro:install-cluster-secret-store-bootstrap:
@@ -1620,7 +1616,6 @@ tasks:
       - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
       - task: hub:kubeconfig
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
       # Seed-safe: the hub drops the built-in untainted general-purpose NodePool
       # (enableGeneralPurposeNodePool=false), and the custom *-peeks pools only
       # arrive via GitOps AFTER apply-root-appset. ESO is helm-installed with
@@ -1628,10 +1623,9 @@ tasks:
       # (only the CriticalAddonsOnly-tainted `system` pool exists) and the
       # install deadlocks until timeout. Tolerate CriticalAddonsOnly so ESO
       # lands on the system pool during seed; Karpenter provisions a system node.
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
-          --namespace external-secrets --create-namespace
-          --version {{.ESO_VERSION}}
-          --set serviceAccount.name=external-secrets-sa
+      # Chart fetch is retried and falls back repo -> OCI (ghcr.io) -> vendored tgz; see the script.
+      # --timeout 10m (was 5m): a slow ghcr.io image pull must not abort the install.
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=10m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh' --
           --set 'tolerations[0].key=CriticalAddonsOnly'
           --set 'tolerations[0].operator=Exists'
           --set 'tolerations[0].effect=NoSchedule'
@@ -1641,7 +1635,6 @@ tasks:
           --set 'certController.tolerations[0].key=CriticalAddonsOnly'
           --set 'certController.tolerations[0].operator=Exists'
           --set 'certController.tolerations[0].effect=NoSchedule'
-          --wait --timeout 5m
 
   hub:cluster-secret-store:
     desc: Apply ClusterSecretStore on hub
