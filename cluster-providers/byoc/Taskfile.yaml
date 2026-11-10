@@ -5,7 +5,7 @@ version: "3"
 set: [errexit, nounset, pipefail]
 
 vars:
-  GITOPS_ROOT: "{{.ROOT_DIR}}"
+  GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
   REQUIRED_CLIS: [kubectl, helm, yq, aws]
   AWS_REGION:
     sh: yq '.aws.region' {{.CONFIG_FILE}}
@@ -89,12 +89,9 @@ tasks:
       - KUBECONFIG=/tmp/hub-kubeconfig helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
       - aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig /tmp/hub-kubeconfig
-      - KUBECONFIG=/tmp/hub-kubeconfig helm repo add external-secrets https://charts.external-secrets.io --force-update
-      - KUBECONFIG=/tmp/hub-kubeconfig helm upgrade --install external-secrets external-secrets/external-secrets
-          --namespace external-secrets --create-namespace
-          --version {{.ESO_VERSION}}
-          --set serviceAccount.name=external-secrets-sa
-          --wait --timeout 5m
+      # Chart fetch is retried and falls back repo -> OCI (ghcr.io) -> vendored tgz.
+      # The script is shared by every provider via cluster-providers/common/scripts (consumer-agnostic, cluster set only via KUBECONFIG).
+      - KUBECONFIG=/tmp/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/common/scripts/install-eso.sh'
       - echo "External Secrets Operator installed on hub"
 
   hub:cluster-secret-store:

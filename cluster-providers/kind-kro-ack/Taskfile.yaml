@@ -724,7 +724,7 @@ tasks:
       - helm status external-secrets -n external-secrets 2>/dev/null | grep -q deployed
     cmds:
       # Chart fetch is retried and falls back repo -> OCI (ghcr.io) -> vendored tgz; see the script.
-      - ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh'
+      - ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=5m bash '{{.ROOT_DIR}}/cluster-providers/common/scripts/install-eso.sh'
       - printf '{{.C_OK}}✓ ESO installed on bootstrap cluster.{{.C_RESET}}\n'
 
   kro:install-cluster-secret-store-bootstrap:
@@ -1625,7 +1625,7 @@ tasks:
       # lands on the system pool during seed; Karpenter provisions a system node.
       # Chart fetch is retried and falls back repo -> OCI (ghcr.io) -> vendored tgz; see the script.
       # --timeout 10m (was 5m): a slow ghcr.io image pull must not abort the install.
-      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=10m bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/install-eso.sh' --
+      - KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig ESO_VERSION={{.ESO_VERSION}} ESO_TIMEOUT=10m bash '{{.ROOT_DIR}}/cluster-providers/common/scripts/install-eso.sh' --
           --set 'tolerations[0].key=CriticalAddonsOnly'
           --set 'tolerations[0].operator=Exists'
           --set 'tolerations[0].effect=NoSchedule'
