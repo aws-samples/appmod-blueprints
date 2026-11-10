@@ -11,7 +11,9 @@
 #      is the authoritative, bounded readiness check.
 #
 # Plugin source, from PEEKS_TOOLS_SOURCE:
-#   (unset)|github  GitHub release only
+# Same values and semantics as `peeks-fetch --mode` (PEEKS MR 1001); unset = github-first.
+#   github-first    GitHub release first, then the S3 mirror if ASSETS_BUCKET_NAME is set (default)
+#   github          GitHub release only (legacy value)
 #   s3-first        S3 mirror first (needs ASSETS_BUCKET_NAME), then GitHub
 #   s3-only         S3 mirror only; never contacts GitHub
 # NOTE: the S3 leg is dormant until the PEEKS side publishes the object and exports these variables
@@ -31,7 +33,8 @@ ATTEMPTS=${ATTEMPTS:-5}
 BACKOFF_BASE=${BACKOFF_BASE:-2}
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-600}
 HEALTH_INTERVAL=${HEALTH_INTERVAL:-10}
-SOURCE=${PEEKS_TOOLS_SOURCE:-github}
+SOURCE=${PEEKS_TOOLS_SOURCE:-github-first}
+HEARTBEAT=${HEARTBEAT:-60}
 
 log() { echo "[ensure-gitlab-compose] $(date +%H:%M:%S) $*" >&2; }
 fail() { echo "PEEKS_PRECONDITION_FAILED: $2" >&2; exit "$1"; }
@@ -73,8 +76,9 @@ install_plugin() {
   case "$SOURCE" in
     s3-only)  fetch_s3 "$tmp"; ok=$? ;;
     s3-first) fetch_s3 "$tmp" || fetch_github "$tmp"; ok=$? ;;
+    github-first) fetch_github "$tmp" || fetch_s3 "$tmp"; ok=$? ;;
     github)   fetch_github "$tmp"; ok=$? ;;
-    *) rm -f "$tmp"; fail 10 "unknown PEEKS_TOOLS_SOURCE='$SOURCE' (expected github|s3-first|s3-only)" ;;
+    *) rm -f "$tmp"; fail 10 "unknown PEEKS_TOOLS_SOURCE='$SOURCE' (expected github-first|github|s3-first|s3-only)" ;;
   esac
   if [ "$ok" -eq 0 ]; then chmod 755 "$tmp" && mv -f "$tmp" "$dest"; return; fi
   rm -f "$tmp"; return 1
@@ -125,5 +129,7 @@ while :; do
     log "WARNING: GitLab container not healthy after ${HEALTH_TIMEOUT}s (status: ${st:-absent}), continuing; later readiness waits decide"
     exit 0
   fi
+  # Heartbeat: the background-job waiter treats a quiet log as a dead job, so never stay silent long.
+  [ "$HEARTBEAT" -gt 0 ] && [ "$waited" -gt 0 ] && [ $(( waited % HEARTBEAT )) -lt "$HEALTH_INTERVAL" ] && log "still waiting for GitLab to be healthy (${waited}s, status: ${st:-absent})"
   sleep "$HEALTH_INTERVAL"; waited=$((waited + HEALTH_INTERVAL))
 done

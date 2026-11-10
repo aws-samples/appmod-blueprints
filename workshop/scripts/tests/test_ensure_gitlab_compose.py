@@ -367,3 +367,111 @@ def test_secret_put_failure_is_not_fatal_under_go_task(tmp_path):
                     "      printf 'Could not update\\n'", "  fi", "fi", "echo AFTER"))
     w = _run_taskfile(tmp_path, [shell], str(bindir))
     assert w.returncode == 0 and "AFTER" in w.stdout
+
+
+# ---- review fixes: github-first, quiet-job threshold, non-precondition exits -----------------
+def test_github_first_is_accepted(env):
+    # the exact default PEEKS exports; the old script answered rc 10 "unknown PEEKS_TOOLS_SOURCE"
+    e, mock, plugins = env
+    e["PEEKS_TOOLS_SOURCE"] = "github-first"
+    r = run(e)
+    assert r.returncode == 0, r.stderr
+    assert (plugins / "docker-compose").exists() and n_calls(mock, "curl") >= 1
+
+
+def test_github_first_falls_back_to_s3(env):
+    e, mock, plugins = env
+    e.update(PEEKS_TOOLS_SOURCE="github-first", CURL_MODE="fail", S3_MODE="ok", ASSETS_BUCKET_NAME="bkt")
+    r = run(e)
+    assert r.returncode == 0, r.stderr
+    assert n_calls(mock, "curl") >= 1 and n_calls(mock, "aws") >= 1
+
+
+def test_unset_source_is_github_first(env):
+    e, mock, plugins = env
+    e.update(CURL_MODE="fail", S3_MODE="ok", ASSETS_BUCKET_NAME="bkt")
+    e.pop("PEEKS_TOOLS_SOURCE", None)
+    assert run(e).returncode == 0
+
+
+def test_health_wait_prints_heartbeat(env):
+    e, mock, plugins = env
+    (mock / "health").write_text("starting\n")
+    e.update(HEALTH_TIMEOUT="3", HEALTH_INTERVAL="1", HEARTBEAT="1")
+    (plugins / "docker-compose").write_text("GOOD\n")
+    r = run(e)
+    assert r.returncode == 0 and "still waiting for GitLab to be healthy" in r.stderr
+
+
+def _waiter(tmp_path):
+    return _prep(_cmd_block("cluster-providers/kind-kro-ack/Taskfile.yaml",
+                            "hub:wait-for-gitlab-init", "PID_FILE="), tmp_path)
+
+
+def _aged(tmp_path, age):
+    import time
+    for n, c in (("gitlab-init.pid", "g1\n"), ("gitlab-init.log", "quiet\n")):
+        f = tmp_path / n
+        f.write_text(c)
+        t = time.time() - age
+        os.utime(f, (t, t))
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_quiet_but_alive_job_is_not_stale(tmp_path):
+    # log silent for 1000 s (< the 1200 s sign_in wait): the job finishes with rc 0 a few seconds later
+    _aged(tmp_path, 1000)
+    wait = _waiter(tmp_path)
+    shell = f"( sleep 5; echo 0 > {tmp_path}/gitlab-init.rc ) > /dev/null 2>&1 < /dev/null &\n" + wait
+    w = _run_taskfile(tmp_path, [shell])
+    assert w.returncode == 0, w.stdout + w.stderr
+    assert "left no exit code" not in w.stdout and "background job complete" in w.stdout
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_timeout_message_differs_from_stale(tmp_path):
+    import time
+    _aged(tmp_path, 0)
+    w = _run_taskfile(tmp_path, [f"export BG_JOB_WAIT_TIMEOUT=3\ntouch {tmp_path}/gitlab-init.log\n" + _waiter(tmp_path)])
+    assert w.returncode != 0
+    assert "still running after 3s" in w.stdout and "stale pid file" not in w.stdout
+
+
+def _rc_case(tmp_path, rc, log):
+    (tmp_path / "gitlab-init.pid").write_text("999999\n")
+    (tmp_path / "gitlab-init.rc").write_text(rc)
+    (tmp_path / "gitlab-init.log").write_text(log)
+    return _run_taskfile(tmp_path, [_waiter(tmp_path)])
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_non_precondition_failure_stays_non_fatal(tmp_path):
+    # before this PR any exit of gitlab:init-ec2 was ignored; only precondition failures may abort
+    w = _rc_case(tmp_path, "7\n", "some ruby error\n")
+    assert w.returncode == 0, w.stdout + w.stderr
+    assert "exited 7 without a precondition failure" in w.stdout
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_precondition_failure_is_fatal(tmp_path):
+    w = _rc_case(tmp_path, "12\n", "PEEKS_PRECONDITION_FAILED: up -d failed\n")
+    assert w.returncode != 0 and "background job failed (exit 12" in w.stdout
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_empty_rc_file_is_not_success(tmp_path):
+    w = _rc_case(tmp_path, "", "PEEKS_PRECONDITION_FAILED: x\n")
+    assert w.returncode != 0 and "background job failed (exit 1" in w.stdout
+
+
+@pytest.mark.skipif(REAL_TASK is None, reason="go-task not installed")
+def test_waiter_removes_pid_file(tmp_path):
+    w = _rc_case(tmp_path, "0\n", "ok\n")
+    assert w.returncode == 0 and not (tmp_path / "gitlab-init.pid").exists()
+
+
+def test_init_ec2_sign_in_wait_prints_heartbeat():
+    with open(os.path.join(ROOT, "workshop/Taskfile.yaml")) as f:
+        cmds = yaml.safe_load(f)["tasks"]["gitlab:init-ec2"]["cmds"]
+    blk = next(c for c in cmds if isinstance(c, str) and "users/sign_in" in c)
+    assert "still waiting for GitLab sign_in" in blk

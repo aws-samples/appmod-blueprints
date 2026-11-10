@@ -2495,6 +2495,8 @@ tasks:
             printf '  GitLab ready.\n'; break
           fi
           [ "$i" -eq 120 ] && { printf '  ⚠ GitLab not ready after 20min — continuing anyway.\n'; }
+          # heartbeat every ~60s: the install waiter treats a silent log as a dead job
+          [ $((i % 6)) -eq 0 ] && printf '  ... still waiting for GitLab sign_in (%ss)\n' "$((i * 10))"
           sleep 10
         done
         # GitLab was started fresh by CDK bootstrap.sh — secrets are consistent on new events.
