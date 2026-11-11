@@ -293,7 +293,11 @@ aws-for-fluentbit:
       # 3.4.13 -> 3.5.1: picks up the AL2023 base-image openssl patch
       # (openssl-libs 3.5.7-2.0.1 -> 3.5.8-1, fixes CVE-2026-14456 /
       # ALAS2023-2026-2088 and ALAS2023-2026-2136).
-      tag: 3.5.1
+      # 3.5.1 -> 3.5.7: AL2023 base 2023.12.20261102.0 picks up
+      # openssl-libs / openssl-fips-provider-latest 3.5.8-1.amzn2023.0.3
+      # (ALAS2023-2026-3204), curl / libcurl 8.21.0-5.amzn2023.0.3
+      # (ALAS2023-2026-3267) and libbrotli 1.1.0-1.amzn2023.0.2 (ALAS2023-2026-3334).
+      tag: 3.5.7
     # The chart defaults every output to us-east-1. Ship logs to the cluster's own
     # region, from the same aws_region annotation every other AWS addon reads.
     cloudWatchLogs:
