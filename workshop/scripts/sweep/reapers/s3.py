@@ -1,9 +1,35 @@
 """S3 reaper (§8c): imperatively-created buckets not in the CFN stack — the Ray
 model cache (<prefix>-ray-models-<acct> / <hub>-ray-models-<acct>) and the
 self-serve deploy-staging bucket. Prefix-scoped so shared bootstrap buckets
-(cdk-hnb659fds-*, ws-assets-*) are never matched. Empties versions + markers first."""
+(cdk-hnb659fds-*, ws-assets-*) are never matched. Empties versions + markers first.
+
+CloudFormation-owned buckets (tag aws:cloudformation:stack-name) are NEVER reaped
+here: CloudFormation deletes them itself, in its own order. The sweep runs in parallel
+with the stack delete/rollback, and deleting the stack's bootstrap bucket under it made
+the IDE bootstrap-script uploader fail with NoSuchBucket (stack ended ROLLBACK_FAILED,
+N-21 cause A). If the tags cannot be read the bucket is left alone and counted as failed
+(fail closed): a visible residue is better than a stack wedged in rollback."""
 
 from ..resilience import run_delete
+
+CFN_STACK_TAG = "aws:cloudformation:stack-name"
+
+
+def _code(e):
+    return getattr(e, "response", {}).get("Error", {}).get("Code", "")
+
+
+def cfn_owner(s3, bkt):
+    """Stack name when the bucket belongs to a CloudFormation stack, "" when it has
+    tags but no stack tag or no tag set at all. Raises on any other error. Shared by the
+    reaper and the verify gate (§17c) so both apply the same ownership test."""
+    try:
+        tags = s3.get_bucket_tagging(Bucket=bkt).get("TagSet", [])
+    except Exception as e:
+        if _code(e) == "NoSuchTagSet":
+            return ""
+        raise
+    return next((x.get("Value", "") for x in tags if x.get("Key") == CFN_STACK_TAG), "")
 
 
 def reap(ctx):
@@ -32,6 +58,7 @@ def reap(ctx):
 
     try:
         considered = deleted = gone = access_denied = failed = 0
+        unreadable = []
         for b in s3.list_buckets().get("Buckets", []):
             name = b["Name"]
             if not name.startswith(prefix + "-"):
@@ -42,6 +69,19 @@ def reap(ctx):
             except Exception:
                 loc = region
             if loc != region:
+                continue
+            try:
+                owner = cfn_owner(s3, name)
+            except Exception as e:
+                if _code(e) == "NoSuchBucket":
+                    continue  # already gone
+                failed += 1
+                considered += 1
+                unreadable.append(name)
+                log(f"  S3 {name}: left alone, tags unreadable ({_code(e) or e}); not reaping a possibly stack-owned bucket (needs s3:GetBucketTagging)")
+                continue
+            if owner:
+                log(f"  S3 {name}: owned by CloudFormation stack {owner}, left to CloudFormation")
                 continue
             considered += 1
             _empty_bucket(name)
@@ -67,6 +107,7 @@ def reap(ctx):
             log(
                 f"S3: deleted {deleted} orphaned bucket(s)"
                 f"; {access_denied} access-denied, {failed} failed"
+                + (f" (tags unreadable: {', '.join(unreadable)})" if unreadable else "")
             )
     except Exception as e:
         log(f"S3: {e}")

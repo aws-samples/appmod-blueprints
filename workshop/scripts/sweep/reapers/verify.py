@@ -14,6 +14,8 @@ from . import iam as iam_reaper
 from . import oidc as oidc_reaper
 from . import residue as residue_reaper
 from .logs import log_group_is_ours
+from .s3 import _code as _s3_code
+from .s3 import cfn_owner
 
 
 def _tagged_arn_exists(ctx, arn):
@@ -156,8 +158,18 @@ def run(ctx):
                     loc = s3.get_bucket_location(Bucket=b["Name"]).get("LocationConstraint") or "us-east-1"
                 except Exception:
                     loc = region
-                if loc == region:
-                    _add(f"s3:{b['Name']}")
+                if loc != region:
+                    continue
+                # CloudFormation-owned buckets are left to CloudFormation by the S3 reaper
+                # (same tag test), so they are not residue. Unreadable tags: the reaper left
+                # the bucket alone, so it still counts.
+                try:
+                    if cfn_owner(s3, b["Name"]):
+                        continue
+                except Exception as e:
+                    if _s3_code(e) == "NoSuchBucket":
+                        continue
+                _add(f"s3:{b['Name']}")
         except Exception:
             pass
         try:  # owned control-plane log groups
