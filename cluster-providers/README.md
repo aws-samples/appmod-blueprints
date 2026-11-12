@@ -200,12 +200,19 @@ Authorization and teardown therefore key on something other than the name:
   load-balancer-controller ALBs by the same exact names, minus retained spokes), the available EBS volumes they
   owned (Retain StorageClass PVCs, tagged `kubernetes.io/cluster/<name>=owned` or, with the
   EKS Auto Mode CSI driver, `eks:eks-cluster-name=<name>`), their target groups with no load
-  balancer, the hub's unused CloudWatch Logs delivery sources/destinations and, when `domain`
+  balancer, the capability-log CloudWatch Logs deliveries, delivery sources and destinations
+  (`<cluster>-<cap>`, `<cluster>-<cap>-cwl`, made by `task enable-capability-logs`) of the hub
+  AND of its spokes and, when `domain`
   is in a Route53 hosted zone, the A/AAAA/CNAME records external-dns made for them (identified
   by its owner TXT record, owner = cluster name; never the zone, NS/SOA, ACM validation or
   hand-made records); `DeleteCluster` is retried while EKS
   answers `ResourceInUseException`, and the secret sweep includes secrets already scheduled
-  for deletion. `DESTROY_KEEP_DATA=true task destroy` keeps those EBS volumes and takes a
+  for deletion. Step 2d (`scripts/sweep-ray-resources.py`) then deletes what `ray:setup`
+  creates with the AWS CLI and no CR owns, by exact name only: the model bucket
+  `<prefix>-ray-models-<account>` (emptied first, every version) and the ECR repos
+  `<prefix>-ray-vllm-custom` / `<prefix>-ray-neuron-custom`; `kind-crossplane` destroy runs
+  the same two sweeps (deliveries, Ray) in its Phase 6b. `DESTROY_KEEP_DATA=true task destroy`
+  keeps those EBS volumes, the Ray bucket and repos, and takes a
   final snapshot of the DevLake databases before deleting them (default: deleted without a
   snapshot).
 - The python helpers use the same AWS profile as the `aws` CLI calls of the task

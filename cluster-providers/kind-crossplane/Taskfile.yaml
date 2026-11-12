@@ -2258,6 +2258,8 @@ tasks:
       Pass CLEANUP_KIND=true to also remove the Kind cluster after cleanup.
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
+      # DESTROY_KEEP_DATA=true: keep the Ray model bucket and the Ray ECR repos (Phase 6b).
+      DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
     cmds:
       # Refresh kubeconfig and credentials, restart providers to pick up new creds
       - kind get kubeconfig --name {{.KIND_CLUSTER_NAME}} > {{.KUBECONFIG}}
@@ -2399,6 +2401,22 @@ tasks:
               aws iam delete-policy --policy-arn "$POLICY_ARN" 2>/dev/null || true
             done
           done
+        ignore_error: true
+      # Phase 6b: what no Crossplane MR owns, once the hub is gone (same sweeps as
+      # kind-kro-ack destroy 2b/2d): the CloudWatch Logs capability-log deliveries,
+      # sources and destinations that the root `task enable-capability-logs` made for
+      # the hub and the <prefix>-spoke-dev/-prod spokes (exact names, deliveries first),
+      # and what ray:setup made with the AWS CLI: the model bucket
+      # <prefix>-ray-models-<account> (emptied, all versions) and the ECR repos
+      # <prefix>-ray-vllm-custom / <prefix>-ray-neuron-custom. Nothing while the hub is
+      # live. DESTROY_KEEP_DATA=true keeps the bucket and the repos.
+      - cmd: |
+          KEEP_DATA_ARGS=""
+          if [ "{{.DESTROY_KEEP_DATA}}" = true ]; then KEEP_DATA_ARGS="--keep-data"; fi
+          python3 "{{.ROOT_DIR}}/scripts/sweep-log-deliveries.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" \
+            "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
+          python3 "{{.ROOT_DIR}}/scripts/sweep-ray-resources.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" \
+            "{{.HUB_CLUSTER_NAME}}" "{{.AWS_ACCOUNT_ID}}" $KEEP_DATA_ARGS 2>&1 || true
         ignore_error: true
       # Phase 7: Clean up observability resources (AMP scrapers, AMP workspace, AMG workspace).
       # Scrapers hold ENIs in VPCs and must be deleted before VPC cleanup.

@@ -2564,7 +2564,8 @@ tasks:
         dl_left() { if [ "{{.DESTROY_DEADLINE}}" -gt 0 ] 2>/dev/null; then
         echo $(( {{.DESTROY_DEADLINE}} - $(date +%s) )); else echo 999999; fi; }
       # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
-      # (step 2b) and take a final snapshot of the DevLake databases before they are
+      # (step 2b), keep the Ray model bucket and Ray ECR repos (step 2d), and take a final
+      # snapshot of the DevLake databases before they are
       # deleted (6eii). It does NOT protect AgentCore memories in a normal destroy:
       # step 6c (hub:destroy-addons) deletes the OAM apps while Crossplane still runs,
       # and their Memory CRs (deletionPolicy Delete) delete the memories (session and
@@ -2869,8 +2870,9 @@ tasks:
           #     ${PREFIX}-spoke-dev/-prod; never ${PREFIX}-*; not live, not retained): available EBS
           #     volumes owned by them (Retain StorageClass PVCs), their target groups with
           #     no load balancer (step 1 deletes ALBs only; ResourceInUse while that ALB is
-          #     still going is retried, bounded), and the hub's CloudWatch Logs
-          #     delivery sources/destinations no delivery uses (step 2 deletes deliveries).
+          #     still going is retried, bounded), and the CloudWatch Logs capability-log
+          #     deliveries, sources and destinations of the hub AND its spokes
+          #     (<cluster>-<cap>, <cluster>-<cap>-cwl; deliveries first).
           #     With a Route53 domain: the A/AAAA/CNAME records external-dns made for them
           #     (owner TXT = cluster name), never the hosted zone or a record it does not own.
           #     DESTROY_KEEP_DATA=true keeps those EBS volumes (listed, not deleted).
@@ -2888,6 +2890,14 @@ tasks:
           #     See scripts/sweep-app-resources.py.
           python3 "{{.ROOT_DIR}}/scripts/sweep-app-resources.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" $KEEP_DATA_ARGS 2>&1 || true
+          # 2d. What ray:setup (cluster-providers/common/Taskfile.ray.yaml) creates with the
+          #     AWS CLI, which no CR owns: the model bucket ${PREFIX}-ray-models-<account>
+          #     (emptied, all versions) and the ECR repos ${PREFIX}-ray-vllm-custom and
+          #     ${PREFIX}-ray-neuron-custom (step 5 skips them: not ACK-tagged). These exact
+          #     names only; nothing while the hub is live. DESTROY_KEEP_DATA=true keeps them.
+          #     See scripts/sweep-ray-resources.py.
+          python3 "{{.ROOT_DIR}}/scripts/sweep-ray-resources.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
+            "{{.AWS_ACCOUNT_ID}}" $KEEP_DATA_ARGS 2>&1 || true
           # 3. Orphaned ACK-managed IAM roles. Scope by BOTH the resource prefix AND
           #    an ACK ownership tag (services.k8s.aws/*), and skip infra/bootstrap/CFN
           #    roles by name. Deleting the IDE execution role (*-team-stack-*/*SharedRole*),

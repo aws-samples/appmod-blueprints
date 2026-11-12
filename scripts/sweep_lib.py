@@ -972,8 +972,8 @@ def sweep_shared_roles(iam, names, protected, dry_run=False):
 #   * EBS volumes of PVCs whose StorageClass is Retain (status available, tag
 #     kubernetes.io/cluster/<cluster>=owned);
 #   * target groups of the load-balancer-controller (step 1 deletes the ALBs only);
-#   * CloudWatch Logs delivery sources/destinations of the EKS capability logs
-#     (step 2 deletes the deliveries only).
+#   * CloudWatch Logs deliveries, sources and destinations of the EKS capability
+#     logs of the hub and of its spokes (step 2 deletes the hub's deliveries only).
 # Each is scoped to a cluster of THIS stack (stack_cluster_names: exact names, no
 # <prefix>-* wildcard) that is no longer live, so a live or retained cluster's
 # resources, and another stack whose prefix starts with ours, are never touched.
@@ -1050,20 +1050,89 @@ def select_target_groups(elbv2, is_gone):
     return sel, skipped
 
 
-def select_log_deliveries(logs, hub, hub_gone):
-    """Delivery sources/destinations named after the hub, once the hub is gone and
-    no delivery references them."""
-    if not hub_gone:
-        return [], []
-    used_src, used_dst = set(), set()
+# The EKS capabilities whose controller logs enable-capability-logs (root Taskfile)
+# delivers: delivery source <cluster>-<cap>, destination <cluster>-<cap>-cwl.
+CAPABILITY_NAMES = ('kro', 'ack', 'argocd')
+
+
+def capability_arn_cluster(arn):
+    """Cluster name of an EKS capability ARN
+    (arn:aws:eks:<region>:<account>:capability/<cluster>/<capability>/<id>), else ''."""
+    parts = (arn or '').split(':', 5)
+    if len(parts) < 6 or parts[2] != 'eks' or not parts[5].startswith('capability/'):
+        return ''
+    path = parts[5].split('/')
+    return path[1] if len(path) > 2 else ''
+
+
+def select_log_deliveries(logs, gone):
+    """CloudWatch Logs delivery objects of the capability logs of the removed clusters
+    of this stack (gone: their exact names, e.g. the hub and its spokes).
+    Returns (delivery ids, source names, destination names), in delete order.
+
+    A source is selected when its name is exactly <cluster>-<cap> for a gone cluster,
+    or when it ends in -<cap> and its resource ARN is a capability of a gone cluster
+    (the capability is deleted, so the source can deliver nothing). Never a
+    <prefix>-* pattern: another stack whose prefix starts with ours keeps its own.
+    Every delivery from a selected source is deleted first (a source cannot be
+    deleted while a delivery uses it). A destination is selected when its name is
+    exactly <cluster>-<cap>-cwl for a gone cluster and no delivery that stays uses it."""
+    gone = {n for n in (gone or ()) if n}
+    if not gone:
+        return [], [], []
+    names = {f'{c}-{cap}' for c in gone for cap in CAPABILITY_NAMES}
+    srcs = []
+    for s in _paginate_token(logs.describe_delivery_sources, 'deliverySources', 'nextToken'):
+        name = s.get('name', '')
+        if not name:
+            continue
+        by_arn = (any(name.endswith(f'-{cap}') for cap in CAPABILITY_NAMES)
+                  and any(capability_arn_cluster(a) in gone for a in s.get('resourceArns') or []))
+        if name in names or by_arn:
+            srcs.append(name)
+    chosen = set(srcs)
+    ids, used_dst = [], set()
     for d in _paginate_token(logs.describe_deliveries, 'deliveries', 'nextToken'):
-        used_src.add(d.get('deliverySourceName', ''))
-        used_dst.add(d.get('deliveryDestinationArn', ''))
-    srcs = [s['name'] for s in _paginate_token(logs.describe_delivery_sources, 'deliverySources', 'nextToken')
-            if hub in s.get('name', '') and s['name'] not in used_src]
+        if d.get('deliverySourceName', '') in chosen:
+            if d.get('id'):
+                ids.append(d['id'])
+        else:
+            used_dst.add(d.get('deliveryDestinationArn', ''))
+    dst_names = {f'{n}-cwl' for n in names}
     dsts = [d['name'] for d in _paginate_token(logs.describe_delivery_destinations, 'deliveryDestinations', 'nextToken')
-            if hub in d.get('name', '') and d.get('arn', '') not in used_dst]
-    return srcs, dsts
+            if d.get('name', '') in dst_names and d.get('arn', '') not in used_dst]
+    return ids, srcs, dsts
+
+
+def sweep_log_deliveries(logs, gone, dry_run=False):
+    """Delete what select_log_deliveries selects: deliveries, then sources, then
+    destinations. Not found counts as done (a re-run, or step 2 got there first).
+    Returns (deliveries, sources, destinations, n deleted)."""
+    ids, srcs, dsts = select_log_deliveries(logs, gone)
+    verb = 'would delete' if dry_run else 'delete'
+    n = 0
+
+    def one(fn, what):
+        nonlocal n
+        log(f'  {verb} CloudWatch Logs {what}')
+        if dry_run:
+            return
+        try:
+            fn()
+            n += 1
+        except Exception as e:
+            reraise_credentials(e)
+            if err_code(e) == 'ResourceNotFoundException':
+                log(f'    {what} already gone')
+                return
+            log(f'    ⚠ {what} not deleted ({err_code(e)})')
+    for i in ids:
+        one(lambda i=i: logs.delete_delivery(id=i), f'delivery {i}')
+    for s in srcs:
+        one(lambda s=s: logs.delete_delivery_source(name=s), f'delivery source {s}')
+    for d in dsts:
+        one(lambda d=d: logs.delete_delivery_destination(name=d), f'delivery destination {d}')
+    return ids, srcs, dsts, n
 
 
 # external-dns (registry txt, txtOwnerId = the cluster name) writes, next to each
@@ -1211,15 +1280,9 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
                                       f'target group {name}', ('ResourceInUse',),
                                       tg_attempts, tg_delay, sleep):
             n += 1
-    srcs, dsts = select_log_deliveries(logs, hub, is_gone(hub))
-    for s in srcs:
-        log(f'  {verb} CloudWatch Logs delivery source {s}')
-        if not dry_run and _try(lambda: logs.delete_delivery_source(name=s), f'delivery source {s}'):
-            n += 1
-    for d in dsts:
-        log(f'  {verb} CloudWatch Logs delivery destination {d}')
-        if not dry_run and _try(lambda: logs.delete_delivery_destination(name=d), f'delivery destination {d}'):
-            n += 1
+    stack = stack_cluster_names(prefix, hub, inventory)
+    dels, srcs, dsts, k = sweep_log_deliveries(logs, {c for c in stack if is_gone(c)}, dry_run)
+    n += k
     dns = []
     if r53 is not None and domain:
         plans, dkeep = select_dns_records(r53, domain, is_gone)
@@ -1228,7 +1291,8 @@ def sweep_hub_leftovers(ec2, elbv2, logs, prefix, hub, clusters, inventory=None,
         dns = [f'{rr["Type"]} {rr["Name"]}' for _, _, rrs in plans for rr in rrs]
         n += sweep_dns_records(r53, plans, dry_run)
     return {'volumes': [v for v, _ in vols], 'target_groups': [a for a, _ in tgs],
-            'delivery_sources': srcs, 'delivery_destinations': dsts, 'dns_records': dns, 'deleted': n}
+            'deliveries': dels, 'delivery_sources': srcs, 'delivery_destinations': dsts, 'dns_records': dns,
+            'deleted': n}
 
 
 # ------------------------------------- app resources (AgentCore memory, SNS, SQS)
@@ -1425,6 +1489,122 @@ def sweep_app_resources(selected, client_for, dry_run=False):
         one('sns', r['region'], f'SNS topic {r["name"]}', f'sns-topic:{r["name"]}',
             lambda c: c.get_topic_attributes(TopicArn=r['arn']), ('NotFound', 'NotFoundException'),
             lambda c: c.delete_topic(TopicArn=r['arn']))
+    return n, failed
+
+
+# ------------------------------------------- Ray model cache (S3) and Ray images (ECR)
+#
+# cluster-providers/common/Taskfile.ray.yaml (task <provider>:ray:setup, ray:setup-neuron)
+# creates these with the AWS CLI, not through a CR: nothing on the hub deletes them,
+# and the ACK ECR step (5) skips the repos (no services.k8s.aws/* tag). Only these
+# exact names, never a <prefix>-* pattern: a user repo or bucket that shares the
+# prefix is not ours.
+RAY_BUCKET = '{p}-ray-models-{a}'
+RAY_ECR_REPOS = ('{p}-ray-vllm-custom', '{p}-ray-neuron-custom')
+
+
+def ray_resource_names(prefix, account):
+    """(bucket, [ECR repos]) ray:setup creates for this prefix and account."""
+    if not prefix or not account:
+        return '', []
+    return RAY_BUCKET.format(p=prefix, a=account), [r.format(p=prefix) for r in RAY_ECR_REPOS]
+
+
+def bucket_region(s3, bucket):
+    loc = s3.get_bucket_location(Bucket=bucket).get('LocationConstraint')
+    return {None: 'us-east-1', '': 'us-east-1', 'EU': 'eu-west-1'}.get(loc, loc)
+
+
+def empty_bucket(s3, bucket):
+    """Delete every object version and delete marker (a versioned bucket cannot be
+    deleted otherwise). Returns the number of keys removed."""
+    n, kw = 0, {'Bucket': bucket}
+    while True:
+        resp = s3.list_object_versions(**kw)
+        keys = [{'Key': o['Key'], 'VersionId': o['VersionId']}
+                for o in (resp.get('Versions') or []) + (resp.get('DeleteMarkers') or [])]
+        for i in range(0, len(keys), 1000):
+            out = s3.delete_objects(Bucket=bucket, Delete={'Objects': keys[i:i + 1000], 'Quiet': True})
+            if out.get('Errors'):
+                raise RuntimeError(f'An error occurred ({out["Errors"][0].get("Code", "DeleteObjects")})')
+            n += len(keys[i:i + 1000])
+        if not resp.get('IsTruncated'):
+            return n
+        kw = {'Bucket': bucket, 'KeyMarker': resp.get('NextKeyMarker'),
+              'VersionIdMarker': resp.get('NextVersionIdMarker')}
+
+
+def sweep_ray_resources(s3, ecr, prefix, account, region, keep_data=False, dry_run=False):
+    """Delete the Ray model bucket (emptied first, all versions) and the Ray ECR repos
+    (with their images) of this prefix and account. keep_data keeps them all (the
+    bucket holds downloaded models, the repos the built images). A bucket in another
+    region is kept: another install of the same prefix and account owns it. Not found
+    is done. Returns (n deleted (dry-run: would delete), failures [tag])."""
+    bucket, repos = ray_resource_names(prefix, account)
+    if not bucket:
+        log('  ray resources: no prefix or account id: not swept')
+        return 0, []
+    if keep_data:
+        for what in [f's3://{bucket}'] + [f'ECR repo {r}' for r in repos]:
+            log(f'  keep {what}: DESTROY_KEEP_DATA=true')
+        return 0, []
+    verb = 'would delete' if dry_run else 'delete'
+    n, failed = 0, []
+    try:
+        s3.head_bucket(Bucket=bucket)
+        present = True
+    except Exception as e:
+        reraise_credentials(e)
+        code = err_code(e)
+        present = False
+        if code in ('404', 'NoSuchBucket', 'NotFound'):
+            log(f'  s3://{bucket} already gone')
+        elif code in ('301', 'PermanentRedirect'):
+            log(f'  keep s3://{bucket}: it is not in {region} (another install of {prefix})')
+        else:
+            log(f'    ⚠ s3://{bucket} not read ({code})')
+            failed.append(f's3:{bucket}')
+    if present:
+        try:
+            where = bucket_region(s3, bucket)
+            if where != region:
+                log(f'  keep s3://{bucket}: it is in {where}, not {region} (another install of {prefix})')
+            else:
+                log(f'  {verb} s3://{bucket} (emptied first, all versions)')
+                if dry_run:
+                    n += 1
+                else:
+                    k = empty_bucket(s3, bucket)
+                    s3.delete_bucket(Bucket=bucket)
+                    log(f'  ✓ deleted s3://{bucket} ({k} object version(s) removed)')
+                    n += 1
+        except Exception as e:
+            reraise_credentials(e)
+            log(f'    ⚠ s3://{bucket} not deleted ({err_code(e)})')
+            failed.append(f's3:{bucket}')
+    for repo in repos:
+        try:
+            ecr.describe_repositories(repositoryNames=[repo])
+        except Exception as e:
+            reraise_credentials(e)
+            if err_code(e) == 'RepositoryNotFoundException':
+                continue
+            log(f'    ⚠ ECR repo {repo} not read ({err_code(e)})')
+            failed.append(f'ecr:{repo}')
+            continue
+        log(f'  {verb} ECR repo {repo} (with its images)')
+        if dry_run:
+            n += 1
+            continue
+        try:
+            ecr.delete_repository(repositoryName=repo, force=True)
+            n += 1
+        except Exception as e:
+            reraise_credentials(e)
+            if err_code(e) == 'RepositoryNotFoundException':
+                continue
+            log(f'    ⚠ ECR repo {repo} not deleted ({err_code(e)})')
+            failed.append(f'ecr:{repo}')
     return n, failed
 
 
