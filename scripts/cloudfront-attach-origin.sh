@@ -28,7 +28,8 @@
 #   AWS_REGION            region                       (default: .aws.region)
 #   CF_COMMENT            distribution Comment         (default: <HUB_CLUSTER_NAME>-platform)
 #   ALB_NAME              override the ALB name        (default: <HUB_CLUSTER_NAME>-platform)
-#   RESOURCE_PREFIX       ownership tag value          (default: .resourcePrefix)
+#   RESOURCE_PREFIX       ownership tag value          (default: .resourcePrefix;
+#                         required only when a new VPC origin is created)
 #   CF_TIMEOUT_SECONDS    VPC origin deploy budget     (default: 1200; measured ~540s)
 #
 # Exit: 0 ok or already correct · 1 bad prerequisite · 2 VPC origin never deployed
@@ -50,9 +51,9 @@ REGION="${AWS_REGION:-$(cfg '.aws.region')}"
 [ -n "$REGION" ]          || die "region unknown (set AWS_REGION, or .aws.region in $CONFIG_FILE)"
 # The VPC origin is created tagged platform.gitops.io/prefix=<prefix> (same ownership tag
 # as cloudfront-reserve-domain.sh), so an IAM policy can condition cloudfront:CreateVpcOrigin
-# on aws:RequestTag. The call then also needs cloudfront:TagResource.
+# on aws:RequestTag. The call then also needs cloudfront:TagResource. Only a create needs the
+# prefix: an already-correct or reusable VPC origin is used without it (checked in step 4).
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-$(cfg '.resourcePrefix')}"
-[ -n "$RESOURCE_PREFIX" ] || die "resource prefix unknown (set RESOURCE_PREFIX, or .resourcePrefix in $CONFIG_FILE)"
 
 CF_COMMENT="${CF_COMMENT:-${HUB_CLUSTER_NAME}-platform}"
 ALB_NAME="${ALB_NAME:-${HUB_CLUSTER_NAME}-platform}"
@@ -136,6 +137,7 @@ for id in $(aws cloudfront list-vpc-origins --query 'VpcOriginList.Items[].Id' -
 done
 
 if [ -z "$VO_ID" ]; then
+  [ -n "$RESOURCE_PREFIX" ] || die "resource prefix unknown (set RESOURCE_PREFIX, or .resourcePrefix in $CONFIG_FILE); required to create the VPC origin"
   # Name must be unique per origin, so on drift suffix it rather than colliding with the old.
   NAME="$VPC_ORIGIN_NAME"
   if aws cloudfront list-vpc-origins --query "VpcOriginList.Items[?Name=='$NAME'].Id" \

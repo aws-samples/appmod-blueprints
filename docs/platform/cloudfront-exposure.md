@@ -89,6 +89,14 @@ Both read `hub.clusterName` and `aws.region` from `config.local.yaml` by default
 (`PLATFORM_CONFIG_FILE` to relocate it), and both accept env overrides — `HUB_CLUSTER_NAME`,
 `AWS_REGION`, `CF_COMMENT`, and for attach also `ALB_NAME` and `CF_TIMEOUT_SECONDS`.
 
+Whatever they **create** (the distribution, the VPC origin) is tagged
+`platform.gitops.io/prefix=<resourcePrefix>`, so an IAM policy can allow
+`cloudfront:CreateDistribution` / `CreateVpcOrigin` only on that `aws:RequestTag` (the tagged
+calls also need `cloudfront:TagResource`). The prefix comes from `resourcePrefix` in
+`config.local.yaml` or the `RESOURCE_PREFIX` env var, and is **required only when something is
+created**: reusing an existing distribution or an already-correct VPC origin works without it.
+Resources created before this tag existed stay untagged.
+
 Progress goes to stderr and the hostname to stdout, so `$(...)` captures the hostname
 cleanly.
 
