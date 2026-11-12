@@ -19,6 +19,15 @@ The example repo is [`allamand/fleet-config-peeks-example`](https://github.com/a
 If any of those is false, use the custom path: [custom-install.md](custom-install.md)
 and [custom-multi-account.md](custom-multi-account.md).
 
+> [!WARNING]
+> **One hub per account on this path.** The example repo is shared and uses the flat layout, so
+> every hub that reads it declares the same `dev` / `prod` spokes. A second hub pointed at it in an
+> account that already runs one adopts the first hub's spoke clusters, duplicates their VPCs, and
+> deletes them on its own teardown. `fleetScopeByPrefix` does not help here: a scoped hub reads
+> `clusters/<resourcePrefix>/`, which the example repo does not have. For a second hub, fork the
+> repo, remove the inherited spokes, and follow
+> [custom-install.md, section 3a](custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
+
 ---
 
 ## Prerequisites
@@ -70,7 +79,9 @@ task install        # idempotent & resumable; ~30–55 min
 ```
 
 > Prefer **your own copy** of the example repo (a fork) if you want a stable pin and the freedom to
-> add spokes. A fork is still read anonymously (still zero‑PAT) as long as it stays public.
+> add spokes. A fork is still read anonymously (still zero‑PAT) as long as it stays public. If you fork
+> a fleet repo that another hub in the account already uses, scope it first:
+> [custom-install.md, section 3a](custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
 
 ---
 
