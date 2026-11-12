@@ -32,6 +32,8 @@
 #   RESOURCE_PREFIX       resource prefix, stamped as the ownership tag
 #                         platform.gitops.io/prefix=<prefix> at creation
 #                                                     (default: .resourcePrefix)
+#                         REQUIRED only when a distribution is created; reusing an
+#                         existing one (found by Comment) does not need it.
 #
 # The distribution is created WITH that tag (create-distribution-with-tags), so an IAM
 # policy can allow cloudfront:CreateDistribution only on
@@ -57,7 +59,6 @@ HUB_CLUSTER_NAME="${HUB_CLUSTER_NAME:-$(cfg '.hub.clusterName')}"
 CF_COMMENT="${CF_COMMENT:-${HUB_CLUSTER_NAME}-platform}"
 PRICE_CLASS="${CF_PRICE_CLASS:-PriceClass_100}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-$(cfg '.resourcePrefix')}"
-[ -n "$RESOURCE_PREFIX" ] || die "resource prefix unknown (set RESOURCE_PREFIX, or .resourcePrefix in $CONFIG_FILE)"
 
 command -v aws >/dev/null 2>&1 || die "aws CLI not found"
 
@@ -72,6 +73,10 @@ if [ -n "$EXISTING" ]; then
   printf '%s\n' "$EXISTING"
   exit 0
 fi
+
+# Only a create needs the prefix (it becomes the ownership tag); reusing an existing
+# distribution above does not, so a re-run without resourcePrefix keeps working.
+[ -n "$RESOURCE_PREFIX" ] || die "resource prefix unknown (set RESOURCE_PREFIX, or .resourcePrefix in $CONFIG_FILE); required to create the distribution"
 
 # placeholder.invalid can never resolve (.invalid is reserved by RFC 2606). CloudFront
 # accepts it: an origin is not validated at creation time. Using an unresolvable name

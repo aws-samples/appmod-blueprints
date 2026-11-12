@@ -36,11 +36,14 @@ case "$1 $2" in
     echo '{"Distribution":{"Id":"E123","DomainName":"d111.cloudfront.net"}}' ;;
   "elbv2 describe-load-balancers")
     printf 'arn:aws:elasticloadbalancing:r:1:loadbalancer/app/x/1\tx.elb\tinternal\tactive\n' ;;
-  "cloudfront get-distribution") echo None ;;
+  "cloudfront get-distribution") echo "${FAKE_CUR_VO:-None}" ;;
   "cloudfront list-vpc-origins") echo "" ;;
   "cloudfront create-vpc-origin") echo "vo_abcdefgh12345" ;;
-  # Stop the attach script right after the create: we only assert on the create call.
-  "cloudfront get-vpc-origin") exit 3 ;;
+  "cloudfront get-vpc-origin")
+    # FAKE_CUR_VO: the distribution already points at a VPC origin bound to the ALB.
+    if [ -n "${FAKE_CUR_VO:-}" ]; then echo "arn:aws:elasticloadbalancing:r:1:loadbalancer/app/x/1"
+    # Otherwise stop the attach script right after the create: we assert on the create call.
+    else exit 3; fi ;;
   *) echo "" ;;
 esac
 """
@@ -109,6 +112,15 @@ def test_reserve_without_prefix_fails_before_any_create(env):
     assert not any(c[0] == "cloudfront" and c[1].startswith("create") for c in calls(log))
 
 
+def test_reserve_reuse_without_prefix_still_ok(env):
+    # An existing distribution is reused without the prefix: the tag is only needed to create.
+    e, log = env
+    r = run(RESERVE, e, HUB_CLUSTER_NAME="peeks-hub", FAKE_DIST_ID="E123")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "d111.cloudfront.net"
+    assert not any(c[1].startswith("create") for c in calls(log))
+
+
 def test_reserve_idempotent_reuse_creates_nothing(env):
     e, log = env
     r = run(RESERVE, e, HUB_CLUSTER_NAME="peeks-hub", RESOURCE_PREFIX="peeks", FAKE_DIST_ID="E123")
@@ -128,9 +140,21 @@ def test_attach_creates_tagged_vpc_origin(env):
     json.loads(create[0][create[0].index("--vpc-origin-endpoint-config") + 1])
 
 
-def test_attach_without_prefix_fails_before_any_call(env):
+def test_attach_create_without_prefix_fails_before_create(env):
     e, log = env
-    r = run(ATTACH, e, HUB_CLUSTER_NAME="peeks-hub", AWS_REGION="us-west-2")
+    r = run(ATTACH, e, HUB_CLUSTER_NAME="peeks-hub", AWS_REGION="us-west-2",
+            FAKE_DIST_ID="E123", CF_TIMEOUT_SECONDS="0")
     assert r.returncode == 1
     assert "resource prefix unknown" in r.stderr
-    assert calls(log) == []
+    assert not any(c[0] == "cloudfront" and c[1].startswith("create") for c in calls(log))
+
+
+def test_attach_already_correct_without_prefix_still_ok(env):
+    # Distribution already points at a VPC origin bound to the current ALB: nothing to
+    # create, so no prefix is needed and the re-run stays rc 0.
+    e, log = env
+    r = run(ATTACH, e, HUB_CLUSTER_NAME="peeks-hub", AWS_REGION="us-west-2",
+            FAKE_DIST_ID="E123", FAKE_CUR_VO="vo_existing12345")
+    assert r.returncode == 0, r.stderr
+    assert "nothing to do" in r.stderr
+    assert not any(c[0] == "cloudfront" and c[1].startswith(("create", "update")) for c in calls(log))
