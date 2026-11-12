@@ -1,0 +1,135 @@
+#!/bin/bash
+# ensure-gitlab-compose.sh: precondition for the workshop `gitlab:init-ec2` task (workshop layer,
+# NOT a cluster provider). Idempotent; a no-op when the docker compose plugin works and GitLab runs.
+#   0. docker must be installed (else exit 10); a GitLab container (gitlab-gitlab-1) that is already
+#      healthy ends the script at once (exit 0).
+#   1. `docker compose version` must work, else install the pinned plugin (sha256-verified, retried)
+#      into the user plugin dir (no sudo).
+#   2. `docker compose up -d` for $GITLAB_HOME when the GitLab container is not running (rc propagates).
+#   3. Wait (bounded, HEALTH_TIMEOUT) for the container to report healthy. A timeout is only a
+#      warning (exit 0): a slow first boot is normal and the later sign_in wait of gitlab:init-ec2
+#      is the authoritative, bounded readiness check.
+#
+# Plugin source, from PEEKS_TOOLS_SOURCE:
+# Same values and semantics as `peeks-fetch --mode` (PEEKS MR 1001); unset = github-first.
+#   github-first    GitHub release first, then the S3 mirror if ASSETS_BUCKET_NAME is set (default)
+#   github          GitHub release only (legacy value)
+#   s3-first        S3 mirror first (needs ASSETS_BUCKET_NAME), then GitHub
+#   s3-only         S3 mirror only; never contacts GitHub
+# NOTE: the S3 leg is dormant until the PEEKS side publishes the object and exports these variables
+# (PEEKS branch feat/v041-peeks-fetch); nothing in this repo sets PEEKS_TOOLS_SOURCE, so only GitHub is live.
+# S3 object: s3://$ASSETS_BUCKET_NAME/${ASSETS_BUCKET_PREFIX}tools/v1/docker-compose-<ver>-linux-x86_64
+#
+# Exit: 0 ok (also: not healthy in time, warning only) | 10 plugin not installable | 11 compose file missing | 12 up -d failed
+# Every failure prints one line starting with PEEKS_PRECONDITION_FAILED.
+# shortcut: x86_64 only (IDE is x86_64), upgrade when an arm64 IDE is supported.
+set -u
+COMPOSE_VERSION=${COMPOSE_VERSION:-v2.27.1}
+COMPOSE_SHA256=${COMPOSE_SHA256:-ddc876fe2a89d5b7ea455146b0975bfe52904eecba9b192193377d6f99d69ad9}
+COMPOSE_URL=${COMPOSE_URL:-https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64}
+GITLAB_HOME=${GITLAB_HOME:-$HOME/gitlab}
+PLUGIN_DIR=${PLUGIN_DIR:-$HOME/.docker/cli-plugins}
+ATTEMPTS=${ATTEMPTS:-5}
+BACKOFF_BASE=${BACKOFF_BASE:-2}
+HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-600}
+HEALTH_INTERVAL=${HEALTH_INTERVAL:-10}
+SOURCE=${PEEKS_TOOLS_SOURCE:-github-first}
+HEARTBEAT=${HEARTBEAT:-60}
+
+log() { echo "[ensure-gitlab-compose] $(date +%H:%M:%S) $*" >&2; }
+fail() { echo "PEEKS_PRECONDITION_FAILED: $2" >&2; exit "$1"; }
+compose_ok() { docker compose version >/dev/null 2>&1; }
+
+# verify FILE: sha256 must match the pinned value
+verify() { [ "$(sha256sum "$1" 2>/dev/null | cut -d' ' -f1)" = "$COMPOSE_SHA256" ]; }
+
+fetch_github() { # $1 = tmp file
+  local n=1
+  while [ "$n" -le "$ATTEMPTS" ]; do
+    log "GitHub download attempt $n/$ATTEMPTS"
+    rm -f "$1"
+    curl -fsSL --connect-timeout 15 --max-time 300 -o "$1" "$COMPOSE_URL" && verify "$1" && return 0
+    [ "$n" -lt "$ATTEMPTS" ] && sleep $(( BACKOFF_BASE * (1 << n) ))
+    n=$((n + 1))
+  done
+  return 1
+}
+
+fetch_s3() { # $1 = tmp file
+  local prefix=${ASSETS_BUCKET_PREFIX:-} n=1
+  if [ -z "${ASSETS_BUCKET_NAME:-}" ]; then log "ASSETS_BUCKET_NAME not set, S3 mirror unavailable"; return 1; fi
+  [ -n "$prefix" ] && [ "${prefix%/}" = "$prefix" ] && prefix="$prefix/"
+  local uri="s3://$ASSETS_BUCKET_NAME/${prefix}tools/v1/docker-compose-$COMPOSE_VERSION-linux-x86_64"
+  while [ "$n" -le 3 ]; do
+    log "S3 download attempt $n/3 $uri"
+    rm -f "$1"
+    aws s3 cp "$uri" "$1" --only-show-errors && verify "$1" && return 0
+    [ "$n" -lt 3 ] && sleep $(( BACKOFF_BASE * (1 << n) ))
+    n=$((n + 1))
+  done
+  return 1
+}
+
+install_plugin() {
+  local dest="$PLUGIN_DIR/docker-compose" tmp ok=1
+  mkdir -p "$PLUGIN_DIR"; tmp="$dest.part.$$"
+  case "$SOURCE" in
+    s3-only)  fetch_s3 "$tmp"; ok=$? ;;
+    s3-first) fetch_s3 "$tmp" || fetch_github "$tmp"; ok=$? ;;
+    github-first) fetch_github "$tmp" || fetch_s3 "$tmp"; ok=$? ;;
+    github)   fetch_github "$tmp"; ok=$? ;;
+    *) rm -f "$tmp"; fail 10 "unknown PEEKS_TOOLS_SOURCE='$SOURCE' (expected github-first|github|s3-first|s3-only)" ;;
+  esac
+  if [ "$ok" -eq 0 ]; then chmod 755 "$tmp" && mv -f "$tmp" "$dest"; return; fi
+  rm -f "$tmp"; return 1
+}
+
+command -v docker >/dev/null 2>&1 || fail 10 "docker is not installed"
+
+# A GitLab that already runs and is healthy needs nothing from the compose plugin or from $GITLAB_HOME
+# (another $HOME, plugin missing for this user): do not fail an install that works today.
+if [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' gitlab-gitlab-1 2>/dev/null)" = healthy ]; then
+  log "gitlab-gitlab-1 already running and healthy, nothing to do"
+  exit 0
+fi
+
+if compose_ok; then
+  log "docker compose present: $(docker compose version 2>/dev/null)"
+else
+  log "docker compose missing or not runnable, installing $COMPOSE_VERSION into $PLUGIN_DIR (source: $SOURCE)"
+  install_plugin || fail 10 "docker compose plugin $COMPOSE_VERSION could not be installed (source: $SOURCE); GitLab cannot start"
+  compose_ok || fail 10 "docker compose plugin installed but 'docker compose version' still fails"
+  log "docker compose installed: $(docker compose version 2>/dev/null)"
+fi
+
+CF="$GITLAB_HOME/docker-compose.yml"
+log "GITLAB_HOME=$GITLAB_HOME"
+[ -f "$CF" ] || fail 11 "$CF missing (bootstrap did not reach the GitLab section)"
+
+if [ -z "$(docker compose -f "$CF" ps -q --status running 2>/dev/null)" ]; then
+  log "GitLab container not running, starting it (image pull + first boot take several minutes)"
+  up=1
+  for n in 1 2 3; do
+    docker compose -f "$CF" up -d && { up=0; break; }
+    log "docker compose up -d attempt $n/3 failed"
+    [ "$n" -lt 3 ] && sleep $(( BACKOFF_BASE * (1 << n) * 5 ))
+  done
+  [ "$up" -eq 0 ] || fail 12 "docker compose up -d failed 3 times (Docker Hub pull?); see 'docker compose -f $CF logs'"
+else
+  log "GitLab container already running"
+fi
+
+# Bounded wait for healthy. An image without a healthcheck reports "none": running is then enough.
+waited=0
+while :; do
+  cid=$(docker compose -f "$CF" ps -q 2>/dev/null | head -n1)
+  st=$([ -n "$cid" ] && docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null)
+  case "$st" in healthy|none) log "GitLab container status: $st"; exit 0 ;; esac
+  if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
+    log "WARNING: GitLab container not healthy after ${HEALTH_TIMEOUT}s (status: ${st:-absent}), continuing; later readiness waits decide"
+    exit 0
+  fi
+  # Heartbeat: the background-job waiter treats a quiet log as a dead job, so never stay silent long.
+  [ "$HEARTBEAT" -gt 0 ] && [ "$waited" -gt 0 ] && [ $(( waited % HEARTBEAT )) -lt "$HEALTH_INTERVAL" ] && log "still waiting for GitLab to be healthy (${waited}s, status: ${st:-absent})"
+  sleep "$HEALTH_INTERVAL"; waited=$((waited + HEALTH_INTERVAL))
+done
