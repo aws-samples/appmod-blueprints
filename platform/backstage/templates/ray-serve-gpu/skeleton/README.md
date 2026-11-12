@@ -6,7 +6,7 @@ This repository contains the GitOps configuration for deploying a Ray Service on
 
 - **Service Name**: ${{values.name}}
 - **Namespace**: ${{values.namespace}}
-- **Ray Serve Config**: ${{values.rayServeFile}}
+- **Ray Serve Config**: ${{values.rayServeFile | default('https://github.com/aws-samples/appmod-blueprints/raw/' + values.workshop_git_branch + '/gitops/workloads/ray/gpu-serve-transformers.zip', true)}}
 - **Worker Replicas**: ${{values.replicas}}
 - **Head Resources**: ${{values.headCpu}}/${{values.headMemory}}
 - **Worker Resources**: ${{values.workerCpu}}/${{values.workerMemory}}

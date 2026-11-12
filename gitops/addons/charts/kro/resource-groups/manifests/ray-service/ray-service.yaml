@@ -193,7 +193,7 @@ spec:
                             ephemeral-storage: 15Gi
           serveConfigV2: |
             applications:
-              - name: gpu_text_generation
+              - name: cpu_text_generation
                 import_path: app:deployment
                 route_prefix: /ray-serve/${schema.spec.name}/generate
                 runtime_env:
