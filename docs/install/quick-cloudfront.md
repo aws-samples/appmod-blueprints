@@ -104,6 +104,11 @@ distribution with that `Comment` already exists it is **reused**; otherwise one 
 non‑resolvable placeholder origin (`PriceClass_100` by default, override with `CF_PRICE_CLASS`). The
 hostname is the **last line of stdout**, so `$(...)` captures it cleanly.
 
+A newly created distribution is tagged `platform.gitops.io/prefix=<prefix>`, so creating one
+needs the prefix: set `RESOURCE_PREFIX` (or `resourcePrefix` in `config.local.yaml`), otherwise
+the script exits with `resource prefix unknown`. Reusing an existing distribution does not need
+it. The same applies to the VPC origin created in Gesture 3.
+
 ### Gesture 2 — `config.local.yaml` + install
 
 Same as Branch 1, with `domain:` set to the reserved hostname:
@@ -112,6 +117,7 @@ Same as Branch 1, with `domain:` set to the reserved hostname:
 # ── CloudFront exposure — Branch 2 (create/reserve) ─────────────────────────
 domain: <hostname>.cloudfront.net   # output of cloudfront-reserve-domain.sh — MUST be non-empty
 insecure: true
+resourcePrefix: <prefix>            # ownership tag value for the VPC origin created at attach
 hub:
   clusterName: <cluster>
 aws:

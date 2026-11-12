@@ -281,7 +281,8 @@ fi
 # The real origin is attached AFTER install by scripts/cloudfront-attach-origin.sh, once
 # the load balancer controller has created the platform ALB.
 echo "[$(date +%H:%M:%S)] ▸ Reserving CloudFront hostname..."
-CF_DOMAIN=$(HUB_CLUSTER_NAME="${RESOURCE_PREFIX}-hub" \
+CF_PREFIX="$RESOURCE_PREFIX"   # passed as the ownership tag platform.gitops.io/prefix
+CF_DOMAIN=$(HUB_CLUSTER_NAME="${CF_PREFIX}-hub" RESOURCE_PREFIX="$CF_PREFIX" \
   "$REPO_ROOT/scripts/cloudfront-reserve-domain.sh") || CF_DOMAIN=""
 if [ -z "$CF_DOMAIN" ]; then
   echo "[$(date +%H:%M:%S)] ERROR: could not reserve a CloudFront hostname." >&2
