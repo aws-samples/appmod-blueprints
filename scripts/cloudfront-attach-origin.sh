@@ -28,6 +28,7 @@
 #   AWS_REGION            region                       (default: .aws.region)
 #   CF_COMMENT            distribution Comment         (default: <HUB_CLUSTER_NAME>-platform)
 #   ALB_NAME              override the ALB name        (default: <HUB_CLUSTER_NAME>-platform)
+#   RESOURCE_PREFIX       ownership tag value          (default: .resourcePrefix)
 #   CF_TIMEOUT_SECONDS    VPC origin deploy budget     (default: 1200; measured ~540s)
 #
 # Exit: 0 ok or already correct · 1 bad prerequisite · 2 VPC origin never deployed
@@ -47,6 +48,11 @@ HUB_CLUSTER_NAME="${HUB_CLUSTER_NAME:-$(cfg '.hub.clusterName')}"
 REGION="${AWS_REGION:-$(cfg '.aws.region')}"
 [ -n "$HUB_CLUSTER_NAME" ] || die "cluster name unknown (set HUB_CLUSTER_NAME, or .hub.clusterName in $CONFIG_FILE)"
 [ -n "$REGION" ]          || die "region unknown (set AWS_REGION, or .aws.region in $CONFIG_FILE)"
+# The VPC origin is created tagged platform.gitops.io/prefix=<prefix> (same ownership tag
+# as cloudfront-reserve-domain.sh), so an IAM policy can condition cloudfront:CreateVpcOrigin
+# on aws:RequestTag. The call then also needs cloudfront:TagResource.
+RESOURCE_PREFIX="${RESOURCE_PREFIX:-$(cfg '.resourcePrefix')}"
+[ -n "$RESOURCE_PREFIX" ] || die "resource prefix unknown (set RESOURCE_PREFIX, or .resourcePrefix in $CONFIG_FILE)"
 
 CF_COMMENT="${CF_COMMENT:-${HUB_CLUSTER_NAME}-platform}"
 ALB_NAME="${ALB_NAME:-${HUB_CLUSTER_NAME}-platform}"
@@ -142,7 +148,8 @@ if [ -z "$VO_ID" ]; then
       \"HTTPSPort\": 443,
       \"OriginProtocolPolicy\": \"http-only\",
       \"OriginSslProtocols\": {\"Quantity\": 1, \"Items\": [\"TLSv1.2\"]}
-    }" --query 'VpcOrigin.Id' --output text 2>&1)
+    }" --tags "{\"Items\": [{\"Key\": \"platform.gitops.io/prefix\", \"Value\": \"$RESOURCE_PREFIX\"}]}" \
+    --query 'VpcOrigin.Id' --output text 2>&1)
   # Ids look like vo_Ie0pJyppijUFcTt0nZRuPJ — an UNDERSCORE, not a hyphen. Validate by shape,
   # not by prefix: a prefix guess here previously misread a success as a failure.
   printf '%s' "$VO_ID" | grep -qE '^[A-Za-z0-9_-]{8,}$' || die "create-vpc-origin failed: $VO_ID"
