@@ -55,9 +55,10 @@ TEMPLATE_STATUS_OK = (
     '}}\n')
 
 
-def fakes(tmp_path, crd_at=0, backstage_at=0, wfc_at=0):
-    """crd_at / backstage_at / wfc_at: virtual second at which the AppmodService CRD on
-    spoke-dev, Backstage, and the workflow-controller Deployment appear."""
+def fakes(tmp_path, crd_at=0, backstage_at=0, wfc_at=0, cd_at=0):
+    """crd_at / backstage_at / wfc_at / cd_at: virtual second at which the AppmodService
+    CRD on spoke-dev, Backstage, the workflow-controller Deployment and the rust-dev-cd
+    Argo CD app appear."""
     b = tmp_path / "bin"
     b.mkdir()
     plat = tmp_path / "plat"
@@ -79,7 +80,7 @@ def fakes(tmp_path, crd_at=0, backstage_at=0, wfc_at=0):
         f'{now}\n'
         'case "$*" in\n'
         f'  *"get crd appmodservices.kro.run"*) echo "$C crd" >> "$FAKE_T/crd.calls"; [ "$C" -ge {crd_at} ];;\n'
-        '  *"get applications.argoproj.io"*) exit 0;;\n'
+        f'  *"get applications.argoproj.io"*) [ "$C" -ge {cd_at} ];;\n'
         f'  *"get deploy/backstage"*) [ "$C" -ge {backstage_at} ];;\n'
         f'  *"get deploy/workflow-controller"*) [ "$C" -ge {wfc_at} ];;\n'
         f'  *"rollout status deploy/workflow-controller"*) [ "$C" -ge {wfc_at} ];;\n'
@@ -127,8 +128,44 @@ def test_rust_kro_waits_for_late_crd(tmp_path):
 
 def test_rust_kro_crd_wait_is_bounded(tmp_path):
     r, clock = run(tmp_path, "prewarm-pathA-rust-kro", crd_at=10_000)
+    assert "AppmodService CRD not served on p-spoke-dev after 900s" in r.stdout, r.stdout
+    assert "retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-pathA-rust-kro" in r.stdout
+    assert clock == 900
+    assert r.returncode == 0
+
+
+def test_rust_kro_waits_for_crd_served_after_300s(tmp_path):
+    # Seen on an event: the CRD was still not served 300 s after the wait started (the
+    # spoke's kro capability had been created ~2 min earlier). A 300 s wait skipped.
+    r, clock = run(tmp_path, "prewarm-pathA-rust-kro", crd_at=600)
+    assert "AppmodService CRD not served" not in r.stdout, r.stdout
+    assert "could not clone" in r.stdout, r.stdout
+    assert clock == 600
+
+
+def test_rust_kro_crd_wait_capped_by_install_budget(tmp_path, monkeypatch):
+    # left() still caps the wait: only 300 s of budget left before DEADLINE
+    # (INSTALL_START + INSTALL_BUDGET_SEC - 300 - 120 - 300).
+    monkeypatch.setitem(VARS, "INSTALL_START", str(1000000 - (6600 - 300 - 120 - 300) + 300))
+    r, clock = run(tmp_path, "prewarm-pathA-rust-kro", crd_at=10_000)
     assert "AppmodService CRD not served on p-spoke-dev after 300s" in r.stdout, r.stdout
     assert clock == 300
+
+
+def test_rust_kro_waits_for_late_rust_dev_cd(tmp_path):
+    # In the install's background job, rust-dev-cd can appear after the job reaches
+    # this task (the foreground Rust CI/CD prewarm is still running).
+    r, clock = run(tmp_path, "prewarm-pathA-rust-kro", cd_at=600)
+    assert "not found after" not in r.stdout, r.stdout
+    assert "could not clone" in r.stdout, r.stdout
+    assert clock == 600
+
+
+def test_rust_kro_rust_dev_cd_wait_is_bounded(tmp_path):
+    r, clock = run(tmp_path, "prewarm-pathA-rust-kro", cd_at=10_000)
+    assert "Argo CD app rust-dev-cd not found after 900s" in r.stdout, r.stdout
+    assert lines(tmp_path, "crd.calls") == []
+    assert clock == 900
     assert r.returncode == 0
 
 
