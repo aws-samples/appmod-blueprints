@@ -142,11 +142,11 @@ def test_phase_a_failed_task_is_not_resubmitted(tmp_path):
 # ── prewarm-rust-cicd (Phase B) ────────────────────────────────────────────────────────
 def test_phase_b_fallback_is_loud(tmp_path, monkeypatch):
     rc = tmp_path / "pa.rc"
-    rc.write_text("1\n")
+    rc.write_text("201\n")                                  # go-task exit code of a failed cmd
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rc))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "pa.pid"))
     r, _ = run(tmp_path, "prewarm-rust-cicd")
-    assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=1" in r.stdout, r.stdout
+    assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=201" in r.stdout, r.stdout
     assert len(lines(tmp_path, "scaffold.calls")) == 1
 
 
@@ -219,3 +219,27 @@ def test_phase_b_phase_a_ok_but_nothing_visible_yet_does_not_rescaffold(tmp_path
     assert lines(tmp_path, "scaffold.calls") == []
     assert "nothing will create the pipeline" not in r.stdout
     assert "waiting for CICDPipeline" in r.stdout, r.stdout
+
+
+# ── nits S1 / S4 ─────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("rc,install_start", [("0", "1000000"), ("201", "")])
+def test_phase_b_no_fallback_message_for_ok_rc_or_standalone(tmp_path, monkeypatch, rc, install_start):
+    # The rc file stays in /tmp after an install: a successful Phase A (rc 0) or a later
+    # standalone re-run (no INSTALL_START) must not print PREWARM FALLBACK.
+    f = tmp_path / "pa.rc"
+    f.write_text(rc + "\n")
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(f))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
+    monkeypatch.setitem(VARS, "INSTALL_START", install_start)
+    r, _ = run(tmp_path, "prewarm-rust-cicd")
+    assert "PREWARM FALLBACK" not in r.stdout, r.stdout
+    assert len(lines(tmp_path, "scaffold.calls")) == 1
+
+
+def test_phase_a_backend_failed_exits_at_once(tmp_path):
+    (tmp_path / "backstage.log").write_text("Backend startup failed\nMigrationLocked: Migration table is already locked\n")
+    r, clock, _ = run_phase_a(tmp_path, bs_up_at=10_000)
+    assert "Backstage backend failed to start" in r.stdout, r.stdout
+    assert lines(tmp_path, "post.calls") == []
+    assert r.returncode != 0
+    assert clock == 0, clock
