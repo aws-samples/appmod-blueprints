@@ -48,8 +48,8 @@ def test_regenerate_only_with_positive_proof():
 
 @pytest.mark.parametrize("text", [NEW_LAYOUT_MANUAL, OLD_LAYOUT, "", "Settings\nIdentity source\n"])
 def test_no_button_without_scim_is_an_error_not_already_enabled(text):
-    # The 9d588683 failure: a fresh instance (method Manual) whose Enable button the
-    # locator missed must NOT be treated as "already enabled".
+    # Regression: a fresh instance (method Manual) whose Enable button the locator
+    # missed must NOT be treated as "already enabled".
     action, reason = decide_provisioning_action(text, False)
     assert action == ERROR
     assert "refusing to assume" in reason

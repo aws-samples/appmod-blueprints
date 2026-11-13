@@ -1,7 +1,7 @@
 """Exit-code semantics of `idc:configure` (workshop/Taskfile.yaml).
 
 A standalone `task idc:configure` must exit non-zero when IDC configuration fails
-(an operator re-run reported rc=0 on a failure on event 9d588683), while the
+(an operator re-run used to report rc=0 on a failure), while the
 `task install` path (post-install) stays tolerant unless IDC_STRICT=true.
 
 The outcome snippet is read verbatim from the Taskfile, its go-task variables filled
