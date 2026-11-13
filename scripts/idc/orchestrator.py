@@ -395,6 +395,10 @@ async def configure_identity_center(
             )
             print(f"Provisioning state: {reason}", file=sys.stderr)
             if action == ENABLE:
+                # Enable opens the SCIM token dialog: from the click on, the page may
+                # show the bearer token, even if the click itself then raises, so no
+                # always-on error screenshot from here (idc.evidence).
+                token_exposed = True
                 await enable_btn.click()
             elif action == REGENERATE:
                 # Already enabled (a genuine re-run, proven by the page): the one-time
@@ -424,6 +428,8 @@ async def configure_identity_center(
                 )
                 await wait_for_stable(page)
                 await page.wait_for_timeout(2000)
+                # Same as Enable: set before the click (idc.evidence).
+                token_exposed = True
                 await click_first_visible(
                     page,
                     ['button:has-text("Generate token")'],
@@ -432,9 +438,6 @@ async def configure_identity_center(
                 )
             else:
                 raise RuntimeError(f"Cannot enable automatic provisioning: {reason}")
-            # Enable / Generate token opens the SCIM token dialog: from here on the page
-            # may show the bearer token, so no always-on error screenshot (idc.evidence).
-            token_exposed = True
             await wait_for_stable(page)
             await page.wait_for_timeout(2000)
             await screenshot(page, "/tmp/step9.png", debug)
