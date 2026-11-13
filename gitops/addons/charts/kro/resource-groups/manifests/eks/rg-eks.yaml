@@ -1814,8 +1814,12 @@ spec:
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-crossplane-provider"
-          policies:
-            - arn:aws:iam::aws:policy/AdministratorAccess
+          # Same scoped policy as cluster-providers/common/iam/crossplane-provider-policy.json
+          # (a test pins the two equal), not AdministratorAccess: on the hub this role has
+          # the same name as the one hub:bootstrap-crossplane-identity creates, and ACK
+          # reconciles the role to this spec once it adopts it.
+          inlinePolicies:
+            crossplane-provider-scoped: '{"Version":"2012-10-17","Statement":[{"Sid":"IamRolesPoliciesInstanceProfilesOidc","Effect":"Allow","Action":"iam:*","Resource":["arn:*:iam::*:role/*","arn:*:iam::*:policy/*","arn:*:iam::*:instance-profile/*","arn:*:iam::*:oidc-provider/*"]},{"Sid":"IamRead","Effect":"Allow","Action":["iam:Get*","iam:List*"],"Resource":"*"},{"Sid":"Eks","Effect":"Allow","Action":"eks:*","Resource":"*"},{"Sid":"Ec2Read","Effect":"Allow","Action":"ec2:Describe*","Resource":"*"},{"Sid":"CallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}'
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
