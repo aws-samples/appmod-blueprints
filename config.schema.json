@@ -204,7 +204,7 @@
             "crossplaneProviderRoleArn": {
               "type": "string",
               "default": "",
-              "description": "Role for the Crossplane provider-aws-iam/eks pod identities on the hub (trust pods.eks.amazonaws.com). Empty = create <hub>-crossplane-provider."
+              "description": "Role for the Crossplane provider-aws-iam/eks pod identities on the hub (trust pods.eks.amazonaws.com). Empty = create <hub>-crossplane-provider. Applies when the pod identity associations are created (fresh hub, or reinstall after destroy); existing associations are not repointed."
             },
             "clusterMgmtRoleArns": {
               "type": "object",

@@ -1831,12 +1831,15 @@ tasks:
         if [ -n "$BYO_ARN" ]; then
           # Consumer-supplied role (e.g. created by CloudFormation): use it as is. The
           # consumer owns its trust (pods.eks.amazonaws.com) and its permissions.
+          # It only takes effect when the PIAs below are created (fresh hub, or reinstall
+          # after destroy): this task is skipped while both PIAs exist, and an existing PIA
+          # is never repointed.
           case "$BYO_ARN" in
-            arn:aws*:iam::{{.AWS_ACCOUNT_ID}}:role/*) ;;
-            *) printf '{{.C_ERR}}ERROR: hub.iam.crossplaneProviderRoleArn=%s is not an IAM role ARN in account {{.AWS_ACCOUNT_ID}}.{{.C_RESET}}\n' "$BYO_ARN"; exit 1 ;;
+            arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*) ;;
+            *) printf '{{.C_ERR}}ERROR: hub.iam.crossplaneProviderRoleArn=%s is not an IAM role ARN in account {{.AWS_ACCOUNT_ID}} (expected arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/<name>).{{.C_RESET}}\n' "$BYO_ARN"; exit 1 ;;
           esac
-          if ! aws iam get-role --role-name "${BYO_ARN##*/}" >/dev/null 2>&1; then
-            printf '{{.C_ERR}}ERROR: hub.iam.crossplaneProviderRoleArn=%s does not exist.{{.C_RESET}}\n' "$BYO_ARN"; exit 1
+          if ! ERR=$(aws iam get-role --role-name "${BYO_ARN##*/}" 2>&1 >/dev/null); then
+            printf '{{.C_ERR}}ERROR: hub.iam.crossplaneProviderRoleArn=%s does not exist or is not readable: %s{{.C_RESET}}\n' "$BYO_ARN" "$ERR"; exit 1
           fi
           ROLE_ARN="$BYO_ARN"
           echo "  using pre-created role $ROLE_ARN (hub.iam.crossplaneProviderRoleArn)"
@@ -1852,6 +1855,8 @@ tasks:
             --policy-document "file://{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json"
           # Older installs attached AdministratorAccess here. Detach it when present
           # (best-effort: the installing principal may lack iam:DetachRolePolicy).
+          # This only runs when the task runs: on a live hub whose two PIAs exist the
+          # status gate skips the task, so the old attachment stays until a reinstall.
           ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" \
             --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
           case "$ATTACHED" in *policy/AdministratorAccess*)
@@ -4290,8 +4295,8 @@ tasks:
             printf '{{.C_ERR}}ERROR: hub.iam.clusterMgmtRoleArns.%s=%s must be arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-%s (the name is derived from resourcePrefix elsewhere).{{.C_RESET}}\n' "$service" "$ARN" "$service"
             exit 1
           fi
-          if ! aws iam get-role --role-name "{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}" >/dev/null 2>&1; then
-            printf '{{.C_ERR}}ERROR: hub.iam.clusterMgmtRoleArns.%s=%s does not exist.{{.C_RESET}}\n' "$service" "$ARN"
+          if ! ERR=$(aws iam get-role --role-name "{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}" 2>&1 >/dev/null); then
+            printf '{{.C_ERR}}ERROR: hub.iam.clusterMgmtRoleArns.%s=%s does not exist or is not readable: %s{{.C_RESET}}\n' "$service" "$ARN" "$ERR"
             exit 1
           fi
           BYO_SERVICES="$BYO_SERVICES $service"
@@ -4325,6 +4330,7 @@ tasks:
           aws iam put-role-policy --role-name "$IAM_ROLE" --policy-name cluster-mgmt-iam-scoped \
             --policy-document "file://{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
           # Older installs attached IAMFullAccess. Detach it when present (best-effort).
+          # This task has no status gate, so this runs on every `task install`.
           ATTACHED=$(aws iam list-attached-role-policies --role-name "$IAM_ROLE" \
             --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
           case "$ATTACHED" in *policy/IAMFullAccess*)

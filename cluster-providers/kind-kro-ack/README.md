@@ -137,14 +137,30 @@ Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `
 
 Both scoped policies keep `iam:*` on roles, policies, instance profiles and OIDC providers: the
 Crossplane and ACK IAM controllers create roles with arbitrary names for the addons and apps.
-They no longer grant IAM users, groups, access keys or account settings, nor any non-IAM service
-(except EKS for the Crossplane role). This is not a privilege boundary: a principal that can
-create a role and write its policy can still grant itself more.
+They no longer grant IAM users, groups, access keys or account settings. Outside IAM they grant
+only `sts:GetCallerIdentity`, plus `eks:*` and `ec2:Describe*` for the Crossplane role. This is
+not a privilege boundary: a principal that can create a role and write its policy can still
+grant itself more.
+
+The same Crossplane document is put inline on the ACK-managed `<spoke>-crossplane-provider` role
+of kro-ack spokes with `enable_crossplane_aws` (`rg-eks.yaml`). Upgrade note: that change reaches
+running spokes on the next RGD sync, without re-running `task install`.
+
+Legacy attachments from older installs are detached (best-effort) only when the task runs, and
+only for these two roles. `hub:create-mgmt-roles` runs on every `task install`, so
+`IAMFullAccess` is detached from `<prefix>-cluster-mgmt-iam` on the next install.
+`hub:bootstrap-crossplane-identity` is skipped while both crossplane-system PIAs exist, so on a
+live hub `<hub>-crossplane-provider` keeps `AdministratorAccess` until a fresh install or a
+reinstall after `task destroy`. The kind-crossplane provider and `spokes:seed-provider-identity`
+put the scoped policy but do not detach.
 
 To create these roles yourself (for example in CloudFormation), set their ARNs under `hub.iam`
 (see `config.yaml`). A set ARN is used as is: no create, no trust update, no policy. Each
 `clusterMgmtRoleArns.<svc>` must be named `<resourcePrefix>-cluster-mgmt-<svc>`, because the
 IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
+`crossplaneProviderRoleArn` applies when the PIAs are created (fresh hub, or reinstall after
+`task destroy`). Existing associations are not repointed: on an existing hub, setting it has
+no effect until the PIAs are recreated.
 
 ## Credentials on Kind
 
