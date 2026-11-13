@@ -2410,7 +2410,17 @@ tasks:
       # <prefix>-ray-models-<account> (emptied, all versions) and the ECR repos
       # <prefix>-ray-vllm-custom / <prefix>-ray-neuron-custom. Nothing while the hub is
       # live. DESTROY_KEEP_DATA=true keeps the bucket and the repos.
+      # Both sweeps need python3 and boto3: without them, say so and skip (destroy goes
+      # on) instead of failing each sweep half-way with an unclear error.
       - cmd: |
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "  ⚠ Phase 6b skipped: python3 missing (capability-log deliveries and Ray bucket/repos not swept)"
+            exit 0
+          fi
+          if ! python3 -c 'import boto3' >/dev/null 2>&1; then
+            echo "  ⚠ Phase 6b skipped: boto3 missing (capability-log deliveries and Ray bucket/repos not swept)"
+            exit 0
+          fi
           KEEP_DATA_ARGS=""
           if [ "{{.DESTROY_KEEP_DATA}}" = true ]; then KEEP_DATA_ARGS="--keep-data"; fi
           python3 "{{.ROOT_DIR}}/scripts/sweep-log-deliveries.py" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" \

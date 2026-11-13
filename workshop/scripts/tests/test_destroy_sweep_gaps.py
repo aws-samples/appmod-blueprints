@@ -421,18 +421,19 @@ def _step(taskfile, marker):
     return next(c["cmd"] for c in cmds if isinstance(c, dict) and marker in c.get("cmd", ""))
 
 
-def _run(tmp_path, cmd, keep_data="false", fx=None, inventory=None):
+def _run(tmp_path, cmd, keep_data="false", fx=None, inventory=None, python3=True, boto3=True):
     bindir, pylib = tmp_path / "bin", tmp_path / "pylib" / "boto3"
     bindir.mkdir()
     pylib.mkdir(parents=True)
-    (pylib / "__init__.py").write_text(FAKE_BOTO3)
+    (pylib / "__init__.py").write_text(FAKE_BOTO3 if boto3 else "raise ImportError('No module named boto3')\n")
     # Fake aws CLI: logs the call; `logs describe-deliveries` answers the fixture's
     # deliveries with --query evaluated by jmespath (--output text), every other call
     # answers nothing.
     (bindir / "aws").write_text(f"#!{sys.executable}\n" + FAKE_AWS)
-    (bindir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
-    for b in ("aws", "python3"):
-        (bindir / b).chmod(0o755)
+    (bindir / "aws").chmod(0o755)
+    if python3:
+        (bindir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+        (bindir / "python3").chmod(0o755)
     priv = tmp_path / "private"
     priv.mkdir()
     (priv / "destroy-inventory.json").write_text(json.dumps(inventory or {"clusters": []}))
@@ -440,7 +441,9 @@ def _run(tmp_path, cmd, keep_data="false", fx=None, inventory=None):
     fxf.write_text(json.dumps(fx or FX))
     log.write_text("")
     cli.write_text("")
-    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", PYTHONPATH=str(tmp_path / "pylib"),
+    # No python3: PATH holds only the fake aws (go-task's shell needs no binary).
+    path = f"{bindir}:{os.environ['PATH']}" if python3 else str(bindir)
+    env = dict(os.environ, PATH=path, PYTHONPATH=str(tmp_path / "pylib"),
                FAKE_FX=str(fxf), FAKE_LOG=str(log), FAKE_CLI_LOG=str(cli),
                SWEEP_FAILURES_FILE=str(priv / "destroy-sweep-failures"))
     cmd = cmd.replace("{{.ROOT_DIR}}/private/", str(priv) + "/").replace("{{.ROOT_DIR}}", REPO)
@@ -541,3 +544,13 @@ def test_kind_kro_ack_destroy_keeps_the_deliveries_of_a_live_cluster_whose_name_
     d = _deletes(calls)
     assert not [x for x in d if foreign in str(x[2]) or x[2] == "d-foreign"], d
     assert ("logs", "delete_delivery", "d-hub") in d and ("logs", "delete_delivery_source", f"{HUB}-kro") in d
+
+
+@pytest.mark.parametrize("python3,boto3,what", [(False, True, "python3"), (True, False, "boto3")])
+def test_kind_crossplane_phase_6b_skips_when_python3_or_boto3_is_missing(tmp_path, python3, boto3, what):
+    """Review of #1287: without python3 / boto3 Phase 6b failed half-way with an
+    unclear error and exit 0. Now it says why it skips and touches nothing."""
+    res, calls = _run(tmp_path, _step(CROSSPLANE, XP_MARKER), python3=python3, boto3=boto3)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert f"Phase 6b skipped: {what} missing" in res.stdout, res.stdout + res.stderr
+    assert calls == [] and (tmp_path / "cli.log").read_text() == ""
