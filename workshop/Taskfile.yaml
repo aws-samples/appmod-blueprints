@@ -1218,6 +1218,7 @@ tasks:
       BUILD_TIMEOUT: '{{.PREWARM_BUILD_TIMEOUT | default "900"}}'
       INSTALL_START: '{{.INSTALL_START | default ""}}'
       INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+      PHASE_A_SCAFFOLD_LOG: '{{.PHASE_A_SCAFFOLD_LOG | default "/tmp/prewarm-phase-a-scaffold.log"}}'
     cmds:
       - |
         set +e
@@ -1253,8 +1254,8 @@ tasks:
 
         KC=$(mktemp)
         if ! aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  prewarm Phase A: cannot get hub kubeconfig — skipping (non-fatal).{{.C_RESET}}\n'
-          rm -f "$KC"; exit 0
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: cannot get hub kubeconfig — not scaffolded (Phase B fallback).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 1
         fi
         KUBE="kubectl --kubeconfig $KC"
 
@@ -1272,8 +1273,8 @@ tasks:
         $KUBE rollout status deploy/workflow-controller -n argo --timeout=${ROLLOUT_T}s >/dev/null 2>&1 \
           || printf '{{.C_ERR}}  prewarm Phase A: workflow-controller not Ready in time — continuing anyway.{{.C_RESET}}\n'
         if ! $KUBE get crd workflows.argoproj.io >/dev/null 2>&1; then
-          printf '{{.C_ERR}}  prewarm Phase A: Workflow CRD not served yet — skipping (Phase B will retry).{{.C_RESET}}\n'
-          rm -f "$KC"; exit 0
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: Workflow CRD not served yet — not scaffolded (Phase B fallback).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 1
         fi
 
         # ── Scaffold if not already done (repo + CICDPipeline guards — same as prewarm-rust-cicd)
@@ -1297,31 +1298,72 @@ tasks:
 
         BSAUTH="{{.PLATFORM_DIR}}/scripts/validation/backstage-auth.sh"
         if [ ! -f "$BSAUTH" ]; then
-          printf '{{.C_ERR}}  prewarm Phase A: %s not found — skipping scaffold.{{.C_RESET}}\n' "$BSAUTH"
-          rm -f "$KC"; exit 0
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: %s not found — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$BSAUTH"
+          rm -f "$KC"; exit 1
         fi
         BASE="{{.CLOUDFRONT_DOMAIN}}"; [ -z "$BASE" ] && BASE="{{.DOMAIN}}"
         export BACKSTAGE_URL="https://${BASE}/backstage"
         export USER1_PASSWORD="{{.USER_PASSWORD}}"
         if [ -z "$USER1_PASSWORD" ]; then
-          printf '{{.C_ERR}}  prewarm Phase A: could not resolve user1 password — skipping scaffold.{{.C_RESET}}\n'
-          rm -f "$KC"; exit 0
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: could not resolve user1 password — not scaffolded (Phase B fallback).{{.C_RESET}}\n'
+          rm -f "$KC"; exit 1
         fi
-        # shellcheck disable=SC1090
-        . "$BSAUTH" 2>/dev/null || true
-        set +e
-        printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s)…{{.C_RESET}}\n' "$APP"
+        # backstage-auth.sh is NEVER sourced into this shell. go-task runs cmds in its own
+        # POSIX interpreter (mvdan/sh), where the helper's subshell-bodied functions
+        # (`f() ( local …; … )`, since #1166) die at once with "local: can only be used
+        # in a function" before any HTTP call. Sourced in-process, Phase A could never
+        # scaffold: it failed in ~0 s, its output went to /dev/null and Phase B did the
+        # work. Run the helper in a real bash, as prewarm-rust-cicd does, and keep its
+        # output in a log so a failure is diagnosable.
+        bs() { _bs_t=$1; shift; BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" timeout "$_bs_t" bash -c '. "$1" >/dev/null 2>&1; set +e; shift; "$@"' _ "$BSAUTH" "$@"; }
+        left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
+        SC_LOG="{{.PHASE_A_SCAFFOLD_LOG}}"; : > "$SC_LOG"
+
+        # ── Readiness gate: Phase A can run before Backstage serves the template (slow
+        #    first hub sync, Backstage restart). Wait, bounded by the budget minus the
+        #    scaffold reserve, for an AUTHENTICATED catalog read of the template to return
+        #    200 (an unauthenticated 401/302 answers on a broken backend too).
+        BS_T=600; BS_MAX=$(( $(left) - SCAFFOLD_RESERVE )); [ "$BS_MAX" -lt "$BS_T" ] && BS_T=$BS_MAX
+        BS_S=$(date +%s); CAT_CODE=000
+        while :; do
+          CAT_CODE=$(bs 120 backstage_template_status cicd-pipeline-gitops 2>>"$SC_LOG") || true
+          case "$CAT_CODE" in [0-9][0-9][0-9]) ;; *) CAT_CODE=000 ;; esac
+          [ "$CAT_CODE" = "200" ] && break
+          BS_E=$(( $(date +%s) - BS_S ))
+          if [ "$BS_E" -ge "$BS_T" ]; then
+            printf '{{.C_ERR}}  ✗ prewarm Phase A: template:default/cicd-pipeline-gitops not served by Backstage after %ss (authenticated read: HTTP %s) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$BS_E" "$CAT_CODE"
+            rm -f "$KC"; exit 1
+          fi
+          printf '{{.C_INFO}}  ▸ prewarm Phase A: waiting for Backstage (%ss/%ss, catalog HTTP %s)…{{.C_RESET}}\n' "$BS_E" "$BS_T" "$CAT_CODE"
+          sleep 30
+        done
+
+        printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s, log: %s)…{{.C_RESET}}\n' "$APP" "$SC_LOG"
         VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
-        # Mark that this run submitted a scaffold attempt — used below to suppress the
-        # "delete the repo" instruction when the scaffold timed out but is still in flight
-        # server-side (publish:gitlab fires before create-argocd-app, so the repo may be
-        # wired even if we exit before backstage_scaffolder reports success).
-        SCAFFOLD_SUBMITTED=yes
-        if backstage_scaffolder "template:default/cicd-pipeline-gitops" "$VALUES" >/dev/null 2>&1; then
-          printf '{{.C_OK}}  prewarm Phase A: scaffolder task completed.{{.C_RESET}}\n'
-        else
-          printf '{{.C_ERR}}  prewarm Phase A: scaffolder did not complete cleanly — Phase B will wait for ACTIVE anyway.{{.C_RESET}}\n'
-        fi
+        # Bounded retry, ONLY when the POST itself was refused (backstage_scaffolder prints
+        # "backstage_scaffolder: POST ... returned HTTP <code>" and exits 2: no task exists
+        # server-side, so a retry cannot double-scaffold). A task that was created and then
+        # failed or timed out is never re-submitted: publish:gitlab may already have created
+        # the repo, and Phase B's repo guard takes it from there.
+        SC_TRY=0
+        while :; do
+          SC_TRY=$((SC_TRY + 1))
+          SC_T=$SCAFFOLD_RESERVE; [ "$(left)" -lt "$SC_T" ] && SC_T=$(left); [ "$SC_T" -lt 1 ] && SC_T=1
+          echo "--- attempt $SC_TRY ($(date -u +%H:%M:%SZ))" >> "$SC_LOG"
+          bs "$SC_T" backstage_scaffolder "template:default/cicd-pipeline-gitops" "$VALUES" >>"$SC_LOG" 2>&1
+          SC_RC=$?
+          if [ "$SC_RC" -eq 0 ]; then
+            printf '{{.C_OK}}  ✓ prewarm Phase A: scaffolder task completed (%s).{{.C_RESET}}\n' "$(grep -m1 '^Task ID:' "$SC_LOG" | tail -n1)"
+            break
+          fi
+          if [ "$SC_RC" -eq 2 ] && [ "$SC_TRY" -lt 3 ] && [ "$(left)" -gt $(( 60 + SCAFFOLD_RESERVE )) ]; then
+            printf '{{.C_INFO}}  ▸ prewarm Phase A: scaffold POST refused (%s) — retrying in 60s (%s/2)…{{.C_RESET}}\n' "$(grep '^backstage_scaffolder: POST ' "$SC_LOG" | tail -n1 | sed -n 's/.* returned \(HTTP [0-9]*\).*/\1/p')" "$SC_TRY"
+            sleep 60; continue
+          fi
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: scaffold failed (rc=%s, attempt %s) — Phase B fallback. Last lines of %s:{{.C_RESET}}\n' "$SC_RC" "$SC_TRY" "$SC_LOG"
+          tail -n 15 "$SC_LOG" | sed 's/^/    | /'
+          rm -f "$KC"; exit 1
+        done
         rm -f "$KC"
       - printf '{{.C_OK}}✓ prewarm-rust-cicd-phase-a done.{{.C_RESET}}\n'
 
@@ -1369,6 +1411,10 @@ tasks:
       # INSTALL_START empty (review S3), which skips the cap entirely (full timeouts apply).
       INSTALL_START: '{{.INSTALL_START | default ""}}'
       INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+      # Written by the install DAG's Phase A launcher; read to avoid a second scaffold.
+      PHASE_A_PID_FILE: '{{.PHASE_A_PID_FILE | default "/tmp/prewarm-phase-a.pid"}}'
+      PHASE_A_RC_FILE: '{{.PHASE_A_RC_FILE | default "/tmp/prewarm-phase-a.rc"}}'
+      PHASE_A_SCAFFOLD_LOG: '{{.PHASE_A_SCAFFOLD_LOG | default "/tmp/prewarm-phase-a-scaffold.log"}}'
     cmds:
       - |
         # Strictly non-fatal: disable errexit so no internal check can fail the install.
@@ -1510,7 +1556,21 @@ tasks:
           printf '{{.C_ERR}}  ⚠ install budget spent before scaffold could start — skipping prewarm (non-fatal; retry: cd ~/environment/platform-on-eks-workshop/workshop && task prewarm-rust-cicd).{{.C_RESET}}\n'
           rm -f "$KC"; exit 0
         fi
+        # Phase A (prewarm-rust-cicd-phase-a, install background job) owns the scaffold.
+        # If it is still running (the join gave up waiting), do not submit a second task:
+        # its scaffold may be in flight. Wait for the pipeline it creates instead.
+        PA_PID=$(cat "{{.PHASE_A_PID_FILE}}" 2>/dev/null || true)
+        if [ -n "$PA_PID" ] && [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] \
+           && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
+          printf '{{.C_INFO}}  ↩ prewarm Phase A still running (pid %s) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n' "$PA_PID"
+          REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
+        fi
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
+          # Phase A is the primary path during an install. Reaching a fresh scaffold here
+          # after it ran means it failed: say so loudly so the run is not read as clean.
+          if [ -s "{{.PHASE_A_RC_FILE}}" ]; then
+            printf '{{.C_ERR}}  ⚠ PREWARM FALLBACK: Phase A did not scaffold %s (rc=%s, see /tmp/prewarm-phase-a.log and {{.PHASE_A_SCAFFOLD_LOG}}) — Phase B scaffolding now.{{.C_RESET}}\n' "$APP" "$(cat "{{.PHASE_A_RC_FILE}}")"
+          fi
           BSAUTH="{{.PLATFORM_DIR}}/scripts/validation/backstage-auth.sh"
           if [ ! -f "$BSAUTH" ]; then
             printf '{{.C_ERR}}  ⚠ %s not found — skipping prewarm (non-fatal).{{.C_RESET}}\n' "$BSAUTH"
