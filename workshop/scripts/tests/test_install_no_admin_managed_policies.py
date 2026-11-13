@@ -18,7 +18,9 @@ What these tests pin:
    spoke-only (gated on provider == "kro-ack", which hub:claim never sets);
 3. behaviour (fake `aws` on PATH, REAL Taskfile blocks under go-task): default path, legacy
    detach, BYO path (CLI var and the real config.local.yaml read), BYO validation, a failing
-   inline put stops the task, and spokes:seed-provider-identity puts the scoped policy.
+   inline put stops the task, and spokes:seed-provider-identity puts the scoped policy;
+   the kind-crossplane hub:create-mgmt-roles and spokes:seed-provider-identity blocks too;
+4. config.schema.json hub.iam rejects unknown keys (a typo is not silently ignored).
 
 Run:  python -m pytest workshop/scripts/tests/test_install_no_admin_managed_policies.py -q
 """
@@ -34,6 +36,8 @@ yaml = pytest.importorskip("yaml")
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 KRO = os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")
+XP = os.path.join(REPO, "cluster-providers", "kind-crossplane", "Taskfile.yaml")
+SCHEMA = os.path.join(REPO, "config.schema.json")
 IAM_DIR = os.path.join(REPO, "cluster-providers", "common", "iam")
 RG_EKS = os.path.join(REPO, "gitops", "addons", "charts", "kro", "resource-groups", "manifests", "eks", "rg-eks.yaml")
 TASK = shutil.which("task")
@@ -45,7 +49,9 @@ ADMIN_ARN = re.compile(r"arn:aws[\w-]*:iam::aws:policy/(AdministratorAccess|Powe
 # Files run (or rendered with the installing principal's creds) by `task install`.
 # Not here, on purpose: cluster-providers/terraform (iam.tf, not the install path of
 # kind-kro-ack/kind-crossplane) and scripts/create-cross-account-roles.sh (manual
-# multi-account helper run with the TARGET account's creds).
+# multi-account helper run with the TARGET account's creds). In-cluster attachments made by
+# provider-aws-iam (crossplane-base, crossplane-pod-identity charts) are not the installing
+# principal's and are out of scope too.
 INSTALL_PATH = [
     "Taskfile.yaml",
     "workshop/Taskfile.yaml",
@@ -180,8 +186,8 @@ exit 0
 """
 
 
-def block(task, index):
-    with open(KRO) as f:
+def block(task, index, taskfile=KRO):
+    with open(taskfile) as f:
         cmd = yaml.safe_load(f)["tasks"][task]["cmds"][index]
     return cmd["cmd"] if isinstance(cmd, dict) else cmd
 
@@ -191,7 +197,7 @@ def kro_var(name):
         return yaml.safe_load(f)["vars"][name]
 
 
-def harness(tmp_path, config="", real_byo_var=False):
+def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "aws").write_text(FAKE_AWS)
@@ -215,11 +221,12 @@ def harness(tmp_path, config="", real_byo_var=False):
             **{c: "" for c in ("C_INFO", "C_OK", "C_STEP", "C_ERR", "C_WARN", "C_RESET")},
         },
         "tasks": {
-            "bootstrap": {"cmds": [block("hub:bootstrap-crossplane-identity", 1)]},
-            "mgmt": {"cmds": [block("hub:create-mgmt-roles", 1)]},
-            "seed": {"cmds": [block("spokes:seed-provider-identity", 0)]},
+            "mgmt": {"cmds": [block("hub:create-mgmt-roles", 1, taskfile)]},
+            "seed": {"cmds": [block("spokes:seed-provider-identity", 0, taskfile)]},
         },
     }
+    if taskfile == KRO:  # kind-crossplane has no hub:bootstrap-crossplane-identity
+        tf["tasks"]["bootstrap"] = {"cmds": [block("hub:bootstrap-crossplane-identity", 1)]}
     (tmp_path / "Taskfile.yml").write_text(yaml.safe_dump(tf, sort_keys=False))
     return bin_dir
 
@@ -386,12 +393,74 @@ def test_seed_provider_identity_puts_scoped_policy(tmp_path):
     assert not [c for c in log if "--role-name hub-" in c], log  # the hub is excluded
 
 
+@needs_task
+def test_seed_provider_identity_put_failure_is_fatal(tmp_path):
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, "seed", fail_put_role="spoke1-CrossplaneIAMProviderRole")
+    assert r.returncode != 0, out
+    assert not [c for c in log if "create-pod-identity-association" in c], log
+
+
+# kind-crossplane: same blocks, same fake aws (no BYO, no detach there).
+
+@needs_task
+def test_kind_crossplane_mgmt_puts_scoped_policy_and_no_admin(tmp_path):
+    b = harness(tmp_path, taskfile=XP)
+    r, out, log = run(tmp_path, b, "mgmt")
+    assert r.returncode == 0, out
+    attaches = calls_of(log, "attach-role-policy")
+    assert not [a for a in attaches if ADMIN_ARN.search(a)], attaches
+    assert not [a for a in attaches if "pfx-cluster-mgmt-iam " in a + " "], attaches
+    puts = [p for p in calls_of(log, "put-role-policy") if "--role-name pfx-cluster-mgmt-iam " in p]
+    assert len(puts) == 1 and f"file://{IAM_DIR}/cluster-mgmt-iam-policy.json" in puts[0], log
+
+
+@needs_task
+def test_kind_crossplane_mgmt_put_failure_is_fatal(tmp_path):
+    b = harness(tmp_path, taskfile=XP)
+    r, out, log = run(tmp_path, b, "mgmt", fail_put_role="pfx-cluster-mgmt-iam")
+    assert r.returncode != 0, out
+
+
+@needs_task
+def test_kind_crossplane_seed_puts_scoped_policy(tmp_path):
+    b = harness(tmp_path, taskfile=XP)
+    r, out, log = run(tmp_path, b, "seed")
+    assert r.returncode == 0, out
+    assert not calls_of(log, "attach-role-policy"), log
+    puts = calls_of(log, "put-role-policy")
+    roles = sorted(re.search(r"--role-name (\S+)", p).group(1) for p in puts)
+    assert roles == ["spoke1-CrossplaneEKSProviderRole", "spoke1-CrossplaneIAMProviderRole"], puts
+    assert all(f"file://{IAM_DIR}/crossplane-provider-policy.json" in p for p in puts), puts
+
+
+@needs_task
+def test_kind_crossplane_seed_put_failure_is_fatal(tmp_path):
+    b = harness(tmp_path, taskfile=XP)
+    r, out, log = run(tmp_path, b, "seed", fail_put_role="spoke1-CrossplaneIAMProviderRole")
+    assert r.returncode != 0, out
+
+
+# ------------------------------------------------------------------ 4. config schema
+
+def test_schema_hub_iam_rejects_unknown_keys():
+    jsonschema = pytest.importorskip("jsonschema")
+    with open(SCHEMA) as f:
+        iam = json.load(f)["properties"]["hub"]["properties"]["iam"]
+    jsonschema.validate({"crossplaneProviderRoleArn": "", "clusterMgmtRoleArns": {"iam": "x"}}, iam)
+    for bad in ({"crossplaneProviderRoleARN": "x"}, {"clusterMgmtRoleArns": {"iamm": "x"}}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, iam)
+
+
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
-@pytest.mark.parametrize("task,index", [("hub:bootstrap-crossplane-identity", 1), ("hub:create-mgmt-roles", 1),
-                                        ("spokes:seed-provider-identity", 0)])
-def test_blocks_shellcheck(tmp_path, task, index):
+@pytest.mark.parametrize("taskfile,task,index", [
+    (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
+    (KRO, "spokes:seed-provider-identity", 0),
+    (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)])
+def test_blocks_shellcheck(tmp_path, taskfile, task, index):
     # go-task templates are not shell; replace them with a plain word first.
-    body = re.sub(r"\{\{[^}]*\}\}", "X", block(task, index))
+    body = re.sub(r"\{\{[^}]*\}\}", "X", block(task, index, taskfile))
     p = tmp_path / "b.sh"
     p.write_text("#!/bin/bash\n" + body)
     r = subprocess.run(["shellcheck", "-S", "error", str(p)], capture_output=True, text=True)
