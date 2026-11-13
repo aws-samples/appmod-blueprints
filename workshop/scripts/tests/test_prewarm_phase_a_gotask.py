@@ -169,3 +169,53 @@ def test_phase_b_standalone_no_fallback_message(tmp_path, monkeypatch):
     r, _ = run(tmp_path, "prewarm-rust-cicd")
     assert "PREWARM FALLBACK" not in r.stdout
     assert len(lines(tmp_path, "scaffold.calls")) == 1
+
+
+# ── Phase A still running when Phase B starts (the join gave up), then ends ────────────
+def run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at, rc, scaffolded=False):
+    """Phase A is a live process (this pytest pid) with no rc file; the fake `sleep`
+    writes its rc (and, for a successful Phase A, the scaffold) once the virtual clock
+    reaches ends_at."""
+    b, plat = fakes(tmp_path)
+    pid, rcf = tmp_path / "pa.pid", tmp_path / "pa.rc"
+    pid.write_text(str(os.getpid()))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
+    done = f'touch "$FAKE_T/scaffolded"; ' if scaffolded else ""
+    (b / "sleep").write_text(
+        '#!/usr/bin/env bash\n'
+        'C=$(cat "$FAKE_T/clock"); C=$((C + ${1%s})); echo $C > "$FAKE_T/clock"\n'
+        f'if [ "$C" -ge {ends_at} ] && [ ! -s "{rcf}" ]; then {done}echo {rc} > "{rcf}"; fi\n')
+    env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", FAKE_T=str(tmp_path), HOME=str(tmp_path))
+    r = subprocess.run(["bash", "-c", render("prewarm-rust-cicd", plat)], env=env,
+                       capture_output=True, text=True, timeout=60, cwd=str(tmp_path))
+    return r, int((tmp_path / "clock").read_text())
+
+
+def test_phase_b_falls_back_when_late_phase_a_fails(tmp_path, monkeypatch):
+    # Pre-review C1: Phase B used to wait PIPE_T for a pipeline nobody creates and give
+    # up with no scaffold. go-task reports a failed cmd as rc=201.
+    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at=300, rc=201)
+    assert "Phase A still running" in r.stdout, r.stdout
+    assert "Phase A finished (rc=201)" in r.stdout, r.stdout
+    assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=201" in r.stdout, r.stdout
+    calls = lines(tmp_path, "scaffold.calls")
+    assert len(calls) == 1 and int(calls[0].split()[0]) >= 300, calls
+    assert "✓ CICDPipeline rust-cicd-pipeline ACTIVE." in r.stdout, r.stdout
+    assert r.returncode == 0
+
+
+def test_phase_b_no_scaffold_when_late_phase_a_succeeds(tmp_path, monkeypatch):
+    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at=300, rc=0, scaffolded=True)
+    assert "Phase A finished (rc=0)" in r.stdout, r.stdout
+    assert lines(tmp_path, "scaffold.calls") == []
+    assert "PREWARM FALLBACK" not in r.stdout
+    assert "pipeline ACTIVE" in r.stdout, r.stdout
+
+
+def test_phase_b_phase_a_ok_but_nothing_visible_yet_does_not_rescaffold(tmp_path, monkeypatch):
+    # rc=0 means Phase A's task completed: never submit a second one, wait instead.
+    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at=300, rc=0, scaffolded=False)
+    assert lines(tmp_path, "scaffold.calls") == []
+    assert "nothing will create the pipeline" not in r.stdout
+    assert "waiting for CICDPipeline" in r.stdout, r.stdout

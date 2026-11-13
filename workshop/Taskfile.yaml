@@ -1558,12 +1558,39 @@ tasks:
         fi
         # Phase A (prewarm-rust-cicd-phase-a, install background job) owns the scaffold.
         # If it is still running (the join gave up waiting), do not submit a second task:
-        # its scaffold may be in flight. Wait for the pipeline it creates instead.
+        # its scaffold may be in flight. Wait (bounded: budget minus the scaffold reserve)
+        # for Phase A to END, then re-check the repo/pipeline guards: if Phase A failed
+        # and left nothing, fall through to the fallback scaffold below. Only if Phase A
+        # is still running at the bound, wait for the pipeline it should create.
         PA_PID=$(cat "{{.PHASE_A_PID_FILE}}" 2>/dev/null || true)
         if [ -n "$PA_PID" ] && [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] \
            && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-          printf '{{.C_INFO}}  ↩ prewarm Phase A still running (pid %s) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n' "$PA_PID"
-          REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
+          PA_T=$(( $(left) - SCAFFOLD_RESERVE )); [ "$PA_T" -lt 0 ] && PA_T=0
+          printf '{{.C_INFO}}  ↩ prewarm Phase A still running (pid %s) — not scaffolding a second time; waiting up to %ss for it to finish.{{.C_RESET}}\n' "$PA_PID" "$PA_T"
+          PA_S=$(date +%s)
+          while [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] && [ $(( $(date +%s) - PA_S )) -lt "$PA_T" ]; do
+            sleep 15
+          done
+          if [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ]; then
+            printf '{{.C_INFO}}  ↩ prewarm Phase A still running after %ss — waiting for its CICDPipeline instead of scaffolding.{{.C_RESET}}\n' "$(( $(date +%s) - PA_S ))"
+            REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
+          else
+            printf '{{.C_INFO}}  ↩ prewarm Phase A finished (rc=%s) — re-checking repo/pipeline.{{.C_RESET}}\n' "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || echo '?')"
+            PSTATE=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+            PIPELINE_EXISTS=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" --ignore-not-found -o name 2>/dev/null)
+            if [ -n "{{.GIT_DOMAIN}}" ] && [ -n "{{.GIT_TOKEN}}" ]; then
+              RC=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 \
+                -H "PRIVATE-TOKEN: {{.GIT_TOKEN}}" \
+                "https://{{.GIT_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F${APP}-cicd" 2>/dev/null || echo "000")
+              [ "$RC" = "200" ] && REPO_EXISTS=yes
+            fi
+            # Phase A reported success but nothing is visible yet: it created a task, so
+            # wait for the pipeline rather than risk a second publish:gitlab.
+            if [ "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null)" = "0" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
+              REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
+            fi
+            if [ -n "$DEADLINE" ] && [ "$(date +%s)" -ge "$DEADLINE" ]; then BUDGET_OK=""; fi
+          fi
         fi
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           # Phase A is the primary path during an install. Reaching a fresh scaffold here
