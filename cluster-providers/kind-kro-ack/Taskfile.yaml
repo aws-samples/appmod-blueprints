@@ -5029,9 +5029,23 @@ tasks:
         # hub reconciles the adopted resources (no dual-manager conflict). docker stop
         # preserves etcd in the container fs -> recoverable with `docker start`.
         printf '{{.C_STEP}}▸ [LIVE] stopping kind nodes so only the hub reconciles…{{.C_RESET}}\n'
-        if [ -n "$KIND_NODES" ]; then docker stop $KIND_NODES; \
-          else printf '{{.C_INFO}}  no running kind nodes for {{.KIND_CLUSTER_NAME}} (already stopped?).{{.C_RESET}}\n'; fi
-        KIND_STOPPED=1  # [#1033 N3] from here, an unexpected exit must restart kind (EXIT trap)
+        # [#1033 N3] Set BEFORE the stop: under load `docker stop` can fail ("did not receive an
+        # exit event") although the node dies a moment later. The EXIT trap must then restart
+        # kind. (No `return` in functions reachable from the trap: go-task's shell ignores it there.)
+        KIND_STOPPED=1
+        if [ -n "$KIND_NODES" ]; then
+          # The stop is judged by docker inspect, not by the exit code of docker stop.
+          docker stop -t 30 $KIND_NODES || printf '{{.C_INFO}}  docker stop returned an error — checking the real node state…{{.C_RESET}}\n'
+          for _ in $(seq 1 30); do
+            [ -z "$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}")" ] && break
+            sleep 2
+          done
+          if [ -n "$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}")" ]; then
+            docker kill $KIND_NODES >/dev/null 2>&1 || true; sleep 2
+            [ -z "$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}")" ] \
+              || { printf '{{.C_ERR}}✗ kind nodes still running after docker kill — aborting before adoption.{{.C_RESET}}\n'; exit 1; }
+          fi
+        else printf '{{.C_INFO}}  no running kind nodes for {{.KIND_CLUSTER_NAME}} (already stopped?).{{.C_RESET}}\n'; fi
 
         # ADOPT on the hub (kind is down -> single reconciler, no conflict).
         printf '{{.C_STEP}}▸ [LIVE] adopting on hub (adopt-or-create)…{{.C_RESET}}\n'

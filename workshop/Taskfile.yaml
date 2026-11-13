@@ -382,7 +382,12 @@ tasks:
             if ( cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop PIVOT_ADOPT_TIMEOUT_SEC="$GATE_SEC" ); then
               printf '{{.C_OK}}  ✓ hub pivoted — kind bootstrap detached (stopped & recoverable).{{.C_RESET}}\n'
             else
-              printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind; the pivot fail-closed and restarted kind. Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+              # Say what is true: check the kind node state instead of assuming a restart.
+              if [ -n "$(docker ps -q --filter 'label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap' 2>/dev/null)" ]; then
+                printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind (kind running). Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+              else
+                printf '{{.C_ERR}}  ✗✗ hub pivot did not complete and kind is NOT running: nothing reconciles the hub AWS resources. Recover: docker start $(docker ps -aq --filter label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap); wait for the kind API; then task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+              fi
             fi
           fi
         ignore_error: true
