@@ -2118,6 +2118,9 @@ tasks:
     cmds:
       - '[ "{{.IDC_CONFIGURE_SKIP | default "false"}}" != "true" ] || printf "{{.C_INFO}}  IDC_CONFIGURE_SKIP=true: idc:configure skipped, IAM Identity Center not touched.{{.C_RESET}}\n"'
       - task: idc:configure
+        vars:
+          # Tolerant inside `task install` (see idc:configure); IDC_STRICT=true opts in.
+          IDC_STRICT: '{{.IDC_STRICT | default "false"}}'
 
 
   setup-env:
@@ -2423,9 +2426,11 @@ tasks:
         else
           printf '{{.C_ERR}}⚠ IDC configuration failed. Federation is NOT active — ArgoCD SSO will not work. Re-run: task idc:configure{{.C_RESET}}\n'
           echo "FAILED $(date -u +%FT%TZ)" > "$IDC_STATUS_FILE"
-          # Honour IDC_STRICT=true to hard-fail (e.g. for standalone runs / CI); default
-          # is tolerant so the install tail is not aborted.
-          if [ "${IDC_STRICT:-false}" = "true" ]; then exit 1; fi
+          # Standalone `task idc:configure` hard-fails by default (an operator re-run must
+          # not report success on failure). `post-install` (the `task install` path)
+          # passes IDC_STRICT=false so a transient IDC miss does not abort the install
+          # tail; set IDC_STRICT=true to hard-fail there too, false to tolerate here.
+          if [ "{{.IDC_STRICT | default "true"}}" = "true" ]; then exit 1; fi
         fi
       - printf '{{.C_STEP}}▸ Syncing admin group members into IDC admin group...{{.C_RESET}}\n'
       - |

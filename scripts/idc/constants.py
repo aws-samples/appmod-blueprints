@@ -10,6 +10,9 @@ AWS_METADATA_FILE = "/tmp/aws-id.xml"
 KEYCLOAK_SAML_FILE = "/tmp/keycloak-saml.xml"
 SCIM_DATA_FILE = "/tmp/scim-data.json"
 ASSUME_ROLE_CREDENTIALS_FILE = "/tmp/keycloak-idc-integration-credentials.json"
+# Written on a failure of the console automation, with or without --debug (unless the
+# SCIM token dialog was open, see idc.evidence). Distinct from other scripts' error.png.
+ERROR_SCREENSHOT = "/tmp/idc-error.png"
 
 # Keycloak realm that fronts AWS IAM Identity Center federation.
 KEYCLOAK_REALM = "platform"
