@@ -154,6 +154,13 @@ live hub `<hub>-crossplane-provider` keeps `AdministratorAccess` until a fresh i
 reinstall after `task destroy`. The kind-crossplane provider and `spokes:seed-provider-identity`
 put the scoped policy but do not detach.
 
+On kind-crossplane spokes the seeded scoped policy is additive, not the effective permission:
+the hub addon `crossplane-pod-identity` (selected for `provider NotIn [kro-ack]`) adopts the same
+`<spoke>-CrossplaneIAMProviderRole` / `<spoke>-CrossplaneEKSProviderRole` roles and still attaches
+`AdministratorAccess` to them through a Crossplane `RolePolicyAttachment`. That attachment is made
+in-cluster by provider-aws-iam, like `crossplane-base`, not by the installing principal, so it is
+out of scope here; scoping it is follow-up work.
+
 To create these roles yourself (for example in CloudFormation), set their ARNs under `hub.iam`
 (see `config.yaml`). A set ARN is used as is: no create, no trust update, no policy. Each
 `clusterMgmtRoleArns.<svc>` must be named `<resourcePrefix>-cluster-mgmt-<svc>`, because the

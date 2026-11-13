@@ -2699,6 +2699,12 @@ tasks:
                 printf '{{.C_INFO}}  %s: role %s exists{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
               fi
               # 2. Scoped inline policy, not AdministratorAccess (idempotent)
+              #    Not the effective permission on its own: the hub's crossplane-pod-identity
+              #    addon (provider NotIn [kro-ack]) adopts these same <spoke>-Crossplane{IAM,EKS}ProviderRole
+              #    roles and attaches AdministratorAccess through an in-cluster Crossplane
+              #    RolePolicyAttachment, so the spoke iam/eks providers stay AdministratorAccess.
+              #    That attachment is made by provider-aws-iam, not the installing principal;
+              #    scoping it is follow-up work.
               aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name crossplane-provider-scoped \
                 --policy-document "file://{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" >/dev/null
               # 3. Pod Identity association on the spoke (idempotent)

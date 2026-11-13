@@ -644,7 +644,7 @@ REPLACE_FORGE_WRITE_COMPONENT
     type: k8s-objects
     properties:
       objects:
-      # iam CRs (both roles in incident-bridge-aws) -> cluster-mgmt-iam (IAMFullAccess),
+      # iam CRs (both roles in incident-bridge-aws) -> cluster-mgmt-iam (scoped inline IAM policy),
       # which the capability role is already trusted to assume. Lets ACK create the
       # roles declaratively — no direct `aws iam` call.
       - apiVersion: services.k8s.aws/v1alpha1
@@ -705,7 +705,7 @@ REPLACE_FORGE_WRITE_COMPONENT
       objects:
       # Dedicated provisioning role, armed with scoped SNS/SQS/AMP-AlertManager perms.
       # MUST be named <prefix>-cluster-mgmt-* (capability AssumeWorkloadRoles pattern).
-      # Created by ACK via cluster-mgmt-iam (IAMFullAccess), routed by the iam selector
+      # Created by ACK via cluster-mgmt-iam (scoped inline IAM policy), routed by the iam selector
       # above — so it is provisioned declaratively with no direct `aws iam` call.
       - apiVersion: iam.services.k8s.aws/v1alpha1
         kind: Role
