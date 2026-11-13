@@ -1815,9 +1815,11 @@ spec:
         spec:
           name: "${schema.spec.name}-crossplane-provider"
           # Same scoped policy as cluster-providers/common/iam/crossplane-provider-policy.json
-          # (a test pins the two equal), not AdministratorAccess: on the hub this role has
-          # the same name as the one hub:bootstrap-crossplane-identity creates, and ACK
-          # reconciles the role to this spec once it adopts it.
+          # (a test pins the two equal), not AdministratorAccess. This node renders only for
+          # kro-ack spokes with enable_crossplane_aws (<spoke>-crossplane-provider); the hub
+          # claim sets no spec.provider, so it never renders for the hub. Upgrade note: on the
+          # next RGD sync, running spokes are expected to move from AdministratorAccess to this
+          # inline policy (ACK sync of policies/inlinePolicies), with no `task install` re-run.
           inlinePolicies:
             crossplane-provider-scoped: '{"Version":"2012-10-17","Statement":[{"Sid":"IamRolesPoliciesInstanceProfilesOidc","Effect":"Allow","Action":"iam:*","Resource":["arn:*:iam::*:role/*","arn:*:iam::*:policy/*","arn:*:iam::*:instance-profile/*","arn:*:iam::*:oidc-provider/*"]},{"Sid":"IamRead","Effect":"Allow","Action":["iam:Get*","iam:List*"],"Resource":"*"},{"Sid":"Eks","Effect":"Allow","Action":"eks:*","Resource":"*"},{"Sid":"Ec2Read","Effect":"Allow","Action":"ec2:Describe*","Resource":"*"},{"Sid":"CallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}'
           assumeRolePolicyDocument: |
