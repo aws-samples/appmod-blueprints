@@ -15,6 +15,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from .evidence import private_umask
 from .resilience import retry_nav
 
 _CHROMIUM_YUM_DEPS = [
@@ -117,11 +118,15 @@ async def wait_for_stable(page, timeout=10000):
 
 
 async def screenshot(page, path, debug):
-    if debug:
-        try:
+    """Save a screenshot owner-only when ``debug`` is set. Returns True if written."""
+    if not debug:
+        return False
+    try:
+        with private_umask():
             await page.screenshot(path=path)
-        except Exception:
-            pass
+        return True
+    except Exception:
+        return False
 
 
 async def dismiss_overlays(page):

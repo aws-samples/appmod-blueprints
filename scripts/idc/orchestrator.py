@@ -34,6 +34,7 @@ from .constants import (
     STORAGE_STATE_FILE,
 )
 from .credentials import get_console_signin_url
+from .evidence import should_take_error_screenshot
 from .keycloak import create_keycloak_saml_client
 from .provisioning import ENABLE, REGENERATE, decide_provisioning_action, enable_button_xpath
 from .resilience import poll_until
@@ -78,6 +79,7 @@ async def configure_identity_center(
         context = await browser.new_context(ignore_https_errors=True, storage_state=storage_state)
         page = await context.new_page()
         page.set_default_timeout(60000)
+        token_exposed = False
 
         try:
             # --- Step 1: Sign in to AWS Console ---
@@ -430,6 +432,9 @@ async def configure_identity_center(
                 )
             else:
                 raise RuntimeError(f"Cannot enable automatic provisioning: {reason}")
+            # Enable / Generate token opens the SCIM token dialog: from here on the page
+            # may show the bearer token, so no always-on error screenshot (idc.evidence).
+            token_exposed = True
             await wait_for_stable(page)
             await page.wait_for_timeout(2000)
             await screenshot(page, "/tmp/step9.png", debug)
@@ -543,10 +548,17 @@ async def configure_identity_center(
 
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
-            # Always keep evidence of a failure, even without --debug: the page state is
-            # otherwise lost when the browser closes.
-            await screenshot(page, ERROR_SCREENSHOT, True)
-            print(f"Error screenshot saved to {ERROR_SCREENSHOT}", file=sys.stderr)
+            # Keep evidence of a failure even without --debug (the page state is lost
+            # when the browser closes), but never a capture that may show the SCIM token.
+            if should_take_error_screenshot(debug, token_exposed):
+                if await screenshot(page, ERROR_SCREENSHOT, True):
+                    print(f"Error screenshot saved to {ERROR_SCREENSHOT}", file=sys.stderr)
+            else:
+                print(
+                    "Error screenshot skipped: the SCIM token dialog was open "
+                    "(re-run with --debug to capture it).",
+                    file=sys.stderr,
+                )
             raise
         finally:
             await browser.close()
