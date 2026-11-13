@@ -10,6 +10,8 @@ AWS_METADATA_FILE = "/tmp/aws-id.xml"
 KEYCLOAK_SAML_FILE = "/tmp/keycloak-saml.xml"
 SCIM_DATA_FILE = "/tmp/scim-data.json"
 ASSUME_ROLE_CREDENTIALS_FILE = "/tmp/keycloak-idc-integration-credentials.json"
+# Written on any failure of the console automation, with or without --debug.
+ERROR_SCREENSHOT = "/tmp/error.png"
 
 # Keycloak realm that fronts AWS IAM Identity Center federation.
 KEYCLOAK_REALM = "platform"
