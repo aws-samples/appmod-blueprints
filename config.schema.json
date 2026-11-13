@@ -200,6 +200,7 @@
         "iam": {
           "type": "object",
           "description": "Optional (kind-kro-ack): pre-created IAM roles. A set ARN is used as is: task install does not create the role, change its trust, or put/attach any policy on it.",
+          "additionalProperties": false,
           "properties": {
             "crossplaneProviderRoleArn": {
               "type": "string",
