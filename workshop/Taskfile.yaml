@@ -263,9 +263,8 @@ tasks:
       # Background: wait for the spoke apps to sync (same tolerant loop and nudges as
       # before), THEN pre-deploy the Path A Next.js frontend and the Rust dev manifest on
       # spoke-dev (both need the spoke's kro AppmodService CRD, which comes with those
-      # apps). Detached like the
-      # hub settle (double fork + setsid, fds closed) so it may outlive the install
-      # without holding the SSM tee / cfn-signal. The install checks the spoke apps at
+      # apps). Detached like the hub settle (double fork + setsid, fds closed) so it may
+      # outlive the install without holding the SSM tee / cfn-signal. The install checks the spoke apps at
       # the end (non-blocking); the module that first uses spoke apps is the point of use.
       - |
         printf '' > /tmp/spoke-apps-bg.rc
@@ -1773,9 +1772,11 @@ tasks:
   #       which turns a stored false into true, see pnz1990 review #1136 point 2);
   #       PREWARM_PATH_A overrides both ways. prewarm-pathA-rust-kro also needs
   #       prewarmRustCicd (no pipeline -> no rust-dev-cd -> nothing syncs the manifest).
-  # Contract: best-effort (`set +e`, every path exits 0, `ignore_error` in install),
-  #       idempotent, and bound by the same DEADLINE as prewarm-rust-cicd so the #1033
-  #       pivot keeps its headroom. Neither task waits for the app to become Healthy:
+  # Contract: best-effort (`set +e`, every path exits 0, `ignore_error` on the call),
+  #       idempotent, and bound by the same DEADLINE as prewarm-rust-cicd. Both run in
+  #       the install's background job (spoke-apps-bg), concurrently with the #1033
+  #       pivot: the DEADLINE only bounds the job's lifetime, it does not protect pivot
+  #       headroom. Neither task waits for the app to become Healthy:
   #       the Rust Rollout pulls `:initial`, which the pipeline's initial build publishes
   #       ~8 min after the CICDPipeline goes ACTIVE, and converges on its own.
   # ============================================================
@@ -1923,12 +1924,13 @@ tasks:
           sleep 15; E=$((E + 15))
         done
         # 1. The AppmodService API must be served on spoke-dev. Bounded wait, same as
-        #    prewarm-pathA-frontend: this runs seconds after the spokes go ACTIVE, while
-        #    the spoke is still syncing its kro RGDs, so a single check skipped the whole
-        #    pre-deploy (the Rust backend was then missing on dev although the content
-        #    says it is already there). 900 s, not 300 s: a 300 s window that opened ~2 min
-        #    after the spoke's kro capability was created still closed before the CRD was
-        #    served. Off the install's critical path (background job), so the wait is free.
+        #    prewarm-pathA-frontend. This task used to run inline seconds after the spokes
+        #    went ACTIVE, while the spoke was still syncing its kro RGDs: a single check,
+        #    then a 300 s window opened ~2 min after the spoke's kro capability was
+        #    created, both closed before the CRD was served and skipped the pre-deploy.
+        #    It now runs in the background job after the tolerant spoke-apps wait, which
+        #    usually leaves the CRD served already; 900 s covers a late one, off the
+        #    install's critical path.
         T=900; [ "$(left)" -lt "$T" ] && T=$(left)
         E=0
         until $D get crd appmodservices.kro.run >/dev/null 2>&1; do
