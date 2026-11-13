@@ -289,12 +289,14 @@ def test_hub_delete_sent_once_when_accepted(tmp_path):
     assert deleting and calls == 1
 
 
-def test_wiring_leftovers_after_deliveries_and_planned_deletion_secrets():
+def test_wiring_leftovers_after_hub_wait_and_planned_deletion_secrets():
     text = "\n".join(destroy_cmds())
-    i_deliv = text.index("aws logs delete-delivery --id")
+    # No substring delivery delete any more (it took a live "x<hub>"'s deliveries):
+    # sweep-hub-leftovers (2b) deletes the hub's deliveries by exact name.
+    assert "aws logs delete-delivery" not in text and "contains(deliverySourceName" not in text
     i_left = text.index('/scripts/sweep-hub-leftovers.py"')
     i_wait = text.index("Hub EKS status")
-    assert i_wait < i_deliv < i_left, "leftovers swept after the hub is gone and the deliveries"
+    assert i_wait < i_left, "leftovers swept after the hub is gone"
     sec = text[text.index("# 6di."):text.index("# 6e.")]
     assert "--include-planned-deletion" in sec and "--force-delete-without-recovery" in sec
 

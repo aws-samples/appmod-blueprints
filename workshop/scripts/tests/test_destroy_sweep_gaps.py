@@ -387,6 +387,21 @@ class Session:
         return _Client(svc)
 '''
 
+FAKE_AWS = r'''
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_CLI_LOG"], "a") as f:
+    f.write("aws " + " ".join(args) + "\n")
+if args[:2] == ["logs", "describe-deliveries"]:
+    import jmespath
+    fx = json.load(open(os.environ["FAKE_FX"]))
+    data = {"deliveries": [{"id": i, "deliverySourceName": s, "deliveryDestinationArn": "arn:dest/" + d}
+                           for i, s, d in fx["deliveries"]]}
+    q = args[args.index("--query") + 1] if "--query" in args else None
+    r = jmespath.search(q, data) if q else data
+    print("\t".join(map(str, r)) if isinstance(r, list) else ("None" if r is None else r))
+'''
+
 FX = {
     "region": REGION,
     "sources": {f"{HUB}-kro": cap_arn(HUB), f"{PREFIX}-spoke-dev-kro": cap_arn(f"{PREFIX}-spoke-dev"),
@@ -411,8 +426,10 @@ def _run(tmp_path, cmd, keep_data="false", fx=None, inventory=None):
     bindir.mkdir()
     pylib.mkdir(parents=True)
     (pylib / "__init__.py").write_text(FAKE_BOTO3)
-    # Fake aws CLI: logs the call, answers every list/describe with nothing.
-    (bindir / "aws").write_text('#!/bin/sh\necho "aws $*" >> "$FAKE_CLI_LOG"\nexit 0\n')
+    # Fake aws CLI: logs the call; `logs describe-deliveries` answers the fixture's
+    # deliveries with --query evaluated by jmespath (--output text), every other call
+    # answers nothing.
+    (bindir / "aws").write_text(f"#!{sys.executable}\n" + FAKE_AWS)
     (bindir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
     for b in ("aws", "python3"):
         (bindir / b).chmod(0o755)
@@ -506,3 +523,21 @@ def test_kind_crossplane_phase_6b_keep_data(tmp_path):
 def test_crossplane_destroy_declares_keep_data_default_false():
     t = yaml.safe_load(open(CROSSPLANE))["tasks"]["destroy"]["vars"]
     assert t["DESTROY_KEEP_DATA"] == '{{.DESTROY_KEEP_DATA | default "false"}}'
+
+
+def test_kind_kro_ack_destroy_keeps_the_deliveries_of_a_live_cluster_whose_name_contains_the_hub(tmp_path):
+    """Review of #1287: the old step 2 deleted every delivery whose source name
+    *contained* the hub name, so destroying "hb-hub" deleted the delivery of a live
+    "xhb-hub". The hub's own deliveries are deleted by exact name (2b)."""
+    foreign = f"x{HUB}"
+    fx = dict(FX, live=[foreign],
+              sources=dict(FX["sources"], **{f"{foreign}-kro": cap_arn(foreign)}),
+              dests=FX["dests"] + [f"{foreign}-kro-cwl"],
+              deliveries=FX["deliveries"] + [["d-foreign", f"{foreign}-kro", f"{foreign}-kro-cwl"]])
+    res, calls = _run(tmp_path, _step(KRO_ACK, KRO_MARKER), fx=fx)
+    assert res.returncode == 0, res.stdout + res.stderr
+    cli = (tmp_path / "cli.log").read_text()
+    assert "delete-delivery --id d-foreign" not in cli, cli
+    d = _deletes(calls)
+    assert not [x for x in d if foreign in str(x[2]) or x[2] == "d-foreign"], d
+    assert ("logs", "delete_delivery", "d-hub") in d and ("logs", "delete_delivery_source", f"{HUB}-kro") in d

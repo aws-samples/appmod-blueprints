@@ -2861,10 +2861,9 @@ tasks:
               echo "  deleting ALB $ARN (cluster $CL)"; aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" --region "$REGION" 2>/dev/null || true
             fi
           done
-          # 2. Orphaned CloudWatch delivery sources for this hub
-          for ID in $(aws logs describe-deliveries --region "$REGION" --query "deliveries[?contains(deliverySourceName, '{{.HUB_CLUSTER_NAME}}')].id" --output text 2>/dev/null); do
-            aws logs delete-delivery --id "$ID" --region "$REGION" 2>/dev/null || true
-          done
+          # 2. (removed) It deleted every delivery whose source name *contained* the hub
+          #    name, so destroying "hb-hub" deleted the deliveries of a live "xhb-hub" or
+          #    "hb-hub-2". 2b deletes the hub's deliveries by exact name instead.
           # 2b. What the controllers leave once the hub is gone, for this stack's removed
           #     clusters only (exact names: the hub, the inventory's spokes and
           #     ${PREFIX}-spoke-dev/-prod; never ${PREFIX}-*; not live, not retained): available EBS

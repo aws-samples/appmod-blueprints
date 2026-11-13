@@ -1106,7 +1106,7 @@ def select_log_deliveries(logs, gone):
 
 def sweep_log_deliveries(logs, gone, dry_run=False):
     """Delete what select_log_deliveries selects: deliveries, then sources, then
-    destinations. Not found counts as done (a re-run, or step 2 got there first).
+    destinations. Not found counts as done (a re-run).
     Returns (deliveries, sources, destinations, n deleted)."""
     ids, srcs, dsts = select_log_deliveries(logs, gone)
     verb = 'would delete' if dry_run else 'delete'
