@@ -12,8 +12,10 @@ and <PREFIX>-spoke-prod) that are no longer live and not retained:
   * target groups tagged elbv2.k8s.aws/cluster=<cluster> with no load balancer
     (step 1 deletes the ALBs only); a delete answered ResourceInUse (the ALB step 1
     just deleted still holds them) is retried, bounded (~3 min);
-  * CloudWatch Logs delivery sources and destinations named after the hub that
-    no delivery uses any more (step 2 deletes the deliveries only).
+  * the CloudWatch Logs capability-log deliveries, delivery sources and
+    destinations (<cluster>-<cap>, <cluster>-<cap>-cwl, made by the root
+    enable-capability-logs) of every removed cluster of the stack: the hub AND its
+    spokes. Deliveries first, then sources, then destinations.
 Never fails destroy (exit 0); errors print the AWS error code only.
 """
 import os
@@ -50,7 +52,7 @@ def main(argv, ec2=None, elbv2=None, logs=None, eks=None, out=sys.stdout, r53=No
         sl.reraise_credentials(e)
         print(f'  ⚠ hub leftover sweep stopped ({sl.err_code(e)})', file=out)
         return 0
-    total = sum(len(r[k]) for k in ('volumes', 'target_groups', 'delivery_sources', 'delivery_destinations',
+    total = sum(len(r[k]) for k in ('volumes', 'target_groups', 'deliveries', 'delivery_sources', 'delivery_destinations',
                                          'dns_records'))
     print(f'  hub leftovers: {total} selected, {r["deleted"]} deleted', file=out)
     return 0

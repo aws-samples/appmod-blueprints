@@ -99,7 +99,7 @@ class FakeLogs:
         self.deleted = []
 
     def describe_deliveries(self, **_):
-        return {"deliveries": [{"deliverySourceName": s, "deliveryDestinationArn": f"arn:dest/{d}"}
+        return {"deliveries": [{"id": f"d-{s}", "deliverySourceName": s, "deliveryDestinationArn": f"arn:dest/{d}"}
                                for s, d in self.deliveries]}
 
     def describe_delivery_sources(self, **_):
@@ -107,6 +107,9 @@ class FakeLogs:
 
     def describe_delivery_destinations(self, **_):
         return {"deliveryDestinations": [{"name": d, "arn": f"arn:dest/{d}"} for d in self.dests]}
+
+    def delete_delivery(self, id):
+        self.deleted.append(("delivery", id))
 
     def delete_delivery_source(self, name):
         self.deleted.append(("source", name))
@@ -162,9 +165,14 @@ def test_live_spoke_with_the_prefix_keeps_its_volumes():
     assert "vol-dev" not in ec2.deleted
 
 
-def test_delivery_source_still_used_by_a_delivery_is_kept():
+def test_delivery_of_the_removed_hub_is_deleted_before_its_source():
+    """A delivery from a removed cluster's source is deleted first (the source cannot
+    go while it is used); a destination only a staying delivery uses is kept
+    (test_destroy_sweep_gaps.py covers the spokes)."""
     logs = FakeLogs(["hb-hub-kro"], ["hb-hub-kro-cwl"], deliveries=[("hb-hub-kro", "hb-hub-kro-cwl")])
-    assert sl.select_log_deliveries(logs, "hb-hub", True) == ([], [])
+    assert sl.select_log_deliveries(logs, {"hb-hub"}) == (["d-hb-hub-kro"], ["hb-hub-kro"], ["hb-hub-kro-cwl"])
+    logs = FakeLogs(["hb-hub-kro"], ["hb-hub-kro-cwl"], deliveries=[("other", "hb-hub-kro-cwl")])
+    assert sl.select_log_deliveries(logs, {"hb-hub"}) == ([], ["hb-hub-kro"], [])
 
 
 def test_dry_run_deletes_nothing(capsys):
@@ -281,12 +289,14 @@ def test_hub_delete_sent_once_when_accepted(tmp_path):
     assert deleting and calls == 1
 
 
-def test_wiring_leftovers_after_deliveries_and_planned_deletion_secrets():
+def test_wiring_leftovers_after_hub_wait_and_planned_deletion_secrets():
     text = "\n".join(destroy_cmds())
-    i_deliv = text.index("aws logs delete-delivery --id")
+    # No substring delivery delete any more (it took a live "x<hub>"'s deliveries):
+    # sweep-hub-leftovers (2b) deletes the hub's deliveries by exact name.
+    assert "aws logs delete-delivery" not in text and "contains(deliverySourceName" not in text
     i_left = text.index('/scripts/sweep-hub-leftovers.py"')
     i_wait = text.index("Hub EKS status")
-    assert i_wait < i_deliv < i_left, "leftovers swept after the hub is gone and the deliveries"
+    assert i_wait < i_left, "leftovers swept after the hub is gone"
     sec = text[text.index("# 6di."):text.index("# 6e.")]
     assert "--include-planned-deletion" in sec and "--force-delete-without-recovery" in sec
 
