@@ -43,17 +43,19 @@ a = sys.argv[1:]
 open(LOG, "a").write("docker " + " ".join(a) + "\n")
 def save(): json.dump(s, open(ST, "w"))
 nodes = s["nodes"]
-if a[:2] == ["ps", "-aq"]:
-    print("\n".join(nodes)); sys.exit(0)
-if a[:2] == ["ps", "-q"]:
+if a[0] == "ps":
+    # docker unreachable: always, or only once a stop was attempted
+    if s.get("ps") == "fail" or (s.get("ps") == "fail-after-stop" and s.get("stop_called")):
+        print("Cannot connect to the Docker daemon", file=sys.stderr); sys.exit(1)
+    # --filter label=io.x-k8s.kind.cluster=<name> must match the node's label (a wrong name lists nothing)
+    want = [x.split("=", 2)[2] for x in a if x.startswith("label=io.x-k8s.kind.cluster=")]
+    if want and want[0] != s.get("label", {kind!r}):
+        sys.exit(0)
     print("\n".join(n for n in nodes if nodes[n])); sys.exit(0)
-if a[0] == "inspect":
-    n = a[-1]
-    if n not in nodes: sys.exit(1)
-    print("true" if nodes[n] else "false"); sys.exit(0)
 ids = [x for x in a[1:] if x in nodes]
 mode = s.get(a[0], "ok")
 if a[0] in ("stop", "kill"):
+    s["stop_called"] = True
     if mode in ("ok", "err-stops"):
         for n in ids: nodes[n] = False
     save()
@@ -112,9 +114,11 @@ sys.exit(0)
 '''
 
 FAKE_AWS = r'''#!{python} -I
-import os, sys
+import json, os, sys
 open(os.environ["FAKE_LOG"], "a").write("aws " + " ".join(sys.argv[1:]) + "\n")
 a = sys.argv[1:]
+if "describe-cluster" in a and json.load(open(os.environ["FAKE_STATE"])).get("describe_cluster_fails"):
+    sys.exit(255)
 if "describe-capability" in a or "describe-cluster" in a:
     print("ACTIVE")
 sys.exit(0)
@@ -129,7 +133,7 @@ def _write_exe(path, body):
 @pytest.fixture
 def ctx(tmp_path):
     bindir = tmp_path / "bin"; bindir.mkdir()
-    fmt = dict(python=sys.executable, err=DOCKER_EXIT_EVENT_ERR, hub=HUB)
+    fmt = dict(python=sys.executable, err=DOCKER_EXIT_EVENT_ERR, hub=HUB, kind=KIND)
     _write_exe(bindir / "docker", FAKE_DOCKER.format(**fmt))
     _write_exe(bindir / "kubectl", FAKE_KUBECTL.format(**fmt))
     _write_exe(bindir / "aws", FAKE_AWS.format(**fmt))
@@ -137,7 +141,7 @@ def ctx(tmp_path):
     state.write_text(json.dumps({"nodes": {"kindnode1": True}}))
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_STATE=str(state),
                FAKE_LOG=str(tmp_path / "calls.log"), TMPDIR=str(tmp_path),
-               KIND_POLL_SEC="0", KIND_STOP_WAIT="1", KIND_KILL_WAIT="1", KIND_START_WAIT="3")
+               )
     return {"tmp": tmp_path, "env": env, "state": state}
 
 
@@ -217,7 +221,7 @@ def test_stop_that_never_completes_aborts_and_restarts_kind(ctx):
     set_state(ctx, stop="err-hangs", kill="err-hangs")
     r = run_pivot(ctx)
     assert r.returncode != 0
-    assert "still running after docker kill" in r.stdout + r.stderr
+    assert "after docker kill" in r.stdout + r.stderr
     assert kind_running(ctx)
     assert get_state(ctx).get("hub_adopted") is not True
 
@@ -228,6 +232,59 @@ def test_stop_ignored_then_kill_succeeds(ctx):
     assert r.returncode == 0, r.stdout + r.stderr
     assert any(c.startswith("docker kill") for c in calls(ctx))
     assert get_state(ctx)["hub_adopted"] is True
+
+
+def test_docker_ps_failure_after_stop_error_never_adopts(ctx):
+    # B1: a failing `docker ps` is "unknown", never "stopped". Stop fails, the node keeps
+    # running, and ps then fails: the hub must NOT adopt while kind runs.
+    set_state(ctx, stop="err-hangs", kill="err-hangs", ps="fail-after-stop")
+    r = run_pivot(ctx)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0
+    assert "docker state unknown" in out
+    assert get_state(ctx).get("hub_adopted") is not True
+    assert "adopting on hub" not in out
+    assert kind_running(ctx)
+
+
+def test_docker_ps_failure_when_the_stop_worked_still_aborts_and_restarts_kind(ctx):
+    # The node did stop, but we cannot confirm it (ps fails): fail closed, the trap restarts kind.
+    set_state(ctx, stop="err-stops", ps="fail-after-stop")
+    r = run_pivot(ctx)
+    assert r.returncode != 0
+    assert get_state(ctx).get("hub_adopted") is not True
+    assert any(c.startswith("docker start") for c in calls(ctx))
+    assert kind_running(ctx)
+
+
+def test_docker_ps_failure_before_the_stop_touches_nothing(ctx):
+    set_state(ctx, ps="fail")
+    r = run_pivot(ctx)
+    assert r.returncode != 0
+    assert "cannot list the kind nodes" in r.stdout + r.stderr
+    assert not any(c.startswith(("docker stop", "docker kill", "docker start")) for c in calls(ctx))
+    assert kind_running(ctx) and get_state(ctx).get("hub_adopted") is not True
+
+
+def test_post_detach_eks_check_failure_does_not_advise_starting_kind(ctx):
+    # C1: detach is committed (hub owns the resources, kind stopped on purpose). A failing
+    # describe-cluster must be reported as such, never as a kind-down failure.
+    set_state(ctx, describe_cluster_fails=True)
+    r = run_pivot(ctx)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    warn = next(l for l in out.splitlines() if "EKS status check returned" in l)
+    assert "Do NOT start kind" in warn and "docker start" not in warn
+    assert get_state(ctx)["hub_adopted"] is True and not kind_running(ctx)
+
+
+def test_fake_docker_honours_the_label_filter(ctx):
+    # C2: guards the fake itself, so a wrong label in the Taskfile cannot go unnoticed.
+    ok = subprocess.run(["docker", "ps", "-q", "--filter", f"label=io.x-k8s.kind.cluster={KIND}"],
+                        env=ctx["env"], capture_output=True, text=True)
+    wrong = subprocess.run(["docker", "ps", "-q", "--filter", "label=io.x-k8s.kind.cluster=WRONG"],
+                           env=ctx["env"], capture_output=True, text=True)
+    assert ok.stdout.split() == ["kindnode1"] and wrong.stdout.strip() == ""
 
 
 def test_kind_stopped_flag_is_set_before_the_stop():

@@ -4990,7 +4990,9 @@ tasks:
         fi
 
         # Identify this cluster's kind node containers (label set by kind).
-        KIND_NODES=$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}" 2>/dev/null || true)
+        # A failing docker is NOT "no running nodes": abort before touching anything (kind untouched).
+        KIND_NODES=$(timeout 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}") \
+          || { printf '{{.C_ERR}}✗ cannot list the kind nodes (docker error) — aborting before stopping kind.{{.C_RESET}}\n'; exit 1; }
 
         # BEFORE stopping kind, pin every kind-side AWS-backed ACK child to
         # services.k8s.aws/deletion-policy=retain — a declarative guarantee that kind's ACK can
@@ -5034,16 +5036,22 @@ tasks:
         # kind. (No `return` in functions reachable from the trap: go-task's shell ignores it there.)
         KIND_STOPPED=1
         if [ -n "$KIND_NODES" ]; then
-          # The stop is judged by docker inspect, not by the exit code of docker stop.
-          docker stop -t 30 $KIND_NODES || printf '{{.C_INFO}}  docker stop returned an error — checking the real node state…{{.C_RESET}}\n'
+          # The stop is judged by the real node state (docker ps), not by the exit code of docker stop.
+          # A failing/hung `docker ps` is "unknown", never "stopped": otherwise the hub could adopt
+          # while kind still runs (dual reconciler). Unknown after the kill aborts; the trap restarts kind.
+          timeout 90 docker stop -t 30 $KIND_NODES || printf '{{.C_INFO}}  docker stop returned an error — checking the real node state…{{.C_RESET}}\n'
+          RUNNING=unknown
           for _ in $(seq 1 30); do
-            [ -z "$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}")" ] && break
+            if RUNNING=$(timeout 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}"); then
+              if [ -z "$RUNNING" ]; then break; fi
+            else RUNNING=unknown; fi
             sleep 2
           done
-          if [ -n "$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}")" ]; then
-            docker kill $KIND_NODES >/dev/null 2>&1 || true; sleep 2
-            [ -z "$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}")" ] \
-              || { printf '{{.C_ERR}}✗ kind nodes still running after docker kill — aborting before adoption.{{.C_RESET}}\n'; exit 1; }
+          if [ -n "$RUNNING" ]; then
+            timeout 60 docker kill $KIND_NODES >/dev/null 2>&1 || true; sleep 2
+            if ! RUNNING=$(timeout 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}") || [ -n "$RUNNING" ]; then
+              printf '{{.C_ERR}}✗ kind nodes still running (or docker state unknown) after docker kill — aborting before adoption.{{.C_RESET}}\n'; exit 1
+            fi
           fi
         else printf '{{.C_INFO}}  no running kind nodes for {{.KIND_CLUSTER_NAME}} (already stopped?).{{.C_RESET}}\n'; fi
 
@@ -5213,5 +5221,7 @@ tasks:
         if [ "$FINAL" = "ACTIVE" ]; then
           printf '{{.C_OK}}✓ [LIVE] pivot done. %s ACTIVE and now self-managed by the hub (kind {{if eq .PIVOT_DETACH_MODE "delete"}}deleted{{else}}stopped{{end}}).{{.C_RESET}}\n' "$HUB"
         else
-          printf '{{.C_ERR}}✗ [LIVE] post-pivot EKS status=%s (expected ACTIVE) — investigate.{{.C_RESET}}\n' "$FINAL"; exit 1
+          # Detach is already committed: the hub OWNS the resources and kind is {{if eq .PIVOT_DETACH_MODE "delete"}}deleted{{else}}stopped on purpose{{end}}. Do not fail the pivot
+          # (the workshop would advise `docker start`, i.e. a dual reconciler); report the real state.
+          printf '{{.C_ERR}}⚠ [LIVE] pivot detached (the hub owns its resources) but the EKS status check returned "%s" (expected ACTIVE) — investigate the hub cluster (aws eks describe-cluster). Do NOT start kind.{{.C_RESET}}\n' "$FINAL"
         fi
