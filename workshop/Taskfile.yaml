@@ -1566,14 +1566,19 @@ tasks:
         fi
         # Phase A (prewarm-rust-cicd-phase-a, install background job) owns the scaffold.
         # If it is still running (the join gave up waiting), do not submit a second task:
-        # its scaffold may be in flight. Wait (bounded: budget minus the scaffold reserve)
-        # for Phase A to END, then re-check the repo/pipeline guards: if Phase A failed
-        # and left nothing, fall through to the fallback scaffold below. Only if Phase A
-        # is still running at the bound, wait for the pipeline it should create.
+        # its scaffold may be in flight. Wait (bounded: budget minus the scaffold reserve,
+        # and never more than 900 s, the join's own cap, so a standalone run with no
+        # deadline cannot hang) for Phase A to END, then re-check the repo/pipeline
+        # guards: if Phase A failed and left nothing, fall through to the fallback
+        # scaffold below. Only if Phase A is still running at the bound, wait for the
+        # pipeline it should create. The pid only counts if its cmdline is the Phase A
+        # launcher (`sh -c '… task prewarm-rust-cicd-phase-a …'`): a pid file left by an
+        # aborted install can point at a reused pid.
         PA_PID=$(cat "{{.PHASE_A_PID_FILE}}" 2>/dev/null || true)
         if [ -n "$PA_PID" ] && [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] \
+           && tr '\0' ' ' < "/proc/$PA_PID/cmdline" 2>/dev/null | grep -q 'prewarm-rust-cicd-phase-a' \
            && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-          PA_T=$(( $(left) - SCAFFOLD_RESERVE )); [ "$PA_T" -lt 0 ] && PA_T=0
+          PA_T=$(( $(left) - SCAFFOLD_RESERVE )); [ "$PA_T" -lt 0 ] && PA_T=0; [ "$PA_T" -gt 900 ] && PA_T=900
           printf '{{.C_INFO}}  ↩ prewarm Phase A still running (pid %s) — not scaffolding a second time; waiting up to %ss for it to finish.{{.C_RESET}}\n' "$PA_PID" "$PA_T"
           PA_S=$(date +%s)
           while [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] && [ $(( $(date +%s) - PA_S )) -lt "$PA_T" ]; do
