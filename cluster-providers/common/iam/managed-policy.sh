@@ -68,15 +68,22 @@ delete_policy() {  # detach from $ROLE, delete non-default versions, delete the 
   ok_or_absent iam delete-policy --policy-arn "$ARN"
 }
 
-# same_document <current-json> <file>: 0 = equal JSON, 1 = different, other = error.
+# same_document <current-json> <file>: 0 = equal JSON, 1 = different, 2 = error. Any
+# exception (unparseable current document, empty output, unreadable or invalid file) is 2,
+# never 1: "different" triggers the delete-and-recreate path.
 same_document() {
   printf '%s' "$1" | python3 -c '
 import json, sys, urllib.parse
-cur = json.loads(sys.stdin.read())
-if isinstance(cur, str):  # URL-encoded document string
-    cur = json.loads(urllib.parse.unquote(cur))
-with open(sys.argv[1]) as f:
-    sys.exit(0 if cur == json.load(f) else 1)
+try:
+    cur = json.loads(sys.stdin.read())
+    if isinstance(cur, str):  # URL-encoded document string
+        cur = json.loads(urllib.parse.unquote(cur))
+    with open(sys.argv[1]) as f:
+        want = json.load(f)
+except Exception as e:
+    sys.stderr.write("cannot compare policy documents: %s\n" % e)
+    sys.exit(2)
+sys.exit(0 if cur == want else 1)
 ' "$2"
 }
 
@@ -98,7 +105,10 @@ if [ "$CMD" = delete ]; then
 fi
 
 DOC=$5; LEGACY=${6:-}
-[ -r "$DOC" ] || { echo "ERROR: policy document $DOC not readable" >&2; exit 1; }
+# Validate the desired document before any AWS call: a broken file must stop here, not
+# after the drift path has deleted the live policy.
+python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$DOC" 2>/dev/null \
+  || { echo "ERROR: policy document $DOC is not readable JSON" >&2; exit 1; }
 rc=0
 DEFAULT=$(iam get-policy --policy-arn "$ARN" --query 'Policy.DefaultVersionId' --output text) || rc=$?
 CREATE=false

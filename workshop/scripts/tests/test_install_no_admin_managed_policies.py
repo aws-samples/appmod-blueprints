@@ -275,7 +275,8 @@ elif op == "get-policy":
 elif op == "get-policy-version":
     if pname not in pols:
         err("NoSuchEntity")
-    print(json.dumps(pols[pname]["docs"][opt["version-id"]]))
+    raw = os.environ.get("FAKE_RAW_VERSION")
+    print(raw if raw is not None else json.dumps(pols[pname]["docs"][opt["version-id"]]))
 elif op == "list-policy-versions":
     if pname not in pols:
         err("NoSuchEntity")
@@ -440,7 +441,7 @@ BLOCKS = [(KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-
 MP = os.path.join(IAM_DIR, "managed-policy.sh")
 
 
-def mp(tmp_path, *args, fail=""):
+def mp(tmp_path, *args, fail="", raw_version=None):
     bin_dir = tmp_path / "bin"
     if not bin_dir.exists():
         bin_dir.mkdir()
@@ -449,6 +450,8 @@ def mp(tmp_path, *args, fail=""):
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
     env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "calls.log"),
                FAKE_STATE=str(tmp_path / "state.json"), FAKE_FAIL=fail, FAKE_ATTACHED="")
+    if raw_version is not None:
+        env["FAKE_RAW_VERSION"] = raw_version
     r = subprocess.run(["sh", MP, *args], env=env, capture_output=True, text=True, timeout=60)
     log = (tmp_path / "calls.log").read_text().splitlines() if (tmp_path / "calls.log").exists() else []
     return r, r.stdout + r.stderr, log
@@ -521,6 +524,29 @@ def test_mp_document_compare_ignores_key_order(tmp_path):
     r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
     assert r.returncode == 0, out
     assert not calls_of(log, "delete-policy"), log
+
+
+@pytest.mark.parametrize("raw", ["{bad", "", '"%7Bbad"'])
+def test_mp_unparseable_document_is_fatal_and_deletes_nothing(tmp_path, raw):
+    """A document that cannot be compared is an error, never "drift": drift deletes the policy."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": XP_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, raw_version=raw)
+    assert r.returncode != 0 and "cannot compare" in out, out
+    for verb in ("detach-role-policy", "delete-policy", "delete-policy-version", "create-policy"):
+        assert not calls_of(log, verb), (verb, log)
+    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+
+
+def test_mp_invalid_desired_document_is_fatal_before_any_aws_call(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{bad")
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": XP_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", str(bad))
+    assert r.returncode != 0 and "is not readable JSON" in out, out
+    assert log == [], log
+    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
 
 
 def test_mp_removes_legacy_inline_and_tolerates_its_absence(tmp_path):
