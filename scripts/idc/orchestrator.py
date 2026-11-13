@@ -28,12 +28,15 @@ from .browser import (
 )
 from .constants import (
     AWS_METADATA_FILE,
+    ERROR_SCREENSHOT,
     KEYCLOAK_SAML_FILE,
     SCIM_DATA_FILE,
     STORAGE_STATE_FILE,
 )
 from .credentials import get_console_signin_url
+from .evidence import should_take_error_screenshot
 from .keycloak import create_keycloak_saml_client
+from .provisioning import ENABLE, REGENERATE, decide_provisioning_action, enable_button_xpath
 from .resilience import poll_until
 from .scim import export_to_aws_scim, verify_federation_active
 
@@ -76,6 +79,7 @@ async def configure_identity_center(
         context = await browser.new_context(ignore_https_errors=True, storage_state=storage_state)
         page = await context.new_page()
         page.set_default_timeout(60000)
+        token_exposed = False
 
         try:
             # --- Step 1: Sign in to AWS Console ---
@@ -375,27 +379,31 @@ async def configure_identity_center(
             await page.wait_for_timeout(2000)
             await dismiss_overlays(page)
 
-            # Click Enable — scoped to the "Automatic provisioning" section. The Settings
-            # page has other Enable buttons (Identity-enhanced sessions comes first in the
+            # Click Enable — scoped to the provisioning section ("Automatic provisioning"
+            # in the older console, "Provisioning" in the current one). The Settings page
+            # has other Enable buttons (Identity-enhanced sessions comes first in the
             # DOM), so a bare 'button:has-text("Enable")' clicks the wrong one (#967).
-            # Nearest container of the section heading that has an Enable button, and only
-            # a button after that heading (so another section's Enable never matches).
             await screenshot(page, "/tmp/step9_before_enable.png", debug)
-            enable_btn = page.locator(
-                'xpath=//*[normalize-space(text())="Automatic provisioning"]'
-                '/ancestor::*[.//button[normalize-space()="Enable"]][1]'
-                '//button[normalize-space()="Enable"]'
-                '[preceding::*[normalize-space(text())="Automatic provisioning"]]'
-            ).first
+            enable_btn = page.locator(enable_button_xpath()).first
             try:
                 await enable_btn.wait_for(state="visible", timeout=10000)
+                enable_visible = True
             except Exception:
-                enable_btn = None
-            if enable_btn:
+                enable_visible = False
+            action, reason = decide_provisioning_action(
+                await page.evaluate("() => document.body.innerText"), enable_visible
+            )
+            print(f"Provisioning state: {reason}", file=sys.stderr)
+            if action == ENABLE:
+                # Enable opens the SCIM token dialog: from the click on, the page may
+                # show the bearer token, even if the click itself then raises, so no
+                # always-on error screenshot from here (idc.evidence).
+                token_exposed = True
                 await enable_btn.click()
-            else:
-                # Already enabled (e.g. a re-run): the one-time token shown at enablement
-                # is gone, so generate a new one via Actions → Manage provisioning.
+            elif action == REGENERATE:
+                # Already enabled (a genuine re-run, proven by the page): the one-time
+                # token shown at enablement is gone, so generate a new one via
+                # Actions → Manage provisioning.
                 print(
                     "Automatic provisioning already enabled — generating a new SCIM token.",
                     file=sys.stderr,
@@ -420,12 +428,16 @@ async def configure_identity_center(
                 )
                 await wait_for_stable(page)
                 await page.wait_for_timeout(2000)
+                # Same as Enable: set before the click (idc.evidence).
+                token_exposed = True
                 await click_first_visible(
                     page,
                     ['button:has-text("Generate token")'],
                     timeout=15000,
                     description="Generate token button (IDC allows at most 2 SCIM tokens)",
                 )
+            else:
+                raise RuntimeError(f"Cannot enable automatic provisioning: {reason}")
             await wait_for_stable(page)
             await page.wait_for_timeout(2000)
             await screenshot(page, "/tmp/step9.png", debug)
@@ -539,7 +551,17 @@ async def configure_identity_center(
 
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
-            await screenshot(page, "/tmp/error.png", debug)
+            # Keep evidence of a failure even without --debug (the page state is lost
+            # when the browser closes), but never a capture that may show the SCIM token.
+            if should_take_error_screenshot(debug, token_exposed):
+                if await screenshot(page, ERROR_SCREENSHOT, True):
+                    print(f"Error screenshot saved to {ERROR_SCREENSHOT}", file=sys.stderr)
+            else:
+                print(
+                    "Error screenshot skipped: the SCIM token dialog was open "
+                    "(re-run with --debug to capture it).",
+                    file=sys.stderr,
+                )
             raise
         finally:
             await browser.close()

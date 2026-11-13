@@ -84,6 +84,7 @@ Full workshop installation. Runs from the `workshop/` directory.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `IDC_CONFIGURE_SKIP` | `false` | `true` skips `idc:configure`, so IAM Identity Center (one per account) is never touched. Use it for a second stack in an account whose Identity Center is already federated to another stack's Keycloak. `setup-env` also writes it to `~/.bashrc.d/platform.sh`, so the IDE's `argocd-refresh-token` never re-points Identity Center either |
+| `IDC_STRICT` | `false` in `task install`, `true` for a standalone `task idc:configure` | Whether an IDC configuration failure fails the task. A standalone `task idc:configure` exits non-zero on failure (`IDC_STRICT=false` tolerates it). `task install` stays tolerant (the failure is reported and written to `/tmp/idc-configure-status`, and the install continues) unless `IDC_STRICT=true`. This covers the IDC configuration itself; the Keycloak pre-wait at the start of `idc:configure` (empty domain, Keycloak still unreachable after the wait) still fails `task install` as before |
 
 ---
 

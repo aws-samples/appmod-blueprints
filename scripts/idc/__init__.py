@@ -8,6 +8,9 @@ Split by concern from the former single-file ``configure_identity_center.py``:
 * ``credentials`` — AWS credential load/refresh + console sign-in URL.
 * ``keycloak``    — Keycloak admin API + SAML client creation.
 * ``scim``        — SCIM user/group export + federation verification.
+* ``provisioning``— decide Enable vs regenerate-token from the console page
+  (stdlib only, unit-testable).
+* ``evidence``    — failure-screenshot policy (no SCIM token capture, owner-only files).
 * ``browser``     — Playwright/Chromium console-navigation helpers.
 * ``orchestrator``— the end-to-end ``configure_identity_center`` flow.
 
