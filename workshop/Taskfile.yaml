@@ -1197,9 +1197,11 @@ tasks:
       APP_NAME: '{{.PREWARM_RUST_APP | default "rust"}}'
       APP_NS: 'team-{{.PREWARM_RUST_APP | default "rust"}}'
       ENABLED:
+        # Same mapping as prewarm-rust-cicd (#1136 point 2): only an absent key (null)
+        # defaults to true; `.prewarmRustCicd // true` would turn a stored false into true.
         sh: |
           ENV_OVERRIDE="${PREWARM_RUST_CICD:-}"
-          if [ -n "$ENV_OVERRIDE" ]; then echo "$ENV_OVERRIDE"; else yq '.prewarmRustCicd // true' {{.CONFIG_FILE}}; fi
+          if [ -n "$ENV_OVERRIDE" ]; then echo "$ENV_OVERRIDE"; else V=$(yq '.prewarmRustCicd' {{.CONFIG_FILE}}); [ "$V" = "null" ] && V=true; echo "$V"; fi
       GIT_DOMAIN:
         sh: |
           if [ -f {{.REPO}}/private/git-domain ]; then
@@ -1330,6 +1332,12 @@ tasks:
           case "$CAT_CODE" in [0-9][0-9][0-9]) ;; *) CAT_CODE=000 ;; esac
           [ "$CAT_CODE" = "200" ] && break
           BS_E=$(( $(date +%s) - BS_S ))
+          # A backend whose startup failed (MigrationLocked) never recovers on its own:
+          # stop at once instead of waiting out BS_T (same check as prewarm-rust-cicd).
+          if $KUBE -n backstage logs deploy/backstage --tail=2000 2>/dev/null | grep -Eq 'MigrationLocked|Backend startup failed'; then
+            printf '{{.C_ERR}}  ✗ prewarm Phase A: Backstage backend failed to start (MigrationLocked / Backend startup failed in its log; catalog HTTP %s) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$CAT_CODE"
+            rm -f "$KC"; exit 1
+          fi
           if [ "$BS_E" -ge "$BS_T" ]; then
             printf '{{.C_ERR}}  ✗ prewarm Phase A: template:default/cicd-pipeline-gitops not served by Backstage after %ss (authenticated read: HTTP %s) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$BS_E" "$CAT_CODE"
             rm -f "$KC"; exit 1
@@ -1595,8 +1603,11 @@ tasks:
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           # Phase A is the primary path during an install. Reaching a fresh scaffold here
           # after it ran means it failed: say so loudly so the run is not read as clean.
-          if [ -s "{{.PHASE_A_RC_FILE}}" ]; then
-            printf '{{.C_ERR}}  ⚠ PREWARM FALLBACK: Phase A did not scaffold %s (rc=%s, see /tmp/prewarm-phase-a.log and {{.PHASE_A_SCAFFOLD_LOG}}) — Phase B scaffolding now.{{.C_RESET}}\n' "$APP" "$(cat "{{.PHASE_A_RC_FILE}}")"
+          # Only during an install (INSTALL_START set) and for a non-zero rc: the rc file
+          # stays in /tmp, so a later standalone re-run must not claim a fallback.
+          PA_RC=$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || true)
+          if [ -n "{{.INSTALL_START}}" ] && [ -n "$PA_RC" ] && [ "$PA_RC" != "0" ]; then
+            printf '{{.C_ERR}}  ⚠ PREWARM FALLBACK: Phase A did not scaffold %s (rc=%s, see /tmp/prewarm-phase-a.log and {{.PHASE_A_SCAFFOLD_LOG}}) — Phase B scaffolding now.{{.C_RESET}}\n' "$APP" "$PA_RC"
           fi
           BSAUTH="{{.PLATFORM_DIR}}/scripts/validation/backstage-auth.sh"
           if [ ! -f "$BSAUTH" ]; then
