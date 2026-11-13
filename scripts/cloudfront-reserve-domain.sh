@@ -29,6 +29,16 @@
 #   CF_COMMENT            distribution Comment, the identity used to find it later
 #                                                     (default: <HUB_CLUSTER_NAME>-platform)
 #   CF_PRICE_CLASS        PriceClass_100|200|All      (default: PriceClass_100)
+#   RESOURCE_PREFIX       resource prefix, stamped as the ownership tag
+#                         platform.gitops.io/prefix=<prefix> at creation
+#                                                     (default: .resourcePrefix)
+#                         REQUIRED only when a distribution is created; reusing an
+#                         existing one (found by Comment) does not need it.
+#
+# The distribution is created WITH that tag (create-distribution-with-tags), so an IAM
+# policy can allow cloudfront:CreateDistribution only on
+# aws:RequestTag/platform.gitops.io/prefix = <prefix> instead of on "*" unconditionally.
+# That call needs cloudfront:CreateDistribution + cloudfront:TagResource.
 #
 # Output: the hostname as the LAST line of stdout; progress on stderr.
 # Exit:   0 ok · 1 bad prerequisite
@@ -48,6 +58,7 @@ HUB_CLUSTER_NAME="${HUB_CLUSTER_NAME:-$(cfg '.hub.clusterName')}"
 [ -n "$HUB_CLUSTER_NAME" ] || die "cluster name unknown (set HUB_CLUSTER_NAME, or .hub.clusterName in $CONFIG_FILE)"
 CF_COMMENT="${CF_COMMENT:-${HUB_CLUSTER_NAME}-platform}"
 PRICE_CLASS="${CF_PRICE_CLASS:-PriceClass_100}"
+RESOURCE_PREFIX="${RESOURCE_PREFIX:-$(cfg '.resourcePrefix')}"
 
 command -v aws >/dev/null 2>&1 || die "aws CLI not found"
 
@@ -63,11 +74,17 @@ if [ -n "$EXISTING" ]; then
   exit 0
 fi
 
+# Only a create needs the prefix (it becomes the ownership tag); reusing an existing
+# distribution above does not, so a re-run without resourcePrefix keeps working.
+[ -n "$RESOURCE_PREFIX" ] || die "resource prefix unknown (set RESOURCE_PREFIX, or .resourcePrefix in $CONFIG_FILE); required to create the distribution"
+
 # placeholder.invalid can never resolve (.invalid is reserved by RFC 2606). CloudFront
 # accepts it: an origin is not validated at creation time. Using an unresolvable name
 # rather than a real one makes it obvious in logs that no origin is attached yet.
 log "creating distribution for '$CF_COMMENT' (placeholder origin, no infrastructure needed)"
-OUT=$(aws cloudfront create-distribution --distribution-config "{
+OUT=$(aws cloudfront create-distribution-with-tags --distribution-config-with-tags "{
+  \"Tags\": {\"Items\": [{\"Key\": \"platform.gitops.io/prefix\", \"Value\": \"$RESOURCE_PREFIX\"}]},
+  \"DistributionConfig\": {
     \"CallerReference\": \"${CF_COMMENT}-$(date +%s)\",
     \"Comment\": \"$CF_COMMENT\",
     \"Enabled\": true,
@@ -94,11 +111,11 @@ OUT=$(aws cloudfront create-distribution --distribution-config "{
       \"Compress\": true},
     \"ViewerCertificate\": {\"CloudFrontDefaultCertificate\": true},
     \"PriceClass\": \"$PRICE_CLASS\"
-  }" --output json 2>&1)
+  }}" --output json 2>&1)
 # shellcheck disable=SC2181
 if [ $? -ne 0 ]; then
   printf '%s\n' "$OUT" | head -5 >&2
-  die "create-distribution failed"
+  die "create-distribution-with-tags failed"
 fi
 
 CF_DOMAIN=$(printf '%s' "$OUT" | jq -r '.Distribution.DomainName // empty' 2>/dev/null)
