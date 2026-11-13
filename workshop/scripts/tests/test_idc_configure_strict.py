@@ -94,3 +94,30 @@ def test_go_task_exit_code(tmp_path, strict, expect_fail):
     env.pop("IDC_STRICT", None)
     r = subprocess.run(args, env=env, capture_output=True, text=True, cwd=tmp_path)
     assert (r.returncode != 0) is expect_fail, r.stderr
+
+
+@pytest.mark.skipif(not shutil.which("task"), reason="go-task not on PATH")
+@pytest.mark.parametrize("args,expect_fail", [([], False), (["IDC_STRICT=true"], True)])
+def test_go_task_install_chain_is_tolerant(tmp_path, args, expect_fail):
+    """Real go-task chain: the verbatim `post-install` task calling an `idc:configure`
+    whose outcome snippet (verbatim) sees a failure. Tolerant by default, opt-in strict."""
+    post_install = _tasks()["post-install"]
+    tf = {
+        "version": "3",
+        "silent": True,
+        "tasks": {
+            "post-install": post_install,
+            "idc:configure": {"cmds": ["IDC_SUCCESS=false\n" + _outcome_snippet()]},
+            "install": {"cmds": [{"task": "post-install"}, "echo TAIL_RAN"]},
+        },
+    }
+    path = tmp_path / "Taskfile.yaml"
+    path.write_text(yaml.safe_dump(tf, sort_keys=False))
+    env = dict(os.environ, IDC_STATUS_FILE=str(tmp_path / "status"))
+    env.pop("IDC_STRICT", None)
+    env.pop("IDC_CONFIGURE_SKIP", None)
+    r = subprocess.run(["task", "-t", str(path), "install"] + args, env=env,
+                       capture_output=True, text=True, cwd=tmp_path)
+    assert (r.returncode != 0) is expect_fail, r.stderr
+    assert ("TAIL_RAN" in r.stdout) is (not expect_fail)
+    assert (tmp_path / "status").read_text().startswith("FAILED")
