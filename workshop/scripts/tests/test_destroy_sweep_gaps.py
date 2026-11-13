@@ -10,9 +10,9 @@ two stacks of one account) left behind, now swept:
    it is not ACK-tagged).
 
 Unit tests on scripts/sweep_lib.py with fakes, then the destroy steps themselves read
-verbatim from both providers' Taskfiles and run under go-task (bash with
-`set -euo pipefail` when go-task is not on PATH) with a fake `aws` and a fake boto3:
-exit code and the AWS calls made are asserted. No AWS, no network.
+verbatim from both providers' Taskfiles and run under go-task (skipped when go-task
+is not on PATH: plain bash handles errexit differently) with a fake `aws` and a fake
+boto3: exit code and the AWS calls made are asserted. No AWS, no network.
 
 Run:  python -m pytest workshop/scripts/tests/test_destroy_sweep_gaps.py -q
 """
@@ -479,6 +479,11 @@ FX = {
 }
 
 
+# The steps run under go-task's own shell, never plain bash: errexit/pipefail and
+# exit codes differ between them, so a bash run could pass a step go-task fails.
+needs_task = pytest.mark.skipif(not TASK, reason="go-task (task) not on PATH")
+
+
 def _step(taskfile, marker):
     with open(taskfile) as f:
         cmds = yaml.safe_load(f)["tasks"]["destroy"]["cmds"]
@@ -513,17 +518,11 @@ def _run(tmp_path, cmd, keep_data="false", fx=None, inventory=None, python3=True
     cmd = cmd.replace("{{.ROOT_DIR}}/private/", str(priv) + "/").replace("{{.ROOT_DIR}}", REPO)
     tvars = {"AWS_REGION": REGION, "RESOURCE_PREFIX": PREFIX, "HUB_CLUSTER_NAME": HUB, "AWS_ACCOUNT_ID": ACCT,
              "DESTROY_KEEP_DATA": keep_data, "DOMAIN": ""}
-    if TASK:
-        tf = tmp_path / "Taskfile.yml"
-        tf.write_text(yaml.safe_dump({"version": "3", "set": ["errexit", "nounset", "pipefail"], "vars": tvars,
-                                      "tasks": {"run": {"cmds": [{"cmd": cmd}]}}}, sort_keys=False))
-        res = subprocess.run([TASK, "-s", "-t", str(tf), "run"], cwd=tmp_path, env=env,
-                             capture_output=True, text=True, timeout=120)
-    else:
-        for k, v in tvars.items():
-            cmd = cmd.replace("{{.%s}}" % k, v)
-        res = subprocess.run(["bash", "-c", "set -euo pipefail\n" + cmd], cwd=tmp_path, env=env,
-                             capture_output=True, text=True, timeout=120)
+    tf = tmp_path / "Taskfile.yml"
+    tf.write_text(yaml.safe_dump({"version": "3", "set": ["errexit", "nounset", "pipefail"], "vars": tvars,
+                                  "tasks": {"run": {"cmds": [{"cmd": cmd}]}}}, sort_keys=False))
+    res = subprocess.run([TASK, "-s", "-t", str(tf), "run"], cwd=tmp_path, env=env,
+                         capture_output=True, text=True, timeout=120)
     calls = [json.loads(ln) for ln in log.read_text().splitlines()]
     return res, calls
 
@@ -537,6 +536,7 @@ KRO_MARKER = "# 2d."
 XP_MARKER = "sweep-ray-resources.py"
 
 
+@needs_task
 def test_kind_kro_ack_sweep_step_removes_spoke_deliveries_bucket_and_repos(tmp_path):
     inv = {"clusters": [{"name": f"{PREFIX}-dev", "deletionPolicy": "delete"}]}
     res, calls = _run(tmp_path, _step(KRO_ACK, KRO_MARKER), inventory=inv)
@@ -556,6 +556,7 @@ def test_kind_kro_ack_sweep_step_removes_spoke_deliveries_bucket_and_repos(tmp_p
     assert not (tmp_path / "private" / "destroy-sweep-failures").exists()
 
 
+@needs_task
 def test_kind_kro_ack_sweep_step_keep_data_keeps_bucket_and_repos(tmp_path):
     res, calls = _run(tmp_path, _step(KRO_ACK, KRO_MARKER), keep_data="true")
     assert res.returncode == 0, res.stdout + res.stderr
@@ -563,6 +564,7 @@ def test_kind_kro_ack_sweep_step_keep_data_keeps_bucket_and_repos(tmp_path):
     assert ("logs", "delete_delivery_source", f"{HUB}-kro") in _deletes(calls)
 
 
+@needs_task
 def test_kind_kro_ack_sweep_step_keeps_everything_while_the_hub_is_live(tmp_path):
     res, calls = _run(tmp_path, _step(KRO_ACK, KRO_MARKER), fx=dict(FX, live=[HUB]))
     assert res.returncode == 0, res.stdout + res.stderr
@@ -570,6 +572,7 @@ def test_kind_kro_ack_sweep_step_keeps_everything_while_the_hub_is_live(tmp_path
     assert not [x for x in d if x[0] in ("s3", "ecr")] and ("logs", "delete_delivery_source", f"{HUB}-kro") not in d
 
 
+@needs_task
 def test_kind_crossplane_phase_6b_removes_the_same(tmp_path):
     res, calls = _run(tmp_path, _step(CROSSPLANE, XP_MARKER))
     assert res.returncode == 0, res.stdout + res.stderr
@@ -581,6 +584,7 @@ def test_kind_crossplane_phase_6b_removes_the_same(tmp_path):
     assert ("logs", "delete_delivery_source", f"{PREFIX}-dev-kro") not in d, "not recorded: not this stack's"
 
 
+@needs_task
 def test_kind_crossplane_phase_6b_keep_data(tmp_path):
     res, calls = _run(tmp_path, _step(CROSSPLANE, XP_MARKER), keep_data="true")
     assert res.returncode == 0, res.stdout + res.stderr
@@ -592,6 +596,7 @@ def test_crossplane_destroy_declares_keep_data_default_false():
     assert t["DESTROY_KEEP_DATA"] == '{{.DESTROY_KEEP_DATA | default "false"}}'
 
 
+@needs_task
 def test_kind_kro_ack_destroy_keeps_the_deliveries_of_a_live_cluster_whose_name_contains_the_hub(tmp_path):
     """Review of #1287: the old step 2 deleted every delivery whose source name
     *contained* the hub name, so destroying "hb-hub" deleted the delivery of a live
@@ -610,6 +615,7 @@ def test_kind_kro_ack_destroy_keeps_the_deliveries_of_a_live_cluster_whose_name_
     assert ("logs", "delete_delivery", "d-hub") in d and ("logs", "delete_delivery_source", f"{HUB}-kro") in d
 
 
+@needs_task
 @pytest.mark.parametrize("python3,boto3,what", [(False, True, "python3"), (True, False, "boto3")])
 def test_kind_crossplane_phase_6b_skips_when_python3_or_boto3_is_missing(tmp_path, python3, boto3, what):
     """Review of #1287: without python3 / boto3 Phase 6b failed half-way with an
