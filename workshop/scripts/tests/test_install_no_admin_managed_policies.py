@@ -13,10 +13,12 @@ Plus the bring-your-own option (hub.iam.*): a set ARN is used as is, nothing is 
 
 What these tests pin:
 1. static: no admin-like managed policy ARN outside comments/detach calls in the install path;
-2. the two policy files are valid, grant no "*" action and no iam:* on "*", and the rg-eks
-   crossplane-provider inline policy is the same document;
+2. the two policy files are valid, grant no "*" action and no iam:* on "*", the rg-eks
+   crossplane-provider inline policy is the same document, and that rg-eks node stays
+   spoke-only (gated on provider == "kro-ack", which hub:claim never sets);
 3. behaviour (fake `aws` on PATH, REAL Taskfile blocks under go-task): default path, legacy
-   detach, BYO path and BYO validation, for both tasks.
+   detach, BYO path (CLI var and the real config.local.yaml read), BYO validation, a failing
+   inline put stops the task, and spokes:seed-provider-identity puts the scoped policy.
 
 Run:  python -m pytest workshop/scripts/tests/test_install_no_admin_managed_policies.py -q
 """
@@ -135,6 +137,27 @@ def test_rg_eks_crossplane_provider_role_uses_the_same_policy():
     assert inline == load_policy("crossplane-provider-policy.json")
 
 
+def test_rg_eks_crossplane_provider_role_not_rendered_for_hub():
+    """The rg-eks crossplaneProviderRole node is for kro-ack spokes, never the hub.
+
+    It is gated on spec.provider == "kro-ack", and the hub instance written by hub:claim
+    sets no spec.provider (default ""). If either drifts, the hub would get an ACK-managed
+    <hub>-crossplane-provider role with the same name as the bootstrap role.
+    """
+    with open(RG_EKS) as f:
+        rgd = yaml.safe_load(f)
+    node = next(r for r in rgd["spec"]["resources"] if r["id"] == "crossplaneProviderRole")
+    gate = " ".join(node.get("includeWhen", []))
+    assert re.search(r'schema\.spec\.provider\s*==\s*"kro-ack"', gate), gate
+    with open(KRO) as f:
+        claim = yaml.safe_load(f)["tasks"]["hub:claim"]["cmds"]
+    heredocs = [c for c in claim if isinstance(c, str) and "kind: $KIND" in c]
+    assert len(heredocs) == 1, "hub:claim instance heredoc not found"
+    m = re.search(r"cat <<EOF.*?\n(.*?)\nEOF\b", heredocs[0], re.S)
+    assert m, "hub:claim heredoc body not found"
+    assert not re.search(r"^\s*provider\s*:", m.group(1), re.M), "hub:claim must not set spec.provider"
+
+
 # ------------------------------------------------------------------ 3. behaviour
 
 FAKE_AWS = r"""#!/bin/sh
@@ -143,8 +166,15 @@ case "$1 $2" in
   "iam get-role")
     for r in $FAKE_EXISTING_ROLES; do [ "$r" = "$4" ] && exit 0; done
     echo "NoSuchEntity" >&2; exit 254 ;;
+  "iam put-role-policy")
+    # failure switch: fail the put on one role (--role-name is $4)
+    if [ -n "${FAKE_FAIL_PUT_ROLE:-}" ] && [ "$4" = "$FAKE_FAIL_PUT_ROLE" ]; then
+      echo "AccessDenied" >&2; exit 254
+    fi
+    exit 0 ;;
   "iam list-attached-role-policies") echo "${FAKE_ATTACHED:-}"; exit 0 ;;
   "eks list-pod-identity-associations") echo "None"; exit 0 ;;
+  "eks describe-cluster") echo "ACTIVE"; exit 0 ;;
 esac
 exit 0
 """
@@ -156,13 +186,21 @@ def block(task, index):
     return cmd["cmd"] if isinstance(cmd, dict) else cmd
 
 
-def harness(tmp_path, config=""):
+def kro_var(name):
+    with open(KRO) as f:
+        return yaml.safe_load(f)["vars"][name]
+
+
+def harness(tmp_path, config="", real_byo_var=False):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "aws").write_text(FAKE_AWS)
     (bin_dir / "aws").chmod(0o755)
     cfg = tmp_path / "config.local.yaml"
     cfg.write_text(config or "hub:\n  clusterName: hub\n")
+    gitops = tmp_path / "gitops"
+    for member in ("hub", "spoke1"):
+        (gitops / "fleet" / "members" / member).mkdir(parents=True)
     tf = {
         "version": "3",
         "set": ["errexit", "nounset", "pipefail"],
@@ -170,23 +208,26 @@ def harness(tmp_path, config=""):
         "vars": {
             "CONFIG_FILE": str(cfg), "AWS_ACCOUNT_ID": ACCT, "AWS_REGION": "us-west-2",
             "HUB_CLUSTER_NAME": "hub", "RESOURCE_PREFIX": "pfx", "IAM_POLICY_DIR": IAM_DIR,
+            "GITOPS_ROOT": str(gitops),
             "ACK_CAPABILITY_ROLE": "hub-ack-capability-role",
-            "CROSSPLANE_PROVIDER_ROLE_ARN": "",
+            # real_byo_var: the provider's own `sh: yq ...` read of config.local.yaml
+            "CROSSPLANE_PROVIDER_ROLE_ARN": kro_var("CROSSPLANE_PROVIDER_ROLE_ARN") if real_byo_var else "",
             **{c: "" for c in ("C_INFO", "C_OK", "C_STEP", "C_ERR", "C_WARN", "C_RESET")},
         },
         "tasks": {
             "bootstrap": {"cmds": [block("hub:bootstrap-crossplane-identity", 1)]},
             "mgmt": {"cmds": [block("hub:create-mgmt-roles", 1)]},
+            "seed": {"cmds": [block("spokes:seed-provider-identity", 0)]},
         },
     }
     (tmp_path / "Taskfile.yml").write_text(yaml.safe_dump(tf, sort_keys=False))
     return bin_dir
 
 
-def run(tmp_path, bin_dir, task, *task_vars, existing="", attached=""):
+def run(tmp_path, bin_dir, task, *task_vars, existing="", attached="", fail_put_role=""):
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
     env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "calls.log"),
-               FAKE_EXISTING_ROLES=existing, FAKE_ATTACHED=attached)
+               FAKE_EXISTING_ROLES=existing, FAKE_ATTACHED=attached, FAKE_FAIL_PUT_ROLE=fail_put_role)
     r = subprocess.run([TASK, "-d", str(tmp_path), task, *task_vars], env=env,
                        capture_output=True, text=True, timeout=60)
     log = (tmp_path / "calls.log").read_text() if (tmp_path / "calls.log").exists() else ""
@@ -301,8 +342,53 @@ def test_mgmt_byo_roles_are_validated(tmp_path, arn, existing, msg):
     assert not calls_of(log, "create-role"), log
 
 
+@needs_task
+def test_bootstrap_put_failure_is_fatal(tmp_path):
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, "bootstrap", fail_put_role="hub-crossplane-provider")
+    assert r.returncode != 0, out
+    assert calls_of(log, "put-role-policy"), log
+    assert not [c for c in log if "create-pod-identity-association" in c], log
+
+
+@needs_task
+def test_bootstrap_byo_role_read_from_config(tmp_path):
+    """The real `sh: yq` global var reads hub.iam.crossplaneProviderRoleArn from config.local.yaml."""
+    arn = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
+    cfg = f"hub:\n  clusterName: hub\n  iam:\n    crossplaneProviderRoleArn: {arn}\n"
+    b = harness(tmp_path, cfg, real_byo_var=True)
+    r, out, log = run(tmp_path, b, "bootstrap", existing="cfn-crossplane")
+    assert r.returncode == 0, out
+    assert not calls_of(log, "create-role") and not calls_of(log, "put-role-policy"), log
+    pia = [c for c in log if "create-pod-identity-association" in c]
+    assert len(pia) == 2 and all(arn in c for c in pia), pia
+
+
+@needs_task
+def test_mgmt_put_failure_is_fatal(tmp_path):
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, "mgmt", fail_put_role="pfx-cluster-mgmt-iam")
+    assert r.returncode != 0, out
+    assert [p for p in calls_of(log, "put-role-policy") if "pfx-cluster-mgmt-iam " in p + " "], log
+
+
+@needs_task
+def test_seed_provider_identity_puts_scoped_policy(tmp_path):
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, "seed")
+    assert r.returncode == 0, out
+    assert not calls_of(log, "attach-role-policy"), log
+    puts = calls_of(log, "put-role-policy")
+    roles = sorted(re.search(r"--role-name (\S+)", p).group(1) for p in puts)
+    assert roles == ["spoke1-CrossplaneEKSProviderRole", "spoke1-CrossplaneIAMProviderRole"], puts
+    assert all(f"file://{IAM_DIR}/crossplane-provider-policy.json" in p for p in puts), puts
+    assert os.path.isfile(os.path.join(IAM_DIR, "crossplane-provider-policy.json"))
+    assert not [c for c in log if "--role-name hub-" in c], log  # the hub is excluded
+
+
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
-@pytest.mark.parametrize("task,index", [("hub:bootstrap-crossplane-identity", 1), ("hub:create-mgmt-roles", 1)])
+@pytest.mark.parametrize("task,index", [("hub:bootstrap-crossplane-identity", 1), ("hub:create-mgmt-roles", 1),
+                                        ("spokes:seed-provider-identity", 0)])
 def test_blocks_shellcheck(tmp_path, task, index):
     # go-task templates are not shell; replace them with a plain word first.
     body = re.sub(r"\{\{[^}]*\}\}", "X", block(task, index))
