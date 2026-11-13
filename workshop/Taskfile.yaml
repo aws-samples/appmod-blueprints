@@ -261,16 +261,16 @@ tasks:
         vars: { SPOKE_APPS: "false" }
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes (ACTIVE) done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # Background: wait for the spoke apps to sync (same tolerant loop and nudges as
-      # before), THEN pre-deploy the Path A Next.js frontend on spoke-dev (it needs the
-      # spoke's kro AppmodService CRD, which comes with those apps). Detached like the
-      # hub settle (double fork + setsid, fds closed) so it may outlive the install
-      # without holding the SSM tee / cfn-signal. The install checks the spoke apps at
+      # before), THEN pre-deploy the Path A Next.js frontend and the Rust dev manifest on
+      # spoke-dev (both need the spoke's kro AppmodService CRD, which comes with those
+      # apps). Detached like the hub settle (double fork + setsid, fds closed) so it may
+      # outlive the install without holding the SSM tee / cfn-signal. The install checks the spoke apps at
       # the end (non-blocking); the module that first uses spoke apps is the point of use.
       - |
         printf '' > /tmp/spoke-apps-bg.rc
         S=""; command -v setsid >/dev/null 2>&1 && S=setsid
         S="$S" sh -c '( exec $S task spoke-apps-bg INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}} ) >> /tmp/spoke-apps-bg.log 2>&1 < /dev/null &'
-        printf '{{.C_INFO}}  spoke apps sync + prewarm-pathA-frontend running in background (log: /tmp/spoke-apps-bg.log){{.C_RESET}}\n'
+        printf '{{.C_INFO}}  spoke apps sync + prewarm-pathA-frontend + prewarm-pathA-rust-kro running in background (log: /tmp/spoke-apps-bg.log){{.C_RESET}}\n'
       # Re-seed observability now that spokes are ACTIVE. The initial seed runs in background
       # during hub install (before spokes exist) so spoke_dev/prod_cluster_arn annotations
       # are empty → no spoke AMP scrapers. Re-running here ensures spoke scraper values are
@@ -344,16 +344,10 @@ tasks:
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
         ignore_error: true
       - 'printf "{{.C_INFO}}  [%ds] prewarm-rust-cicd done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
-      # Pre-deploy the Rust app to dev with kro (Path A 30_CD kro tab, dev only): needs
-      # rust-dev-cd from prewarm-rust-cicd, so it runs right after it. Short (clone,
-      # commit, push); does not wait for the Rollout.
-      - '{{.MARK}} step workshop prewarm-pathA-rust-kro'
-      - task: prewarm-pathA-rust-kro
-        vars:
-          INSTALL_START: '{{.INSTALL_START}}'
-          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
-        ignore_error: true
-      - 'printf "{{.C_INFO}}  [%ds] prewarm-pathA-rust-kro done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # The Rust dev pre-deploy (prewarm-pathA-rust-kro) is NOT run here: it needs the
+      # spoke-dev AppmodService CRD, which comes with the spoke apps, so it runs in the
+      # background job (spoke-apps-bg) after the spoke apps sync. Inline, it could start
+      # minutes after the spoke's kro capability was created and give up on the CRD.
       - '{{.MARK}} step workshop hub:pivot'
       # [#1033] FINAL step — hub self-adoption pivot (detach from the ephemeral kind bootstrap
       # cluster). Runs LAST, after overlay wiring + spokes + idc + ray are all up, so:
@@ -1078,19 +1072,26 @@ tasks:
       - printf '{{.C_OK}}✓ Spoke wait-gate complete.{{.C_RESET}}\n'
 
   # Background worker of the install (O3): spoke apps sync, then the Path A frontend
-  # prewarm. Writes its rc to /tmp/spoke-apps-bg.rc for the install's final check.
+  # and Rust dev prewarms. Writes its rc to /tmp/spoke-apps-bg.rc for the install's
+  # final check. The Rust prewarm also needs rust-dev-cd, which the foreground
+  # prewarm (Phase A scaffold, Phase B) creates meanwhile; the task waits for it.
   spoke-apps-bg:
-    desc: "Install background job: wait-for-spokes:apps, then prewarm-pathA-frontend (non-fatal)"
+    desc: "Install background job: wait-for-spokes:apps, then prewarm-pathA-frontend and prewarm-pathA-rust-kro (non-fatal)"
     cmds:
-      - '{{.MARK}} start "spoke apps + frontend prewarm (bg)"'
+      - '{{.MARK}} start "spoke apps + Path A prewarms (bg)"'
       - task: wait-for-spokes:apps
       - task: prewarm-pathA-frontend
         vars:
           INSTALL_START: '{{.INSTALL_START | default ""}}'
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
         ignore_error: true
+      - task: prewarm-pathA-rust-kro
+        vars:
+          INSTALL_START: '{{.INSTALL_START | default ""}}'
+          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+        ignore_error: true
       - echo 0 > /tmp/spoke-apps-bg.rc
-      - '{{.MARK}} done "spoke apps + frontend prewarm (bg)" rc=0'
+      - '{{.MARK}} done "spoke apps + Path A prewarms (bg)" rc=0'
 
   wait-for-spokes:apps:
     desc: "Wait for the spoke-targeted Argo CD apps to sync within tolerance, nudging stuck ones (non-fatal)"
@@ -1771,9 +1772,11 @@ tasks:
   #       which turns a stored false into true, see pnz1990 review #1136 point 2);
   #       PREWARM_PATH_A overrides both ways. prewarm-pathA-rust-kro also needs
   #       prewarmRustCicd (no pipeline -> no rust-dev-cd -> nothing syncs the manifest).
-  # Contract: best-effort (`set +e`, every path exits 0, `ignore_error` in install),
-  #       idempotent, and bound by the same DEADLINE as prewarm-rust-cicd so the #1033
-  #       pivot keeps its headroom. Neither task waits for the app to become Healthy:
+  # Contract: best-effort (`set +e`, every path exits 0, `ignore_error` on the call),
+  #       idempotent, and bound by the same DEADLINE as prewarm-rust-cicd. Both run in
+  #       the install's background job (spoke-apps-bg), concurrently with the #1033
+  #       pivot: the DEADLINE only bounds the job's lifetime, it does not protect pivot
+  #       headroom. Neither task waits for the app to become Healthy:
   #       the Rust Rollout pulls `:initial`, which the pipeline's initial build publishes
   #       ~8 min after the CICDPipeline goes ACTIVE, and converges on its own.
   # ============================================================
@@ -1908,8 +1911,10 @@ tasks:
         fi
         H="kubectl --kubeconfig $KH"; D="kubectl --kubeconfig $KD"
         # 0. rust-dev-cd must exist (it is created by the rust-cicd app synced from the
-        #    scaffolded repo, right after the CICDPipeline). Bounded wait.
-        T=180; [ "$(left)" -lt "$T" ] && T=$(left)
+        #    scaffolded repo, right after the CICDPipeline). Bounded wait. 900 s: the
+        #    install runs this in its background job, which starts before the foreground
+        #    prewarm (Phase A join, Phase B) has finished, so rust-dev-cd may come later.
+        T=900; [ "$(left)" -lt "$T" ] && T=$(left)
         E=0
         until $H get applications.argoproj.io "$CD_APP" -n argocd >/dev/null 2>&1; do
           if [ "$E" -ge "$T" ]; then
@@ -1919,11 +1924,14 @@ tasks:
           sleep 15; E=$((E + 15))
         done
         # 1. The AppmodService API must be served on spoke-dev. Bounded wait, same as
-        #    prewarm-pathA-frontend: this runs seconds after the spokes go ACTIVE, while
-        #    the spoke is still syncing its kro RGDs, so a single check skipped the whole
-        #    pre-deploy (the Rust backend was then missing on dev although the content
-        #    says it is already there).
-        T=300; [ "$(left)" -lt "$T" ] && T=$(left)
+        #    prewarm-pathA-frontend. This task used to run inline seconds after the spokes
+        #    went ACTIVE, while the spoke was still syncing its kro RGDs: a single check,
+        #    then a 300 s window opened ~2 min after the spoke's kro capability was
+        #    created, both closed before the CRD was served and skipped the pre-deploy.
+        #    It now runs in the background job after the tolerant spoke-apps wait, which
+        #    usually leaves the CRD served already; 900 s covers a late one, off the
+        #    install's critical path.
+        T=900; [ "$(left)" -lt "$T" ] && T=$(left)
         E=0
         until $D get crd appmodservices.kro.run >/dev/null 2>&1; do
           if [ "$E" -ge "$T" ]; then

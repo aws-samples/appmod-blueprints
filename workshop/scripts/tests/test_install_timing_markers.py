@@ -102,7 +102,7 @@ def test_background_jobs_and_waiters_log_their_end():
     for text, name in [
         (wk, "gitlab:init-ec2 (bg)"),
         (wk, "prewarm Phase A (bg)"),
-        (wk, "spoke apps + frontend prewarm (bg)"),
+        (wk, "spoke apps + Path A prewarms (bg)"),
         (wk, "cloudfront:attach (bg)"),
         (wk, "observability re-seed (bg)"),
         (wk, "wait-for-spokes: $S ACTIVE"),

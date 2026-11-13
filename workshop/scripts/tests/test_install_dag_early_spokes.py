@@ -105,6 +105,24 @@ def test_o3_install_gates_on_active_only_and_backgrounds_spoke_apps():
     assert wfs["vars"]["SPOKE_APPS"].endswith('default "true"}}')
 
 
+def test_o3_rust_dev_prewarm_runs_in_background_job_not_inline():
+    # The Rust dev pre-deploy needs the spoke-dev AppmodService CRD (it comes with the
+    # spoke apps). Inline, right after prewarm-rust-cicd, it could start ~2 min after
+    # the spoke's kro capability was created and give up on the CRD before the pivot.
+    assert not any("prewarm-pathA-rust-kro" in ln and ln.startswith("task:") for ln in WS)
+    assert not any("step workshop prewarm-pathA-rust-kro" in ln for ln in WS)
+    raw = _tasks("workshop/Taskfile.yaml")["spoke-apps-bg"]["cmds"]
+    job = _flat(raw)
+    apps = _index(job, "task: wait-for-spokes:apps")
+    front = _index(job, "task: prewarm-pathA-frontend")
+    rust = _index(job, "task: prewarm-pathA-rust-kro")
+    rc = _index(job, "> /tmp/spoke-apps-bg.rc")
+    assert apps < front < rust < rc
+    # non-fatal and budget-aware, like the frontend prewarm
+    assert raw[rust].get("ignore_error") is True
+    assert "INSTALL_START" in raw[rust]["vars"] and "INSTALL_BUDGET_SEC" in raw[rust]["vars"]
+
+
 @pytest.mark.parametrize("provider", ["kind-kro-ack", "kind-crossplane"])
 def test_platform_install_is_hub_then_complete(provider):
     t = _tasks(f"cluster-providers/{provider}/Taskfile.yaml")
