@@ -1815,8 +1815,11 @@ spec:
               {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-crossplane-provider-scoped"}
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
-          # Customer-managed, not inline: same name rule as common/iam/managed-policy.sh
-          # (<role>-scoped), so it matches policy/<prefix>-* and the prefix teardown sweeps.
+          # Customer-managed, not inline, named <role>-scoped like common/iam/managed-policy.sh.
+          # Unlike the script, no "<prefix>-" is added here: the name matches policy/<prefix>-*
+          # (consumer IAM grants, prefix teardown sweeps) only when the spoke name starts with
+          # the resource prefix, as it does in the default fleet (e.g. <prefix>-spoke-dev).
+          # A spoke named outside the prefix gets a policy outside policy/<prefix>-*.
           # Spoke-only, like the role (the hub claim sets no spec.provider). A test pins the
           # document equal to cluster-providers/common/iam/crossplane-provider-policy.json.
           name: "${schema.spec.name}-crossplane-provider-scoped"
@@ -1848,10 +1851,10 @@ spec:
           name: "${schema.spec.name}-crossplane-provider"
           # Scoped customer-managed policy crossplaneProviderPolicy above (same document as
           # cluster-providers/common/iam/crossplane-provider-policy.json), not
-          # AdministratorAccess. Upgrade note: on the next RGD sync, running spokes are
-          # expected to move from the inline crossplane-provider-scoped policy (or the older
-          # AdministratorAccess) to this managed policy (ACK sync of policies/inlinePolicies),
-          # with no `task install` re-run.
+          # AdministratorAccess. Upgrade note: on the next RGD sync, with no `task install`
+          # re-run, ACK is expected to reconcile the Role to this spec: attach this managed
+          # policy, detach the older AdministratorAccess, and delete the inline
+          # crossplane-provider-scoped policy an earlier revision set (not verified live).
           policies:
             - ${crossplaneProviderPolicy.status.ackResourceMetadata.arn}
           assumeRolePolicyDocument: |

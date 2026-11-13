@@ -176,7 +176,9 @@ Crossplane provider roles, so their scoped policies stay attached to them.
 The kro-ack spoke role `<spoke>-crossplane-provider` (`rg-eks.yaml`, spokes with
 `enable_crossplane_aws`) gets the same document as an ACK `Policy` named
 `<spoke>-crossplane-provider-scoped`, attached through `policies`, and ACK deletes it with the
-spoke. Upgrade note: that change reaches running spokes on the next RGD sync, without
+spoke. That name has no added `<prefix>-`, so it matches `policy/<prefix>-*` only when the
+spoke name starts with the resource prefix (the default fleet does). Upgrade note: that
+change reaches running spokes on the next RGD sync, without
 re-running `task install`; ACK is expected to drop the old inline policy (or the older
 `AdministratorAccess`) and attach the managed one (not verified live).
 
