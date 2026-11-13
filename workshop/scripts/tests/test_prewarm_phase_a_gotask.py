@@ -139,6 +139,16 @@ def test_phase_a_failed_task_is_not_resubmitted(tmp_path):
     assert r.returncode != 0
 
 
+@pytest.fixture
+def phase_a_pid():
+    """A live process whose cmdline looks like the install's Phase A launcher
+    (`sh -c '... task prewarm-rust-cicd-phase-a ...'`)."""
+    p = subprocess.Popen(["sh", "-c", "/bin/sleep 600; : task prewarm-rust-cicd-phase-a"])
+    yield p.pid
+    p.kill()
+    p.wait()
+
+
 # ── prewarm-rust-cicd (Phase B) ────────────────────────────────────────────────────────
 def test_phase_b_fallback_is_loud(tmp_path, monkeypatch):
     rc = tmp_path / "pa.rc"
@@ -150,9 +160,9 @@ def test_phase_b_fallback_is_loud(tmp_path, monkeypatch):
     assert len(lines(tmp_path, "scaffold.calls")) == 1
 
 
-def test_phase_b_no_second_scaffold_while_phase_a_runs(tmp_path, monkeypatch):
+def test_phase_b_no_second_scaffold_while_phase_a_runs(tmp_path, monkeypatch, phase_a_pid):
     pid = tmp_path / "pa.pid"
-    pid.write_text(str(os.getpid()))                          # a live process, no rc yet
+    pid.write_text(str(phase_a_pid))                          # a live Phase A, no rc yet
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "pa.rc"))
     r, _ = run(tmp_path, "prewarm-rust-cicd")
@@ -172,13 +182,14 @@ def test_phase_b_standalone_no_fallback_message(tmp_path, monkeypatch):
 
 
 # ── Phase A still running when Phase B starts (the join gave up), then ends ────────────
-def run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at, rc, scaffolded=False):
-    """Phase A is a live process (this pytest pid) with no rc file; the fake `sleep`
-    writes its rc (and, for a successful Phase A, the scaffold) once the virtual clock
-    reaches ends_at."""
+def run_b_with_late_phase_a(tmp_path, monkeypatch, pa_pid, ends_at, rc, scaffolded=False, repo_after=False):
+    """Phase A is a live launcher-like process with no rc file; the fake `sleep` writes
+    its rc (and, for a successful Phase A, the scaffold) once the virtual clock reaches
+    ends_at. repo_after: the GitLab project API answers 200 once the rc is written
+    (Phase A failed AFTER publish:gitlab created the repo)."""
     b, plat = fakes(tmp_path)
     pid, rcf = tmp_path / "pa.pid", tmp_path / "pa.rc"
-    pid.write_text(str(os.getpid()))
+    pid.write_text(str(pa_pid))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
     done = f'touch "$FAKE_T/scaffolded"; ' if scaffolded else ""
@@ -186,16 +197,24 @@ def run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at, rc, scaffolded=False
         '#!/usr/bin/env bash\n'
         'C=$(cat "$FAKE_T/clock"); C=$((C + ${1%s})); echo $C > "$FAKE_T/clock"\n'
         f'if [ "$C" -ge {ends_at} ] && [ ! -s "{rcf}" ]; then {done}echo {rc} > "{rcf}"; fi\n')
+    if repo_after:
+        monkeypatch.setitem(VARS, "GIT_TOKEN", "glpat-test")
+        (b / "curl").write_text(
+            '#!/usr/bin/env bash\n'
+            'C=$(cat "$FAKE_T/clock"); echo "$C curl $*" >> "$FAKE_T/curl.calls"\n'
+            'case "$*" in *api/v4/projects/*)\n'
+            f'  if [ -s "{rcf}" ]; then echo 200; else echo 404; fi; exit 0;; esac\n'
+            'echo 401\n')
     env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", FAKE_T=str(tmp_path), HOME=str(tmp_path))
     r = subprocess.run(["bash", "-c", render("prewarm-rust-cicd", plat)], env=env,
                        capture_output=True, text=True, timeout=60, cwd=str(tmp_path))
     return r, int((tmp_path / "clock").read_text())
 
 
-def test_phase_b_falls_back_when_late_phase_a_fails(tmp_path, monkeypatch):
+def test_phase_b_falls_back_when_late_phase_a_fails(tmp_path, monkeypatch, phase_a_pid):
     # Pre-review C1: Phase B used to wait PIPE_T for a pipeline nobody creates and give
     # up with no scaffold. go-task reports a failed cmd as rc=201.
-    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at=300, rc=201)
+    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=201)
     assert "Phase A still running" in r.stdout, r.stdout
     assert "Phase A finished (rc=201)" in r.stdout, r.stdout
     assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=201" in r.stdout, r.stdout
@@ -205,17 +224,17 @@ def test_phase_b_falls_back_when_late_phase_a_fails(tmp_path, monkeypatch):
     assert r.returncode == 0
 
 
-def test_phase_b_no_scaffold_when_late_phase_a_succeeds(tmp_path, monkeypatch):
-    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at=300, rc=0, scaffolded=True)
+def test_phase_b_no_scaffold_when_late_phase_a_succeeds(tmp_path, monkeypatch, phase_a_pid):
+    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=0, scaffolded=True)
     assert "Phase A finished (rc=0)" in r.stdout, r.stdout
     assert lines(tmp_path, "scaffold.calls") == []
     assert "PREWARM FALLBACK" not in r.stdout
     assert "pipeline ACTIVE" in r.stdout, r.stdout
 
 
-def test_phase_b_phase_a_ok_but_nothing_visible_yet_does_not_rescaffold(tmp_path, monkeypatch):
+def test_phase_b_phase_a_ok_but_nothing_visible_yet_does_not_rescaffold(tmp_path, monkeypatch, phase_a_pid):
     # rc=0 means Phase A's task completed: never submit a second one, wait instead.
-    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, ends_at=300, rc=0, scaffolded=False)
+    r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=0, scaffolded=False)
     assert lines(tmp_path, "scaffold.calls") == []
     assert "nothing will create the pipeline" not in r.stdout
     assert "waiting for CICDPipeline" in r.stdout, r.stdout
@@ -243,3 +262,40 @@ def test_phase_a_backend_failed_exits_at_once(tmp_path):
     assert lines(tmp_path, "post.calls") == []
     assert r.returncode != 0
     assert clock == 0, clock
+
+
+# ── pre-review #2: repo guard re-check, standalone cap, stale pid ──────────────────────
+def test_phase_b_no_rescaffold_when_late_phase_a_failed_after_publishing_repo(tmp_path, monkeypatch, phase_a_pid):
+    # Phase A failed (rc=201) after publish:gitlab created user1/rust-cicd: a second
+    # scaffold would 500 in publish:gitlab. The re-check must see the repo and not POST.
+    r, _ = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=201, repo_after=True)
+    assert "Phase A finished (rc=201)" in r.stdout, r.stdout
+    assert lines(tmp_path, "scaffold.calls") == [], r.stdout
+    assert "PREWARM FALLBACK" not in r.stdout
+
+
+def test_phase_b_wait_for_phase_a_capped_without_deadline(tmp_path, monkeypatch, phase_a_pid):
+    # Standalone run (no INSTALL_START): left() is 999999, the wait must still stop at 900 s.
+    pid = tmp_path / "pa.pid"
+    pid.write_text(str(phase_a_pid))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "pa.rc"))
+    monkeypatch.setitem(VARS, "INSTALL_START", "")
+    r, clock = run(tmp_path, "prewarm-rust-cicd")
+    assert "waiting up to 900s for it to finish" in r.stdout, r.stdout
+    assert "still running after 900s" in r.stdout, r.stdout
+    assert lines(tmp_path, "scaffold.calls") == []
+    assert clock < 900 + 600 + 120, clock         # Phase A wait + PIPE_T, not ~999639 s
+
+
+def test_phase_b_ignores_stale_pid_of_another_process(tmp_path, monkeypatch):
+    # A pid file left by an aborted install now points at an unrelated live process
+    # (here: pytest itself). It must not be treated as Phase A.
+    pid = tmp_path / "pa.pid"
+    pid.write_text(str(os.getpid()))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "pa.rc"))
+    monkeypatch.setitem(VARS, "INSTALL_START", "")
+    r, clock = run(tmp_path, "prewarm-rust-cicd")
+    assert "Phase A still running" not in r.stdout, r.stdout
+    assert len(lines(tmp_path, "scaffold.calls")) == 1
