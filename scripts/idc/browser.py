@@ -12,6 +12,7 @@ unit tests that only need the pure resilience layer.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -118,12 +119,17 @@ async def wait_for_stable(page, timeout=10000):
 
 
 async def screenshot(page, path, debug):
-    """Save a screenshot owner-only when ``debug`` is set. Returns True if written."""
+    """Save a screenshot owner-only when ``debug`` is set. Returns True if written.
+
+    The umask covers a file this call creates; the chmod also covers a file that
+    already existed (an earlier run, another user), whose mode the write keeps.
+    """
     if not debug:
         return False
     try:
         with private_umask():
             await page.screenshot(path=path)
+        os.chmod(path, 0o600)
         return True
     except Exception:
         return False
