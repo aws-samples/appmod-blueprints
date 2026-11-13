@@ -5,22 +5,30 @@ iam:AttachRolePolicy of AdministratorAccess / PowerUserAccess / IAMFullAccess (i
 condition). That only works if the install never attaches them itself. The two places that did:
 
 * hub:bootstrap-crossplane-identity / spokes:seed-provider-identity -> AdministratorAccess on
-  the Crossplane provider-aws-iam/eks role. Now: inline common/iam/crossplane-provider-policy.json.
-* hub:create-mgmt-roles -> IAMFullAccess on <prefix>-cluster-mgmt-iam. Now: inline
-  common/iam/cluster-mgmt-iam-policy.json.
+  the Crossplane provider-aws-iam/eks role. Now: customer-managed <role>-scoped policy with the
+  document common/iam/crossplane-provider-policy.json.
+* hub:create-mgmt-roles -> IAMFullAccess on <prefix>-cluster-mgmt-iam. Now: customer-managed
+  <prefix>-cluster-mgmt-iam-scoped with common/iam/cluster-mgmt-iam-policy.json.
 
-Plus the bring-your-own option (hub.iam.*): a set ARN is used as is, nothing is created or put.
+Customer-managed, not inline, and no CreatePolicyVersion: the consumer may grant
+CreatePolicy/AttachRolePolicy/DeletePolicy on <prefix>-* but neither iam:PutRolePolicy on these
+roles nor iam:CreatePolicyVersion. common/iam/managed-policy.sh creates, recreates on drift and
+attaches the policy, and removes the inline policy an earlier version of the install wrote.
+Plus the bring-your-own option (hub.iam.*): a set ARN is used as is, nothing is created.
 
 What these tests pin:
 1. static: no admin-like managed policy ARN outside comments/detach calls in the install path;
-2. the two policy files are valid, grant no "*" action and no iam:* on "*", the rg-eks
-   crossplane-provider inline policy is the same document, and that rg-eks node stays
-   spoke-only (gated on provider == "kro-ack", which hub:claim never sets);
-3. behaviour (fake `aws` on PATH, REAL Taskfile blocks under go-task): default path, legacy
-   detach, BYO path (CLI var and the real config.local.yaml read), BYO validation, a failing
-   inline put stops the task, and spokes:seed-provider-identity puts the scoped policy;
-   the kind-crossplane hub:create-mgmt-roles and spokes:seed-provider-identity blocks too;
-4. config.schema.json hub.iam rejects unknown keys (a typo is not silently ignored).
+2. the two policy files are valid, grant no "*" action and no iam:* on "*"; the rg-eks
+   crossplane-provider role attaches only the ACK Policy node with the same document and the
+   <role>-scoped name, and that node stays spoke-only (gated on provider == "kro-ack", which
+   hub:claim never sets);
+3. behaviour, against a stateful fake `aws` on PATH: managed-policy.sh alone (create, identical
+   = attach only, drift = detach/prune/delete/create/attach in that order, legacy inline
+   removal, fatal errors, convergence after a failure inside the recreate window, delete);
+   the REAL Taskfile blocks under go-task (default, legacy detach, upgrade from inline, re-run
+   on the roles a failed run left, BYO, fatal policy errors, seed tasks of both providers);
+   kind-kro-ack destroy step 6b deletes the scoped policies before their roles;
+4. config.schema.json hub.iam rejects unknown keys; shellcheck on the blocks and the script.
 
 Run:  python -m pytest workshop/scripts/tests/test_install_no_admin_managed_policies.py -q
 """
@@ -29,6 +37,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -136,11 +145,17 @@ def test_cluster_mgmt_iam_policy_has_no_non_iam_service():
 def test_rg_eks_crossplane_provider_role_uses_the_same_policy():
     with open(RG_EKS) as f:
         rgd = yaml.safe_load(f)
-    node = next(r for r in rgd["spec"]["resources"] if r["id"] == "crossplaneProviderRole")
-    spec = node["template"]["spec"]
-    assert "policies" not in spec, "the crossplane-provider role must not attach managed policies"
-    inline = json.loads(spec["inlinePolicies"]["crossplane-provider-scoped"])
-    assert inline == load_policy("crossplane-provider-policy.json")
+    nodes = {r["id"]: r for r in rgd["spec"]["resources"]}
+    role, pol = nodes["crossplaneProviderRole"], nodes["crossplaneProviderPolicy"]
+    spec = role["template"]["spec"]
+    # Only the scoped customer-managed policy node, no inline policy, no AWS managed ARN.
+    assert spec["policies"] == ["${crossplaneProviderPolicy.status.ackResourceMetadata.arn}"], spec
+    assert "inlinePolicies" not in spec, spec
+    assert pol["template"]["kind"] == "Policy"
+    assert pol["includeWhen"] == role["includeWhen"], "policy and role must render together"
+    # Same <role>-scoped name rule as managed-policy.sh, so it matches policy/<prefix>-*.
+    assert pol["template"]["spec"]["name"] == spec["name"] + "-scoped"
+    assert json.loads(pol["template"]["spec"]["policyDocument"]) == load_policy("crossplane-provider-policy.json")
 
 
 def test_rg_eks_crossplane_provider_role_not_rendered_for_hub():
@@ -166,24 +181,125 @@ def test_rg_eks_crossplane_provider_role_not_rendered_for_hub():
 
 # ------------------------------------------------------------------ 3. behaviour
 
-FAKE_AWS = r"""#!/bin/sh
-echo "aws $*" >> "$FAKE_LOG"
-case "$1 $2" in
-  "iam get-role")
-    for r in $FAKE_EXISTING_ROLES; do [ "$r" = "$4" ] && exit 0; done
-    echo "NoSuchEntity" >&2; exit 254 ;;
-  "iam put-role-policy")
-    # failure switch: fail the put on one role (--role-name is $4)
-    if [ -n "${FAKE_FAIL_PUT_ROLE:-}" ] && [ "$4" = "$FAKE_FAIL_PUT_ROLE" ]; then
-      echo "AccessDenied" >&2; exit 254
-    fi
-    exit 0 ;;
-  "iam list-attached-role-policies") echo "${FAKE_ATTACHED:-}"; exit 0 ;;
-  "eks list-pod-identity-associations") echo "None"; exit 0 ;;
-  "eks describe-cluster") echo "ACTIVE"; exit 0 ;;
-esac
-exit 0
-"""
+# Stateful fake `aws`: IAM roles, customer-managed policies (versions + default document),
+# attachments and inline policies live in a JSON state file, so the real Taskfile blocks and
+# managed-policy.sh run against something that behaves like IAM (NoSuchEntity,
+# DeleteConflict, EntityAlreadyExists). Every call is logged. Failure switch:
+# FAKE_FAIL="<op>:<target> ..." -> AccessDenied when the op's role name or policy name is
+# <target>. FAKE_ATTACHED: extra AWS-managed ARNs listed as attached to every role (legacy).
+FAKE_AWS = r'''#!__PY__
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write("aws " + " ".join(args) + "\n")
+svc, op = (args + ["", ""])[:2]
+opt = {}
+i = 2
+while i < len(args):
+    if args[i].startswith("--"):
+        opt[args[i][2:]] = args[i + 1] if i + 1 < len(args) else ""
+        i += 2
+    else:
+        i += 1
+if svc != "iam":
+    if (svc, op) == ("eks", "list-pod-identity-associations"):
+        print("None")
+    elif (svc, op) == ("eks", "describe-cluster"):
+        print("ACTIVE")
+    sys.exit(0)
+import fcntl
+path = os.environ["FAKE_STATE"]
+lock = open(path + ".lock", "w")
+fcntl.flock(lock, fcntl.LOCK_EX)  # the mgmt block runs 8 role creations in parallel
+st = json.load(open(path)) if os.path.exists(path) else {}
+roles = st.setdefault("roles", [])
+pols = st.setdefault("policies", {})
+att = st.setdefault("attached", {})
+inl = st.setdefault("inline", {})
+role = opt.get("role-name", "")
+pname = opt.get("policy-name") or opt.get("policy-arn", "").rsplit("/", 1)[-1]
+
+def save():
+    json.dump(st, open(path, "w"))
+
+def err(code):
+    sys.stderr.write(f"An error occurred ({code}) when calling the {op} operation: fake\n")
+    sys.exit(254)
+
+for spec in os.environ.get("FAKE_FAIL", "").split():
+    o, _, target = spec.partition(":")
+    if o == op and target in (role, pname):
+        err("AccessDenied")
+legacy = os.environ.get("FAKE_ATTACHED", "").split()
+
+def managed(arn):
+    return ":iam::aws:policy/" not in arn
+
+if op == "list-roles":
+    print("\t".join(roles))
+elif op == "list-policies":
+    print("\t".join(f"arn:aws:iam::{os.environ.get('FAKE_ACCT', '111111111111')}:policy/{n}" for n in pols))
+elif op == "get-role":
+    if role not in roles:
+        err("NoSuchEntity")
+elif op == "create-role":
+    roles.append(role); save()
+elif op == "put-role-policy":
+    inl.setdefault(role, []).append(pname); save()
+elif op == "delete-role-policy":
+    if pname not in inl.get(role, []):
+        err("NoSuchEntity")
+    inl[role].remove(pname); save()
+elif op == "list-role-policies":
+    print("\t".join(inl.get(role, [])))
+elif op == "list-attached-role-policies":
+    print("\t".join(legacy + att.get(role, [])))
+elif op == "attach-role-policy":
+    arn = opt["policy-arn"]
+    if role not in roles or (managed(arn) and pname not in pols):
+        err("NoSuchEntity")
+    if arn not in att.setdefault(role, []):
+        att[role].append(arn)
+    save()
+elif op == "detach-role-policy":
+    arn = opt["policy-arn"]
+    if arn in legacy:
+        sys.exit(0)
+    if arn not in att.get(role, []):
+        err("NoSuchEntity")
+    att[role].remove(arn); save()
+elif op == "get-policy":
+    if pname not in pols:
+        err("NoSuchEntity")
+    print(pols[pname]["default"])
+elif op == "get-policy-version":
+    if pname not in pols:
+        err("NoSuchEntity")
+    print(json.dumps(pols[pname]["docs"][opt["version-id"]]))
+elif op == "list-policy-versions":
+    if pname not in pols:
+        err("NoSuchEntity")
+    print("\t".join(v for v in pols[pname]["docs"] if v != pols[pname]["default"]))
+elif op == "delete-policy-version":
+    if pname not in pols or opt["version-id"] not in pols[pname]["docs"]:
+        err("NoSuchEntity")
+    if opt["version-id"] == pols[pname]["default"]:
+        err("DeleteConflict")
+    del pols[pname]["docs"][opt["version-id"]]; save()
+elif op == "delete-policy":
+    if pname not in pols:
+        err("NoSuchEntity")
+    if any(opt["policy-arn"] in a for a in att.values()) or len(pols[pname]["docs"]) > 1:
+        err("DeleteConflict")
+    del pols[pname]; save()
+elif op == "create-policy":
+    if pname in pols:
+        err("EntityAlreadyExists")
+    doc = json.load(open(opt["policy-document"][len("file://"):]))
+    pols[pname] = {"default": "v1", "docs": {"v1": doc}}; save()
+elif op == "create-policy-version":
+    err("AccessDenied")  # the consumer (PEEKS) does not grant it: never called
+'''.replace("__PY__", sys.executable)
 
 
 def block(task, index, taskfile=KRO):
@@ -195,6 +311,15 @@ def block(task, index, taskfile=KRO):
 def kro_var(name):
     with open(KRO) as f:
         return yaml.safe_load(f)["vars"][name]
+
+
+def destroy_index():
+    """The destroy cmd that holds step 6 (extended sweep, role loop 6b)."""
+    with open(KRO) as f:
+        cmds = yaml.safe_load(f)["tasks"]["destroy"]["cmds"]
+    idx = [i for i, c in enumerate(cmds) if isinstance(c, dict) and "6b. ALL remaining" in c.get("cmd", "")]
+    assert len(idx) == 1, idx
+    return idx[0]
 
 
 def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
@@ -227,16 +352,49 @@ def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
     }
     if taskfile == KRO:  # kind-crossplane has no hub:bootstrap-crossplane-identity
         tf["tasks"]["bootstrap"] = {"cmds": [block("hub:bootstrap-crossplane-identity", 1)]}
+        # destroy step 6, with its own task vars; python3 is a no-op stub here (the
+        # sweep helpers it runs would call AWS) and the destroy deadline is off.
+        with open(KRO) as f:
+            dvars = yaml.safe_load(f)["tasks"]["destroy"]["vars"]
+        tf["tasks"]["sweep"] = {
+            "vars": {"DL_FN": dvars["DL_FN"], "DESTROY_DEADLINE": "0", "HUB_VPC_ID": "",
+                     "DESTROY_KEEP_DATA": "false"},
+            "cmds": [block("destroy", destroy_index())],
+        }
+        (tmp_path / "private").mkdir()
     (tmp_path / "Taskfile.yml").write_text(yaml.safe_dump(tf, sort_keys=False))
     return bin_dir
 
 
-def run(tmp_path, bin_dir, task, *task_vars, existing="", attached="", fail_put_role=""):
+def seed_state(tmp_path, roles=(), policies=None, attached=None, inline=None):
+    """policies: {name: document | [doc_v1, doc_v2, ...]} (the last one is the default)."""
+    pols = {}
+    for name, docs in (policies or {}).items():
+        docs = docs if isinstance(docs, list) else [docs]
+        pols[name] = {"default": f"v{len(docs)}", "docs": {f"v{i + 1}": d for i, d in enumerate(docs)}}
+    st = {"roles": list(roles), "policies": pols, "attached": attached or {}, "inline": inline or {}}
+    (tmp_path / "state.json").write_text(json.dumps(st))
+
+
+def state(tmp_path):
+    return json.loads((tmp_path / "state.json").read_text())
+
+
+def run(tmp_path, bin_dir, task, *task_vars, existing="", attached="", fail="", stub_python=False):
+    if not (tmp_path / "state.json").exists():
+        seed_state(tmp_path, roles=existing.split())
+    path = f"{bin_dir}:{os.environ['PATH']}"
+    if stub_python:
+        stub = tmp_path / "stubpy"
+        stub.mkdir(exist_ok=True)
+        (stub / "python3").write_text("#!/bin/sh\nexit 0\n")
+        (stub / "python3").chmod(0o755)
+        path = f"{stub}:{path}"
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
-    env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "calls.log"),
-               FAKE_EXISTING_ROLES=existing, FAKE_ATTACHED=attached, FAKE_FAIL_PUT_ROLE=fail_put_role)
+    env.update(PATH=path, FAKE_LOG=str(tmp_path / "calls.log"), FAKE_STATE=str(tmp_path / "state.json"),
+               FAKE_ATTACHED=attached, FAKE_FAIL=fail)
     r = subprocess.run([TASK, "-d", str(tmp_path), task, *task_vars], env=env,
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, timeout=120)
     log = (tmp_path / "calls.log").read_text() if (tmp_path / "calls.log").exists() else ""
     return r, r.stdout + r.stderr, log.splitlines()
 
@@ -245,19 +403,208 @@ def calls_of(log, verb):
     return [c for c in log if f"aws iam {verb} " in c]
 
 
+def arn(name):
+    return f"arn:aws:iam::{ACCT}:policy/{name}"
+
+
+XP_DOC = load_policy("crossplane-provider-policy.json")
+MGMT_DOC = load_policy("cluster-mgmt-iam-policy.json")
+HUB_POL = "pfx-hub-crossplane-provider-scoped"
+MGMT_POL = "pfx-cluster-mgmt-iam-scoped"
+
+
+def test_no_create_policy_version_and_no_inline_put_in_changed_blocks():
+    """The consumer (PEEKS) grants CreatePolicy/DeletePolicy on policy/<prefix>-* but neither
+    iam:CreatePolicyVersion nor iam:PutRolePolicy on these roles."""
+    with open(os.path.join(IAM_DIR, "managed-policy.sh")) as f:
+        assert "create-policy-version" not in f.read()
+    for taskfile, task, index in BLOCKS:
+        body = block(task, index, taskfile)
+        assert "managed-policy.sh\" ensure" in body, (task, taskfile)
+        for line in logical_lines_of(body):
+            if "put-role-policy" in line and not line.strip().startswith("#"):
+                assert not re.search(r"--policy-name (cluster-mgmt-iam|crossplane-provider)-scoped", line), line
+
+
+def logical_lines_of(text):
+    return text.replace("\\\n", " ").splitlines()
+
+
+BLOCKS = [(KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
+          (KRO, "spokes:seed-provider-identity", 0),
+          (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)]
+
+
+# managed-policy.sh on its own (same fake aws, no go-task)
+
+MP = os.path.join(IAM_DIR, "managed-policy.sh")
+
+
+def mp(tmp_path, *args, fail=""):
+    bin_dir = tmp_path / "bin"
+    if not bin_dir.exists():
+        bin_dir.mkdir()
+        (bin_dir / "aws").write_text(FAKE_AWS)
+        (bin_dir / "aws").chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
+    env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "calls.log"),
+               FAKE_STATE=str(tmp_path / "state.json"), FAKE_FAIL=fail, FAKE_ATTACHED="")
+    r = subprocess.run(["sh", MP, *args], env=env, capture_output=True, text=True, timeout=60)
+    log = (tmp_path / "calls.log").read_text().splitlines() if (tmp_path / "calls.log").exists() else []
+    return r, r.stdout + r.stderr, log
+
+
+DOC_FILE = os.path.join(IAM_DIR, "crossplane-provider-policy.json")
+
+
+@pytest.mark.parametrize("prefix,role,name", [
+    ("pfx", "pfx-hub-crossplane-provider", "pfx-hub-crossplane-provider-scoped"),
+    ("pfx", "hub-crossplane-provider", "pfx-hub-crossplane-provider-scoped"),
+    ("", "hub-crossplane-provider", "hub-crossplane-provider-scoped"),
+    ("pfx", "pfx-cluster-mgmt-iam", "pfx-cluster-mgmt-iam-scoped"),
+])
+def test_mp_name_always_carries_the_prefix(tmp_path, prefix, role, name):
+    r, out, _ = mp(tmp_path, "name", prefix, role)
+    assert r.returncode == 0 and out.strip() == name, out
+
+
+def test_mp_create_when_absent(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"])
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    assert not calls_of(log, "create-policy-version")
+
+
+def test_mp_identical_is_attach_only(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": XP_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    for verb in ("create-policy", "delete-policy", "delete-policy-version", "detach-role-policy"):
+        assert not calls_of(log, verb), (verb, log)
+    assert len(calls_of(log, "attach-role-policy")) == 1
+    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+
+
+def test_mp_identical_but_detached_is_reattached(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": XP_DOC})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    assert not calls_of(log, "create-policy")
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+
+
+def test_mp_drift_recreates_in_order_without_create_policy_version(tmp_path):
+    old = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [old, old, old]},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    ops = [c.split()[2] for c in log if c.split()[2] in (
+        "detach-role-policy", "delete-policy-version", "delete-policy", "create-policy", "attach-role-policy")]
+    assert ops == ["detach-role-policy", "delete-policy-version", "delete-policy-version",
+                   "delete-policy", "create-policy", "attach-role-policy"], ops
+    s = state(tmp_path)
+    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    assert not calls_of(log, "create-policy-version")
+
+
+def test_mp_document_compare_ignores_key_order(tmp_path):
+    reordered = json.loads(json.dumps(XP_DOC))
+    reordered = {"Statement": reordered["Statement"], "Version": reordered["Version"]}
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": reordered},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    assert not calls_of(log, "delete-policy"), log
+
+
+def test_mp_removes_legacy_inline_and_tolerates_its_absence(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r", "pfx-s"], inline={"pfx-r": ["crossplane-provider-scoped", "other"]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, "crossplane-provider-scoped")
+    assert r.returncode == 0, out
+    assert state(tmp_path)["inline"]["pfx-r"] == ["other"]
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-s", DOC_FILE, "crossplane-provider-scoped")
+    assert r.returncode == 0, out  # NoSuchEntity on the legacy inline = nothing to do
+
+
+@pytest.mark.parametrize("fail", [
+    "get-policy:pfx-r-scoped", "create-policy:pfx-r-scoped", "attach-role-policy:pfx-r",
+    "delete-role-policy:pfx-r",
+])
+def test_mp_errors_are_fatal(tmp_path, fail):
+    seed_state(tmp_path, roles=["pfx-r"], inline={"pfx-r": ["crossplane-provider-scoped"]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, "crossplane-provider-scoped", fail=fail)
+    assert r.returncode != 0, out
+    # the failing call itself is reported (not a later call failing because of it)
+    assert f"ERROR: aws iam {fail.split(':')[0]} failed" in out and "AccessDenied" in out, out
+
+
+def test_mp_missing_role_is_fatal(tmp_path):
+    seed_state(tmp_path)
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0, out
+
+
+def test_mp_failure_in_the_recreate_window_converges_on_rerun(tmp_path):
+    old = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": old},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail="create-policy:pfx-r-scoped")
+    assert r.returncode != 0, out
+    assert "pfx-r-scoped" not in state(tmp_path)["policies"]  # inside the window: no policy
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+
+
+def test_mp_delete_detaches_prunes_versions_and_deletes(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [XP_DOC, XP_DOC, XP_DOC]},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "delete", ACCT, "pfx", "pfx-r")
+    assert r.returncode == 0, out
+    assert state(tmp_path)["policies"] == {}
+    assert state(tmp_path)["attached"]["pfx-r"] == []
+    assert len(calls_of(log, "delete-policy-version")) == 2
+
+
+def test_mp_delete_absent_is_a_noop(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"])
+    r, out, log = mp(tmp_path, "delete", ACCT, "pfx", "pfx-r")
+    assert r.returncode == 0, out
+    assert not calls_of(log, "delete-policy")
+
+
+def test_mp_delete_refuses_a_policy_attached_elsewhere(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": XP_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "delete", ACCT, "pfx", "pfx-r")
+    assert r.returncode != 0 and "DeleteConflict" in out, out
+    assert state(tmp_path)["attached"]["other"] == [arn("pfx-r-scoped")]
+
+
+# The real Taskfile blocks under go-task
+
 @needs_task
-def test_bootstrap_default_puts_scoped_policy_and_attaches_nothing(tmp_path):
+def test_bootstrap_default_creates_managed_policy_and_no_admin(tmp_path):
     b = harness(tmp_path)
     r, out, log = run(tmp_path, b, "bootstrap")
     assert r.returncode == 0, out
     assert calls_of(log, "create-role"), log
-    assert not calls_of(log, "attach-role-policy"), log
-    puts = calls_of(log, "put-role-policy")
-    assert len(puts) == 1 and "--role-name hub-crossplane-provider" in puts[0]
-    assert f"file://{IAM_DIR}/crossplane-provider-policy.json" in puts[0]
-    assert not calls_of(log, "detach-role-policy"), log  # nothing attached -> nothing to detach
+    attaches = calls_of(log, "attach-role-policy")
+    assert not [a for a in attaches if ADMIN_ARN.search(a)], attaches
+    assert not calls_of(log, "put-role-policy"), log
+    s = state(tmp_path)
+    assert s["policies"][HUB_POL]["docs"] == {"v1": XP_DOC}
+    assert s["attached"]["hub-crossplane-provider"] == [arn(HUB_POL)]
     pia = [c for c in log if "create-pod-identity-association" in c]
-    assert len(pia) == 2 and all(f"role/hub-crossplane-provider" in c for c in pia), pia
+    assert len(pia) == 2 and all("role/hub-crossplane-provider" in c for c in pia), pia
 
 
 @needs_task
@@ -267,30 +614,44 @@ def test_bootstrap_detaches_legacy_administrator_access(tmp_path):
                       attached="arn:aws:iam::aws:policy/AdministratorAccess")
     assert r.returncode == 0, out
     assert not calls_of(log, "create-role")
-    det = calls_of(log, "detach-role-policy")
-    assert len(det) == 1 and "policy/AdministratorAccess" in det[0], log
+    det = [d for d in calls_of(log, "detach-role-policy") if "policy/AdministratorAccess" in d]
+    assert len(det) == 1, log
+
+
+@needs_task
+def test_bootstrap_upgrade_from_inline_converges(tmp_path):
+    """Re-run on a role an earlier version of this PR gave an inline policy."""
+    b = harness(tmp_path)
+    seed_state(tmp_path, roles=["hub-crossplane-provider"],
+               inline={"hub-crossplane-provider": ["crossplane-provider-scoped"]})
+    r, out, log = run(tmp_path, b, "bootstrap")
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["inline"]["hub-crossplane-provider"] == []
+    assert s["attached"]["hub-crossplane-provider"] == [arn(HUB_POL)]
 
 
 @needs_task
 def test_bootstrap_byo_role_is_used_as_is(tmp_path):
     b = harness(tmp_path)
-    arn = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
-    r, out, log = run(tmp_path, b, "bootstrap", f"CROSSPLANE_PROVIDER_ROLE_ARN={arn}", existing="cfn-crossplane")
+    byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
+    r, out, log = run(tmp_path, b, "bootstrap", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}", existing="cfn-crossplane")
     assert r.returncode == 0, out
-    for verb in ("create-role", "put-role-policy", "attach-role-policy", "detach-role-policy"):
+    for verb in ("create-role", "put-role-policy", "attach-role-policy", "detach-role-policy",
+                 "create-policy", "get-policy"):
         assert not calls_of(log, verb), (verb, log)
     pia = [c for c in log if "create-pod-identity-association" in c]
-    assert len(pia) == 2 and all(arn in c for c in pia), pia
+    assert len(pia) == 2 and all(byo in c for c in pia), pia
 
 
 @needs_task
-@pytest.mark.parametrize("arn,existing,msg", [
+@pytest.mark.parametrize("byo,existing,msg", [
     ("arn:aws:iam::222222222222:role/cfn-crossplane", "cfn-crossplane", "is not an IAM role ARN in account"),
     (f"arn:aws:iam::{ACCT}:role/missing", "", "does not exist"),
 ])
-def test_bootstrap_byo_role_is_validated(tmp_path, arn, existing, msg):
+def test_bootstrap_byo_role_is_validated(tmp_path, byo, existing, msg):
     b = harness(tmp_path)
-    r, out, log = run(tmp_path, b, "bootstrap", f"CROSSPLANE_PROVIDER_ROLE_ARN={arn}", existing=existing)
+    r, out, log = run(tmp_path, b, "bootstrap", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}", existing=existing)
     assert r.returncode != 0 and msg in out, out
     assert not [c for c in log if "create-pod-identity-association" in c]
 
@@ -304,10 +665,28 @@ def test_mgmt_default_no_iam_full_access(tmp_path):
     assert len(created) == 8, created
     attaches = calls_of(log, "attach-role-policy")
     assert attaches and not [a for a in attaches if ADMIN_ARN.search(a)], attaches
-    assert not [a for a in attaches if "pfx-cluster-mgmt-iam " in a + " "], attaches
     assert any("AmazonS3FullAccess" in a for a in attaches)  # other services unchanged
-    puts = [p for p in calls_of(log, "put-role-policy") if "--role-name pfx-cluster-mgmt-iam " in p]
-    assert len(puts) == 1 and f"file://{IAM_DIR}/cluster-mgmt-iam-policy.json" in puts[0], log
+    s = state(tmp_path)
+    assert s["attached"]["pfx-cluster-mgmt-iam"] == [arn(MGMT_POL)], s["attached"]
+    assert s["policies"][MGMT_POL]["docs"] == {"v1": MGMT_DOC}
+    assert not [p for p in calls_of(log, "put-role-policy") if "pfx-cluster-mgmt-iam " in p + " "], log
+
+
+@needs_task
+def test_mgmt_rerun_on_existing_roles_without_policy_converges(tmp_path):
+    """A failed earlier run left the 8 roles with no scoped policy: the re-run creates it."""
+    b = harness(tmp_path)
+    roles = [f"pfx-cluster-mgmt-{s}" for s in ("ec2", "eks", "iam", "ecr", "s3", "dynamodb", "secretsmanager", "rds")]
+    seed_state(tmp_path, roles=roles)
+    r, out, log = run(tmp_path, b, "mgmt")
+    assert r.returncode == 0, out
+    assert not calls_of(log, "create-role"), log
+    assert state(tmp_path)["attached"]["pfx-cluster-mgmt-iam"] == [arn(MGMT_POL)]
+    # and a second run is a no-op for the policy
+    r, out, log2 = run(tmp_path, b, "mgmt")
+    assert r.returncode == 0, out
+    new = log2[len(log):]
+    assert not calls_of(new, "create-policy") and not calls_of(new, "delete-policy"), new
 
 
 @needs_task
@@ -316,8 +695,8 @@ def test_mgmt_detaches_legacy_iam_full_access(tmp_path):
     r, out, log = run(tmp_path, b, "mgmt", existing="pfx-cluster-mgmt-iam",
                       attached="arn:aws:iam::aws:policy/IAMFullAccess")
     assert r.returncode == 0, out
-    det = calls_of(log, "detach-role-policy")
-    assert len(det) == 1 and "pfx-cluster-mgmt-iam" in det[0] and "IAMFullAccess" in det[0], log
+    det = [d for d in calls_of(log, "detach-role-policy") if "IAMFullAccess" in d]
+    assert len(det) == 1 and "pfx-cluster-mgmt-iam" in det[0], log
 
 
 @needs_task
@@ -331,18 +710,19 @@ def test_mgmt_byo_roles_are_used_as_is(tmp_path):
     touched = [c for c in log if re.search(r"--role-name pfx-cluster-mgmt-(iam|eks) ", c + " ")
                and " get-role " not in c and "list-attached" not in c]
     assert not touched, touched
+    assert not calls_of(log, "create-policy"), log
     assert len(calls_of(log, "create-role")) == 6, log
     # rds is not BYO here, so its inline KMS policy is still put
     assert [p for p in calls_of(log, "put-role-policy") if "pfx-cluster-mgmt-rds" in p]
 
 
 @needs_task
-@pytest.mark.parametrize("arn,existing,msg", [
+@pytest.mark.parametrize("byo,existing,msg", [
     (f"arn:aws:iam::{ACCT}:role/cfn-iam", "cfn-iam", "must be arn:aws:iam::"),
     (f"arn:aws:iam::{ACCT}:role/pfx-cluster-mgmt-iam", "", "does not exist"),
 ])
-def test_mgmt_byo_roles_are_validated(tmp_path, arn, existing, msg):
-    cfg = f"hub:\n  clusterName: hub\n  iam:\n    clusterMgmtRoleArns:\n      iam: {arn}\n"
+def test_mgmt_byo_roles_are_validated(tmp_path, byo, existing, msg):
+    cfg = f"hub:\n  clusterName: hub\n  iam:\n    clusterMgmtRoleArns:\n      iam: {byo}\n"
     b = harness(tmp_path, cfg)
     r, out, log = run(tmp_path, b, "mgmt", existing=existing)
     assert r.returncode != 0 and msg in out, out
@@ -350,95 +730,128 @@ def test_mgmt_byo_roles_are_validated(tmp_path, arn, existing, msg):
 
 
 @needs_task
-def test_bootstrap_put_failure_is_fatal(tmp_path):
+@pytest.mark.parametrize("fail", [f"create-policy:{HUB_POL}", "attach-role-policy:hub-crossplane-provider"])
+def test_bootstrap_policy_failure_is_fatal(tmp_path, fail):
     b = harness(tmp_path)
-    r, out, log = run(tmp_path, b, "bootstrap", fail_put_role="hub-crossplane-provider")
+    r, out, log = run(tmp_path, b, "bootstrap", fail=fail)
     assert r.returncode != 0, out
-    assert calls_of(log, "put-role-policy"), log
     assert not [c for c in log if "create-pod-identity-association" in c], log
 
 
 @needs_task
 def test_bootstrap_byo_role_read_from_config(tmp_path):
     """The real `sh: yq` global var reads hub.iam.crossplaneProviderRoleArn from config.local.yaml."""
-    arn = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
-    cfg = f"hub:\n  clusterName: hub\n  iam:\n    crossplaneProviderRoleArn: {arn}\n"
+    byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
+    cfg = f"hub:\n  clusterName: hub\n  iam:\n    crossplaneProviderRoleArn: {byo}\n"
     b = harness(tmp_path, cfg, real_byo_var=True)
     r, out, log = run(tmp_path, b, "bootstrap", existing="cfn-crossplane")
     assert r.returncode == 0, out
-    assert not calls_of(log, "create-role") and not calls_of(log, "put-role-policy"), log
+    assert not calls_of(log, "create-role") and not calls_of(log, "create-policy"), log
     pia = [c for c in log if "create-pod-identity-association" in c]
-    assert len(pia) == 2 and all(arn in c for c in pia), pia
+    assert len(pia) == 2 and all(byo in c for c in pia), pia
 
 
 @needs_task
-def test_mgmt_put_failure_is_fatal(tmp_path):
+@pytest.mark.parametrize("fail", [f"create-policy:{MGMT_POL}", "attach-role-policy:pfx-cluster-mgmt-iam",
+                                  "delete-role-policy:pfx-cluster-mgmt-iam"])
+def test_mgmt_policy_failure_is_fatal(tmp_path, fail):
     b = harness(tmp_path)
-    r, out, log = run(tmp_path, b, "mgmt", fail_put_role="pfx-cluster-mgmt-iam")
+    seed_state(tmp_path, inline={"pfx-cluster-mgmt-iam": ["cluster-mgmt-iam-scoped"]})
+    r, out, log = run(tmp_path, b, "mgmt", fail=fail)
     assert r.returncode != 0, out
-    assert [p for p in calls_of(log, "put-role-policy") if "pfx-cluster-mgmt-iam " in p + " "], log
+
+
+SPOKE_ROLES = ["spoke1-CrossplaneEKSProviderRole", "spoke1-CrossplaneIAMProviderRole"]
 
 
 @needs_task
-def test_seed_provider_identity_puts_scoped_policy(tmp_path):
-    b = harness(tmp_path)
+@pytest.mark.parametrize("taskfile", [KRO, XP])
+def test_seed_provider_identity_creates_managed_policies(tmp_path, taskfile):
+    b = harness(tmp_path, taskfile=taskfile)
     r, out, log = run(tmp_path, b, "seed")
     assert r.returncode == 0, out
-    assert not calls_of(log, "attach-role-policy"), log
-    puts = calls_of(log, "put-role-policy")
-    roles = sorted(re.search(r"--role-name (\S+)", p).group(1) for p in puts)
-    assert roles == ["spoke1-CrossplaneEKSProviderRole", "spoke1-CrossplaneIAMProviderRole"], puts
-    assert all(f"file://{IAM_DIR}/crossplane-provider-policy.json" in p for p in puts), puts
-    assert os.path.isfile(os.path.join(IAM_DIR, "crossplane-provider-policy.json"))
+    assert not calls_of(log, "put-role-policy"), log
+    s = state(tmp_path)
+    for role in SPOKE_ROLES:
+        assert s["attached"][role] == [arn(f"pfx-{role}-scoped")], s["attached"]
+        assert s["policies"][f"pfx-{role}-scoped"]["docs"] == {"v1": XP_DOC}
     assert not [c for c in log if "--role-name hub-" in c], log  # the hub is excluded
 
 
 @needs_task
-def test_seed_provider_identity_put_failure_is_fatal(tmp_path):
-    b = harness(tmp_path)
-    r, out, log = run(tmp_path, b, "seed", fail_put_role="spoke1-CrossplaneIAMProviderRole")
+@pytest.mark.parametrize("taskfile", [KRO, XP])
+def test_seed_provider_identity_policy_failure_is_fatal(tmp_path, taskfile):
+    b = harness(tmp_path, taskfile=taskfile)
+    r, out, log = run(tmp_path, b, "seed", fail="create-policy:pfx-spoke1-CrossplaneIAMProviderRole-scoped")
     assert r.returncode != 0, out
     assert not [c for c in log if "create-pod-identity-association" in c], log
 
 
-# kind-crossplane: same blocks, same fake aws (no BYO, no detach there).
-
 @needs_task
-def test_kind_crossplane_mgmt_puts_scoped_policy_and_no_admin(tmp_path):
+def test_kind_crossplane_mgmt_creates_managed_policy_and_no_admin(tmp_path):
     b = harness(tmp_path, taskfile=XP)
+    seed_state(tmp_path, inline={"pfx-cluster-mgmt-iam": ["cluster-mgmt-iam-scoped"]})
     r, out, log = run(tmp_path, b, "mgmt")
     assert r.returncode == 0, out
     attaches = calls_of(log, "attach-role-policy")
     assert not [a for a in attaches if ADMIN_ARN.search(a)], attaches
-    assert not [a for a in attaches if "pfx-cluster-mgmt-iam " in a + " "], attaches
-    puts = [p for p in calls_of(log, "put-role-policy") if "--role-name pfx-cluster-mgmt-iam " in p]
-    assert len(puts) == 1 and f"file://{IAM_DIR}/cluster-mgmt-iam-policy.json" in puts[0], log
+    s = state(tmp_path)
+    assert s["attached"]["pfx-cluster-mgmt-iam"] == [arn(MGMT_POL)]
+    assert s["inline"]["pfx-cluster-mgmt-iam"] == []  # legacy inline removed
 
 
 @needs_task
-def test_kind_crossplane_mgmt_put_failure_is_fatal(tmp_path):
+def test_kind_crossplane_mgmt_policy_failure_is_fatal(tmp_path):
     b = harness(tmp_path, taskfile=XP)
-    r, out, log = run(tmp_path, b, "mgmt", fail_put_role="pfx-cluster-mgmt-iam")
+    r, out, log = run(tmp_path, b, "mgmt", fail=f"create-policy:{MGMT_POL}")
     assert r.returncode != 0, out
 
 
+# Teardown: kind-kro-ack destroy step 6b deletes the scoped managed policies of the roles
+# it deletes (detach, non-default versions, delete), before the role itself.
+
 @needs_task
-def test_kind_crossplane_seed_puts_scoped_policy(tmp_path):
+def test_destroy_sweep_deletes_scoped_managed_policies(tmp_path):
+    b = harness(tmp_path)
+    roles = ["pfx-cluster-mgmt-iam", "pfx-hub-crossplane-provider", "pfx-spoke1-CrossplaneIAMProviderRole"]
+    pols = {f"{r}-scoped": [XP_DOC, XP_DOC] for r in roles}
+    seed_state(tmp_path, roles=roles, policies=pols, attached={r: [arn(f"{r}-scoped")] for r in roles})
+    r, out, log = run(tmp_path, b, "sweep", stub_python=True)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["policies"] == {}, s["policies"]
+    for role in roles:
+        assert s["attached"][role] == []
+        order = [c.split()[2] for c in log if (f"policy/{role}-scoped" in c) or (f"--role-name {role}" in c and " delete-role " in c + " ")]
+        assert "delete-policy" in order and order.index("delete-policy") < order.index("delete-role"), order
+        assert order.index("delete-policy-version") < order.index("delete-policy"), order
+    assert "iam-scoped-policy(6b)" not in ((tmp_path / "private" / "destroy-sweep-failures").read_text()
+                                           if (tmp_path / "private" / "destroy-sweep-failures").exists() else "")
+
+
+@needs_task
+def test_destroy_sweep_records_a_failed_scoped_policy_delete(tmp_path):
+    b = harness(tmp_path)
+    seed_state(tmp_path, roles=["pfx-cluster-mgmt-iam"], policies={MGMT_POL: MGMT_DOC},
+               attached={"pfx-cluster-mgmt-iam": [arn(MGMT_POL)]})
+    r, out, log = run(tmp_path, b, "sweep", stub_python=True, fail=f"delete-policy:{MGMT_POL}")
+    assert "could not delete the scoped managed policy of pfx-cluster-mgmt-iam" in out, out
+    assert "iam-scoped-policy(6b)" in (tmp_path / "private" / "destroy-sweep-failures").read_text()
+
+
+def test_destroy_role_loop_deletes_the_scoped_policy_before_the_role():
+    body = block("destroy", destroy_index())
+    sixb = body[body.index("6b. ALL remaining"):body.index("6b2.")]
+    assert sixb.index('managed-policy.sh" delete') < sixb.index("aws iam delete-role --role-name"), sixb
+
+
+@needs_task
+def test_kind_crossplane_seed_upgrade_from_inline(tmp_path):
     b = harness(tmp_path, taskfile=XP)
+    seed_state(tmp_path, roles=SPOKE_ROLES, inline={r: ["crossplane-provider-scoped"] for r in SPOKE_ROLES})
     r, out, log = run(tmp_path, b, "seed")
     assert r.returncode == 0, out
-    assert not calls_of(log, "attach-role-policy"), log
-    puts = calls_of(log, "put-role-policy")
-    roles = sorted(re.search(r"--role-name (\S+)", p).group(1) for p in puts)
-    assert roles == ["spoke1-CrossplaneEKSProviderRole", "spoke1-CrossplaneIAMProviderRole"], puts
-    assert all(f"file://{IAM_DIR}/crossplane-provider-policy.json" in p for p in puts), puts
-
-
-@needs_task
-def test_kind_crossplane_seed_put_failure_is_fatal(tmp_path):
-    b = harness(tmp_path, taskfile=XP)
-    r, out, log = run(tmp_path, b, "seed", fail_put_role="spoke1-CrossplaneIAMProviderRole")
-    assert r.returncode != 0, out
+    assert all(state(tmp_path)["inline"][r] == [] for r in SPOKE_ROLES)
 
 
 # ------------------------------------------------------------------ 4. config schema
@@ -464,4 +877,10 @@ def test_blocks_shellcheck(tmp_path, taskfile, task, index):
     p = tmp_path / "b.sh"
     p.write_text("#!/bin/bash\n" + body)
     r = subprocess.run(["shellcheck", "-S", "error", str(p)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout
+
+
+@pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
+def test_managed_policy_script_shellcheck():
+    r = subprocess.run(["shellcheck", "-s", "sh", MP], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout
