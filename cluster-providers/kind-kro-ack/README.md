@@ -123,6 +123,29 @@ Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `
 > Prevention and recovery steps:
 > [custom-install.md, section 3a](../../docs/install/custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
 
+## IAM roles created by `task install`
+
+`task install` never attaches an admin-like AWS managed policy (`AdministratorAccess`,
+`PowerUserAccess`, `IAMFullAccess`). A consumer can therefore deny that on the installing role
+(an `iam:AttachRolePolicy` Deny with an `iam:PolicyARN` condition) without breaking the install.
+
+| Role | Policy |
+|---|---|
+| `<hub>-crossplane-provider` (Crossplane provider-aws-iam/eks) | inline `crossplane-provider-scoped` = [`common/iam/crossplane-provider-policy.json`](../common/iam/crossplane-provider-policy.json) |
+| `<prefix>-cluster-mgmt-iam` (ACK iam) | inline `cluster-mgmt-iam-scoped` = [`common/iam/cluster-mgmt-iam-policy.json`](../common/iam/cluster-mgmt-iam-policy.json) |
+| other `<prefix>-cluster-mgmt-<svc>` | unchanged service managed policies (`AmazonEC2FullAccess`, `AmazonS3FullAccess`, …) |
+
+Both scoped policies keep `iam:*` on roles, policies, instance profiles and OIDC providers: the
+Crossplane and ACK IAM controllers create roles with arbitrary names for the addons and apps.
+They no longer grant IAM users, groups, access keys or account settings, nor any non-IAM service
+(except EKS for the Crossplane role). This is not a privilege boundary: a principal that can
+create a role and write its policy can still grant itself more.
+
+To create these roles yourself (for example in CloudFormation), set their ARNs under `hub.iam`
+(see `config.yaml`). A set ARN is used as is: no create, no trust update, no policy. Each
+`clusterMgmtRoleArns.<svc>` must be named `<resourcePrefix>-cluster-mgmt-<svc>`, because the
+IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
+
 ## Credentials on Kind
 
 ACK controllers on Kind cannot use Pod Identity (no IMDS). The Taskfile creates an `aws-credentials` Secret and configures each ACK controller Helm chart with:

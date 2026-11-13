@@ -60,6 +60,14 @@ hub:
       enabled: true
     ack:
       enabled: true
+  # Optional (kind-kro-ack): bring your own IAM roles, e.g. created by CloudFormation.
+  # Empty (default) = `task install` creates them. Set = that role is used as is: the
+  # install does not create it, change its trust, or put/attach any policy on it.
+  # iam:
+  #   crossplaneProviderRoleArn: ""          # Crossplane provider-aws-iam/eks bootstrap role (trust pods.eks.amazonaws.com)
+  #   clusterMgmtRoleArns:                   # per service; the name MUST be <resourcePrefix>-cluster-mgmt-<service>
+  #     iam: "arn:aws:iam::<account-id>:role/<prefix>-cluster-mgmt-iam"
+  #     # ec2, eks, ecr, s3, dynamodb, secretsmanager, rds work the same way
 
 # AWS configuration
 aws:
