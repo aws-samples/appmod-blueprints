@@ -52,8 +52,9 @@ vars:
         echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"
       fi
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
-  # Fixed least-privilege policy documents put inline on the roles this provider creates
-  # (Crossplane bootstrap role, cluster-mgmt-iam). No AWS-managed admin-like policy
+  # Fixed least-privilege policy documents, created as customer-managed <prefix>-*-scoped
+  # policies (common/iam/managed-policy.sh) on the roles this provider creates (Crossplane
+  # bootstrap role, cluster-mgmt-iam). No AWS-managed admin-like policy
   # (AdministratorAccess / PowerUserAccess / IAMFullAccess) is attached by `task install`.
   IAM_POLICY_DIR: "{{.ROOT_DIR}}/cluster-providers/common/iam"
   # Bring-your-own Crossplane bootstrap role (hub.iam.crossplaneProviderRoleArn). Empty =
@@ -1848,11 +1849,14 @@ tasks:
           aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
             aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
               --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
-          # Scoped inline policy (IAM roles/policies/OIDC + EKS), not AdministratorAccess:
-          # the installing principal never attaches an admin-like AWS managed policy, so a
-          # consumer can deny that on its own role (iam:PolicyARN condition).
-          aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name crossplane-provider-scoped \
-            --policy-document "file://{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json"
+          # Scoped customer-managed policy <hub>-crossplane-provider-scoped (IAM roles/policies/
+          # OIDC + EKS), not AdministratorAccess: the installing principal never attaches an
+          # admin-like AWS managed policy, so a consumer can deny that on its own role
+          # (iam:PolicyARN condition). Managed, not inline: a consumer may allow
+          # iam:PutRolePolicy only on a few named roles. managed-policy.sh also removes the
+          # inline crossplane-provider-scoped an earlier install put.
+          sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+            "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" crossplane-provider-scoped
           # Older installs attached AdministratorAccess here. Detach it when present
           # (best-effort: the installing principal may lack iam:DetachRolePolicy).
           # This only runs when the task runs: on a live hub whose two PIAs exist the
@@ -3066,6 +3070,11 @@ tasks:
             # stack is "<prefix>-workshop" (no "-team-stack-"), so match the stack-name prefix too:
             # deleting them breaks the stack's custom-resource Lambdas during delete-stack.
             case "$ROLE" in "${PREFIX}-workshop-"*) echo "  skip role $ROLE (CloudFormation stack role — not swept)"; continue ;; esac
+            # The scoped customer-managed policy `task install` created for this role
+            # (<role>-scoped, see common/iam/managed-policy.sh): detach, delete its
+            # non-default versions, delete it. A no-op for roles that have none.
+            sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" delete "{{.AWS_ACCOUNT_ID}}" "$PREFIX" "$ROLE" >/dev/null \
+              || { echo "  ⚠ could not delete the scoped managed policy of $ROLE (6b)"; { echo "iam-scoped-policy(6b)" >> "$FAILED"; } 2>/dev/null || true; }
             for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
               aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
             done
@@ -4271,9 +4280,10 @@ tasks:
           case $1 in
             ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
             eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
-            # iam: no managed policy. It gets the inline cluster-mgmt-iam-policy.json below
-            # (IAM roles/policies/OIDC only) instead of IAMFullAccess, so `task install`
-            # never attaches an admin-like AWS managed policy.
+            # iam: no AWS managed policy. It gets the customer-managed
+            # <prefix>-cluster-mgmt-iam-scoped (cluster-mgmt-iam-policy.json: IAM roles/
+            # policies/OIDC only) below instead of IAMFullAccess, so `task install` never
+            # attaches an admin-like AWS managed policy.
             iam) echo "";;
             ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
             s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
@@ -4323,12 +4333,15 @@ tasks:
         done
         # Wait for all role creations to complete
         for _pid in $_PIDS; do wait "$_pid" || true; done
-        # cluster-mgmt-iam: scoped inline policy instead of IAMFullAccess (done here, not in
-        # the parallel subshells above, so a failure stops the install instead of being lost).
+        # cluster-mgmt-iam: scoped customer-managed policy <prefix>-cluster-mgmt-iam-scoped
+        # instead of IAMFullAccess (done here, not in the parallel subshells above, so a
+        # failure stops the install instead of being lost). managed-policy.sh creates or
+        # recreates it (no CreatePolicyVersion), attaches it, and removes the inline
+        # cluster-mgmt-iam-scoped an earlier install put on the role.
         IAM_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-iam"
         if ! is_byo iam; then
-          aws iam put-role-policy --role-name "$IAM_ROLE" --policy-name cluster-mgmt-iam-scoped \
-            --policy-document "file://{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
+          sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+            "$IAM_ROLE" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json" cluster-mgmt-iam-scoped
           # Older installs attached IAMFullAccess. Detach it when present (best-effort).
           # This task has no status gate, so this runs on every `task install`.
           ATTACHED=$(aws iam list-attached-role-policies --role-name "$IAM_ROLE" \
@@ -4630,9 +4643,10 @@ tasks:
               else
                 printf '{{.C_INFO}}  %s: role %s exists{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
               fi
-              # 2. Scoped inline policy, not AdministratorAccess (idempotent)
-              aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name crossplane-provider-scoped \
-                --policy-document "file://{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" >/dev/null
+              # 2. Scoped customer-managed policy, not AdministratorAccess (idempotent;
+              #    managed-policy.sh, see hub:bootstrap-crossplane-identity)
+              sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+                "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" crossplane-provider-scoped >/dev/null
               # 3. Pod Identity association on the spoke (idempotent)
               EXISTING=$(aws eks list-pod-identity-associations --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
                 --namespace crossplane-system --service-account "$SA" \
