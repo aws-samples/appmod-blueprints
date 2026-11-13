@@ -1510,27 +1510,29 @@ def ray_resource_names(prefix, account):
     return RAY_BUCKET.format(p=prefix, a=account), [r.format(p=prefix) for r in RAY_ECR_REPOS]
 
 
-def bucket_region(s3, bucket):
-    loc = s3.get_bucket_location(Bucket=bucket).get('LocationConstraint')
+def bucket_region(s3, bucket, owner):
+    loc = s3.get_bucket_location(Bucket=bucket, ExpectedBucketOwner=owner).get('LocationConstraint')
     return {None: 'us-east-1', '': 'us-east-1', 'EU': 'eu-west-1'}.get(loc, loc)
 
 
-def empty_bucket(s3, bucket):
+def empty_bucket(s3, bucket, owner):
     """Delete every object version and delete marker (a versioned bucket cannot be
-    deleted otherwise). Returns the number of keys removed."""
-    n, kw = 0, {'Bucket': bucket}
+    deleted otherwise), only while the bucket is owned by account owner (S3 answers
+    403 otherwise). Returns the number of keys removed."""
+    n, kw = 0, {'Bucket': bucket, 'ExpectedBucketOwner': owner}
     while True:
         resp = s3.list_object_versions(**kw)
         keys = [{'Key': o['Key'], 'VersionId': o['VersionId']}
                 for o in (resp.get('Versions') or []) + (resp.get('DeleteMarkers') or [])]
         for i in range(0, len(keys), 1000):
-            out = s3.delete_objects(Bucket=bucket, Delete={'Objects': keys[i:i + 1000], 'Quiet': True})
+            out = s3.delete_objects(Bucket=bucket, ExpectedBucketOwner=owner,
+                                    Delete={'Objects': keys[i:i + 1000], 'Quiet': True})
             if out.get('Errors'):
                 raise RuntimeError(f'An error occurred ({out["Errors"][0].get("Code", "DeleteObjects")})')
             n += len(keys[i:i + 1000])
         if not resp.get('IsTruncated'):
             return n
-        kw = {'Bucket': bucket, 'KeyMarker': resp.get('NextKeyMarker'),
+        kw = {'Bucket': bucket, 'ExpectedBucketOwner': owner, 'KeyMarker': resp.get('NextKeyMarker'),
               'VersionIdMarker': resp.get('NextVersionIdMarker')}
 
 
@@ -1539,7 +1541,9 @@ def sweep_ray_resources(s3, ecr, prefix, account, region, keep_data=False, dry_r
     (with their images) of this prefix and account. keep_data keeps them all (the
     bucket holds downloaded models, the repos the built images). A bucket in another
     region is kept: another install of the same prefix and account owns it. Not found
-    is done. Returns (n deleted (dry-run: would delete), failures [tag])."""
+    is done. Bucket names are global: every S3 call passes ExpectedBucketOwner=account,
+    so a bucket of that name owned by another account is never touched (403: a failure,
+    not deleted). Returns (n deleted (dry-run: would delete), failures [tag])."""
     bucket, repos = ray_resource_names(prefix, account)
     if not bucket:
         log('  ray resources: no prefix or account id: not swept')
@@ -1551,7 +1555,7 @@ def sweep_ray_resources(s3, ecr, prefix, account, region, keep_data=False, dry_r
     verb = 'would delete' if dry_run else 'delete'
     n, failed = 0, []
     try:
-        s3.head_bucket(Bucket=bucket)
+        s3.head_bucket(Bucket=bucket, ExpectedBucketOwner=account)
         present = True
     except Exception as e:
         reraise_credentials(e)
@@ -1566,7 +1570,7 @@ def sweep_ray_resources(s3, ecr, prefix, account, region, keep_data=False, dry_r
             failed.append(f's3:{bucket}')
     if present:
         try:
-            where = bucket_region(s3, bucket)
+            where = bucket_region(s3, bucket, account)
             if where != region:
                 log(f'  keep s3://{bucket}: it is in {where}, not {region} (another install of {prefix})')
             else:
@@ -1574,8 +1578,8 @@ def sweep_ray_resources(s3, ecr, prefix, account, region, keep_data=False, dry_r
                 if dry_run:
                     n += 1
                 else:
-                    k = empty_bucket(s3, bucket)
-                    s3.delete_bucket(Bucket=bucket)
+                    k = empty_bucket(s3, bucket, account)
+                    s3.delete_bucket(Bucket=bucket, ExpectedBucketOwner=account)
                     log(f'  ✓ deleted s3://{bucket} ({k} object version(s) removed)')
                     n += 1
         except Exception as e:

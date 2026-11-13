@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep-ray-resources.py PREFIX AWS_REGION HUB ACCOUNT_ID [--keep-data]
+sweep-ray-resources.py PREFIX AWS_REGION HUB [ACCOUNT_ID] [--keep-data]
                        [--dry-run [--assume-deleted HUB]]
 
 task <provider>:destroy, after the hub cluster is deleted. Deletes what
@@ -14,6 +14,10 @@ Only these exact names, never a PREFIX-* pattern. Nothing while HUB is still a l
 cluster (Ray still uses them). --keep-data (DESTROY_KEEP_DATA=true) keeps them all.
 A read or delete error is logged with the AWS error code only and recorded in
 destroy-sweep-failures for destroy's final check. Never fails destroy (exit 0).
+The account is the one the credentials resolve to (STS GetCallerIdentity); an empty
+or "null" ACCOUNT_ID takes it, another ACCOUNT_ID sweeps nothing (recorded). Every S3
+call passes ExpectedBucketOwner=<that account>: bucket names are global, so a bucket
+of that name owned by another account is never touched.
 """
 import os
 import sys
@@ -22,12 +26,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
 
 
-def main(argv, eks=None, s3=None, ecr=None, out=sys.stdout):
+def main(argv, eks=None, s3=None, ecr=None, sts=None, out=sys.stdout):
     pos, o = sl.parse_common(argv, __doc__)
-    if len(pos) < 4 or not all(pos[:4]):
+    if len(pos) < 3 or not all(pos[:3]):
         print(__doc__, file=sys.stderr)
         return 2
-    prefix, region, hub, account = pos[:4]
+    prefix, region, hub = pos[:3]
+    given = pos[3] if len(pos) > 3 and pos[3] not in ('null', 'None') else ''
     try:
         eks = eks or sl.client('eks', region)
         live = sl.live_clusters(sl.cluster_inventory(eks), o['assume_deleted'])
@@ -38,6 +43,18 @@ def main(argv, eks=None, s3=None, ecr=None, out=sys.stdout):
         return 0
     if hub in live:
         print(f'  skip Ray resources: hub {hub} is still {live[hub]["status"]} (Ray still uses them)', file=out)
+        return 0
+    try:
+        sts = sts or sl.client('sts', region)
+        account = sts.get_caller_identity()['Account']
+    except Exception as e:
+        sl.reraise_credentials(e)
+        print(f'  ⚠ cannot resolve the AWS account ({sl.err_code(e)}): Ray resources not swept', file=out)
+        sl.record_failure('sweep-ray-resources(sts)')
+        return 0
+    if given and given != account:
+        print('  ⚠ the credentials are for another AWS account than ACCOUNT_ID: Ray resources not swept', file=out)
+        sl.record_failure('sweep-ray-resources(account)')
         return 0
     try:
         s3 = s3 or sl.client('s3', region)

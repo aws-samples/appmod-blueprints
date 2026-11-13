@@ -209,9 +209,12 @@ Authorization and teardown therefore key on something other than the name:
   answers `ResourceInUseException`, and the secret sweep includes secrets already scheduled
   for deletion. Step 2d (`scripts/sweep-ray-resources.py`) then deletes what `ray:setup`
   creates with the AWS CLI and no CR owns, by exact name only: the model bucket
-  `<prefix>-ray-models-<account>` (emptied first, every version) and the ECR repos
+  `<prefix>-ray-models-<account>` (emptied first, every version; every S3 call passes
+  `ExpectedBucketOwner=<account>`, the account the credentials resolve to, so a bucket of
+  that name in another account is never touched) and the ECR repos
   `<prefix>-ray-vllm-custom` / `<prefix>-ray-neuron-custom`; `kind-crossplane` destroy runs
-  the same two sweeps (deliveries, Ray) in its Phase 6b. `DESTROY_KEEP_DATA=true task destroy`
+  the same two sweeps (deliveries, Ray) in its Phase 6b (skipped, with a message, when
+  `python3` or `boto3` is missing). `DESTROY_KEEP_DATA=true task destroy`
   keeps those EBS volumes, the Ray bucket and repos, and takes a
   final snapshot of the DevLake databases before deleting them (default: deleted without a
   snapshot).

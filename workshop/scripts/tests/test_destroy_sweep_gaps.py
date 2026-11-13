@@ -199,24 +199,35 @@ def test_log_deliveries_cli_never_fails(capsys):
 # -------------------------------------------------------- 2 + 3. Ray bucket, repos
 
 class FakeS3:
-    def __init__(self, buckets, region=REGION, versions=2500, head_error=None, fail=()):
-        self.buckets, self.region = set(buckets), region
+    """owner: the account that owns the buckets. Every call must pass
+    ExpectedBucketOwner; S3 answers 403 when it is another account."""
+
+    def __init__(self, buckets, region=REGION, versions=2500, head_error=None, fail=(), owner=ACCT):
+        self.buckets, self.region, self.owner = set(buckets), region, owner
         self.objects = [{"Key": f"models/m/{i}", "VersionId": f"v{i}"} for i in range(versions)]
         self.markers = [{"Key": "models/m/0", "VersionId": "dm0"}]
         self.head_error, self.fail = head_error, set(fail)
         self.calls = []
 
-    def head_bucket(self, Bucket):
+    def _own(self, owner):
+        assert owner, "ExpectedBucketOwner not passed"
+        if owner != self.owner:
+            raise AwsError("403")
+
+    def head_bucket(self, Bucket, ExpectedBucketOwner=None):
         self.calls.append(("head_bucket", Bucket))
+        self._own(ExpectedBucketOwner)
         if self.head_error:
             raise AwsError(self.head_error)
         if Bucket not in self.buckets:
             raise AwsError("404")
 
-    def get_bucket_location(self, Bucket):
+    def get_bucket_location(self, Bucket, ExpectedBucketOwner=None):
+        self._own(ExpectedBucketOwner)
         return {"LocationConstraint": None if self.region == "us-east-1" else self.region}
 
-    def list_object_versions(self, Bucket, KeyMarker=None, VersionIdMarker=None):
+    def list_object_versions(self, Bucket, ExpectedBucketOwner=None, KeyMarker=None, VersionIdMarker=None):
+        self._own(ExpectedBucketOwner)
         start = int(KeyMarker or 0)
         page = self.objects[start:start + 1000]
         resp = {"Versions": page, "IsTruncated": start + 1000 < len(self.objects)}
@@ -226,13 +237,15 @@ class FakeS3:
             resp.update(NextKeyMarker=str(start + 1000), NextVersionIdMarker="x")
         return resp
 
-    def delete_objects(self, Bucket, Delete):
+    def delete_objects(self, Bucket, Delete, ExpectedBucketOwner=None):
+        self._own(ExpectedBucketOwner)
         assert len(Delete["Objects"]) <= 1000
         self.calls.append(("delete_objects", len(Delete["Objects"])))
         return {}
 
-    def delete_bucket(self, Bucket):
+    def delete_bucket(self, Bucket, ExpectedBucketOwner=None):
         self.calls.append(("delete_bucket", Bucket))
+        self._own(ExpectedBucketOwner)
         if "delete_bucket" in self.fail:
             raise AwsError("BucketNotEmpty")
         self.buckets.discard(Bucket)
@@ -309,6 +322,53 @@ def test_no_account_sweeps_nothing():
     assert s3.calls == []
 
 
+class FakeSts:
+    def __init__(self, account=ACCT, error=None):
+        self.account, self.error = account, error
+
+    def get_caller_identity(self):
+        if self.error:
+            raise AwsError(self.error)
+        return {"Account": self.account}
+
+
+class NoEks:
+    def list_clusters(self, **_):
+        return {"clusters": []}
+
+
+def test_bucket_of_that_name_owned_by_another_account_is_not_touched():
+    """Bucket names are global: the name alone does not prove the bucket is ours."""
+    s3 = FakeS3({BUCKET}, owner="444455556666")
+    n, failed = sl.sweep_ray_resources(s3, FakeEcr(set()), PREFIX, ACCT, REGION)
+    assert (n, failed) == (0, [f"s3:{BUCKET}"])
+    assert [c[0] for c in s3.calls] == ["head_bucket"] and s3.buckets == {BUCKET}
+
+
+@pytest.mark.parametrize("arg", ["", "null"])
+def test_ray_cli_takes_the_account_from_sts_when_not_given(arg):
+    mod = load("sweep-ray-resources.py")
+    s3 = FakeS3({BUCKET})
+    assert mod.main([PREFIX, REGION, HUB, arg], eks=NoEks(), s3=s3, ecr=FakeEcr(set()), sts=FakeSts()) == 0
+    assert ("delete_bucket", BUCKET) in s3.calls
+
+
+def test_ray_cli_sweeps_nothing_when_the_credentials_are_another_account(tmp_path, capsys, monkeypatch):
+    mod = load("sweep-ray-resources.py")
+    failures = tmp_path / "failures"
+    monkeypatch.setenv("SWEEP_FAILURES_FILE", str(failures))
+    s3, ecr = FakeS3({BUCKET}), FakeEcr({VLLM})
+    assert mod.main([PREFIX, REGION, HUB, ACCT], eks=NoEks(), s3=s3, ecr=ecr,
+                    sts=FakeSts("444455556666")) == 0
+    assert s3.calls == [] and ecr.calls == []
+    assert mod.main([PREFIX, REGION, HUB, ACCT], eks=NoEks(), s3=s3, ecr=ecr,
+                    sts=FakeSts(error="ExpiredToken")) == 0
+    assert s3.calls == [] and ecr.calls == []
+    assert failures.read_text() == "sweep-ray-resources(account)\nsweep-ray-resources(sts)\n"
+    out = capsys.readouterr().out
+    assert ACCT not in out and "444455556666" not in out
+
+
 def test_ray_cli_skips_while_the_hub_is_live_and_records_failures(tmp_path, capsys, monkeypatch):
     mod = load("sweep-ray-resources.py")
     failures = tmp_path / "failures"
@@ -327,7 +387,7 @@ def test_ray_cli_skips_while_the_hub_is_live_and_records_failures(tmp_path, caps
     assert mod.main([PREFIX, REGION, HUB, ACCT], eks=Eks([HUB]), s3=s3, ecr=ecr) == 0
     assert "skip Ray resources" in capsys.readouterr().out and s3.calls == [] and ecr.calls == []
     assert mod.main([PREFIX, REGION, HUB, ACCT], eks=Eks([]), s3=FakeS3({BUCKET}, head_error="403"),
-                    ecr=FakeEcr(set())) == 0
+                    ecr=FakeEcr(set()), sts=FakeSts()) == 0
     assert failures.read_text() == f"sweep-ray-resources(s3:{BUCKET})\n"
     assert ACCT not in capsys.readouterr().out.replace(BUCKET, "")
 
@@ -360,6 +420,10 @@ class _Client:
                                        for i, src, d in fx["deliveries"]]}
             if (s, op) == ("logs", "describe_delivery_destinations"):
                 return {"deliveryDestinations": [{"name": d, "arn": "arn:dest/" + d} for d in fx["dests"]]}
+            if (s, op) == ("sts", "get_caller_identity"):
+                return {"Account": fx["account"]}
+            if s == "s3" and kw.get("ExpectedBucketOwner") != fx["account"]:
+                raise ClientError("403", op)
             if (s, op) == ("s3", "head_bucket"):
                 if kw["Bucket"] not in fx["buckets"]:
                     raise ClientError("404", "HeadBucket")
@@ -403,7 +467,7 @@ if args[:2] == ["logs", "describe-deliveries"]:
 '''
 
 FX = {
-    "region": REGION,
+    "region": REGION, "account": ACCT,
     "sources": {f"{HUB}-kro": cap_arn(HUB), f"{PREFIX}-spoke-dev-kro": cap_arn(f"{PREFIX}-spoke-dev"),
                 f"{PREFIX}-dev-kro": cap_arn(f"{PREFIX}-dev"), "ha-dev-kro": cap_arn("ha-dev")},
     "dests": [f"{HUB}-kro-cwl", f"{PREFIX}-spoke-dev-kro-cwl", f"{PREFIX}-dev-kro-cwl", "ha-dev-kro-cwl"],
