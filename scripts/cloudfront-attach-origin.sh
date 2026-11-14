@@ -31,6 +31,8 @@
 #   RESOURCE_PREFIX       ownership tag value          (default: .resourcePrefix;
 #                         required only when a new VPC origin is created)
 #   CF_TIMEOUT_SECONDS    VPC origin deploy budget     (default: 1200; measured ~540s)
+#   LBC_UNSTICK_AFTER / _GAP / _MAX   late-ALB controller check (default 480 / 180 / 2),
+#                         see scripts/lbc-unstick.sh
 #
 # Exit: 0 ok or already correct · 1 bad prerequisite · 2 VPC origin never deployed
 set -uo pipefail
@@ -81,6 +83,7 @@ command -v jq  >/dev/null 2>&1 || die "jq not found"
 ALB_WAIT="${ALB_WAIT_SECONDS:-1800}"
 ALB=""
 WAITED=0
+rm -f "${LBC_UNSTICK_STATE:-/tmp/lbc-unstick.state}"
 while :; do
   ALB=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --region "$REGION" \
     --query 'LoadBalancers[0].[LoadBalancerArn,DNSName,Scheme,State.Code]' --output text 2>/dev/null)
@@ -90,7 +93,13 @@ while :; do
      Run this AFTER 'task install' has finished and the platform ingresses have an address.
      Check:  kubectl get ingress -A"
   fi
-  [ "$((WAITED % 60))" -eq 0 ] && log "waiting for ALB '$ALB_NAME' (created by the load balancer controller): ${WAITED}s/${ALB_WAIT}s"
+  if [ "$((WAITED % 60))" -eq 0 ]; then
+    log "waiting for ALB '$ALB_NAME' (created by the load balancer controller): ${WAITED}s/${ALB_WAIT}s"
+    # Late ALB: look at the controller itself (nothing before LBC_UNSTICK_AFTER, default 480s;
+    # bounded, never fatal). See scripts/lbc-unstick.sh.
+    HUB_CLUSTER_NAME="$HUB_CLUSTER_NAME" AWS_REGION="$REGION" \
+      bash "$(dirname "$0")/lbc-unstick.sh" "$WAITED" 2>&1 | while IFS= read -r l; do log "$l"; done || true
+  fi
   sleep 15; WAITED=$((WAITED + 15))
 done
 ALB_ARN=$(printf '%s' "$ALB" | awk '{print $1}')
