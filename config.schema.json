@@ -196,6 +196,33 @@
               }
             }
           }
+        },
+        "iam": {
+          "type": "object",
+          "description": "Optional (kind-kro-ack): pre-created IAM roles. A set ARN is used as is: task install does not create the role, change its trust, or put/attach any policy on it.",
+          "additionalProperties": false,
+          "properties": {
+            "crossplaneProviderRoleArn": {
+              "type": "string",
+              "default": "",
+              "description": "Role for the Crossplane provider-aws-iam/eks pod identities on the hub (trust pods.eks.amazonaws.com). Empty = create <hub>-crossplane-provider. Applies when the pod identity associations are created (fresh hub, or reinstall after destroy); existing associations are not repointed."
+            },
+            "clusterMgmtRoleArns": {
+              "type": "object",
+              "description": "Per-service cluster-mgmt roles assumed by ACK. Each ARN must name <resourcePrefix>-cluster-mgmt-<service> in aws.accountId.",
+              "additionalProperties": false,
+              "properties": {
+                "ec2": {"type": "string"},
+                "eks": {"type": "string"},
+                "iam": {"type": "string"},
+                "ecr": {"type": "string"},
+                "s3": {"type": "string"},
+                "dynamodb": {"type": "string"},
+                "secretsmanager": {"type": "string"},
+                "rds": {"type": "string"}
+              }
+            }
+          }
         }
       }
     },
