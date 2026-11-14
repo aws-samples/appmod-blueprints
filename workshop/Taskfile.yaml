@@ -383,10 +383,16 @@ tasks:
               printf '{{.C_OK}}  ✓ hub pivoted — kind bootstrap detached (stopped & recoverable).{{.C_RESET}}\n'
             else
               # Say what is true: check the kind node state instead of assuming a restart.
-              if [ -n "$(docker ps -q --filter 'label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap' 2>/dev/null)" ]; then
-                printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind (kind running). Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+              # Three answers: running / not running / UNKNOWN (docker did not answer). Bounded when GNU timeout exists.
+              TMO=; command -v timeout >/dev/null 2>&1 && TMO="timeout 20"
+              if KIND_UP=$($TMO docker ps -q --filter 'label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap' 2>/dev/null); then
+                if [ -n "$KIND_UP" ]; then
+                  printf '{{.C_INFO}}  ⚠ hub pivot did not complete (non-fatal). The workshop is fully functional with the hub still managed by kind (kind running). Detach later: task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+                else
+                  printf '{{.C_ERR}}  ✗✗ hub pivot did not complete and kind is NOT running: nothing reconciles the hub AWS resources. Recover: docker start $(docker ps -aq --filter label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap); wait for the kind API; then task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+                fi
               else
-                printf '{{.C_ERR}}  ✗✗ hub pivot did not complete and kind is NOT running: nothing reconciles the hub AWS resources. Recover: docker start $(docker ps -aq --filter label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap); wait for the kind API; then task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
+                printf '{{.C_ERR}}  ✗ hub pivot did not complete and the kind state is UNKNOWN (docker did not answer). Check: docker ps --filter label=io.x-k8s.kind.cluster={{.HUB_CLUSTER_NAME}}-bootstrap. If kind is stopped: docker start the nodes, wait for the kind API, then task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes.{{.C_RESET}}\n'
               fi
             fi
           fi

@@ -4705,6 +4705,11 @@ tasks:
         KINDKC='{{.KINDKC}}'; HUBKC='{{.HUBKC}}'; REGION='{{.AWS_REGION}}'
         kind_k() { KUBECONFIG="$KINDKC" kubectl "$@"; }
         hub_k()  { KUBECONFIG="$HUBKC"  kubectl "$@"; }
+        # tmo <seconds> <cmd...>: bound a docker call with GNU timeout; without it, run unbounded
+        # (the live pivot warns once, below). No `return`/`local`: reachable from the EXIT trap,
+        # where go-task's shell (mvdan/sh) ignores `return`.
+        HAVE_TIMEOUT=; command -v timeout >/dev/null 2>&1 && HAVE_TIMEOUT=1
+        tmo() { _t=$1; shift; if [ -n "$HAVE_TIMEOUT" ]; then timeout "$_t" "$@"; else "$@"; fi; }
 
         printf '{{.C_STEP}}▸ hub:pivot ({{if eq .PIVOT_DRY_RUN "true"}}DRY-RUN{{else}}LIVE{{end}}) for %s{{.C_RESET}}\n' "$HUB"
 
@@ -4738,7 +4743,7 @@ tasks:
           rm -rf "$WORK" 2>/dev/null || true
           if [ "$DETACHED" != 1 ] && [ "$ABORT_HANDLED" != 1 ] && [ "$KIND_STOPPED" = 1 ] && [ "$rc" != 0 ]; then
             printf '{{.C_ERR}}✗ pivot aborted unexpectedly (rc=%s) after kind was stopped — restarting kind + orphaning hub-side instance (retain → no AWS delete)…{{.C_RESET}}\n' "$rc"
-            [ -n "$KIND_NODES" ] && docker start $KIND_NODES >/dev/null 2>&1 || true
+            [ -n "$KIND_NODES" ] && tmo 60 docker start $KIND_NODES >/dev/null 2>&1 || true
             ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
           orphan_hub_instance hub_k 2>/dev/null || true
           fi
@@ -4991,8 +4996,12 @@ tasks:
 
         # Identify this cluster's kind node containers (label set by kind).
         # A failing docker is NOT "no running nodes": abort before touching anything (kind untouched).
-        KIND_NODES=$(timeout 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}") \
+        [ -n "$HAVE_TIMEOUT" ] || printf '{{.C_INFO}}  ⚠ GNU timeout not found: docker calls in this pivot run WITHOUT a time bound.{{.C_RESET}}\n'
+        KIND_NODES=$(tmo 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}") \
           || { printf '{{.C_ERR}}✗ cannot list the kind nodes (docker error) — aborting before stopping kind.{{.C_RESET}}\n'; exit 1; }
+        # The precondition above proved the kind API answers, so an empty listing is a contradiction
+        # (other container runtime, label/name mismatch), never "already stopped": never adopt then.
+        [ -n "$KIND_NODES" ] || { printf '{{.C_ERR}}✗ the kind API answers but no running container has label io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}} (other container runtime?) — aborting before adoption (kind untouched).{{.C_RESET}}\n'; exit 1; }
 
         # BEFORE stopping kind, pin every kind-side AWS-backed ACK child to
         # services.k8s.aws/deletion-policy=retain — a declarative guarantee that kind's ACK can
@@ -5039,21 +5048,21 @@ tasks:
           # The stop is judged by the real node state (docker ps), not by the exit code of docker stop.
           # A failing/hung `docker ps` is "unknown", never "stopped": otherwise the hub could adopt
           # while kind still runs (dual reconciler). Unknown after the kill aborts; the trap restarts kind.
-          timeout 90 docker stop -t 30 $KIND_NODES || printf '{{.C_INFO}}  docker stop returned an error — checking the real node state…{{.C_RESET}}\n'
+          tmo 90 docker stop -t 30 $KIND_NODES || printf '{{.C_INFO}}  docker stop returned an error — checking the real node state…{{.C_RESET}}\n'
           RUNNING=unknown
-          for _ in $(seq 1 30); do
-            if RUNNING=$(timeout 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}"); then
+          for _ in $(seq 1 15); do
+            if RUNNING=$(tmo 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}"); then
               if [ -z "$RUNNING" ]; then break; fi
             else RUNNING=unknown; fi
             sleep 2
           done
           if [ -n "$RUNNING" ]; then
-            timeout 60 docker kill $KIND_NODES >/dev/null 2>&1 || true; sleep 2
-            if ! RUNNING=$(timeout 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}") || [ -n "$RUNNING" ]; then
+            tmo 60 docker kill $KIND_NODES >/dev/null 2>&1 || true; sleep 2
+            if ! RUNNING=$(tmo 20 docker ps -q --filter "label=io.x-k8s.kind.cluster={{.KIND_CLUSTER_NAME}}") || [ -n "$RUNNING" ]; then
               printf '{{.C_ERR}}✗ kind nodes still running (or docker state unknown) after docker kill — aborting before adoption.{{.C_RESET}}\n'; exit 1
             fi
           fi
-        else printf '{{.C_INFO}}  no running kind nodes for {{.KIND_CLUSTER_NAME}} (already stopped?).{{.C_RESET}}\n'; fi
+        fi
 
         # ADOPT on the hub (kind is down -> single reconciler, no conflict).
         printf '{{.C_STEP}}▸ [LIVE] adopting on hub (adopt-or-create)…{{.C_RESET}}\n'
@@ -5127,7 +5136,7 @@ tasks:
           if [ "$HUB_GITOPS_ACTIVE" != 1 ]; then
             printf '{{.C_ERR}}✗ [LIVE] GitOps adoption could not commit to the overlay repo (%s) — ABORTING; kind NOT discarded. There is NO imperative fallback here (that was the two-behaviour coupling this change removes); restart kind and retry once the overlay is reachable.{{.C_RESET}}\n' "$OVERLAY_URL"
             ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
-            [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+            [ -n "$KIND_NODES" ] && tmo 60 docker start $KIND_NODES || true
             exit 1
           fi
         else
@@ -5169,7 +5178,7 @@ tasks:
           printf '{{.C_INFO}}  The deleter forensics are dumped above. Orphaning the hub-side instance (retain → no AWS delete), then restarting kind to resume prior management…{{.C_RESET}}\n'
           ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
           orphan_hub_instance hub_k
-          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          [ -n "$KIND_NODES" ] && tmo 60 docker start $KIND_NODES || true
           printf '{{.C_ERR}}  Something deleted {{.HUB_KIND}}/%s on the hub. The anti-prune annotations should stop an ArgoCD prune; if it recurs, the forensics above name the actual deleter.{{.C_RESET}}\n' "$HUB"
           exit 1
         fi
@@ -5178,7 +5187,7 @@ tasks:
           printf '{{.C_INFO}}  Orphaning the hub-side instance (retain → no AWS delete), then restarting kind. NOTE: a deletion-marked spoke CR cannot be un-marked — it completes deletion; with deletionPolicy=retain the AWS EKS cluster survives and kind re-creates the CR (delete-then-recreate, not in-place recovery).{{.C_RESET}}\n'
           ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
           orphan_hub_instance hub_k
-          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          [ -n "$KIND_NODES" ] && tmo 60 docker start $KIND_NODES || true
           printf '{{.C_ERR}}  A spoke was deletion-marked during adoption — this must not happen; investigate the fleetMember label on the hub cluster secret before retrying.{{.C_RESET}}\n'
           exit 1
         fi
@@ -5187,7 +5196,7 @@ tasks:
           printf '{{.C_INFO}}  Orphaning the hub-side instance (retain → no AWS delete), then restarting kind to resume its management (recovering prior state)…{{.C_RESET}}\n'
           ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
           orphan_hub_instance hub_k
-          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          [ -n "$KIND_NODES" ] && tmo 60 docker start $KIND_NODES || true
           printf '{{.C_ERR}}  Re-run when the hub is healthy; adopt-or-create is idempotent.{{.C_RESET}}\n'
           exit 1
         fi
@@ -5199,7 +5208,7 @@ tasks:
           printf '{{.C_ERR}}✗ A spoke was deletion-marked after the gate passed — ABORTING before detach; orphaning hub-side instance then restarting kind.{{.C_RESET}}\n'
           ABORT_HANDLED=1  # [#1033 N3] this branch restarts kind itself; EXIT trap must not re-handle
           orphan_hub_instance hub_k
-          [ -n "$KIND_NODES" ] && docker start $KIND_NODES || true
+          [ -n "$KIND_NODES" ] && tmo 60 docker start $KIND_NODES || true
           exit 1
         fi
 

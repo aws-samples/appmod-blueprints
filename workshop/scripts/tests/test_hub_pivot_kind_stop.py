@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -36,7 +37,7 @@ KIND = "acme-hub-bootstrap"
 # --- fakes -------------------------------------------------------------------------------
 
 FAKE_DOCKER = r'''#!{python} -I
-import json, os, sys
+import json, os, sys, time
 ST, LOG = os.environ["FAKE_STATE"], os.environ["FAKE_LOG"]
 s = json.load(open(ST))
 a = sys.argv[1:]
@@ -63,6 +64,8 @@ if a[0] in ("stop", "kill"):
         print({err!r}, file=sys.stderr); sys.exit(1)
     sys.exit(0)
 if a[0] == "start":
+    if mode == "hang":
+        time.sleep(60)
     if mode == "ok":
         for n in ids: nodes[n] = True
         save(); print("\n".join(ids)); sys.exit(0)
@@ -178,7 +181,7 @@ def render(script, values):
     return script
 
 
-def run_pivot(ctx):
+def run_pivot(ctx, fast_timeouts=False):
     cmds = yaml.safe_load(open(PROVIDER_TASKFILE))["tasks"]["hub:pivot"]["cmds"]
     script = next(c for c in cmds if isinstance(c, str) and "hub:pivot (" in c)
     t = ctx["tmp"]
@@ -190,6 +193,8 @@ def run_pivot(ctx):
         "HUB_PIVOT_GITOPS": "false", "C_STEP": "", "C_OK": "", "C_ERR": "", "C_INFO": "", "C_RESET": "",
     }
     script = render(script, values).replace("sleep 5\n", "sleep 0\n").replace("sleep 2", "sleep 0")
+    if fast_timeouts:  # scale the docker time bounds down so a hung fake is cut off quickly
+        script = re.sub(r"\btmo (\d+) docker", "tmo 2 docker", script)
     return run_task(ctx, script)
 
 
@@ -278,6 +283,66 @@ def test_post_detach_eks_check_failure_does_not_advise_starting_kind(ctx):
     assert get_state(ctx)["hub_adopted"] is True and not kind_running(ctx)
 
 
+def test_trap_docker_start_hang_is_bounded(ctx):
+    # The EXIT trap's `docker start` must be time-bounded: a wedged dockerd must not hang the install.
+    set_state(ctx, stop="err-stops", ps="fail-after-stop", start="hang")
+    t0 = time.time()
+    r = run_pivot(ctx, fast_timeouts=True)
+    assert r.returncode != 0
+    assert time.time() - t0 < 45
+    assert get_state(ctx).get("hub_adopted") is not True
+
+
+def test_empty_kind_listing_while_api_answers_never_adopts(ctx):
+    # Pre-existing "already stopped?" branch: the kind API answers (precondition) but no container
+    # carries the label (other runtime / name mismatch). Never adopt: kind untouched, still running.
+    set_state(ctx, label="some-other-name")
+    r = run_pivot(ctx)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0
+    assert "no running container has label" in out and "already stopped" not in out
+    assert get_state(ctx).get("hub_adopted") is not True
+    assert not any(c.startswith(("docker stop", "docker kill", "docker start")) for c in calls(ctx))
+    assert kind_running(ctx)
+
+
+def test_missing_gnu_timeout_runs_unbounded_with_a_one_line_warning(ctx):
+    # No `timeout` on PATH: warn once and carry on (no misleading "docker error" refusal).
+    nobin = ctx["tmp"] / "notimeout"
+    nobin.mkdir()
+    for d in ctx["env"]["PATH"].split(":"):
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            dst = nobin / f
+            if f != "timeout" and not dst.exists() and os.access(os.path.join(d, f), os.X_OK):
+                os.symlink(os.path.join(d, f), dst)
+    ctx["env"]["PATH"] = str(nobin)
+    set_state(ctx, stop="err-stops")
+    r = run_pivot(ctx)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert out.count("GNU timeout not found") == 1
+    assert "cannot list the kind nodes" not in out
+    assert get_state(ctx)["hub_adopted"] is True
+
+
+def test_every_docker_call_in_hub_pivot_is_time_bounded():
+    # Static guard: a `docker start|stop|kill|ps` call must go through `tmo <seconds> docker …`.
+    cmds = yaml.safe_load(open(PROVIDER_TASKFILE))["tasks"]["hub:pivot"]["cmds"]
+    sc = next(c for c in cmds if isinstance(c, str) and "hub:pivot (" in c)
+    bad = []
+    for line in sc.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        code = re.sub(r"'[^']*'", "''", line)          # drop printf/message strings
+        for m in re.finditer(r"\bdocker (start|stop|kill|ps)\b", code):
+            if not re.search(r"\btmo \d+ $", code[:m.start()]):
+                bad.append(line.strip())
+    assert not bad, bad
+    assert 'tmo() {' in sc and "timeout" in sc
+
+
 def test_fake_docker_honours_the_label_filter(ctx):
     # C2: guards the fake itself, so a wrong label in the Taskfile cannot go unnoticed.
     ok = subprocess.run(["docker", "ps", "-q", "--filter", f"label=io.x-k8s.kind.cluster={KIND}"],
@@ -325,6 +390,15 @@ def test_workshop_says_kind_running_only_when_it_is(ctx):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "kind running" in r.stdout and "kind is NOT running" not in r.stdout
     assert "the pivot fail-closed and restarted kind" not in r.stdout
+
+
+def test_workshop_reports_unknown_when_docker_fails(ctx):
+    # docker not answering is "unknown", not "kind is NOT running" (kind may well be running).
+    set_state(ctx, ps="fail")
+    r = run_workshop(ctx, task_rc=1)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "kind state is UNKNOWN" in r.stdout
+    assert "kind is NOT running" not in r.stdout and "(kind running)" not in r.stdout
 
 
 def test_workshop_is_loud_when_kind_is_down(ctx):
