@@ -938,15 +938,20 @@ tasks:
             # which every GIT_PASSWORD var reads first) so Secrets Manager is never re-read.
             _TOK=$(aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/secrets" --region {{.AWS_REGION}} \
                  --query SecretString --output text 2>/dev/null | jq -r '.git_token // empty' || true)
-            if [ -n "$_TOK" ]; then
-              if [ "$(printf '%s' "$_TOK" | wc -l)" -eq 0 ] && printf '%s' "$_TOK" | grep -Eq '^glpat-[A-Za-z0-9_-]{20,}$'; then
-                PAT="$_TOK" yq -i '.hub.gitlabRootPassword = strenv(PAT)' {{.CONFIG_FILE}}
-                echo "[$(date +%H:%M:%S)] ✓ GitLab PAT present after ${_W}s"
-                exit 0
-              fi
-              echo "[$(date +%H:%M:%S)] ✗ git_token in {{.HUB_CLUSTER_NAME}}/secrets has an unexpected format (refusing to use it)"
-              exit 1
-            fi
+            # Anything that does not start with glpat- (empty, or the placeholder the CDK seeds
+            # at deploy time = the IDE password) means gitlab:init-ec2 has not finished: keep
+            # polling, the value is never used. Only a glpat- value is validated and snapshotted.
+            case "$_TOK" in
+              glpat-*)
+                if [ "$(printf '%s' "$_TOK" | wc -l)" -eq 0 ] && printf '%s' "$_TOK" | grep -Eq '^glpat-[A-Za-z0-9_-]{20,}$'; then
+                  PAT="$_TOK" yq -i '.hub.gitlabRootPassword = strenv(PAT)' {{.CONFIG_FILE}}
+                  echo "[$(date +%H:%M:%S)] ✓ GitLab PAT present after ${_W}s"
+                  exit 0
+                fi
+                echo "[$(date +%H:%M:%S)] ✗ git_token in {{.HUB_CLUSTER_NAME}}/secrets has an unexpected format (refusing to use it)"
+                exit 1
+                ;;
+            esac
             sleep "${GITLAB_REMOTE_POLL:-10}"
             _W=$((_W + ${GITLAB_REMOTE_POLL:-10}))
           done

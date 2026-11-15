@@ -165,9 +165,10 @@ def test_remote_wait_passes_on_a_real_pat_and_snapshots_it_into_the_config(tmp_p
 
 
 @needs_tools
-@pytest.mark.parametrize("token", ["", None])
+@pytest.mark.parametrize("token", ["", None, "root-IDEPASSWORD"])
 def test_remote_wait_fails_without_a_real_pat(tmp_path, token):
-    # a missing secret must not read as "done"
+    # a missing secret must not read as "done"; the CDK-seeded placeholder (root-<ide password>)
+    # is not a PAT either: it keeps polling and ends in "did not finish", never "unexpected format"
     r, out = _run_wait(tmp_path, token)
     assert r.returncode == 1, out
     assert "did not finish" in out
@@ -175,7 +176,6 @@ def test_remote_wait_fails_without_a_real_pat(tmp_path, token):
 
 @needs_tools
 @pytest.mark.parametrize("token", [
-    "root-IDEPASSWORD",                    # the CDK-seeded placeholder is not a PAT
     "glpat-abc123",                        # too short
     "glpat-abcDEF0123456789_-xyz$(touch PWNED)",
     "glpat-abcDEF0123456789_-xyz'; touch PWNED; '",
@@ -190,6 +190,29 @@ def test_remote_wait_refuses_a_token_that_could_inject_shell(tmp_path, token):
     assert "unexpected format" in out
     assert "gitlabRootPassword" not in (tmp_path / "config.local.yaml").read_text()
     assert not (tmp_path / "PWNED").exists() and not os.path.exists("PWNED")
+
+
+@needs_tools
+def test_remote_wait_polls_through_the_cdk_placeholder_until_the_pat_appears(tmp_path):
+    # fresh account: <hub>/secrets.git_token is the placeholder first, gitlab:init-ec2 swaps in the PAT
+    (tmp_path / "bin").mkdir()
+    state = tmp_path / "n"
+    fake = tmp_path / "bin" / "aws"
+    fake.write_text('#!/bin/sh\nn=$(cat "%s" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "%s"\n'
+                    'if [ "$n" -lt 3 ]; then echo \'{"git_token":"root-IDEPASSWORD"}\'; '
+                    'else echo \'{"git_token":"%s"}\'; fi\n' % (state, state, GOOD_PAT))
+    fake.chmod(0o755)
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text("hub:\n  clusterName: acme-hub\ngitlabInit: remote\n")
+    block = (_wait_block().replace("{{.CONFIG_FILE}}", str(cfg)).replace("{{.HUB_CLUSTER_NAME}}", "acme-hub")
+             .replace("{{.AWS_REGION}}", "us-west-2"))
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}",
+               GITLAB_REMOTE_WAIT="30", GITLAB_REMOTE_POLL="1")
+    r = subprocess.run(["bash", "-c", block], env=env, capture_output=True, text=True, timeout=60)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert "unexpected format" not in out
+    assert f"gitlabRootPassword: {GOOD_PAT}" in cfg.read_text()
 
 
 @needs_tools
