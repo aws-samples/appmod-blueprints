@@ -408,3 +408,53 @@ def test_attachment_names_follow_the_policy_not_the_index(tmp_path):
     names = {a["metadata"]["name"] for a in docs_of(r.stdout, "RolePolicyAttachment")
              if a["spec"]["forProvider"]["roleRef"]["name"] == "ec2-provider-role"}
     assert names == {"ec2-provider-amazons3fullaccess", "ec2-provider-amazonec2fullaccess"}, names
+
+
+# ------------------------------------------------------------------ grafana: EC2 reads for a VPC workspace
+
+GRAFANA_EC2_READ = ["ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeVpcs"]
+WRITE_OR_ESCALATE = ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole",
+                     "sts:AssumeRole", "ec2:CreateVpc", "ec2:CreateSecurityGroup", "ec2:DeleteSubnet",
+                     "ec2:ModifyVpcAttribute", "ec2:AuthorizeSecurityGroupIngress", "ec2:RunInstances"]
+
+
+def grafana_inline_doc(tmp_path):
+    """The inline policy document(s) crossplane-base puts on the Grafana provider role, as one
+    policy. The managed AWSGrafanaAccountAdministrator (grafana:*, iam:PassRole to grafana)
+    has no ec2:*: AMG CreateWorkspace with a VPC then fails 403 'Access denied when fetching EC2
+    subnet details' (CloudTrail: ec2:DescribeSubnets refused)."""
+    r = render(tmp_path, registry_values())
+    assert r.returncode == 0, r.stderr
+    pols = [d for d in docs_of(r.stdout, "RolePolicy") if d["spec"]["forProvider"]["roleRef"]["name"] == "grafana-provider-role"]
+    assert len(pols) == 1, "grafana-provider-role needs exactly one inline policy for the EC2 reads"
+    return json.loads(pols[0]["spec"]["forProvider"]["policy"])
+
+
+def test_grafana_role_can_describe_vpc_for_workspace(tmp_path):
+    doc = grafana_inline_doc(tmp_path)
+    for a in GRAFANA_EC2_READ:
+        assert allowed(doc, a, "*"), a
+
+
+def test_grafana_inline_policy_is_only_those_ec2_reads(tmp_path):
+    doc = grafana_inline_doc(tmp_path)
+    for st in doc["Statement"]:
+        assert st["Effect"] == "Allow" and "Condition" not in st
+        assert sorted(as_list(st["Action"])) == sorted(GRAFANA_EC2_READ)
+        assert as_list(st["Resource"]) == ["*"]
+    for a in WRITE_OR_ESCALATE:
+        assert not allowed(doc, a, "*"), a
+        assert not allowed(doc, a, ROLE), a
+
+
+def test_only_grafana_gets_an_inline_policy(tmp_path):
+    r = render(tmp_path, registry_values())
+    assert r.returncode == 0, r.stderr
+    assert {d["spec"]["forProvider"]["roleRef"]["name"] for d in docs_of(r.stdout, "RolePolicy")} == {"grafana-provider-role"}
+
+
+def test_grafana_inline_policy_keeps_managed_policy_attached(tmp_path):
+    r = render(tmp_path, registry_values())
+    atts = [a["spec"]["forProvider"]["policyArn"] for a in docs_of(r.stdout, "RolePolicyAttachment")
+            if a["spec"]["forProvider"]["roleRef"]["name"] == "grafana-provider-role"]
+    assert atts == [aws_managed("AWSGrafanaAccountAdministrator")]

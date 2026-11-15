@@ -32,6 +32,8 @@ functions:
 # cluster-providers/common/iam/crossplane-provider-policy.json (Sid
 # DenyAttachAwsManagedPolicyOutsideAllowlist): provider-aws-iam, which makes these
 # attachments, is denied any other AWS managed policy. A test keeps the two in step.
+# inlineStatements: optional IAM statements for an inline policy on the provider role (a
+# RolePolicy), for what no allowlisted AWS managed policy gives. Keep them read-only.
 # iam and eks default to createIdentity: false: a provider cannot create the credentials it
 # runs with, so their role comes from outside this addon's GitOps sync. kind-kro-ack: the
 # cluster provider's <cluster>-crossplane-provider role. kind-crossplane: the bootstrap render
@@ -104,6 +106,17 @@ providers:
     createIdentity: true
     policyArns:
       - arn:aws:iam::aws:policy/AWSGrafanaAccountAdministrator
+    # AWSGrafanaAccountAdministrator has no ec2:*, so CreateWorkspace with a VPC fails 403
+    # "Access denied when fetching EC2 subnet details" (ec2:DescribeSubnets refused).
+    # DescribeSubnets is the proven one; DescribeSecurityGroups and DescribeVpcs are read-only
+    # and not yet proven needed (the create fails before them). No iam:CreateServiceLinkedRole.
+    inlineStatements:
+      - Effect: Allow
+        Action:
+          - ec2:DescribeSubnets
+          - ec2:DescribeSecurityGroups
+          - ec2:DescribeVpcs
+        Resource: "*"
   kubernetes:
     version: ""
     serviceAccount: provider-kubernetes
