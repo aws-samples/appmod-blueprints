@@ -152,20 +152,44 @@ def _run_wait(tmp_path, token, mode="remote", max_wait="1"):
     return r, r.stdout + r.stderr
 
 
+GOOD_PAT = "glpat-abcDEF0123456789_-xyz"
+
+
 @needs_tools
-def test_remote_wait_passes_on_a_real_pat(tmp_path):
-    r, out = _run_wait(tmp_path, "glpat-abc123")
+def test_remote_wait_passes_on_a_real_pat_and_snapshots_it_into_the_config(tmp_path):
+    r, out = _run_wait(tmp_path, GOOD_PAT)
     assert r.returncode == 0, out
     assert "GitLab PAT present" in out
+    # every GIT_PASSWORD var reads this key first: Secrets Manager is not read again
+    assert f"gitlabRootPassword: {GOOD_PAT}" in (tmp_path / "config.local.yaml").read_text()
 
 
 @needs_tools
-@pytest.mark.parametrize("token", ["root-IDEPASSWORD", "", None])
+@pytest.mark.parametrize("token", ["", None])
 def test_remote_wait_fails_without_a_real_pat(tmp_path, token):
-    # the CDK-seeded placeholder is not a PAT; a missing secret must not read as "done"
+    # a missing secret must not read as "done"
     r, out = _run_wait(tmp_path, token)
     assert r.returncode == 1, out
     assert "did not finish" in out
+
+
+@needs_tools
+@pytest.mark.parametrize("token", [
+    "root-IDEPASSWORD",                    # the CDK-seeded placeholder is not a PAT
+    "glpat-abc123",                        # too short
+    "glpat-abcDEF0123456789_-xyz$(touch PWNED)",
+    "glpat-abcDEF0123456789_-xyz'; touch PWNED; '",
+    "glpat-abcDEF0123456789_-xyz`touch PWNED`",
+    "glpat-abcDEF0123456789_-xyz\nextra",
+    "glpat-abcDEF0123456789_-xyz@evil.example",
+])
+def test_remote_wait_refuses_a_token_that_could_inject_shell(tmp_path, token):
+    # the IDE can write <hub>/secrets; go-task pastes the token into shell text later
+    r, out = _run_wait(tmp_path, token)
+    assert r.returncode == 1, out
+    assert "unexpected format" in out
+    assert "gitlabRootPassword" not in (tmp_path / "config.local.yaml").read_text()
+    assert not (tmp_path / "PWNED").exists() and not os.path.exists("PWNED")
 
 
 @needs_tools
@@ -282,3 +306,64 @@ def test_fetch_install_config_fails_when_the_build_never_published(tmp_path):
     r = subprocess.run(["bash", os.path.join(REPO, "workshop", "fetch-install-config.sh")],
                        env=_env(tmp_path, OUTPUT_FILE=str(tmp_path / "c.yaml")), capture_output=True, text=True, timeout=60)
     assert r.returncode == 1 and not (tmp_path / "c.yaml").exists()
+
+
+# ---------------------------------------------------------------- AWS_CONFIG_FILE probe (CodeBuild)
+
+KRO_VARS = yaml.safe_load(open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")))["vars"]
+
+
+def _config_file_for(tmp_path, container_env):
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    curl = tmp_path / "bin" / "curl"
+    curl.write_text("#!/bin/sh\necho 401\nexit 0\n")  # answers like any HTTP server, even refusing
+    curl.chmod(0o755)
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text('aws:\n  installRoleArn: "arn:aws:iam::111111111111:role/x"\n')
+    block = KRO_VARS["AWS_CONFIG_FILE"]["sh"].replace("{{.ROOT_DIR}}", str(tmp_path)).replace("{{.CONFIG_FILE}}", str(cfg))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
+    env.update(PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", HOME=str(tmp_path), **container_env)
+    r = subprocess.run(["bash", "-c", block], env=env, capture_output=True, text=True, timeout=30)
+    return r.stdout.strip()
+
+
+@needs_tools
+def test_codebuild_container_credentials_skip_the_instance_metadata_probe(tmp_path):
+    out = _config_file_for(tmp_path, {"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/v2/credentials/x"})
+    assert out == str(tmp_path / ".aws" / "config")
+    assert not (tmp_path / "private" / "aws-config").exists()
+
+
+@needs_tools
+def test_ec2_still_gets_the_generated_config(tmp_path):
+    out = _config_file_for(tmp_path, {})
+    assert out == str(tmp_path / "private" / "aws-config")
+
+
+# ---------------------------------------------------------------- kind node image (Docker Hub rate limit)
+
+def _kind_args(tmp_path, cfg_text):
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    kind = tmp_path / "bin" / "kind"
+    kind.write_text('#!/bin/sh\necho "$@" > "$KIND_ARGS"\n')
+    kind.chmod(0o755)
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text(cfg_text)
+    cmd = [c for c in KRO["kind:create"]["cmds"] if isinstance(c, str) and "kind create" in c][0]
+    cmd = (cmd.replace("{{.CONFIG_FILE}}", str(cfg)).replace("{{.KIND_CLUSTER_NAME}}", "c1")
+           .replace("{{.KUBECONFIG}}", "/tmp/k"))
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", KIND_ARGS=str(tmp_path / "args"))
+    r = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return (tmp_path / "args").read_text().strip()
+
+
+@needs_tools
+def test_kind_create_default_has_no_image_flag(tmp_path):
+    assert _kind_args(tmp_path, "aws:\n  region: x\n") == "create cluster --name c1 --config kind.yaml --kubeconfig /tmp/k"
+
+
+@needs_tools
+def test_kind_create_uses_the_configured_node_image(tmp_path):
+    out = _kind_args(tmp_path, "kind:\n  nodeImage: mirror.example/kindest/node:v1.35.0\n")
+    assert out.endswith("--image mirror.example/kindest/node:v1.35.0")

@@ -65,7 +65,9 @@ vars:
   # or ~/.aws/config, so local behavior is unchanged (zero regression).
   AWS_CONFIG_FILE:
     sh: |
-      if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
+      # In CodeBuild (container credentials) the IMDS probe must not run: any HTTP answer would
+      # swap in a config with no [profile install] and break every aws call.
+      if [ -z "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}" ] && curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
         mkdir -p "{{.ROOT_DIR}}/private"
         printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
         IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)

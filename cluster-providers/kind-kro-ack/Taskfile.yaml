@@ -49,7 +49,9 @@ vars:
   # bare AWS_PROFILE=default still works. Off-instance: the user's own config, unchanged.
   AWS_CONFIG_FILE:
     sh: |
-      if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
+      # In CodeBuild (container credentials) the IMDS probe must not run: any HTTP answer would
+      # swap in a config with no [profile install] and break every aws call.
+      if [ -z "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}" ] && curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
         mkdir -p "{{.ROOT_DIR}}/private"
         printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
         IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
@@ -476,7 +478,13 @@ tasks:
     status:
       - kind get clusters 2>/dev/null | grep -q "^{{.KIND_CLUSTER_NAME}}$"
     cmds:
-      - kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}}
+      # kind.nodeImage (optional): node image to use instead of kind's default docker.io/kindest/node,
+      # e.g. an ECR mirror, because anonymous Docker Hub pulls from shared CodeBuild IPs get rate-limited.
+      # Empty/absent = kind's default (unchanged).
+      - |
+        NODE_IMAGE=$(yq -r '.kind.nodeImage // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+        [ "$NODE_IMAGE" = null ] && NODE_IMAGE=""
+        kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}} ${NODE_IMAGE:+--image "$NODE_IMAGE"}
 
   kind:kubeconfig:
     desc: Ensure kind cluster kubeconfig is present (idempotent)
@@ -924,10 +932,20 @@ tasks:
           _W=0
           echo "[$(date +%H:%M:%S)] ▸ Waiting for the GitLab PAT in {{.HUB_CLUSTER_NAME}}/secrets (gitlab:init-ec2 runs on the IDE, max ${_MAX}s)..."
           while [ "$_W" -lt "$_MAX" ]; do
-            if aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/secrets" --region {{.AWS_REGION}} \
-                 --query SecretString --output text 2>/dev/null | jq -r '.git_token // empty' | grep -q '^glpat-'; then
-              echo "[$(date +%H:%M:%S)] ✓ GitLab PAT present after ${_W}s"
-              exit 0
+            # The IDE can write this secret, and go-task substitutes config values into shell
+            # text later (set-overlay-repo, enable-kro, webhook): accept ONLY a strict PAT
+            # charset, and snapshot it into the build's local config (hub.gitlabRootPassword,
+            # which every GIT_PASSWORD var reads first) so Secrets Manager is never re-read.
+            _TOK=$(aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/secrets" --region {{.AWS_REGION}} \
+                 --query SecretString --output text 2>/dev/null | jq -r '.git_token // empty' || true)
+            if [ -n "$_TOK" ]; then
+              if [ "$(printf '%s' "$_TOK" | wc -l)" -eq 0 ] && printf '%s' "$_TOK" | grep -Eq '^glpat-[A-Za-z0-9_-]{20,}$'; then
+                PAT="$_TOK" yq -i '.hub.gitlabRootPassword = strenv(PAT)' {{.CONFIG_FILE}}
+                echo "[$(date +%H:%M:%S)] ✓ GitLab PAT present after ${_W}s"
+                exit 0
+              fi
+              echo "[$(date +%H:%M:%S)] ✗ git_token in {{.HUB_CLUSTER_NAME}}/secrets has an unexpected format (refusing to use it)"
+              exit 1
             fi
             sleep "${GITLAB_REMOTE_POLL:-10}"
             _W=$((_W + ${GITLAB_REMOTE_POLL:-10}))
