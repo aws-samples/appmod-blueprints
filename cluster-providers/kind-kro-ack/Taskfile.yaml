@@ -4196,7 +4196,24 @@ tasks:
         fi
 
   hub:create-mgmt-roles:
-    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
+    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    vars:
+      # privilegedSteps (config.yaml): "inline" (default) creates the roles here, as
+      # before. "external" means a separate, more privileged runner (e.g. a CodeBuild
+      # project) already created them (`task privileged:pre`), so this host only
+      # verifies them read-only and needs no IAM write on <prefix>-cluster-mgmt-*.
+      MGMT_ROLES_MODE:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
+    cmds:
+      - task: 'hub:create-mgmt-roles:{{if eq .MGMT_ROLES_MODE "external"}}verify{{else}}apply{{end}}'
+
+  hub:create-mgmt-roles:verify:
+    desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
+    cmds:
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+
+  hub:create-mgmt-roles:apply:
+    internal: true
     vars:
       ACK_CAPABILITY_ROLE:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-ack-capability-role"

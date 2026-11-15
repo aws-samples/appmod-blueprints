@@ -410,6 +410,34 @@ tasks:
       - 'printf "{{.C_OK}}✓ Workshop install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
   # ============================================================
+  # INSTALL WITH PRIVILEGED STEPS OFFLOADED (CloudFormation path)
+  # ============================================================
+  # Same install as `task install`, for a host (the IDE) whose privileged AWS steps
+  # are run by a separate runner (the CloudFormation InstallOffload CodeBuild project,
+  # `task privileged:pre` before / `task privileged:post` after). Sets
+  # privilegedSteps: external in config.local.yaml, so the platform verifies the
+  # cluster-mgmt IAM roles read-only and skips the capability-log delivery.
+  # `task install` is unchanged and keeps doing everything itself.
+  install:codebuild:
+    desc: "Workshop install with the privileged steps offloaded (privilegedSteps: external)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    cmds:
+      - yq -i '.privilegedSteps = "external"' {{.CONFIG_FILE}}
+      - task: platform:prepare
+      - |
+        # An older pinned platform.ref would ignore privilegedSteps and try the IAM writes
+        # this host is no longer allowed to make: refuse instead of failing deep in install.
+        if ! grep -q '^  privileged:pre:' "{{.PLATFORM_DIR}}/Taskfile.yaml"; then
+          printf '{{.C_ERR}}✗ platform at {{.PLATFORM_DIR}} has no privileged-step offload (privileged:pre); use task install.{{.C_RESET}}\n'
+          exit 1
+        fi
+      # Fail fast, before kind/ACK, if privileged:pre did not run (read-only check).
+      - cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:create-mgmt-roles:verify
+      - task: install
+
+  # ============================================================
   # DESTROY — full ordered teardown
   # ============================================================
   credentials:refresh:

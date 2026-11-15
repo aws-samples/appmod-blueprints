@@ -721,7 +721,22 @@ tasks:
       - task: hub:apply-root-appset
 
   hub:create-mgmt-roles:
-    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
+    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    vars:
+      # Same contract as kind-kro-ack: privilegedSteps=external -> read-only verify,
+      # the roles were created by a separate privileged runner (`task privileged:pre`).
+      MGMT_ROLES_MODE:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
+    cmds:
+      - task: 'hub:create-mgmt-roles:{{if eq .MGMT_ROLES_MODE "external"}}verify{{else}}apply{{end}}'
+
+  hub:create-mgmt-roles:verify:
+    desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
+    cmds:
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+
+  hub:create-mgmt-roles:apply:
+    internal: true
     vars:
       ACK_CAPABILITY_ROLE:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole"
@@ -795,7 +810,13 @@ tasks:
             "Resource": "*"
           }]
         }'
-        # Allow ACK capability role to assume cluster-mgmt roles
+        # Allow ACK capability role to assume cluster-mgmt roles. The role exists only
+        # once the hub does: when this runs before the hub (task privileged:pre, the
+        # privilegedSteps=external runner), the lookup above is empty, so skip it here;
+        # hub:seed / task privileged:post apply it on the next pass.
+        if [ -z "{{.ACK_CAPABILITY_ROLE}}" ]; then
+          echo "  (hub ACK capability role not found yet: ack-assume-role applied on the next pass)"
+        else
         aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
           "Version": "2012-10-17",
           "Statement": [{
@@ -804,6 +825,7 @@ tasks:
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
         }'
+        fi
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
   hub:install-eso:
