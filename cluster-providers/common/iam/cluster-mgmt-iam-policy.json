@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IamRolesPoliciesInstanceProfilesOidc",
+      "Effect": "Allow",
+      "Action": "iam:*",
+      "Resource": [
+        "arn:*:iam::*:role/*",
+        "arn:*:iam::*:policy/*",
+        "arn:*:iam::*:instance-profile/*",
+        "arn:*:iam::*:oidc-provider/*"
+      ]
+    },
+    {
+      "Sid": "IamRead",
+      "Effect": "Allow",
+      "Action": [
+        "iam:Get*",
+        "iam:List*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CallerIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    }
+  ]
+}

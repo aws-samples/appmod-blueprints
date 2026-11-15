@@ -40,6 +40,9 @@ env:
 vars:
   CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
+  # Fixed least-privilege policy documents (shared with kind-kro-ack). No AWS-managed
+  # admin-like policy is attached by `task install`.
+  IAM_POLICY_DIR: "{{.ROOT_DIR}}/cluster-providers/common/iam"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
     # MUST never evaluate to an empty string. yq's `//` falls back only on null or
@@ -748,7 +751,8 @@ tasks:
           case $1 in
             ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
             eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
-            iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
+            # iam: customer-managed <prefix>-cluster-mgmt-iam-scoped below instead of IAMFullAccess.
+            iam) echo "";;
             ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
             s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
             dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
@@ -768,6 +772,10 @@ tasks:
           done
           echo "  ✓ $ROLE_NAME"
         done
+        # cluster-mgmt-iam: scoped customer-managed policy instead of IAMFullAccess
+        # (common/iam/managed-policy.sh: create or recreate, attach, drop the legacy inline).
+        sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+          "{{.RESOURCE_PREFIX}}-cluster-mgmt-iam" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json" cluster-mgmt-iam-scoped
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
         EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
         # PassRole: scoped by the service the role is passed TO, not by role name.
@@ -2691,9 +2699,16 @@ tasks:
               else
                 printf '{{.C_INFO}}  %s: role %s exists{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
               fi
-              # 2. AdministratorAccess (attach is idempotent)
-              aws iam attach-role-policy --role-name "$ROLE_NAME" \
-                --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null
+              # 2. Scoped customer-managed policy, not AdministratorAccess (idempotent;
+              #    common/iam/managed-policy.sh).
+              #    Not the effective permission on its own: the hub's crossplane-pod-identity
+              #    addon (provider NotIn [kro-ack]) adopts these same <spoke>-Crossplane{IAM,EKS}ProviderRole
+              #    roles and attaches AdministratorAccess through an in-cluster Crossplane
+              #    RolePolicyAttachment, so the spoke iam/eks providers stay AdministratorAccess.
+              #    That attachment is made by provider-aws-iam, not the installing principal;
+              #    scoping it is follow-up work.
+              sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+                "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" crossplane-provider-scoped >/dev/null
               # 3. Pod Identity association on the spoke (idempotent)
               EXISTING=$(aws eks list-pod-identity-associations --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
                 --namespace crossplane-system --service-account "$SA" \

@@ -1791,6 +1791,41 @@ spec:
     #  - enable_crossplane_aws limits it to clusters that actually run Crossplane.
     # REMOVE once devlake (and other data resources) are migrated off Crossplane to ACK/KRO.
     ###########################################################
+    - id: crossplaneProviderPolicy
+      includeWhen:
+        - ${schema.spec.provider == "kro-ack" && schema.spec.addons.enable_crossplane_aws == "true"}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          namespace: "${schema.spec.name}"
+          name: "${schema.spec.name}-crossplane-provider-scoped"
+          ownerReferences:
+            - apiVersion: kro.run/v1alpha1
+              kind: ${schema.kind}
+              name: ${schema.metadata.name}
+              uid: ${schema.metadata.uid}
+              blockOwnerDeletion: true
+              controller: false
+          annotations:
+            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+            services.k8s.aws/region: ${schema.spec.region}
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: |
+              {"arn":"arn:aws:iam::${schema.spec.accountId}:policy/${schema.spec.name}-crossplane-provider-scoped"}
+            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+        spec:
+          # Customer-managed, not inline, named <role>-scoped like common/iam/managed-policy.sh.
+          # Unlike the script, no "<prefix>-" is added here: the name matches policy/<prefix>-*
+          # (consumer IAM grants, prefix teardown sweeps) only when the spoke name starts with
+          # the resource prefix, as it does in the default fleet (e.g. <prefix>-spoke-dev).
+          # A spoke named outside the prefix gets a policy outside policy/<prefix>-*.
+          # Spoke-only, like the role (the hub claim sets no spec.provider). A test pins the
+          # document equal to cluster-providers/common/iam/crossplane-provider-policy.json.
+          name: "${schema.spec.name}-crossplane-provider-scoped"
+          description: "Scoped policy for the Crossplane provider-aws-iam/eks role (kro-ack spoke)"
+          policyDocument: '{"Version":"2012-10-17","Statement":[{"Sid":"IamRolesPoliciesInstanceProfilesOidc","Effect":"Allow","Action":"iam:*","Resource":["arn:*:iam::*:role/*","arn:*:iam::*:policy/*","arn:*:iam::*:instance-profile/*","arn:*:iam::*:oidc-provider/*"]},{"Sid":"IamRead","Effect":"Allow","Action":["iam:Get*","iam:List*"],"Resource":"*"},{"Sid":"Eks","Effect":"Allow","Action":"eks:*","Resource":"*"},{"Sid":"Ec2Read","Effect":"Allow","Action":"ec2:Describe*","Resource":"*"},{"Sid":"CallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}'
+
     - id: crossplaneProviderRole
       includeWhen:
         - ${schema.spec.provider == "kro-ack" && schema.spec.addons.enable_crossplane_aws == "true"}
@@ -1814,8 +1849,14 @@ spec:
             services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
         spec:
           name: "${schema.spec.name}-crossplane-provider"
+          # Scoped customer-managed policy crossplaneProviderPolicy above (same document as
+          # cluster-providers/common/iam/crossplane-provider-policy.json), not
+          # AdministratorAccess. Upgrade note: on the next RGD sync, with no `task install`
+          # re-run, ACK is expected to reconcile the Role to this spec: attach this managed
+          # policy, detach the older AdministratorAccess, and delete the inline
+          # crossplane-provider-scoped policy an earlier revision set (not verified live).
           policies:
-            - arn:aws:iam::aws:policy/AdministratorAccess
+            - ${crossplaneProviderPolicy.status.ackResourceMetadata.arn}
           assumeRolePolicyDocument: |
             {
               "Version": "2012-10-17",
