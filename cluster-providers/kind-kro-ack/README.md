@@ -146,6 +146,31 @@ only `sts:GetCallerIdentity`, plus `eks:*` and `ec2:Describe*` for the Crossplan
 not a privilege boundary: a principal that can create a role and write its policy can still
 grant itself more.
 
+The Crossplane document also has two `Deny` statements, which narrow what provider-aws-iam can
+hand out in-cluster:
+
+- `DenyAttachAwsManagedPolicyOutsideAllowlist`: `iam:AttachRolePolicy` of an AWS managed policy
+  (`arn:*:iam::aws:policy/*`) is refused unless it is on an explicit list (`iam:PolicyARN`).
+  The list is the service policies the charts attach through Crossplane (`crossplane-base`
+  provider roles, the Karpenter node role, the Grafana workspace role, the `platform-cluster`
+  composition). `AdministratorAccess`, `PowerUserAccess` and `IAMFullAccess` are not on it.
+  `DetachRolePolicy` is not conditioned, so an upgrade can still remove them. A chart that
+  attaches a new AWS managed policy through Crossplane must add it to the list
+  (`workshop/scripts/tests/test_crossplane_provider_scope.py` fails until it does).
+- `DenyRewriteOwnScopedPolicy`: no `iam:CreatePolicyVersion` / `iam:SetDefaultPolicyVersion` on
+  `policy/*-crossplane-provider-scoped`, so the provider cannot rewrite its own policy.
+
+Still open: customer-managed policies (`CreatePolicy`, then attach), inline `PutRolePolicy`,
+`CreatePolicyVersion` on other policies, `iam:PassRole` and `eks:*` (access entries and pod
+identity associations on any cluster). A permissions boundary is the fix for those.
+
+`crossplane-base` attaches a per-provider service policy to each provider role it creates
+(`providers.<name>.policyArns`, e.g. `AmazonEC2FullAccess` for ec2), not `AdministratorAccess`.
+Upgrade note: the addon syncs with `prune: false`, so on a live cluster the old
+`<name>-provider-admin-attachment` `RolePolicyAttachment` stays until it is deleted
+(`kubectl delete rolepolicyattachments.iam.aws.upbound.io <name>-provider-admin-attachment`);
+provider-aws-iam then detaches `AdministratorAccess`.
+
 ### Why customer-managed, and how re-runs converge
 
 The documents are customer-managed policies, not inline ones: a consumer may allow
@@ -195,7 +220,9 @@ the hub addon `crossplane-pod-identity` (selected for `provider NotIn [kro-ack]`
 `<spoke>-CrossplaneIAMProviderRole` / `<spoke>-CrossplaneEKSProviderRole` roles and still attaches
 `AdministratorAccess` to them through a Crossplane `RolePolicyAttachment`. That attachment is made
 in-cluster by provider-aws-iam, like `crossplane-base`, not by the installing principal, so it is
-out of scope here; scoping it is follow-up work.
+out of scope here; scoping it is follow-up work. If the hub's provider-aws-iam runs with the
+scoped Crossplane document, its `DenyAttachAwsManagedPolicyOutsideAllowlist` refuses that
+attachment (not verified live).
 
 To create these roles yourself (for example in CloudFormation), set their ARNs under `hub.iam`
 (see `config.yaml`). A set ARN is used as is: no create, no trust update, no policy. Each

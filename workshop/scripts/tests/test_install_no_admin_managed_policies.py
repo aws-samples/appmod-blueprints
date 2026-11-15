@@ -121,6 +121,8 @@ def test_policy_is_scoped(name):
     doc = load_policy(name)
     assert doc["Version"] == "2012-10-17"
     for st in doc["Statement"]:
+        if st["Effect"] == "Deny":  # can only narrow; pinned in test_crossplane_provider_scope.py
+            continue
         assert st["Effect"] == "Allow"
         actions, resources = as_list(st["Action"]), as_list(st["Resource"])
         assert "*" not in actions, st
