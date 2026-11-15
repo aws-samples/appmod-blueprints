@@ -71,6 +71,25 @@ def test_remote_dag_order():
     assert idx == sorted(idx), dict(zip(order, idx))
 
 
+def test_remote_sets_a_git_identity_before_the_first_commit(tmp_path):
+    # CodeBuild has no git identity: spokes:enable-kro failed with "Author identity unknown".
+    i = _index(REMOTE, "git config --global user.email")
+    assert i < _index(REMOTE, "task: set-overlay-repo") and i < _index(REMOTE, "spoke-dev")
+    block = REMOTE[i]
+    home = tmp_path / "h"
+    home.mkdir()
+    env = dict(os.environ, HOME=str(home), GIT_CONFIG_NOSYSTEM="1")
+    env.pop("GIT_CONFIG_GLOBAL", None)
+    subprocess.run(["bash", "-c", block], env=env, check=True, timeout=30)
+    got = subprocess.run(["git", "config", "--global", "user.email"], env=env, capture_output=True, text=True)
+    assert got.stdout.strip() == "platform@workshops.aws"
+    # an existing identity is kept
+    subprocess.run(["git", "config", "--global", "user.email", "me@example.com"], env=env, check=True)
+    subprocess.run(["bash", "-c", block], env=env, check=True, timeout=30)
+    got = subprocess.run(["git", "config", "--global", "user.email"], env=env, capture_output=True, text=True)
+    assert got.stdout.strip() == "me@example.com"
+
+
 def test_remote_has_no_silent_failure_and_a_fatal_pivot():
     # `install` runs the pivot with ignore_error (non-fatal); once the build ends, kind is gone,
     # so here a failed pivot must fail the build, and no step may swallow its own failure.
