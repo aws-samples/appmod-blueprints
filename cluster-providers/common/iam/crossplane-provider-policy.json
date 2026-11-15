@@ -76,13 +76,18 @@
       }
     },
     {
-      "Sid": "DenyRewriteOwnScopedPolicy",
+      "Sid": "DenyChangeProviderScopedPolicies",
       "Effect": "Deny",
       "Action": [
         "iam:CreatePolicyVersion",
-        "iam:SetDefaultPolicyVersion"
+        "iam:SetDefaultPolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:DeletePolicy"
       ],
-      "Resource": "arn:*:iam::*:policy/*crossplane-provider-scoped"
+      "Resource": [
+        "arn:*:iam::*:policy/*crossplane-provider-scoped",
+        "arn:*:iam::*:policy/*ProviderRole-scoped"
+      ]
     }
   ]
 }

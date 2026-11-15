@@ -9,12 +9,16 @@ AdministratorAccess included, to any role. Two changes:
     to each provider role, not AdministratorAccess.
 (a) common/iam/crossplane-provider-policy.json (and its rg-eks inline copy) denies
     iam:AttachRolePolicy of any AWS managed policy outside an explicit allowlist (iam:PolicyARN),
-    and denies CreatePolicyVersion / SetDefaultPolicyVersion on the provider's own
-    *-crossplane-provider-scoped policy.
+    and denies editing or deleting the provider scoped policies (*-crossplane-provider-scoped,
+    *ProviderRole-scoped).
 
-Not closed, and pinned below as still allowed so a reader sees the gap: customer-managed
-policies (CreatePolicy + attach), inline PutRolePolicy, CreatePolicyVersion on other
-policies, PassRole, eks:*.
+The privilege ceiling is unchanged. Pinned below as still allowed so a reader sees the gap:
+customer-managed policies (CreatePolicy + attach), inline PutRolePolicy, CreatePolicyVersion
+on other policies, UpdateAssumeRolePolicy, CreateRole, the boundary operations, PassRole, eks:*,
+and detaching the scoped policy.
+
+kind-crossplane: its hub iam/eks provider roles come from a direct render of crossplane-base
+in crossplane:claims (and the same render in destroy). Those renders are tested here too.
 
 Run:  python -m pytest workshop/scripts/tests/test_crossplane_provider_scope.py -q
 """
@@ -51,7 +55,9 @@ def as_list(v):
 # shortcut: a model of IAM evaluation for this one document (Allow/Deny, wildcard Action and
 # Resource, the Arn*/String* condition operators it uses, AND across operators, OR across
 # values, negated operators true when no value matches). Not AWS's evaluator: no SCPs,
-# boundaries, NotAction or IfExists. Upgrade to `aws iam simulate-custom-policy` in a live test.
+# boundaries, NotAction or IfExists. fnmatch on whole ARNs lets `*` cross `:`, unlike ArnLike;
+# harmless for the patterns in this document. Upgrade to `aws iam simulate-custom-policy` in a
+# live test.
 def _cond_ok(cond, ctx):
     for op, kv in cond.items():
         neg = "Not" in op
@@ -88,7 +94,7 @@ def aws_managed(name):
 
 
 def allowlist(doc):
-    st = next(s for s in doc["Statement"] if s.get("Sid") == "DenyAttachAwsManagedPolicyOutsideAllowlist")
+    st = next(x for x in doc["Statement"] if x.get("Sid") == "DenyAttachAwsManagedPolicyOutsideAllowlist")
     return as_list(st["Condition"]["ArnNotLike"]["iam:PolicyARN"])
 
 
@@ -132,12 +138,40 @@ def test_detach_admin_still_allowed():
     assert allowed(load_doc(), "iam:DetachRolePolicy", ROLE, {"iam:PolicyARN": aws_managed("AdministratorAccess")})
 
 
-@pytest.mark.parametrize("name", ["peeks-hub-crossplane-provider-scoped",
-                                  "peeks-spoke-dev-crossplane-provider-scoped",
-                                  "pfx-hub-crossplane-provider-scoped"])
-@pytest.mark.parametrize("action", ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion"])
-def test_own_scoped_policy_cannot_be_rewritten(name, action):
-    assert not allowed(load_doc(), action, f"arn:aws:iam::{ACCT}:policy/{name}")
+MANAGED_POLICY_SH = os.path.join(REPO, "cluster-providers", "common", "iam", "managed-policy.sh")
+
+
+def scoped_name(prefix, role):
+    """The policy name managed-policy.sh gives <role> (its own `name` subcommand)."""
+    return subprocess.run(["sh", MANAGED_POLICY_SH, "name", prefix, role], capture_output=True,
+                          text=True, check=True).stdout.strip()
+
+
+# Every role that carries this document: hub (kind-kro-ack hub:bootstrap-crossplane-identity),
+# kro-ack spoke (rg-eks, "<spoke>-crossplane-provider-scoped", no prefix added) and the
+# spokes:seed-provider-identity roles of both cluster providers.
+OWN_POLICIES = [
+    ("peeks", "peeks-hub-crossplane-provider"),
+    ("peeks", "acme-hub-crossplane-provider"),
+    ("peeks", "peeks-spoke-dev-CrossplaneIAMProviderRole"),
+    ("peeks", "peeks-spoke-dev-CrossplaneEKSProviderRole"),
+    ("peeks", "acme-spoke1-CrossplaneIAMProviderRole"),
+    ("", "spoke1-CrossplaneEKSProviderRole"),
+]
+
+
+@pytest.mark.parametrize("prefix,role", OWN_POLICIES)
+@pytest.mark.parametrize("action", ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion",
+                                    "iam:DeletePolicyVersion", "iam:DeletePolicy"])
+def test_provider_scoped_policies_cannot_be_changed(prefix, role, action):
+    doc = load_doc()
+    for name in (scoped_name(prefix, role), role + "-scoped"):  # managed-policy.sh / rg-eks
+        assert not allowed(doc, action, f"arn:aws:iam::{ACCT}:policy/{name}"), name
+
+
+def test_scoped_name_matches_script():
+    assert scoped_name("peeks", "peeks-hub-crossplane-provider") == "peeks-hub-crossplane-provider-scoped"
+    assert scoped_name("peeks", "acme-spoke1-CrossplaneIAMProviderRole") == "peeks-acme-spoke1-CrossplaneIAMProviderRole-scoped"
 
 
 def test_known_gaps_still_open():
@@ -150,12 +184,19 @@ def test_known_gaps_still_open():
     assert allowed(doc, "iam:PutRolePolicy", ROLE)
     assert allowed(doc, "iam:PassRole", ROLE)
     assert allowed(doc, "eks:CreateAccessEntry", f"arn:aws:eks:us-west-2:{ACCT}:cluster/any")
+    assert allowed(doc, "iam:UpdateAssumeRolePolicy", f"arn:aws:iam::{ACCT}:role/any-admin-role")
+    assert allowed(doc, "iam:CreateRole", ROLE)
+    assert allowed(doc, "iam:PutRolePermissionsBoundary", ROLE)
+    assert allowed(doc, "iam:DeleteRolePermissionsBoundary", ROLE)
+    own = f"arn:aws:iam::{ACCT}:policy/peeks-hub-crossplane-provider-scoped"
+    own_role = f"arn:aws:iam::{ACCT}:role/peeks-hub-crossplane-provider"
+    assert allowed(doc, "iam:DetachRolePolicy", own_role, {"iam:PolicyARN": own})
 
 
 def test_deny_statements_only_narrow():
     doc = load_doc()
     denies = [s for s in doc["Statement"] if s["Effect"] == "Deny"]
-    assert {s["Sid"] for s in denies} == {"DenyAttachAwsManagedPolicyOutsideAllowlist", "DenyRewriteOwnScopedPolicy"}
+    assert {x["Sid"] for x in denies} == {"DenyAttachAwsManagedPolicyOutsideAllowlist", "DenyChangeProviderScopedPolicies"}
     for arn in allowlist(doc):
         assert re.fullmatch(r"arn:\*:iam::aws:policy/[\w+=,.@/-]+", arn), arn
         assert not any(arn.endswith("/" + a) for a in ADMIN_LIKE), arn
@@ -175,16 +216,26 @@ ARN = re.compile(r"arn:aws:iam::aws:policy/([\w+=,.@/-]+)")
 KNOWN_DENIED = {("gitops/addons/charts/crossplane-pod-identity", "AdministratorAccess")}
 
 
+SCAN_ROOTS = ["gitops/addons/charts", "gitops/abstractions", "gitops/overlays", "platform",
+              "cluster-providers/kind-crossplane/claims"]
+SCAN_EXT = (".yaml", ".yml", ".tpl", ".cue", ".json")
+
+
 def crossplane_iam_units():
-    roots = [os.path.join(REPO, "gitops", "addons", "charts"), os.path.join(REPO, "gitops", "abstractions", "crossplane")]
+    """(unit, {file: text}) per first-level directory (or loose file) under SCAN_ROOTS that
+    uses Crossplane IAM. A unit is the scope in which an ARN counts as Crossplane-attached."""
     units = []
-    for root in roots:
+    for rel in SCAN_ROOTS:
+        root = os.path.join(REPO, rel)
         for name in sorted(os.listdir(root)):
             d = os.path.join(root, name)
-            if not os.path.isdir(d):
+            if os.path.isdir(d):
+                files = [os.path.join(dp, f) for dp, _, fs in os.walk(d) for f in fs if f.endswith(SCAN_EXT)]
+            elif name.endswith(SCAN_EXT):
+                files = [d]
+            else:
                 continue
-            files = [os.path.join(dp, f) for dp, _, fs in os.walk(d) for f in fs if f.endswith((".yaml", ".yml", ".tpl"))]
-            texts = {f: open(f).read() for f in files}
+            texts = {f: open(f, errors="replace").read() for f in files}
             if any(XP_IAM.search(t) for t in texts.values()):
                 units.append((os.path.relpath(d, REPO), texts))
     return units
@@ -194,7 +245,8 @@ def test_allowlist_covers_every_crossplane_attached_aws_policy():
     allow = {a.split("policy/", 1)[1] for a in allowlist(load_doc())}
     units = crossplane_iam_units()
     names = {u for u, _ in units}
-    assert "gitops/addons/charts/crossplane-base" in names and "gitops/addons/charts/karpenter" in names, names
+    assert {"gitops/addons/charts/crossplane-base", "gitops/addons/charts/karpenter",
+            "gitops/abstractions/crossplane"} <= names, names
     missing = []
     for unit, texts in units:
         if unit == "gitops/addons/charts/kro":  # ACK RGDs (iam.services.k8s.aws), another identity
@@ -286,3 +338,73 @@ def test_every_chart_default_policy_is_allowlisted():
             assert set(p["policyArns"]) <= allow, (name, p["policyArns"])
     assert str(provs["iam"]["createIdentity"]).lower() == "false"
     assert str(provs["eks"]["createIdentity"]).lower() == "false"
+
+
+# ------------------------------------------------------------------ kind-crossplane direct renders
+
+KC = os.path.join(REPO, "cluster-providers", "kind-crossplane", "Taskfile.yaml")
+
+
+def kind_crossplane_render_cmd(task):
+    """The `helm template crossplane-base ...` command of a kind-crossplane task, vars stubbed."""
+    with open(KC) as f:
+        cmds = yaml.safe_load(f)["tasks"][task]["cmds"]
+    texts = [c if isinstance(c, str) else c.get("cmd", "") for c in cmds]
+    hit = [t for t in texts if "helm template crossplane-base" in t]
+    assert len(hit) == 1, (task, len(hit))
+    cmd = hit[0].replace("\\\n", " ")
+    cmd = cmd[cmd.index("helm template crossplane-base"):cmd.index("|")]
+    for var, val in {"{{.GITOPS_ROOT}}": os.path.join(REPO, "gitops"), "{{.AWS_REGION}}": "us-west-2",
+                     "{{.HUB_CLUSTER_NAME}}": "hub1", "{{.AWS_ACCOUNT_ID}}": ACCT}.items():
+        cmd = cmd.replace(var, val)
+    assert "{{" not in cmd, cmd
+    return cmd
+
+
+def run_render(cmd):
+    if not shutil.which("helm"):
+        pytest.skip("helm not available")
+    r = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return list(d for d in yaml.safe_load_all(r.stdout) if d)
+
+
+@pytest.mark.parametrize("task", ["crossplane:claims", "destroy"])
+def test_kind_crossplane_bootstrap_render_keeps_hub_iam_eks_identity(task):
+    """kind-crossplane has no other source for the hub provider-aws-iam/eks identity: the
+    chart defaults them to createIdentity: false, so both renders must enable them."""
+    docs = run_render(kind_crossplane_render_cmd(task))
+    roles = {d["metadata"]["annotations"].get("crossplane.io/external-name") for d in docs
+             if d["kind"] == "Role" and d["apiVersion"].startswith("iam.aws.")}
+    assert {"hub1-CrossplaneIAMProviderRole", "hub1-CrossplaneEKSProviderRole"} <= roles, roles
+    pias = {d["spec"]["forProvider"]["serviceAccount"] for d in docs if d["kind"] == "PodIdentityAssociation"}
+    assert {"provider-aws-iam", "provider-aws-eks"} <= pias, pias
+    atts = {d["spec"]["forProvider"]["roleRef"]["name"] for d in docs if d["kind"] == "RolePolicyAttachment"}
+    assert {"iam-provider-role", "eks-provider-role"} <= atts, atts
+
+
+def test_kind_crossplane_destroy_matches_install_render():
+    """destroy deletes what crossplane:claims created (plus family/ec2), so no role is left."""
+    ins = {(d["kind"], d["metadata"]["name"]) for d in run_render(kind_crossplane_render_cmd("crossplane:claims"))}
+    des = {(d["kind"], d["metadata"]["name"]) for d in run_render(kind_crossplane_render_cmd("destroy"))}
+    assert ins <= des, ins - des
+
+
+def test_kind_crossplane_destroy_deletes_legacy_admin_attachments():
+    """Hubs installed before the attachments were renamed keep <name>-provider-admin-attachment;
+    destroy must delete those too, or the role delete hits DeleteConflict."""
+    with open(KC) as f:
+        cmds = yaml.safe_load(f)["tasks"]["destroy"]["cmds"]
+    text = next(c["cmd"] for c in cmds if isinstance(c, dict) and "helm template crossplane-base" in c.get("cmd", ""))
+    assert re.search(r'for P in iam eks ec2; do\s+kubectl delete rolepolicyattachments\.iam\.aws\.upbound\.io '
+                     r'"\$P-provider-admin-attachment"', text), text
+
+
+def test_attachment_names_follow_the_policy_not_the_index(tmp_path):
+    vals = registry_values()
+    vals["providers"]["ec2"]["policyArns"] = [aws_managed("AmazonS3FullAccess"), aws_managed("AmazonEC2FullAccess")]
+    r = render(tmp_path, vals)
+    assert r.returncode == 0, r.stderr
+    names = {a["metadata"]["name"] for a in docs_of(r.stdout, "RolePolicyAttachment")
+             if a["spec"]["forProvider"]["roleRef"]["name"] == "ec2-provider-role"}
+    assert names == {"ec2-provider-amazons3fullaccess", "ec2-provider-amazonec2fullaccess"}, names
