@@ -45,14 +45,34 @@ spec:
 {{- end }}
 {{- end }}
 {{- /*
+  prefixListIds: optional AWS managed prefix list IDs (pl-...) allowed on the shared ALB,
+  rendered into IngressClassParams.spec.prefixListsIDs (group-level form of the
+  security-group-prefix-lists annotation). Same field name in elbv2.k8s.aws/v1beta1 (OSS
+  LBC) and eks.amazonaws.com/v1 (EKS Auto Mode). YAML list OR comma-separated string;
+  empty/unset => field omitted. Each prefix list counts against the security group rule
+  quota by its MAX size, per listener port. With prefix lists only (no inboundCIDRs) the
+  controller does not add its 0.0.0.0/0 default. See docs/platform/alb-ip-allowlist.md.
+*/}}
+{{- $plraw := list }}
+{{- $pl := .Values.prefixListIds }}
+{{- if kindIs "string" $pl }}{{- $plraw = splitList "," $pl }}{{- else if $pl }}{{- $plraw = $pl }}{{- end }}
+{{- $prefixLists := list }}
+{{- range $plraw }}
+{{- $t := . | toString | trim }}
+{{- if and $t (not (has $t $prefixLists)) }}
+{{- $prefixLists = append $prefixLists $t }}
+{{- end }}
+{{- end }}
+{{- /*
   clusterEgressCidrs: this cluster's OWN NAT egress address(es), written by the provider
   into <cluster>/config (metadata nat_egress_cidrs -> cluster-secret annotation) and passed
-  by the registry. Appended ONLY when an allowlist is already configured above: with no
-  allowlist the ALB stays open and this list is ignored, so it can never turn an open ALB
-  into a NAT-only one. Needed because in-cluster apps reach the public Keycloak issuer
-  through this same ALB from the NAT EIP (see docs/platform/alb-ip-allowlist.md pitfall 1).
+  by the registry. Appended ONLY when an allowlist is already configured above (CIDRs or
+  prefix lists): with no allowlist the ALB stays open and this list is ignored, so it can
+  never turn an open ALB into a NAT-only one. Needed because in-cluster apps reach the
+  public Keycloak issuer through this same ALB from the NAT EIP (see
+  docs/platform/alb-ip-allowlist.md pitfall 1).
 */}}
-{{- if $cidrs }}
+{{- if or $cidrs $prefixLists }}
 {{- $egress := .Values.clusterEgressCidrs }}
 {{- $eraw := list }}
 {{- if kindIs "string" $egress }}{{- $eraw = splitList "," $egress }}{{- else if $egress }}{{- $eraw = $egress }}{{- end }}
@@ -65,6 +85,12 @@ spec:
 {{- end }}
 {{- with $cidrs }}
   inboundCIDRs:
+{{- range . }}
+    - {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- with $prefixLists }}
+  prefixListsIDs:
 {{- range . }}
     - {{ . | quote }}
 {{- end }}

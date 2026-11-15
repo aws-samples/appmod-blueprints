@@ -5,12 +5,14 @@
 # Keys meant for the fleet overlay (overlays/clusters/<cluster>/ingress-class-alb/values.yaml),
 # never set by the registry so the overlay keeps control of them:
 #   inboundCidrs, extraInboundCidrs  (YAML list or comma-separated string; both empty => ALB open)
-# See docs/platform/alb-ip-allowlist.md.
+#   prefixListIds                    (AWS managed prefix list IDs, list or comma-separated
+#                                     string, rendered into spec.prefixListsIDs; empty => omitted)
+# All three empty => ALB open. See docs/platform/alb-ip-allowlist.md.
 
 # This cluster's OWN NAT egress address(es), as a YAML list or a comma-separated string of
 # CIDRs. The registry fills it from the cluster-secret annotation nat_egress_cidrs, which the
 # cluster provider writes into <cluster>/config at install time. It is appended (deduplicated)
-# to inboundCidrs + extraInboundCidrs ONLY when that allowlist is non-empty: with no allowlist
+# to inboundCidrs + extraInboundCidrs ONLY when an allowlist is set (CIDRs or prefixListIds): with no allowlist
 # the ALB stays open and this key is ignored. In-cluster apps reach the public Keycloak issuer
 # through this same ALB from the NAT EIP, so without it SSO breaks behind an allowlist.
 # To opt out on one cluster, set it to "" through the overlay's overrides.yaml valuesObject.
