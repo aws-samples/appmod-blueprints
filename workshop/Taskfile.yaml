@@ -3513,6 +3513,23 @@ tasks:
             printf '{{.C_ERR}}\u26a0 fleet-config push failed after 3 attempts.{{.C_RESET}}\n'
             exit 1
           fi
+          # Install perf R10: the clusters-kro (kro-clusters/clusters/*.json) and
+          # fleet-secrets (fleet/members/*) ApplicationSets turn this push into the spoke,
+          # but re-read git on their own timer: the first ACK CreateVpc came 7 to 9 min
+          # after the push on a measured run. Ask them to re-read now (same annotation as
+          # spokes:disable-kro). Non-fatal: without it they still pick the push up later.
+          {{.MARK}} start "spoke {{.CLUSTER}}: appset refresh after push"
+          RF=failed
+          KCR=$(mktemp)
+          if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KCR" >/dev/null 2>&1; then
+            RF=ok
+            for AS in clusters-kro fleet-secrets; do
+              kubectl --kubeconfig "$KCR" --request-timeout=20s annotate applicationsets.argoproj.io "$AS" -n argocd \
+                argocd.argoproj.io/application-set-refresh=true --overwrite >/dev/null 2>&1 || RF=partial
+            done
+          fi
+          rm -f "$KCR"
+          {{.MARK}} done "spoke {{.CLUSTER}}: appset refresh after push" "refresh=$RF"
         fi
         rm -rf "$REPO_DIR"
         # Refresh the local fleet-config checkout so the committed overlay change is
