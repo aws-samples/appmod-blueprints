@@ -165,6 +165,15 @@ def test_remote_wait_passes_on_a_real_pat_and_snapshots_it_into_the_config(tmp_p
 
 
 @needs_tools
+def test_remote_wait_accepts_a_routable_gitlab_pat(tmp_path):
+    # GitLab routable tokens: glpat-<payload>.<2-char version>.<suffix> (seen on rosa, 51 chars)
+    pat = "glpat-" + "aB3_-" * 7 + "xyz" + ".01." + "abcdefghi"
+    r, out = _run_wait(tmp_path, pat)
+    assert r.returncode == 0, out
+    assert f"gitlabRootPassword: {pat}" in (tmp_path / "config.local.yaml").read_text()
+
+
+@needs_tools
 @pytest.mark.parametrize("token", ["", None, "root-IDEPASSWORD"])
 def test_remote_wait_fails_without_a_real_pat(tmp_path, token):
     # a missing secret must not read as "done"; the CDK-seeded placeholder (root-<ide password>)
