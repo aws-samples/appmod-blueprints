@@ -484,7 +484,18 @@ tasks:
       - |
         NODE_IMAGE=$(yq -r '.kind.nodeImage // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
         [ "$NODE_IMAGE" = null ] && NODE_IMAGE=""
-        kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind.yaml --kubeconfig {{.KUBECONFIG}} ${NODE_IMAGE:+--image "$NODE_IMAGE"}
+        # On a cgroup v1 host (e.g. the CodeBuild fleet of the remote install), kubelet >= 1.35
+        # refuses to start (failCgroupV1 defaults to true), so kubeadm init times out. Opt out
+        # there only; cgroup v2 hosts keep kind.yaml unchanged.
+        # shortcut: failCgroupV1=false is a temporary kubelet override, move to a cgroup v2 build host when one is available.
+        KIND_CFG=kind.yaml
+        CGROUP_FS=${KIND_CGROUP_FS:-$(stat -fc %T /sys/fs/cgroup 2>/dev/null || echo unknown)}
+        if [ "$CGROUP_FS" != cgroup2fs ]; then
+          KIND_CFG=$(mktemp /tmp/kind-cgroupv1-XXXXXX.yaml)
+          yq '.kubeadmConfigPatches += ["kind: KubeletConfiguration\nfailCgroupV1: false\n"]' kind.yaml > "$KIND_CFG"
+          echo "cgroup v1 host ($CGROUP_FS): kubelet failCgroupV1=false"
+        fi
+        kind create cluster --name {{.KIND_CLUSTER_NAME}} --config "$KIND_CFG" --kubeconfig {{.KUBECONFIG}} ${NODE_IMAGE:+--image "$NODE_IMAGE"}
 
   kind:kubeconfig:
     desc: Ensure kind cluster kubeconfig is present (idempotent)

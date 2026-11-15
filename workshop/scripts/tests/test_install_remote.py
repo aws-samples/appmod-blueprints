@@ -365,7 +365,7 @@ def test_ec2_still_gets_the_generated_config(tmp_path):
 
 # ---------------------------------------------------------------- kind node image (Docker Hub rate limit)
 
-def _kind_args(tmp_path, cfg_text):
+def _kind_args(tmp_path, cfg_text, cgroup_fs="cgroup2fs"):
     (tmp_path / "bin").mkdir(exist_ok=True)
     kind = tmp_path / "bin" / "kind"
     kind.write_text('#!/bin/sh\necho "$@" > "$KIND_ARGS"\n')
@@ -375,8 +375,10 @@ def _kind_args(tmp_path, cfg_text):
     cmd = [c for c in KRO["kind:create"]["cmds"] if isinstance(c, str) and "kind create" in c][0]
     cmd = (cmd.replace("{{.CONFIG_FILE}}", str(cfg)).replace("{{.KIND_CLUSTER_NAME}}", "c1")
            .replace("{{.KUBECONFIG}}", "/tmp/k"))
-    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", KIND_ARGS=str(tmp_path / "args"))
-    r = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", KIND_ARGS=str(tmp_path / "args"),
+               KIND_CGROUP_FS=cgroup_fs)
+    r = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30,
+                       cwd=os.path.join(REPO, "cluster-providers", "kind-kro-ack"))
     assert r.returncode == 0, r.stderr
     return (tmp_path / "args").read_text().strip()
 
@@ -390,3 +392,15 @@ def test_kind_create_default_has_no_image_flag(tmp_path):
 def test_kind_create_uses_the_configured_node_image(tmp_path):
     out = _kind_args(tmp_path, "kind:\n  nodeImage: mirror.example/kindest/node:v1.35.0\n")
     assert out.endswith("--image mirror.example/kindest/node:v1.35.0")
+
+
+@needs_tools
+def test_kind_create_on_cgroup_v1_host_disables_fail_cgroup_v1(tmp_path):
+    # kubelet >= 1.35 exits on cgroup v1 (CodeBuild host) unless failCgroupV1 is false.
+    out = _kind_args(tmp_path, "aws:\n  region: x\n", cgroup_fs="tmpfs")
+    cfg = re.search(r"--config (\S+)", out).group(1)
+    assert cfg != "kind.yaml"
+    doc = yaml.safe_load(open(cfg))
+    patches = [yaml.safe_load(x) for x in doc["kubeadmConfigPatches"]]
+    assert {"kind": "KubeletConfiguration", "failCgroupV1": False} in patches
+    assert doc["nodes"] == [{"role": "control-plane"}]
