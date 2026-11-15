@@ -412,7 +412,11 @@ def test_attachment_names_follow_the_policy_not_the_index(tmp_path):
 
 # ------------------------------------------------------------------ grafana: EC2 reads for a VPC workspace
 
-GRAFANA_EC2_READ = ["ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeVpcs"]
+# DescribeSubnets and DescribeDhcpOptions: proven needed (CloudTrail UnauthorizedOperation, caller
+# grafana.amazonaws.com). The rest are read-only and not proven; see v04x-grafana-fix2-report.md.
+GRAFANA_EC2_READ = ["ec2:DescribeSubnets", "ec2:DescribeDhcpOptions", "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeVpcs", "ec2:DescribeVpcAttribute", "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeAvailabilityZones"]
 WRITE_OR_ESCALATE = ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole",
                      "sts:AssumeRole", "ec2:CreateVpc", "ec2:CreateSecurityGroup", "ec2:DeleteSubnet",
                      "ec2:ModifyVpcAttribute", "ec2:AuthorizeSecurityGroupIngress", "ec2:RunInstances"]
