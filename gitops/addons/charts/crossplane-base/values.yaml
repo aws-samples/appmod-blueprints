@@ -99,6 +99,36 @@ providers:
     createIdentity: true
     policyArns:
       - arn:aws:iam::aws:policy/AmazonPrometheusFullAccess
+    # AMP CreateScraper creates an EKS access entry for the scraper with the CALLER's rights.
+    # AmazonPrometheusFullAccess has no eks:CreateAccessEntry: all 3 Scrapers 403 (CloudTrail
+    # responseElements.message: "not authorized to perform: eks:CreateAccessEntry on resource:
+    # .../cluster/<name>"). The entry is for AMP's own service-linked role
+    # AWSServiceRoleForAmazonPrometheusScraper_<id>, whose id AMP generates at create time, so
+    # another principal cannot pre-create it. The grant is therefore limited to that principal
+    # (eks:principalArn, a CreateAccessEntry condition key; the role name prefix AWSServiceRoleFor
+    # is reserved for service-linked roles) on clusters named <resourcePrefix>-*, and the
+    # follow-up actions to entries of that principal only. Nothing here can give any other
+    # principal access to a cluster. Both ARN spellings are listed (AMP and EKS docs differ on
+    # whether the /aws-service-role/<service>/ path is kept). The follow-up actions are not proven
+    # needed (the create fails first); they are bounded by the same resource pattern.
+    # Rendered with tpl: {{ }} below is resolved by the chart, not by Helm values.
+    inlineStatements:
+      - Effect: Allow
+        Action: eks:CreateAccessEntry
+        Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:cluster/{{ required `crossplane-base: resourcePrefix is required to scope the amp inline policy` .Values.resourcePrefix }}-*'
+        Condition:
+          StringLike:
+            eks:principalArn:
+              - 'arn:aws:iam::{{ .Values.aws.accountId }}:role/AWSServiceRoleForAmazonPrometheusScraper_*'
+              - 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*'
+      - Effect: Allow
+        Action:
+          - eks:AssociateAccessPolicy
+          - eks:DisassociateAccessPolicy
+          - eks:DescribeAccessEntry
+          - eks:ListAssociatedAccessPolicies
+          - eks:DeleteAccessEntry
+        Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:access-entry/{{ .Values.resourcePrefix }}-*/role/{{ .Values.aws.accountId }}/AWSServiceRoleForAmazonPrometheusScraper_*/*'
   grafana:
     version: ""
     serviceAccount: provider-aws-grafana
@@ -140,6 +170,10 @@ providers:
     createIdentity: false
 
 namespace: crossplane-system
+
+# Prefix of the cluster names (<prefix>-hub, <prefix>-spoke-*). Only used to scope the amp inline
+# policy to those clusters; the render fails when amp has an inline policy and this is empty.
+resourcePrefix: ""
 
 # Default reconcile tuning applied to every provider's DeploymentRuntimeConfig.
 # Lower maxReconcileRate reduces concurrent AWS API calls during the initial bootstrap
