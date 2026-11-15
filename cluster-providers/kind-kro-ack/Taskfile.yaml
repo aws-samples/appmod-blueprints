@@ -39,6 +39,11 @@ vars:
     sh: |
       P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
       [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      # aws.installRoleArn: the install runs as this role (assumed from the instance role)
+      # so the instance role itself needs no IAM write. Not for teardown on the IDE
+      # (PEEKS_AWS_IDE_ONLY=true), which stays on the instance role.
+      IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      if [ -n "$IR" ] && [ "$IR" != "null" ] && [ -z "${PEEKS_AWS_IDE_ONLY:-}" ] && [ "$P" = default ]; then P=install; fi
       echo "$P"
   # On EC2: a generated config whose [default] resolves through the instance role, so a
   # bare AWS_PROFILE=default still works. Off-instance: the user's own config, unchanged.
@@ -47,6 +52,10 @@ vars:
       if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
         mkdir -p "{{.ROOT_DIR}}/private"
         printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
+        IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+        if [ -n "$IR" ] && [ "$IR" != "null" ] && [ -z "${PEEKS_AWS_IDE_ONLY:-}" ]; then
+          printf '[profile install]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = peeks-install\n' "$IR" >> "{{.ROOT_DIR}}/private/aws-config"
+        fi
         echo "{{.ROOT_DIR}}/private/aws-config"
       else
         echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"
@@ -1288,6 +1297,13 @@ tasks:
           fi
           aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --type STANDARD --region {{.AWS_REGION}} 2>/dev/null || true
           aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$PRINCIPAL_ARN" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} 2>/dev/null || true
+          # aws.installRoleArn: the caller is the install role, so the host's own (instance)
+          # role, which the participant's kubectl uses, gets the same entry explicitly.
+          IDE_ROLE=$(yq -r '.aws.ideRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+          if [ -n "$IDE_ROLE" ] && [ "$IDE_ROLE" != "null" ] && [ "$IDE_ROLE" != "$PRINCIPAL_ARN" ]; then
+            aws eks create-access-entry --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$IDE_ROLE" --type STANDARD --region {{.AWS_REGION}} 2>/dev/null || true
+            aws eks associate-access-policy --cluster-name {{.HUB_CLUSTER_NAME}} --principal-arn "$IDE_ROLE" --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy --access-scope type=cluster --region {{.AWS_REGION}} 2>/dev/null || true
+          fi
       - cmd: |
           # Grant the ACK capability role (secretsmanager controller) permission to
           # read k8s Secrets — required to push <cluster>/config to Secrets Manager.
@@ -2574,6 +2590,11 @@ tasks:
       # (stranded ones). Tracked in https://github.com/aws-samples/appmod-blueprints/issues/1227. Default false: all deleted, the
       # databases without a snapshot, as before.
       DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
+      # privilegedSteps (config.yaml): external = no direct AWS delete in this task (the
+      # steps from "Deleting EKS Capabilities" to the security-group cleanup are skipped);
+      # the stack sweep (CodeBuild, own role) does them.
+      AWS_DELETES:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
     cmds:
       # Preflight: the extended sweep (step 6) runs python helpers that import boto3.
       # boto3 was an UNDECLARED prerequisite: when absent, the sweep died on
@@ -2772,8 +2793,10 @@ tasks:
           DESTROY_DEADLINE: '{{.DESTROY_DEADLINE}}'
       # Delete EKS Capabilities (ack, argocd, kro) directly via AWS API.
       # aws eks delete-cluster fails with ResourceInUseException if capabilities exist.
-      - printf '{{.C_ERR}}▸ Deleting EKS Capabilities (ack, argocd, kro)...{{.C_RESET}}\n'
-      - cmd: |
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: printf '{{.C_ERR}}▸ Deleting EKS Capabilities (ack, argocd, kro)...{{.C_RESET}}\n'
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: |
           for CAP in ack argocd kro; do
             STATUS=$(aws eks list-capabilities --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
               --query "capabilities[?capabilityName=='${CAP}'].status | [0]" --output text 2>/dev/null || echo "")
@@ -2795,8 +2818,10 @@ tasks:
         ignore_error: true
       # Delete the hub EKS cluster directly via AWS API (bypasses KRO entirely).
       # Kind is already dead so KRO cannot recreate it.
-      - printf '{{.C_ERR}}▸ Deleting hub EKS cluster via AWS API...{{.C_RESET}}\n'
-      - cmd: |
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: printf '{{.C_ERR}}▸ Deleting hub EKS cluster via AWS API...{{.C_RESET}}\n'
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: |
           # The capability deletes above can leave the cluster in an update for a few
           # minutes: DeleteCluster then answers ResourceInUseException ("update in
           # progress", or capabilities still attached). One call was not enough (a real
@@ -2825,8 +2850,10 @@ tasks:
             esac
           done
         ignore_error: true
-      - printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
-      - cmd: |
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: printf '{{.C_STEP}}▸ Waiting for EKS cluster deletion...{{.C_RESET}}\n'
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: |
           if [ "{{.HUB_DELETE_WAIT}}" = false ]; then echo "  HUB_DELETE_WAIT=false: not waiting for the hub cluster deletion"; exit 0; fi
           for i in $(seq 1 120); do
             STATUS=$(aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
@@ -2837,14 +2864,18 @@ tasks:
           done
         ignore_error: true
       # Clean up Secrets Manager
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
-      - aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/config --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: aws secretsmanager delete-secret --secret-id {{.HUB_CLUSTER_NAME}}/keycloak --force-delete-without-recovery --region {{.AWS_REGION}} 2>/dev/null || true
       # Best-effort sweep of AWS resources the addon controllers may have orphaned —
       # prevents redeploy conflicts on a reused account: IAM EntityAlreadyExists,
       # ALB DuplicateLoadBalancerName, delivery-source ConflictException.
       # Prefix-scoped; never fails destroy.
-      - printf '{{.C_ERR}}▸ Sweeping leftover AWS resources ({{.RESOURCE_PREFIX}}-*)...{{.C_RESET}}\n'
-      - cmd: |
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: printf '{{.C_ERR}}▸ Sweeping leftover AWS resources ({{.RESOURCE_PREFIX}}-*)...{{.C_RESET}}\n'
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: |
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
           # 1. ALBs from the load-balancer-controller — scoped by the elbv2.k8s.aws/cluster
           #    tag to THIS stack's clusters by exact name (scripts/stack-clusters.py: the hub,
@@ -2975,8 +3006,10 @@ tasks:
       #    (Crossplane/pod-identity/LBC/etc — not ACK-tagged), Secrets Manager,
       #    AMP workspaces, OIDC providers, CW log groups, spoke VPCs.
       #    All best-effort; safe to run on a fresh account (most loops are no-ops).
-      - printf '{{.C_ERR}}▸ Extended AWS sweep (CloudFront, IAM, Secrets, AMP, OIDC, VPCs)...{{.C_RESET}}\n'
-      - cmd: |
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: printf '{{.C_ERR}}▸ Extended AWS sweep (CloudFront, IAM, Secrets, AMP, OIDC, VPCs)...{{.C_RESET}}\n'
+      - if: '{{ne .AWS_DELETES "external"}}'
+        cmd: |
           REGION="{{.AWS_REGION}}"; PREFIX="{{.RESOURCE_PREFIX}}"
           HUB="{{.HUB_CLUSTER_NAME}}"
           {{.DL_FN}}
@@ -3281,6 +3314,10 @@ tasks:
       # hub cluster survived (capability deletion timed out and the DeleteCluster
       # error was swallowed). One check on the one outcome that matters.
       - cmd: |
+          if [ "{{.AWS_DELETES}}" = external ]; then
+            printf '{{.C_OK}}✓ Kubernetes teardown complete (privilegedSteps=external: the AWS deletes are left to the stack sweep).{{.C_RESET}}\n'
+            exit 0
+          fi
           if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then
             if [ "{{.HUB_DELETE_WAIT}}" = false ]; then
               printf '{{.C_INFO}}  EKS cluster {{.HUB_CLUSTER_NAME}} is still being deleted (HUB_DELETE_WAIT=false: the caller removes it).{{.C_RESET}}\n'

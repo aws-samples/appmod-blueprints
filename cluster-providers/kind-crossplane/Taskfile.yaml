@@ -54,6 +54,11 @@ vars:
     sh: |
       P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
       [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      # aws.installRoleArn: the install runs as this role (assumed from the instance role)
+      # so the instance role itself needs no IAM write. Not for teardown on the IDE
+      # (PEEKS_AWS_IDE_ONLY=true), which stays on the instance role.
+      IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      if [ -n "$IR" ] && [ "$IR" != "null" ] && [ -z "${PEEKS_AWS_IDE_ONLY:-}" ] && [ "$P" = default ]; then P=install; fi
       echo "$P"
   # On EC2: generate a config that resolves the profile to the instance role and
   # return its path. Off-instance: fall back to the user's existing AWS_CONFIG_FILE
@@ -63,6 +68,10 @@ vars:
       if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
         mkdir -p "{{.ROOT_DIR}}/private"
         printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
+        IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+        if [ -n "$IR" ] && [ "$IR" != "null" ] && [ -z "${PEEKS_AWS_IDE_ONLY:-}" ]; then
+          printf '[profile install]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = peeks-install\n' "$IR" >> "{{.ROOT_DIR}}/private/aws-config"
+        fi
         echo "{{.ROOT_DIR}}/private/aws-config"
       else
         echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"
