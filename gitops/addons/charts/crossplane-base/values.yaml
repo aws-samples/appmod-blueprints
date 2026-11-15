@@ -32,8 +32,11 @@ functions:
 # cluster-providers/common/iam/crossplane-provider-policy.json (Sid
 # DenyAttachAwsManagedPolicyOutsideAllowlist): provider-aws-iam, which makes these
 # attachments, is denied any other AWS managed policy. A test keeps the two in step.
-# iam and eks are createIdentity: false: a provider cannot create the credentials it runs
-# with. Their role comes from the cluster provider (<cluster>-crossplane-provider).
+# iam and eks default to createIdentity: false: a provider cannot create the credentials it
+# runs with, so their role comes from outside this addon's GitOps sync. kind-kro-ack: the
+# cluster provider's <cluster>-crossplane-provider role. kind-crossplane: the bootstrap render
+# of this chart from kind (cluster-providers/kind-crossplane/Taskfile.yaml crossplane:claims),
+# which sets createIdentity and policyArns for them explicitly.
 providers:
   family:
     version: ""
