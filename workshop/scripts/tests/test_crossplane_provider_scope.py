@@ -413,7 +413,7 @@ def test_attachment_names_follow_the_policy_not_the_index(tmp_path):
 # ------------------------------------------------------------------ grafana: EC2 reads for a VPC workspace
 
 # DescribeSubnets and DescribeDhcpOptions: proven needed (CloudTrail UnauthorizedOperation, caller
-# grafana.amazonaws.com). The rest are read-only and not proven; see v04x-grafana-fix2-report.md.
+# grafana.amazonaws.com). The rest are read-only and not proven.
 GRAFANA_EC2_READ = ["ec2:DescribeSubnets", "ec2:DescribeDhcpOptions", "ec2:DescribeSecurityGroups",
                     "ec2:DescribeVpcs", "ec2:DescribeVpcAttribute", "ec2:DescribeNetworkInterfaces",
                     "ec2:DescribeAvailabilityZones"]
@@ -440,15 +440,51 @@ def test_grafana_role_can_describe_vpc_for_workspace(tmp_path):
         assert allowed(doc, a, "*"), a
 
 
-def test_grafana_inline_policy_is_only_those_ec2_reads(tmp_path):
+SLR_ARN = f"arn:aws:iam::{ACCT}:role/aws-service-role/grafana.amazonaws.com/AWSServiceRoleForAmazonGrafana"
+SLR_RESOURCE = "arn:aws:iam::*:role/aws-service-role/grafana.amazonaws.com/*"
+
+
+def test_grafana_inline_policy_is_only_those_ec2_reads_and_the_scoped_slr(tmp_path):
     doc = grafana_inline_doc(tmp_path)
-    for st in doc["Statement"]:
-        assert st["Effect"] == "Allow" and "Condition" not in st
-        assert sorted(as_list(st["Action"])) == sorted(GRAFANA_EC2_READ)
-        assert as_list(st["Resource"]) == ["*"]
+    sts = doc["Statement"]
+    reads = [s for s in sts if "iam:CreateServiceLinkedRole" not in as_list(s["Action"])]
+    slr = [s for s in sts if "iam:CreateServiceLinkedRole" in as_list(s["Action"])]
+    assert len(reads) == 1 and len(slr) == 1 and len(sts) == 2
+    st = reads[0]
+    assert st["Effect"] == "Allow" and "Condition" not in st
+    assert sorted(as_list(st["Action"])) == sorted(GRAFANA_EC2_READ)
+    assert as_list(st["Resource"]) == ["*"]
     for a in WRITE_OR_ESCALATE:
         assert not allowed(doc, a, "*"), a
         assert not allowed(doc, a, ROLE), a
+
+
+def test_grafana_can_create_only_its_own_service_linked_role(tmp_path):
+    # AMG CreateWorkspace with a VPC creates the service-linked role with the caller's rights:
+    # 403 "You do not have permissions to create a service-linked role" without this statement.
+    doc = grafana_inline_doc(tmp_path)
+    ctx = {"iam:AWSServiceName": "grafana.amazonaws.com"}
+    assert allowed(doc, "iam:CreateServiceLinkedRole", SLR_ARN, ctx)
+    # another service's SLR, or a mismatched service name, stays denied
+    assert not allowed(doc, "iam:CreateServiceLinkedRole", SLR_ARN, {"iam:AWSServiceName": "ec2.amazonaws.com"})
+    assert not allowed(doc, "iam:CreateServiceLinkedRole", SLR_ARN)
+    other = f"arn:aws:iam::{ACCT}:role/aws-service-role/eks.amazonaws.com/AWSServiceRoleForAmazonEKS"
+    assert not allowed(doc, "iam:CreateServiceLinkedRole", other, {"iam:AWSServiceName": "eks.amazonaws.com"})
+    assert not allowed(doc, "iam:CreateServiceLinkedRole", other, ctx)
+    assert not allowed(doc, "iam:CreateServiceLinkedRole", ROLE, ctx)
+
+
+def test_grafana_slr_statement_is_scoped_and_the_only_iam_action(tmp_path):
+    doc = grafana_inline_doc(tmp_path)
+    slr = [s for s in doc["Statement"] if "iam:CreateServiceLinkedRole" in as_list(s["Action"])]
+    assert len(slr) == 1
+    st = slr[0]
+    assert st["Effect"] == "Allow"
+    assert as_list(st["Action"]) == ["iam:CreateServiceLinkedRole"]
+    assert as_list(st["Resource"]) == [SLR_RESOURCE]
+    assert st["Condition"] == {"StringEquals": {"iam:AWSServiceName": "grafana.amazonaws.com"}}
+    iam_actions = [a for s in doc["Statement"] for a in as_list(s["Action"]) if a.lower().startswith("iam:")]
+    assert iam_actions == ["iam:CreateServiceLinkedRole"], iam_actions
 
 
 def test_only_grafana_gets_an_inline_policy(tmp_path):
