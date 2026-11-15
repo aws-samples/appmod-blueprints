@@ -914,6 +914,27 @@ tasks:
     desc: Wait for gitlab:init-ec2 background job to complete before seeding Secrets Manager
     cmds:
       - |
+        # gitlabInit: remote (task workshop:install:remote, run in CodeBuild): gitlab:init-ec2
+        # runs on ANOTHER host (the IDE), so there is no local pid/rc file to join. It writes the
+        # real PAT (glpat-) into <hub>/secrets.git_token when it is done: poll for that, bounded.
+        # A missing token is an error here (the pid-file path below assumes "already done"
+        # when it finds no job, which would let hub:seed write a placeholder token).
+        if [ "$(yq '.gitlabInit // "local"' {{.CONFIG_FILE}})" = "remote" ]; then
+          _MAX="${GITLAB_REMOTE_WAIT:-2400}"
+          _W=0
+          echo "[$(date +%H:%M:%S)] ▸ Waiting for the GitLab PAT in {{.HUB_CLUSTER_NAME}}/secrets (gitlab:init-ec2 runs on the IDE, max ${_MAX}s)..."
+          while [ "$_W" -lt "$_MAX" ]; do
+            if aws secretsmanager get-secret-value --secret-id "{{.HUB_CLUSTER_NAME}}/secrets" --region {{.AWS_REGION}} \
+                 --query SecretString --output text 2>/dev/null | jq -r '.git_token // empty' | grep -q '^glpat-'; then
+              echo "[$(date +%H:%M:%S)] ✓ GitLab PAT present after ${_W}s"
+              exit 0
+            fi
+            sleep "${GITLAB_REMOTE_POLL:-10}"
+            _W=$((_W + ${GITLAB_REMOTE_POLL:-10}))
+          done
+          echo "[$(date +%H:%M:%S)] ✗ no glpat- token in {{.HUB_CLUSTER_NAME}}/secrets after ${_MAX}s: gitlab:init-ec2 on the IDE did not finish"
+          exit 1
+        fi
         PID_FILE="/tmp/gitlab-init.pid"
         LOG_FILE="/tmp/gitlab-init.log"
         if [ ! -f "$PID_FILE" ]; then

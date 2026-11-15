@@ -438,6 +438,164 @@ tasks:
       - task: install
 
   # ============================================================
+  # REMOTE INSTALL (option A: the install runs in CodeBuild, the IDE follows)
+  # ============================================================
+  # `install` split in two, for a host (the IDE) that must hold no IAM write and no right to
+  # assume the install role. `install:remote` runs in ONE CodeBuild build under a dedicated
+  # role (CloudFormation PEEKS_INSTALL_REMOTE=true, cdk/resources/buildspec-install.yaml):
+  # platform install (kind, ACK, kro, hub, providers), overlay, spokes, CloudFront, hub pivot.
+  # `install:ide` runs on the IDE: GitLab init (the PAT it writes releases the build's wait),
+  # wait for the build, IdC federation, prewarm, env. `install` is unchanged and keeps doing
+  # everything on one host.
+  #
+  # Contract of the remote half: config.local.yaml has gitlabInit: remote (the platform waits
+  # for the PAT in Secrets Manager instead of a local pid file) and the privileged steps stay
+  # inline (the build role is the privileged runner). Progress: SSM /<prefix>/install-state
+  # (scripts/install-state.sh), written at every step; the build writes OK or FAILED.
+  # shortcut: kind-kro-ack only (kind-crossplane has no remote wait); the body of the IDE half
+  # copies the tail of `install`, share it through included tasks when the two are kept long-term.
+  install:remote:
+    desc: "Remote half of the install, run in CodeBuild: platform, overlay, spokes, CloudFront, hub pivot"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
+      STATE: 'sh "{{.REPO}}/scripts/install-state.sh"'
+    preconditions:
+      - sh: '[ "$(yq ''.clusterProvider // "kind-kro-ack"'' {{.CONFIG_FILE}})" = "kind-kro-ack" ]'
+        msg: "install:remote supports clusterProvider kind-kro-ack only."
+      - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" = "remote" ]'
+        msg: "install:remote needs gitlabInit: remote in {{.CONFIG_FILE}} (GitLab runs on the IDE, not here)."
+      - sh: '[ "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" != "external" ]'
+        msg: "install:remote is the privileged runner: privilegedSteps must not be external."
+    cmds:
+      - printf '{{.C_STEP}}▸ Remote install starting (CodeBuild half)...{{.C_RESET}}\n'
+      - '{{.MARK}} reset {{.INSTALL_START}}'
+      - '{{.STATE}} "RUNNING step=platform:prepare"'
+      - task: platform:prepare
+      - |
+        if ! grep -q '^  install:hub:' "{{.PLATFORM_DIR}}/Taskfile.yaml"; then
+          printf '{{.C_ERR}}✗ platform at {{.PLATFORM_DIR}} has no install:hub: the remote install needs the two-phase platform install.{{.C_RESET}}\n'
+          exit 1
+        fi
+      - '{{.STATE}} "RUNNING step=platform:install:hub"'
+      - 'cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:hub'
+      - 'printf "{{.C_INFO}}  [%ds] platform install:hub done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # CloudFront attach in the background, joined before install ends (same pattern as install).
+      - |
+        rm -f /tmp/cloudfront-attach.pid /tmp/cloudfront-attach.rc
+        sh -c 'echo $$ > /tmp/cloudfront-attach.pid; {{.MARK}} start "cloudfront:attach (bg)"; task cloudfront:attach; rc=$?; echo $rc > /tmp/cloudfront-attach.rc; {{.MARK}} done "cloudfront:attach (bg)" "rc=$rc"' \
+          > /tmp/cloudfront-attach.log 2>&1 < /dev/null &
+      - '{{.STATE}} "RUNNING step=set-overlay-repo"'
+      - task: set-overlay-repo
+      - '{{.STATE}} "RUNNING step=argocd-gitlab-webhook"'
+      - task: argocd-gitlab-webhook
+      - '{{.STATE}} "RUNNING step=spokes:enable-kro"'
+      - task: spokes:enable-kro
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
+      - task: spokes:enable-kro
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
+      - '{{.STATE}} "RUNNING step=platform:install:complete"'
+      - 'cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:complete'
+      - '{{.STATE}} "RUNNING step=join cloudfront:attach"'
+      - |
+        CPID=$(cat /tmp/cloudfront-attach.pid 2>/dev/null || echo '')
+        E=0
+        while [ ! -s /tmp/cloudfront-attach.rc ] && [ -n "$CPID" ] && [ -d "/proc/$CPID" ] && [ "$E" -lt 2400 ]; do
+          sleep 5; E=$((E + 5))
+        done
+        CRC=$(cat /tmp/cloudfront-attach.rc 2>/dev/null || echo '')
+        printf '{{.C_INFO}}  cloudfront:attach joined after %ss (rc=%s).{{.C_RESET}}\n' "$E" "${CRC:-none}"
+        if [ "$CRC" != "0" ]; then
+          printf '{{.C_INFO}}  re-running cloudfront:attach inline (background run did not succeed).{{.C_RESET}}\n'
+          task cloudfront:attach
+        fi
+      # The pivot detaches the hub from the kind cluster, which dies with this build: the spokes
+      # must exist (ACTIVE) first, as in `install` where the pivot is the last step.
+      - '{{.STATE}} "RUNNING step=wait-for-spokes"'
+      - task: wait-for-spokes
+        vars: { SPOKE_APPS: "false" }
+      # Hub self-adoption pivot. FATAL here (it is non-fatal in `install`): once this build ends
+      # the bootstrap kind cluster is gone, and a hub nobody manages must not look like success.
+      - '{{.STATE}} "RUNNING step=hub:pivot"'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop PIVOT_ADOPT_TIMEOUT_SEC={{.HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC | default "1800"}}'
+      - '{{.MARK}} dump'
+      - 'printf "{{.C_OK}}✓ Remote install (CodeBuild half) complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  install:ide:
+    desc: "IDE half of the remote install: GitLab init, wait for the CodeBuild half, IdC, prewarm, env"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
+    preconditions:
+      - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" != "remote" ]'
+        msg: "install:ide runs on the IDE with the config published by the remote install (workshop/fetch-install-config.sh), not the build's own."
+    cmds:
+      - printf '{{.C_STEP}}▸ IDE install starting (the platform install runs in CodeBuild)...{{.C_RESET}}\n'
+      - '{{.MARK}} reset {{.INSTALL_START}}'
+      # GitLab init in the background, as in `install`. The build waits for the PAT it writes.
+      - |
+        rm -f /tmp/gitlab-init.rc
+        ( set +e; task -x gitlab:init-ec2; echo $? > /tmp/gitlab-init.rc ) > /tmp/gitlab-init.log 2>&1 < /dev/null &
+        echo $! > /tmp/gitlab-init.pid
+        printf '{{.C_INFO}}  gitlab:init-ec2 started in background (PID=%s, log: /tmp/gitlab-init.log){{.C_RESET}}\n' "$(cat /tmp/gitlab-init.pid)"
+      - task: platform:prepare
+      - '{{.MARK}} step workshop wait for the CodeBuild install'
+      - 'sh "{{.REPO}}/scripts/install-remote-wait.sh"'
+      - '{{.MARK}} step workshop join gitlab:init-ec2'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-gitlab-init'
+      - '{{.MARK}} step workshop post-install'
+      - task: post-install
+      # ray:setup / ray:prestage-models create IAM roles and Pod Identity associations: this host
+      # has no IAM write, so they fail here. Known gap of this cut (module 40), kept non-fatal.
+      - '{{.MARK}} step workshop ray:setup'
+      - cmd: 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
+        ignore_error: true
+      - '{{.MARK}} step workshop ray:prestage-models'
+      - cmd: 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
+        ignore_error: true
+      - |
+        rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
+        sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > /tmp/prewarm-phase-a.rc; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
+          > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
+      - '{{.MARK}} step workshop wait-for-spokes:active'
+      - task: wait-for-spokes
+        vars: { SPOKE_APPS: "false" }
+      - |
+        printf '' > /tmp/spoke-apps-bg.rc
+        S=""; command -v setsid >/dev/null 2>&1 && S=setsid
+        S="$S" sh -c '( exec $S task spoke-apps-bg INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}} ) >> /tmp/spoke-apps-bg.log 2>&1 < /dev/null &'
+      - '{{.MARK}} step workshop setup-env'
+      - task: setup-env
+      - |
+        if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}; then
+          kubectl config use-context {{.HUB_CLUSTER_NAME}}
+        else
+          printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
+        fi
+      - '{{.MARK}} step workshop join prewarm Phase A'
+      - cmd: |
+          APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
+          E=0
+          while [ ! -s /tmp/prewarm-phase-a.rc ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt 900 ]; do
+            sleep 5; E=$((E + 5))
+          done
+          printf '{{.C_INFO}}  prewarm Phase A: rc=%s after %ss (log: /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$(cat /tmp/prewarm-phase-a.rc 2>/dev/null || echo none)" "$E"
+        ignore_error: true
+      - '{{.MARK}} step workshop prewarm-rust-cicd'
+      - task: prewarm-rust-cicd
+        vars:
+          INSTALL_START: '{{.INSTALL_START}}'
+          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+        ignore_error: true
+      - '{{.MARK}} step workshop -'
+      - '{{.MARK}} dump'
+      - 'printf "{{.C_OK}}✓ IDE install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  # ============================================================
   # DESTROY — full ordered teardown
   # ============================================================
   credentials:refresh:
