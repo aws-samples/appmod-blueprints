@@ -14,28 +14,34 @@ allowlist on that shared ALB, from your fleet repo, through GitOps.
 
 ## What the setting does
 
-The `ingress-class-alb` chart accepts two optional values that you set:
+The `ingress-class-alb` chart accepts three optional values that you set:
 
 | Key | Role |
 |-----|------|
 | `inboundCidrs` | Base allowlist (the stable list you keep) |
 | `extraInboundCidrs` | Extra entries **appended** after the base (ad‑hoc additions without touching the base) |
+| `prefixListIds` | Managed prefix list IDs (`pl-...`) allowed on the ALB, see [Use managed prefix lists](#use-managed-prefix-lists) |
 
-A third value, `clusterEgressCidrs`, is filled automatically and only matters once an allowlist
+A fourth value, `clusterEgressCidrs`, is filled automatically and only matters once an allowlist
 is set: see [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes).
 
 Each key accepts a **YAML list** *or* a **comma‑separated string**; blank entries are dropped. The
-two lists are concatenated and rendered into `IngressClassParams.spec.inboundCIDRs` of the
-`platform` IngressClassParams:
+two CIDR lists are concatenated and rendered into `IngressClassParams.spec.inboundCIDRs` of the
+`platform` IngressClassParams; the prefix list IDs are rendered into `spec.prefixListsIDs`:
 
 ```text
-inboundCidrs + extraInboundCidrs (+ clusterEgressCidrs, only when the first two are non-empty)
+inboundCidrs + extraInboundCidrs (+ clusterEgressCidrs, only when an allowlist is set)
   └─> IngressClassParams "platform" .spec.inboundCIDRs
+prefixListIds
+  └─> IngressClassParams "platform" .spec.prefixListsIDs
         └─> load balancer controller rewrites the inbound rules of the ALB's managed security group
               └─> applies to EVERY ingress of the "platform" group at once
 ```
 
-- **Unset by default.** With both keys empty the field is not rendered at all: the ALB stays open to
+"An allowlist is set" means at least one of `inboundCidrs`, `extraInboundCidrs` or
+`prefixListIds` is non-empty.
+
+- **Unset by default.** With all three keys empty neither field is rendered: the ALB stays open to
   `0.0.0.0/0`, exactly as before (rendered output is byte‑identical).
 - **Group‑wide.** `inboundCIDRs` is the group‑level form of the `inbound-cidrs` ingress annotation:
   it is applied once to the shared managed security group and takes precedence over any per‑ingress
@@ -43,7 +49,44 @@ inboundCidrs + extraInboundCidrs (+ clusterEgressCidrs, only when the first two 
 - **Both controller modes.** The chart renders `eks.amazonaws.com/v1` IngressClassParams on EKS Auto
   Mode (`alb_controller_mode` unset or `auto`, the default) and `elbv2.k8s.aws/v1beta1` with the
   open‑source AWS Load Balancer Controller (`alb_controller_mode: oss`). Both support
-  `inboundCIDRs`; the same values work in either mode.
+  `inboundCIDRs` and `prefixListsIDs` under the same field names (see the
+  [EKS Auto Mode IngressClassParams reference](https://docs.aws.amazon.com/eks/latest/userguide/auto-configure-alb.html#ingress-reference));
+  the same values work in either mode.
+
+---
+
+## Use managed prefix lists
+
+`prefixListIds` admits the CIDRs of one or more managed prefix lists (for example a corporate
+egress list) instead of listing them by hand:
+
+```yaml
+# overlays/clusters/<hub-name>/ingress-class-alb/values.yaml
+prefixListIds:
+  - pl-0123456789abcdef0      # placeholder: your managed prefix list ID
+# Spoke NAT egress IPs still go here (pitfall 1):
+# extraInboundCidrs: "203.0.113.201/32"
+```
+
+- **No `0.0.0.0/0`.** With prefix lists only (no `inboundCIDRs`), the controller does not add its
+  `0.0.0.0/0` default to the managed security group.
+- **The cluster's NAT `/32` is still added.** `clusterEgressCidrs` is appended to `inboundCIDRs`
+  whenever an allowlist is set, prefix lists included. On kind-kro-ack and kind-crossplane a
+  prefix-list-only allowlist therefore renders `inboundCIDRs: ["<hub-nat-eip>/32"]` next to
+  `prefixListsIDs`, and in-cluster SSO keeps working ([pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
+  Spoke NAT EIPs are not added: list them in `extraInboundCidrs`.
+- **Quota.** A prefix list counts against the security group rule quota by its **maximum size**,
+  not its current entry count, once per listener port. See [pitfall 3](#3-securitygroup-rule-limits).
+- AWS-managed prefix lists are read-only: you cannot add your NAT IPs to them, use
+  `extraInboundCidrs`. The list must exist in the ALB's region.
+- Check the size before choosing a list (`MaxEntries` may not be reported for AWS-managed
+  lists; then the current entry count is a lower bound, not the number the quota uses):
+
+  ```bash
+  aws ec2 describe-managed-prefix-lists --prefix-list-ids <pl-id> \
+    --query 'PrefixLists[].[PrefixListName,MaxEntries]' --output text
+  aws ec2 get-managed-prefix-list-entries --prefix-list-id <pl-id> --query 'length(Entries)'
+  ```
 
 ---
 
@@ -140,20 +183,22 @@ environment file.
    ```
 
    Expect one rule per CIDR **per listener port** (80, and 443 when `insecure: false`), and no
-   `0.0.0.0/0`.
+   `0.0.0.0/0`. With `prefixListIds`, the prefix lists appear under
+   `IpPermissions[].PrefixListIds[].PrefixListId`.
 
 ---
 
 ## Remove the filtering
 
-Delete both keys (or the whole `ingress-class-alb/values.yaml` file), or set them empty:
+Delete the keys (or the whole `ingress-class-alb/values.yaml` file), or set them empty:
 
 ```yaml
 inboundCidrs: []
 extraInboundCidrs: ""
+prefixListIds: []
 ```
 
-Commit, push to the tracked revision and sync as above. The `inboundCIDRs` field disappears from
+Commit, push to the tracked revision and sync as above. The `inboundCIDRs` and `prefixListsIDs` fields disappear from
 the IngressClassParams and the controller restores the default `0.0.0.0/0` inbound rules. Verify
 with the same two commands: `inboundCIDRs` no longer appears, and the security group shows
 `0.0.0.0/0` on the listener ports.
@@ -190,8 +235,8 @@ At install, `secrets-manager:seed` looks up the public IP of every available NAT
 hub VPC and writes them as `/32`s to the `nat_egress_cidrs` metadata key of `<hub>/config`. ESO
 turns it into an annotation of the hub cluster secret, and the registry passes it to the chart as
 `clusterEgressCidrs`. The chart appends it to `inboundCidrs` + `extraInboundCidrs` (no duplicate if
-you already listed it) **only when that allowlist is non-empty**: without an allowlist the ALB
-stays open and the value is ignored. Nothing to commit in your fleet repo for the hub, and the
+you already listed it) **only when an allowlist is set** (CIDRs or `prefixListIds`): without an
+allowlist the ALB stays open and the value is ignored. Nothing to commit in your fleet repo for the hub, and the
 allowlist is complete from the ALB's creation.
 
 - A re-seed whose NAT lookup **fails** (API or IAM error) keeps the value already stored, so an
@@ -230,6 +275,21 @@ allowlist is complete from the ALB's creation.
 - the NAT egress IPs of **spokes running OAP**, on every provider: add them to the hub list in
   `inboundCidrs` or `extraInboundCidrs`.
 
+#### Spoke NAT EIPs are unknown when the hub ALB is created
+
+`nat_egress_cidrs` is looked up only for the **hub** VPC, by the hub's seed. Nothing in this repo
+writes a spoke's NAT EIP into the hub's allowlist, and a spoke's VPC (with its NAT gateway) is
+created after the hub, so its EIP does not exist yet when the hub ALB gets its allowlist. On a
+fresh install with an allowlist (CIDRs or prefix lists), spoke-to-hub calls (OTel export, Agent
+Gateway JWKS) time out until you:
+
+1. wait for the spoke VPC, then read its NAT EIP(s) with the `describe-nat-gateways` command below;
+2. add them as `/32`s to `extraInboundCidrs` in the hub's `ingress-class-alb/values.yaml`, push to
+   the tracked revision and sync `ingress-class-alb-<hub-name>`.
+
+Repeat after every spoke reinstall. A hub allowlist set under `overlays/clusters/<hub-name>/` or
+`overlays/environments/control-plane/` does not change the spokes' own ALBs.
+
 To list the NAT gateway Elastic IPs of a VPC:
 
 ```bash
@@ -242,7 +302,7 @@ aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=<hub-or-spoke-vpc-id> 
 > listed by hand (spokes, and the hub outside kind-kro-ack / kind-crossplane), replace the old
 > `/32` with the new one, or SSO breaks again.
 
-Nothing to do when `inboundCidrs` / `extraInboundCidrs` are unset. In CloudFront mode the ALB
+Nothing to do when `inboundCidrs` / `extraInboundCidrs` / `prefixListIds` are unset. In CloudFront mode the ALB
 carries no allowlist ([pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)), but the
 same NAT IPs must be in the WAF IP set if you filter clients at the edge. The automatic hub value
 only reaches the ALB allowlist, never a WAF IP set: list the hub NAT there yourself.
@@ -262,6 +322,13 @@ rules per CIDR. A security group allows 60 inbound rules by default, so plan for
 at most** (about 60 with an HTTP‑only ALB). Summarise ranges, or move to AWS WAF, beyond that. The
 platform ALB is IPv4 by default, so list IPv4 CIDRs; IPv6 entries are only useful on a dual‑stack
 ALB.
+
+A managed prefix list in `prefixListIds` counts as **its maximum size**, not its current entry
+count, once per listener port, on top of one rule per `/32` per port from `inboundCIDRs`. Example on
+an HTTP + HTTPS ALB with a quota of 60: a list of maximum size 8 plus one NAT `/32` needs
+2 × 8 + 2 × 1 = 18 rules; a list of maximum size 58 needs 116 before any `/32`, over the quota.
+Check the maximum size (see [Use managed prefix lists](#use-managed-prefix-lists)) before
+choosing a list.
 
 ### 4. CloudFront mode: do not apply a client allowlist
 
