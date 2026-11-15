@@ -31,21 +31,32 @@ spec:
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
 {{- if and $provider.version $provider.serviceAccount $provider.roleName (not (eq (toString $provider.createIdentity) "false")) }}
+{{- if not $provider.policyArns }}
+{{- fail (printf "crossplane-base: providers.%s has createIdentity but no policyArns (the role would get no permissions)" $name) }}
+{{- end }}
+{{- /* One attachment per scoped managed policy (values.yaml policyArns), not
+       AdministratorAccess. Named after the policy, not its list index, so reordering the list
+       does not rename (and, with prune: false, orphan) an attachment. Upgrade: the addon syncs
+       with prune: false, so on a live cluster the old <name>-provider-admin-attachment stays (and
+       keeps AdministratorAccess attached) until it is deleted by hand; deleting it makes
+       provider-aws-iam detach the policy. */}}
+{{- range $arn := $provider.policyArns }}
 ---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: RolePolicyAttachment
 metadata:
-  name: {{ $name }}-provider-admin-attachment
+  name: {{ $name }}-provider-{{ base $arn | lower | replace "_" "-" }}
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
     argocd.argoproj.io/sync-wave: "5"
 spec:
   forProvider:
-    policyArn: "arn:aws:iam::aws:policy/AdministratorAccess"
+    policyArn: {{ $arn | quote }}
     roleRef:
       name: {{ $name }}-provider-role
   providerConfigRef:
     name: default
+{{- end }}
 {{- end }}
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
