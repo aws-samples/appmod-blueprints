@@ -309,6 +309,8 @@ tasks:
       # bootstrap can't self-heal an already-running hub. crossplane-base only declares the
       # downstream provider PIAs (createIdentity:false for iam/eks) — nothing else seeds the first
       # credential, so without this the whole crossplane chain stays credential-less.
+      - '{{.MARK}} step hub hub:scope-crossplane-provider-role'
+      - task: hub:scope-crossplane-provider-role
       - '{{.MARK}} step hub hub:bootstrap-crossplane-identity'
       - task: hub:bootstrap-crossplane-identity
       # Enable spokes EARLY (kro-ack-specific optimization): KRO-provisioned spokes are
@@ -1805,6 +1807,42 @@ tasks:
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
+  hub:scope-crossplane-provider-role:
+    desc: Create <hub>-crossplane-provider with its scoped policy and detach AdministratorAccess (skipped for a bring-your-own role)
+    internal: true
+    # No status gate on purpose. hub:bootstrap-crossplane-identity is skipped while both pod
+    # identity associations exist, so gating this there kept a live hub on AdministratorAccess
+    # and never applied a later change of the policy document. Idempotent: managed-policy.sh
+    # creates, recreates on drift, or only attaches.
+    cmds:
+      - |
+        ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          echo "  hub.iam.crossplaneProviderRoleArn is set: that role and its permissions are the consumer's, not scoped here"
+          exit 0
+        fi
+        TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
+        aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
+          aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
+            --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
+        # Scoped customer-managed policy <hub>-crossplane-provider-scoped (IAM roles/policies/
+        # OIDC + EKS), not AdministratorAccess: the installing principal never attaches an
+        # admin-like AWS managed policy, so a consumer can deny that on its own role
+        # (iam:PolicyARN condition). Managed, not inline: a consumer may allow
+        # iam:PutRolePolicy only on a few named roles.
+        sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+          "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json"
+        # Older installs attached AdministratorAccess. Detach it when present (best-effort:
+        # the installing principal may lack iam:DetachRolePolicy).
+        ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" \
+          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
+        case "$ATTACHED" in *policy/AdministratorAccess*)
+          aws iam detach-role-policy --role-name "$ROLE_NAME" \
+            --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 \
+            || printf '{{.C_INFO}}  ⚠ could not detach AdministratorAccess from %s (left attached){{.C_RESET}}\n' "$ROLE_NAME" ;;
+        esac
+
   hub:bootstrap-crossplane-identity:
     desc: Seed hub Crossplane provider creds (provider-aws-iam/eks pod identities) so crossplane-base can provision
     internal: true
@@ -1824,15 +1862,6 @@ tasks:
             --query "associations[?serviceAccount=='$SA' && namespace=='crossplane-system'] | [0].associationId" --output text 2>/dev/null)
           [ -n "$ID" ] && [ "$ID" != "None" ] || exit 1
         done
-      # ...and the role carries no legacy AdministratorAccess. Without this a live hub
-      # (both PIAs present) skipped the task and kept the old Admin attachment until a
-      # destroy and reinstall. The task is idempotent: it attaches the scoped policy,
-      # detaches Admin, and leaves the existing PIAs alone. A bring-your-own role has a
-      # different name, so it is never checked here.
-      - |
-        ATTACHED=$(aws iam list-attached-role-policies --role-name "{{.HUB_CLUSTER_NAME}}-crossplane-provider" \
-          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
-        case "$ATTACHED" in *policy/AdministratorAccess*) exit 1 ;; esac
     cmds:
       - printf '{{.C_STEP}}▸ Bootstrapping Crossplane provider pod identities (iam/eks)...{{.C_RESET}}\n'
       - |
@@ -1854,29 +1883,8 @@ tasks:
           ROLE_ARN="$BYO_ARN"
           echo "  using pre-created role $ROLE_ARN (hub.iam.crossplaneProviderRoleArn)"
         else
-          TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
-          aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
-            aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
-              --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
-          # Scoped customer-managed policy <hub>-crossplane-provider-scoped (IAM roles/policies/
-          # OIDC + EKS), not AdministratorAccess: the installing principal never attaches an
-          # admin-like AWS managed policy, so a consumer can deny that on its own role
-          # (iam:PolicyARN condition). Managed, not inline: a consumer may allow
-          # iam:PutRolePolicy only on a few named roles. managed-policy.sh also removes the
-          # inline crossplane-provider-scoped an earlier install put.
-          sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
-            "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" crossplane-provider-scoped
-          # Older installs attached AdministratorAccess here. Detach it when present
-          # (best-effort: the installing principal may lack iam:DetachRolePolicy).
-          # The status gate re-runs this task on a live hub while AdministratorAccess is
-          # still attached, so an existing hub is scoped on the next `task install`.
-          ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" \
-            --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
-          case "$ATTACHED" in *policy/AdministratorAccess*)
-            aws iam detach-role-policy --role-name "$ROLE_NAME" \
-              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 \
-              || printf '{{.C_INFO}}  ⚠ could not detach AdministratorAccess from %s (left attached){{.C_RESET}}\n' "$ROLE_NAME" ;;
-          esac
+          # The role and its scoped policy come from hub:scope-crossplane-provider-role,
+          # which runs before this task and is not gated on the PIAs.
           ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE_NAME"
         fi
         for SA in provider-aws-iam provider-aws-eks; do
@@ -3066,6 +3074,9 @@ tasks:
             { echo "iam-guard(6b)" >> "$FAILED"; } 2>/dev/null || true
           fi
           ROLES=""
+          # Roles the consumer brought (hub.iam.*): never ours to delete, even though the
+          # cluster-mgmt ones must be named <prefix>-cluster-mgmt-<svc> and so match the sweep.
+          BYO_ROLES=$(yq '[.hub.iam.crossplaneProviderRoleArn, (.hub.iam.clusterMgmtRoleArns // {})[]] | .[] | select(. != null and . != "")' "{{.CONFIG_FILE}}" 2>/dev/null | sed 's|.*/||' || true)
           if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
             ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" \
                 --output text 2>/dev/null) \
@@ -3074,6 +3085,7 @@ tasks:
           printf '%s\n' "$ROLES" | tr '\t' '\n' | while read ROLE; do
             [ -z "$ROLE" ] && continue
             echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (CFN — not swept)"; continue; }
+            printf '%s\n' "$BYO_ROLES" | grep -qxF "$ROLE" && { echo "  skip role $ROLE (bring-your-own, hub.iam.*)"; continue; }
             printf '%s\n' "$PROTECTED" | grep -qxF "$ROLE" && { echo "  skip role $ROLE (still used by a live EKS cluster)"; continue; }
             # The stack's own roles are named <stack-name>-<LogicalId>-<random>. The self-paced
             # stack is "<prefix>-workshop" (no "-team-stack-"), so match the stack-name prefix too:
@@ -4345,12 +4357,11 @@ tasks:
         # cluster-mgmt-iam: scoped customer-managed policy <prefix>-cluster-mgmt-iam-scoped
         # instead of IAMFullAccess (done here, not in the parallel subshells above, so a
         # failure stops the install instead of being lost). managed-policy.sh creates or
-        # recreates it (no CreatePolicyVersion), attaches it, and removes the inline
-        # cluster-mgmt-iam-scoped an earlier install put on the role.
+        # recreates it (no CreatePolicyVersion) and attaches it.
         IAM_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-iam"
         if ! is_byo iam; then
           sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
-            "$IAM_ROLE" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json" cluster-mgmt-iam-scoped
+            "$IAM_ROLE" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
           # Older installs attached IAMFullAccess. Detach it when present (best-effort).
           # This task has no status gate, so this runs on every `task install`.
           ATTACHED=$(aws iam list-attached-role-policies --role-name "$IAM_ROLE" \
@@ -4655,7 +4666,7 @@ tasks:
               # 2. Scoped customer-managed policy, not AdministratorAccess (idempotent;
               #    managed-policy.sh, see hub:bootstrap-crossplane-identity)
               sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
-                "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" crossplane-provider-scoped >/dev/null
+                "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" >/dev/null
               # 3. Pod Identity association on the spoke (idempotent)
               EXISTING=$(aws eks list-pod-identity-associations --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
                 --namespace crossplane-system --service-account "$SA" \
