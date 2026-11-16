@@ -152,14 +152,87 @@ def test_ide_half_has_no_platform_install_no_iam_write_no_pivot():
 def test_ide_waits_for_the_build_before_anything_that_needs_the_hub():
     wait = _index(IDE, "install-remote-wait.sh")
     gitlab_bg = _index(IDE, "task -x gitlab:init-ec2")
-    for later in ("hub:wait-for-gitlab-init", "task: post-install", "ray:setup", "task: wait-for-spokes", "task: setup-env"):
+    for later in ("hub:wait-for-gitlab-init", "task: post-install", "task: wait-for-spokes", "task: setup-env"):
         assert wait < _index(IDE, later), later
     assert gitlab_bg < wait  # GitLab init must run while the build waits for its PAT
 
 
-def test_ide_ray_steps_are_non_fatal_known_gap():
-    ray = [c for c in WS["install:ide"]["cmds"] if isinstance(c, dict) and "ray:" in c.get("cmd", "")]
-    assert len(ray) == 2 and all(c.get("ignore_error") for c in ray)
+def test_ide_half_has_no_ray_and_no_kargo_iam_setup():
+    # ray:setup / ray:prestage-models / the Kargo controller identity create IAM roles and Pod
+    # Identity associations: they run in the build (install:remote-extras), never on the IDE.
+    text = "\n".join(IDE)
+    assert "ray:" not in text and "kargo" not in text.lower()
+
+
+EXTRAS = _flat(WS["install:remote-extras"]["cmds"])
+
+
+def test_remote_extras_order_and_content():
+    order = [":ray:setup", ":ray:prestage-models", ":ray:wait-image", "task: kargo-identity"]
+    idx = [_index(EXTRAS, n) for n in order]
+    assert idx == sorted(idx), dict(zip(order, idx))
+    # the build wraps this task as non-fatal (own status); inside it nothing may swallow a failure
+    for c in WS["install:remote-extras"]["cmds"]:
+        if isinstance(c, dict):
+            assert not c.get("ignore_error"), c
+    pre = " ".join(p["sh"] for p in WS["install:remote-extras"]["preconditions"])
+    assert "gitlabInit" in pre and "remote" in pre
+
+
+def test_default_install_does_not_know_the_extras():
+    assert "remote-extras" not in json.dumps(WS["install"]) and "kargo-identity" not in json.dumps(WS["install"])
+
+
+# ---------------------------------------------------------------- kargo-identity
+
+KARGO_SH = open(os.path.join(REPO, "applications", "java", "kargo", "deploy-kargo.sh")).read()
+
+
+def _kargo_block():
+    return "\n".join(c if isinstance(c, str) else c.get("cmd", "") for c in WS["kargo-identity"]["cmds"])
+
+
+def test_kargo_identity_names_match_deploy_kargo_script():
+    # deploy-kargo.sh (module 30.4, run by the participant) looks the role/association up by these
+    # names and skips the IAM write when they exist; any drift would send it back to iam:CreateRole.
+    block = _kargo_block()
+    assert 'HUB_CLUSTER="${RESOURCE_PREFIX:-peeks}-hub"' in KARGO_SH
+    assert 'KARGO_ROLE="${HUB_CLUSTER}-kargo-controller-role"' in KARGO_SH
+    assert 'HUB_CLUSTER="{{.RESOURCE_PREFIX}}-hub"' in block
+    assert 'KARGO_ROLE="${HUB_CLUSTER}-kargo-controller-role"' in block
+    for frag in ("--namespace kargo", "--service-account kargo-controller", "pods.eks.amazonaws.com",
+                 "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"):
+        assert frag in block and frag in KARGO_SH, frag
+
+
+KARGO_FAKE_AWS = r"""#!/bin/sh
+echo "aws $*" >> "$FAKE_LOG"
+case "$1 $2" in
+  "iam get-role") if [ "$FAKE_ROLE" = 1 ] || grep -q "iam create-role" "$FAKE_LOG"; then
+      case "$*" in *query*) echo arn:aws:iam::111122223333:role/x;; esac; exit 0; else exit 254; fi ;;
+  "eks list-pod-identity-associations") [ "$FAKE_PIA" = 1 ] && echo a-123; exit 0 ;;
+esac
+exit 0
+"""
+
+
+@pytest.mark.parametrize("role,pia,creates", [("0", "0", ["iam create-role", "iam attach-role-policy", "eks create-pod-identity-association"]),
+                                               ("1", "0", ["eks create-pod-identity-association"]),
+                                               ("1", "1", [])])
+def test_kargo_identity_is_idempotent(tmp_path, role, pia, creates):
+    (tmp_path / "bin").mkdir()
+    f = tmp_path / "bin" / "aws"
+    f.write_text(KARGO_FAKE_AWS)
+    f.chmod(0o755)
+    block = _kargo_block().replace("{{.RESOURCE_PREFIX}}", "acme").replace("{{.AWS_REGION}}", "us-west-2")
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "c.log"),
+               FAKE_ROLE=role, FAKE_PIA=pia)
+    r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = (tmp_path / "c.log").read_text()
+    for w in ("iam create-role", "iam attach-role-policy", "eks create-pod-identity-association"):
+        assert (w in calls) == (w in creates), (w, calls)
+    assert "acme-hub-kargo-controller-role" in calls and "--cluster-name acme-hub" in calls
 
 
 def test_ide_refuses_the_builds_own_config():

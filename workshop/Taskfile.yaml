@@ -528,6 +528,51 @@ tasks:
       - '{{.MARK}} dump'
       - 'printf "{{.C_OK}}✓ Remote install (CodeBuild half) complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
 
+  install:remote-extras:
+    desc: "Remote install (CodeBuild half), after the platform is up: Ray + Kargo IAM setup the IDE role cannot do"
+    preconditions:
+      - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" = "remote" ]'
+        msg: "install:remote-extras is for the CodeBuild half of the remote install (gitlabInit: remote)."
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    cmds:
+      # The same steps `install` runs on the IDE, with the build role's IAM rights. The vLLM image
+      # build is started in the background by ray:setup (docker is available in the build); the
+      # build waits for it so the push is not killed when the build ends.
+      - '{{.MARK}} step workshop ray:setup'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
+      - '{{.MARK}} step workshop ray:prestage-models'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
+      - '{{.MARK}} step workshop ray:wait-image'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:wait-image'
+      # Module 30.4 (deploy-kargo.sh, run by the participant) skips its IAM write when these exist.
+      - '{{.MARK}} step workshop kargo-identity'
+      - task: kargo-identity
+
+  kargo-identity:
+    desc: "Create the Kargo controller IAM role + Pod Identity association (the IAM part of applications/java/kargo/deploy-kargo.sh)"
+    cmds:
+      - |
+        HUB_CLUSTER="{{.RESOURCE_PREFIX}}-hub"
+        KARGO_ROLE="${HUB_CLUSTER}-kargo-controller-role"
+        if ! aws iam get-role --role-name "$KARGO_ROLE" --region "{{.AWS_REGION}}" >/dev/null 2>&1; then
+          aws iam create-role --role-name "$KARGO_ROLE" \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}' \
+            --description "Kargo controller ECR read access" --no-cli-pager >/dev/null
+          aws iam attach-role-policy --role-name "$KARGO_ROLE" \
+            --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly --region "{{.AWS_REGION}}"
+          echo "  ✓ IAM role $KARGO_ROLE created"
+        fi
+        KARGO_ROLE_ARN=$(aws iam get-role --role-name "$KARGO_ROLE" --query 'Role.Arn' --output text --region "{{.AWS_REGION}}")
+        if ! aws eks list-pod-identity-associations --cluster-name "$HUB_CLUSTER" --region "{{.AWS_REGION}}" \
+          --query "associations[?namespace=='kargo'&&serviceAccount=='kargo-controller']" --output text 2>/dev/null | grep -q .; then
+          aws eks create-pod-identity-association \
+            --cluster-name "$HUB_CLUSTER" --namespace kargo --service-account kargo-controller \
+            --role-arn "$KARGO_ROLE_ARN" --region "{{.AWS_REGION}}" >/dev/null
+          echo "  ✓ pod identity association created"
+        fi
+
   install:ide:
     desc: "IDE half of the remote install: GitLab init, wait for the CodeBuild half, IdC, prewarm, env"
     vars:
@@ -554,14 +599,9 @@ tasks:
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-gitlab-init'
       - '{{.MARK}} step workshop post-install'
       - task: post-install
-      # ray:setup / ray:prestage-models create IAM roles and Pod Identity associations: this host
-      # has no IAM write, so they fail here. Known gap of this cut (module 40), kept non-fatal.
-      - '{{.MARK}} step workshop ray:setup'
-      - cmd: 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
-        ignore_error: true
-      - '{{.MARK}} step workshop ray:prestage-models'
-      - cmd: 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
-        ignore_error: true
+      # The Ray setup and the Kargo controller identity create IAM roles and Pod Identity
+      # associations: this host has no IAM write, so they run in the CodeBuild install
+      # (install:remote-extras), not here.
       - |
         rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
         sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > /tmp/prewarm-phase-a.rc; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
