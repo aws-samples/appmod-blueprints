@@ -417,7 +417,8 @@ tasks:
   # `task privileged:pre` before / `task privileged:post` after). Sets
   # privilegedSteps: external in config.local.yaml, so the platform verifies the
   # cluster-mgmt IAM roles read-only and skips the capability-log delivery.
-  # `task install` is unchanged and keeps doing everything itself.
+  # The key stays in config.local.yaml: a later plain `task install` on this host is also
+  # external (the notice below says so). Remove the key to go back to inline.
   install:codebuild:
     desc: "Workshop install with the privileged steps offloaded (privilegedSteps: external)"
     vars:
@@ -425,16 +426,17 @@ tasks:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - yq -i '.privilegedSteps = "external"' {{.CONFIG_FILE}}
+      - "printf '{{.C_INFO}}  privilegedSteps=external written to {{.CONFIG_FILE}}; later task install runs stay external until the key is removed.{{.C_RESET}}\\n'"
       - task: platform:prepare
       - |
         # An older pinned platform.ref would ignore privilegedSteps and try the IAM writes
         # this host is no longer allowed to make: refuse instead of failing deep in install.
-        if ! grep -q '^  privileged:pre:' "{{.PLATFORM_DIR}}/Taskfile.yaml"; then
-          printf '{{.C_ERR}}✗ platform at {{.PLATFORM_DIR}} has no privileged-step offload (privileged:pre); use task install.{{.C_RESET}}\n'
+        if ! grep -q '^  privileged:verify:external:' "{{.PLATFORM_DIR}}/Taskfile.yaml"; then
+          printf '{{.C_ERR}}✗ platform at {{.PLATFORM_DIR}} has no privileged-step offload (privileged:verify); use task install.{{.C_RESET}}\n'
           exit 1
         fi
       # Fail fast, before kind/ACK, if privileged:pre did not run (read-only check).
-      - cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:create-mgmt-roles:verify
+      - cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:privileged:verify
       - task: install
 
   # ============================================================
