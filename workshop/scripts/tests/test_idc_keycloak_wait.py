@@ -78,3 +78,34 @@ def test_unreachable_tolerated_when_not_strict(tmp_path):
 def test_reachable_writes_no_status(tmp_path):
     rc, status, _ = _run(tmp_path, "200", {"IDC_STRICT": "false"})
     assert (rc, status) == (0, "")
+
+
+def _config_block():
+    blocks = [c for c in _tasks()["idc:configure"]["cmds"] if isinstance(c, str) and "IDC_SUCCESS=false" in c]
+    assert len(blocks) == 1
+    return blocks[0]
+
+
+@pytest.mark.parametrize("code,skipped", [("503", True), ("502", True), ("404", True), ("000", True), ("200", False)])
+def test_precheck_skips_saml_wait_on_5xx(tmp_path, code, skipped):
+    """After the wait gave up, a 5xx must skip at once, not enter the 20x15s SAML loop."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls"
+    for name, body in (
+        ("curl", f"#!/bin/sh\necho curl >> {log}\nprintf '{code}'\n"),
+        ("sleep", f"#!/bin/sh\necho sleep >> {log}\nexit 0\n"),
+        ("python3", f"#!/bin/sh\necho python3 >> {log}\nexit 1\n"),
+    ):
+        (bindir / name).write_text(body)
+        (bindir / name).chmod(0o755)
+    status = tmp_path / "status"
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", IDC_STATUS_FILE=str(status))
+    tv = {"KEYCLOAK_DNS": "kc.example.test", "IDC_STRICT": "false"}
+    r = subprocess.run(["bash", "-c", _render(_config_block(), tv)], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text().split()
+    assert ("python3" not in calls) is skipped
+    if skipped:
+        assert "sleep" not in calls
+        assert status.read_text().startswith("FAILED")

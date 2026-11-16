@@ -68,7 +68,7 @@ tasks:
       # 5. Pod Identity associations, THEN the S3 CSI driver addon. EKS Pod Identity injects
       #    credentials into a pod at admission, so driver pods that start before the
       #    kube-system/s3-csi-driver-sa association exists run without credentials and every
-      #    Mountpoint pod they spawn fails with "Failed to create S3 client" .
+      #    Mountpoint pod they spawn fails with "Failed to create S3 client".
       #    If the addon is already installed and the association was only created now, restart
       #    the node driver DaemonSet. Name from the upstream chart (awslabs/mountpoint-s3-csi-driver
       #    charts/.../templates/node.yaml, also used by the EKS addon): DaemonSet s3-csi-node in
