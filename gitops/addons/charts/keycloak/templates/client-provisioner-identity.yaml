@@ -37,6 +37,10 @@
       role); (2) switch the backend (prune is off, the old objects stay); (3) delete the
       two old objects. Deleting them before the switch does not work: selfHeal
       recreates them while the chart still renders them. Fresh installs are unaffected.
+  Trust: only the hub cluster's keycloak/<serviceAccountName> service account can use the
+  role (EKS Pod Identity session tags eks-cluster-name, kubernetes-namespace,
+  kubernetes-service-account); the secrets it writes are pinned to the hub region, the one
+  the provisioner Job writes to (gitops/bootstrap/client-provisioner.yaml region).
   Keep the two backends semantically identical (name, trust, permissions, waves);
   the test test_keycloak_client_provisioner_identity_ack.py enforces it.
 
@@ -80,7 +84,12 @@ spec:
       "Statement": [{
         "Effect": "Allow",
         "Principal": {"Service": "pods.eks.amazonaws.com"},
-        "Action": ["sts:AssumeRole", "sts:TagSession"]
+        "Action": ["sts:AssumeRole", "sts:TagSession"],
+        "Condition": {"StringEquals": {
+          "aws:RequestTag/eks-cluster-name": "{{ $clusterName }}",
+          "aws:RequestTag/kubernetes-namespace": "keycloak",
+          "aws:RequestTag/kubernetes-service-account": "{{ $saName }}"
+        }}
       }]
     }
   inlinePolicies:
@@ -94,7 +103,7 @@ spec:
             "secretsmanager:PutSecretValue",
             "secretsmanager:DescribeSecret"
           ],
-          "Resource": "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
+          "Resource": "arn:aws:secretsmanager:{{ $region }}:*:secret:*/oidc/*"
         }]
       }
   tags:
@@ -143,7 +152,12 @@ spec:
         "Statement": [{
           "Effect": "Allow",
           "Principal": {"Service": "pods.eks.amazonaws.com"},
-          "Action": ["sts:AssumeRole", "sts:TagSession"]
+          "Action": ["sts:AssumeRole", "sts:TagSession"],
+          "Condition": {"StringEquals": {
+            "aws:RequestTag/eks-cluster-name": "{{ $clusterName }}",
+            "aws:RequestTag/kubernetes-namespace": "keycloak",
+            "aws:RequestTag/kubernetes-service-account": "{{ $saName }}"
+          }}
         }]
       }
     inlinePolicy:
@@ -158,7 +172,7 @@ spec:
                 "secretsmanager:PutSecretValue",
                 "secretsmanager:DescribeSecret"
               ],
-              "Resource": "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
+              "Resource": "arn:aws:secretsmanager:{{ $region }}:*:secret:*/oidc/*"
             }]
           }
     tags:

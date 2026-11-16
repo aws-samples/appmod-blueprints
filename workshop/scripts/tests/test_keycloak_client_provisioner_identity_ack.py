@@ -155,8 +155,20 @@ def test_policy_absolute_content_is_pinned(ack, crossplane, backend):
     (ts,) = trust["Statement"]
     assert ts["Principal"] == {"Service": "pods.eks.amazonaws.com"}
     assert sorted(ts["Action"]) == ["sts:AssumeRole", "sts:TagSession"]
+    # only the hub's keycloak/keycloak-client-provisioner can use it (Pod Identity session tags)
+    assert ts["Condition"] == {"StringEquals": {
+        "aws:RequestTag/eks-cluster-name": CLUSTER,
+        "aws:RequestTag/kubernetes-namespace": "keycloak",
+        "aws:RequestTag/kubernetes-service-account": "keycloak-client-provisioner"}}
     (ps,) = json.loads(policy)["Statement"]
     assert ps["Effect"] == "Allow"
     assert sorted(ps["Action"]) == ["secretsmanager:CreateSecret", "secretsmanager:DescribeSecret",
                                     "secretsmanager:PutSecretValue"]
-    assert ps["Resource"] == "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
+    assert ps["Resource"] == "arn:aws:secretsmanager:us-west-2:*:secret:*/oidc/*"
+
+
+def test_trust_follows_a_renamed_service_account():
+    docs = render("clientProvisioner.identityBackend=ack", "clientProvisioner.serviceAccountName=other-sa")
+    (role,) = ack_kind(docs, "Role")
+    (ts,) = json.loads(role["spec"]["assumeRolePolicyDocument"])["Statement"]
+    assert ts["Condition"]["StringEquals"]["aws:RequestTag/kubernetes-service-account"] == "other-sa"
