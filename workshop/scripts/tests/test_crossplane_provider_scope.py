@@ -510,7 +510,13 @@ verb=$1; shift
 name=$2   # $1 is the resource type
 case $verb in
   get)
-    [ -f "$STATE/mr/$name" ] || exit 0   # --ignore-not-found: empty output
+    [ -f "$STATE/get_fail" ] && { echo "error: You must be logged in (ExpiredToken)" >&2; exit 1; }
+    if [ ! -f "$STATE/mr/$name" ]; then
+      case " $* " in
+        *" --ignore-not-found "*) exit 0 ;;   # empty output, like kubectl
+        *) echo "Error from server (NotFound): $name not found" >&2; exit 1 ;;
+      esac
+    fi
     case " $* " in
       *jsonpath*) cat "$STATE/mr/$name" ;;
       *) echo "rolepolicyattachment.iam.aws.upbound.io/$name" ;;
@@ -535,15 +541,17 @@ def legacy_step_script():
     return texts[idx[0]]
 
 
-def run_legacy_step(tmp_path, existing, ignore_patch=False):
+def run_legacy_step(tmp_path, existing, ignore_patch=False, get_fail=False):
     state = tmp_path / "state"
-    (state / "mr").mkdir(parents=True)
+    (state / "mr").mkdir(parents=True, exist_ok=True)
     for n in existing:
         (state / "mr" / n).write_text("Delete\n")
     if ignore_patch:
         (state / "ignore_patch").write_text("")
+    if get_fail:
+        (state / "get_fail").write_text("")
     bindir = tmp_path / "bin"
-    bindir.mkdir()
+    bindir.mkdir(exist_ok=True)
     k = bindir / "kubectl"
     k.write_text(FAKE_KUBECTL)
     k.chmod(0o755)
@@ -576,9 +584,18 @@ def test_legacy_step_orphans_before_deleting_on_an_existing_cluster(tmp_path):
 def test_legacy_step_rerun_is_a_noop(tmp_path):
     r, events, _ = run_legacy_step(tmp_path, LEGACY)
     assert r.returncode == 0 and len(events) == 2
-    # second pass: the MRs are gone (state dir recreated without them)
-    r2, events2, log2 = run_legacy_step(tmp_path / "again", [])
-    assert r2.returncode == 0 and events2 == [] and "delete" not in log2
+    # second pass on the SAME state: the MRs are gone, nothing is patched or deleted again
+    (tmp_path / "state" / "events").unlink()
+    (tmp_path / "state" / "log").unlink()
+    r2, events2, log2 = run_legacy_step(tmp_path, [])
+    assert r2.returncode == 0 and events2 == [] and "patch" not in log2 and "delete" not in log2
+
+
+def test_legacy_step_aborts_when_kubectl_get_fails(tmp_path):
+    """Only NotFound means absent: an expired token must not be read as 'nothing to do'."""
+    r, events, log = run_legacy_step(tmp_path, LEGACY, get_fail=True)
+    assert r.returncode != 0
+    assert events == [] and "patch" not in log and "delete" not in log
 
 
 def test_legacy_step_only_touches_one_when_only_one_exists(tmp_path):
