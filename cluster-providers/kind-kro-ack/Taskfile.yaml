@@ -3373,6 +3373,7 @@ tasks:
       - cmd: |
           if [ "{{.AWS_DELETES}}" = external ]; then
             printf '{{.C_OK}}✓ Kubernetes teardown complete (privilegedSteps=external: the AWS deletes are left to the stack sweep).{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  If no stack sweep runs after this, the EKS cluster {{.HUB_CLUSTER_NAME}}, its capabilities and secrets remain: delete them with a privileged role.{{.C_RESET}}\n'
             exit 0
           fi
           if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then
@@ -5077,7 +5078,7 @@ tasks:
           # is a string, but Argo CD / Kubernetes parse YAML 1.1, where it is a boolean. A
           # platformTags value like auto-delete: "no" then reached the hub as `false` and the
           # sync failed: ".spec.awsTags.auto-delete: expected string, got &v...", so the
-          # adoption gate timed out and the pivot aborted (PoC run, 2026-11-15).
+          # adoption gate timed out and the pivot aborted.
           yq -p=json -o=yaml '(.. | select(tag == "!!str")) style="double"' "$WORK/hub-instance.json" > "$WORK/hub-instance.yaml"
           if OVERLAY_GIT_PASSWORD="$REPO_PASS" OVERLAY_GIT_USERNAME="${REPO_USER:-x-access-token}" \
                bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' publish \
