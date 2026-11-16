@@ -34,7 +34,7 @@ case "$1 $2" in
     case "$C" in
       acme-spoke-none) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
       acme-spoke-err) echo "An error occurred (ExpiredTokenException) when calling the DescribeCapability operation" >&2; exit 254 ;;
-      acme-spoke-prod) S=CREATING ;;
+      acme-spoke-prod|acme-spoke-prod2) S=CREATING ;;
       acme-spoke-deg) S=DEGRADED ;;
       acme-spoke-dev) if [ "$N" -le 1 ]; then S=CREATING; else S=ACTIVE; fi ;;
       acme-spoke-upd) if [ "$N" -le 1 ]; then S=UPDATING; else S=ACTIVE; fi ;;
@@ -71,7 +71,8 @@ def _run(tmp_path, wait, clusters=ALL):
         "clusterProvider: kind-kro-ack\nresourcePrefix: acme\naws: {region: us-west-2}\n")
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name, body in (("aws", FAKE_AWS), ("sleep", "#!/bin/sh\nexit 0\n")):
+    # the fake sleep records each nap so the tests can pin that the wait really sleeps
+    for name, body in (("aws", FAKE_AWS), ("sleep", '#!/bin/sh\necho "$1" >> "$FAKE_SLEEP_LOG"\n')):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
     tmpd = tmp_path / "tmp"
@@ -80,7 +81,9 @@ def _run(tmp_path, wait, clusters=ALL):
     state.mkdir()
     log = tmp_path / "calls.log"
     log.write_text("")
-    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(log),
+    naps = tmp_path / "sleeps.log"
+    naps.write_text("")
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(log), FAKE_SLEEP_LOG=str(naps),
                FAKE_STATE=str(state), FAKE_CLUSTERS=clusters, HOME=str(tmp_path), TMPDIR=str(tmpd), CAP_LOGS_WAIT=wait)
     for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG"):
         env.pop(k, None)
@@ -88,6 +91,10 @@ def _run(tmp_path, wait, clusters=ALL):
                          capture_output=True, text=True, timeout=120)
     sources = [l for l in log.read_text().splitlines() if l.startswith("logs put-delivery-source")]
     return res, res.stdout + res.stderr, sources
+
+
+def _naps(tmp_path):
+    return (tmp_path / "sleeps.log").read_text().split()
 
 
 def _delivered(sources, cluster):
@@ -102,7 +109,9 @@ def test_waits_for_creating_and_skips_never_active(tmp_path):
     assert _delivered(sources, "acme-spoke-upd"), out   # waited UPDATING -> ACTIVE
     assert _delivered(sources, "acme-spoke-deg"), out   # DEGRADED still gets logs
     assert not _delivered(sources, "acme-spoke-prod"), out
-    assert "acme-spoke-prod: 'kro' capability is CREATING after 45s" in out, out
+    # one shared budget: spoke-dev and spoke-upd each used 15 s, spoke-prod gets the last 15 s
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 15s (wait budget 45/45s used)" in out, out
+    assert _naps(tmp_path) == ["15", "15", "15"], out
     assert "acme-spoke-none: no 'kro' capability" in out, out
     # an expired token is reported as an error, not as "no capability"
     assert "WARN acme-spoke-err: describe-capability failed (rc=254)" in out, out
@@ -111,8 +120,6 @@ def test_waits_for_creating_and_skips_never_active(tmp_path):
     # skips are summarised instead of a success line (spoke-none has no capability: not a skip)
     assert "✓ kro capability logs enabled" not in out, out
     assert "⚠ kro capability logs NOT enabled for: acme-spoke-prod acme-spoke-err " in out, out
-    # the wait never overshoots CAP_LOGS_WAIT (45 s = 15+15+15)
-    assert "CREATING after 45s" in out, out
 
 
 def test_all_ready_prints_success_and_cleans_tmp(tmp_path):
@@ -126,6 +133,17 @@ def test_all_ready_prints_success_and_cleans_tmp(tmp_path):
 def test_wait_is_capped_at_cap_logs_wait(tmp_path):
     res, out, _ = _run(tmp_path, "50", "acme-spoke-prod")
     assert "acme-spoke-prod: 'kro' capability is CREATING after 50s" in out, out
+    assert _naps(tmp_path) == ["15", "15", "15", "5"], out   # last nap trimmed, no overshoot
+
+
+def test_wait_budget_is_shared_by_all_clusters(tmp_path):
+    # two capabilities stuck CREATING: the second one gets only what the first left (0 s)
+    res, out, sources = _run(tmp_path, "45", "acme-spoke-prod acme-spoke-prod2")
+    assert res.returncode == 0, out
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 45s (wait budget 45/45s used)" in out, out
+    assert "acme-spoke-prod2: 'kro' capability is CREATING after 0s (wait budget 45/45s used)" in out, out
+    assert _naps(tmp_path) == ["15", "15", "15"], out
+    assert not sources, out
 
 
 def test_non_numeric_wait_falls_back_to_default(tmp_path):
@@ -133,3 +151,4 @@ def test_non_numeric_wait_falls_back_to_default(tmp_path):
     assert res.returncode == 0, out
     assert "CAP_LOGS_WAIT='abc' is not a number of seconds" in out, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 600s" in out, out
+    assert sum(int(n) for n in _naps(tmp_path)) == 600, out
