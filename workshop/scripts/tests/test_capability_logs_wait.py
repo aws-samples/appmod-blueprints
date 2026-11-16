@@ -27,7 +27,7 @@ val() { prev=""; for a in "$@"; do [ "$prev" = "$KEY" ] && { echo "$a"; return; 
 case "$1 $2" in
   "sts get-caller-identity") echo 111122223333 ;;
   "eks list-clusters")
-    printf 'acme-hub\tacme-spoke-dev\tacme-spoke-prod\tacme-spoke-deg\tacme-spoke-none\tacme-spoke-err\n' ;;
+    echo "$FAKE_CLUSTERS" ;;
   "eks describe-capability")
     C=$(KEY=--cluster-name val "$@")
     N=$(grep -c "describe-capability --cluster-name $C " "$FAKE_AWS_LOG")
@@ -37,6 +37,7 @@ case "$1 $2" in
       acme-spoke-prod) S=CREATING ;;
       acme-spoke-deg) S=DEGRADED ;;
       acme-spoke-dev) if [ "$N" -le 1 ]; then S=CREATING; else S=ACTIVE; fi ;;
+      acme-spoke-upd) if [ "$N" -le 1 ]; then S=UPDATING; else S=ACTIVE; fi ;;
       *) S=ACTIVE ;;
     esac
     echo "$S" > "$FAKE_STATE/$C"
@@ -53,8 +54,10 @@ case "$1 $2" in
 esac
 """
 
+ALL = "acme-hub acme-spoke-dev acme-spoke-upd acme-spoke-prod acme-spoke-deg acme-spoke-none acme-spoke-err"
 
-def _run(tmp_path, wait):
+
+def _run(tmp_path, wait, clusters=ALL):
     r = tmp_path / "repo"
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
@@ -71,12 +74,14 @@ def _run(tmp_path, wait):
     for name, body in (("aws", FAKE_AWS), ("sleep", "#!/bin/sh\nexit 0\n")):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
+    tmpd = tmp_path / "tmp"
+    tmpd.mkdir()
     state = tmp_path / "state"
     state.mkdir()
     log = tmp_path / "calls.log"
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(log),
-               FAKE_STATE=str(state), HOME=str(tmp_path), CAP_LOGS_WAIT=wait)
+               FAKE_STATE=str(state), FAKE_CLUSTERS=clusters, HOME=str(tmp_path), TMPDIR=str(tmpd), CAP_LOGS_WAIT=wait)
     for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG"):
         env.pop(k, None)
     res = subprocess.run([TASK, "-d", str(r), "enable-capability-logs"], env=env,
@@ -94,6 +99,7 @@ def test_waits_for_creating_and_skips_never_active(tmp_path):
     assert res.returncode == 0, out
     assert _delivered(sources, "acme-hub"), out
     assert _delivered(sources, "acme-spoke-dev"), out   # waited CREATING -> ACTIVE
+    assert _delivered(sources, "acme-spoke-upd"), out   # waited UPDATING -> ACTIVE
     assert _delivered(sources, "acme-spoke-deg"), out   # DEGRADED still gets logs
     assert not _delivered(sources, "acme-spoke-prod"), out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 45s" in out, out
@@ -102,10 +108,28 @@ def test_waits_for_creating_and_skips_never_active(tmp_path):
     assert "WARN acme-spoke-err: describe-capability failed (rc=254)" in out, out
     assert "ExpiredTokenException" in out, out
     assert "acme-spoke-err: no 'kro' capability" not in out, out
+    # skips are summarised instead of a success line (spoke-none has no capability: not a skip)
+    assert "✓ kro capability logs enabled" not in out, out
+    assert "⚠ kro capability logs NOT enabled for: acme-spoke-prod acme-spoke-err " in out, out
+    # the wait never overshoots CAP_LOGS_WAIT (45 s = 15+15+15)
+    assert "CREATING after 45s" in out, out
+
+
+def test_all_ready_prints_success_and_cleans_tmp(tmp_path):
+    res, out, sources = _run(tmp_path, "45", "acme-hub acme-spoke-dev acme-spoke-none")
+    assert res.returncode == 0, out
+    assert "✓ kro capability logs enabled for acme-* clusters" in out, out
+    assert "⚠ kro capability logs NOT enabled" not in out, out
+    assert list((tmp_path / "tmp").iterdir()) == [], "ERRF temp file left behind"
+
+
+def test_wait_is_capped_at_cap_logs_wait(tmp_path):
+    res, out, _ = _run(tmp_path, "50", "acme-spoke-prod")
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 50s" in out, out
 
 
 def test_non_numeric_wait_falls_back_to_default(tmp_path):
-    res, out, sources = _run(tmp_path, "abc")
+    res, out, sources = _run(tmp_path, "abc", "acme-spoke-prod")
     assert res.returncode == 0, out
     assert "CAP_LOGS_WAIT='abc' is not a number of seconds" in out, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 600s" in out, out
