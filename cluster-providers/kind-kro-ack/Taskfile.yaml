@@ -3330,7 +3330,7 @@ tasks:
           if [ -s "$FAILED" ]; then
             printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, a failed list or read call, or EKS unreadable in an enabled region) or could not delete what they found: %s{{.C_RESET}}\n' \
               "$(sort -u "$FAILED" | tr '\n' ' ')"
-            printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy. If this host may not delete IAM roles (privilegedSteps: external), task privileged:destroy on the privileged runner deletes the roles privileged:pre created.{{.C_RESET}}\n'
             exit 1
           fi
           printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
@@ -4382,19 +4382,28 @@ tasks:
             "Resource": "*"
           }]
         }'
-        # Allow ACK capability role to assume cluster-mgmt roles
-        # Best-effort: the ACK capability role only exists after the hub EKS cluster
-        # is created. When this task runs before hub:claim (new ordering for PR #861),
-        # the role doesn't exist yet — skip gracefully. hub:seed re-runs this task
-        # once the hub is up, which will apply the policy correctly.
-        aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
-          "Version": "2012-10-17",
-          "Statement": [{
-            "Effect": "Allow",
-            "Action": ["sts:AssumeRole", "sts:TagSession"],
-            "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
-          }]
-        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
+        # Allow ACK capability role to assume cluster-mgmt roles. The capability exists only
+        # once the hub does: when this task runs before hub:claim (ordering of PR #861) or
+        # in task privileged:pre, the put is skipped; hub:seed (inline) or task
+        # privileged:post (privilegedSteps=external) applies it once the hub is up. Once the
+        # capability exists, a failed put fails the task (it no longer prints success).
+        if CAP_ERR=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack \
+            --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>&1 >/dev/null); then
+          aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": ["sts:AssumeRole", "sts:TagSession"],
+              "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
+            }]
+          }'
+        else
+          case "$CAP_ERR" in
+            *ResourceNotFoundException*)
+              echo "  (hub ACK capability not created yet: ack-assume-role is applied once the hub is up, by hub:seed or task privileged:post)" ;;
+            *) printf '{{.C_ERR}}✗ cannot read the hub ACK capability: %s{{.C_RESET}}\n' "$CAP_ERR"; exit 1 ;;
+          esac
+        fi
         # [#1033 Deliverable #9] The hub self-manage grant (eks:Describe/manage on the
         # hub's OWN cluster + pod-identity ARNs) is NO LONGER applied imperatively here.
         # This capability role is a kro/ACK-managed IAM Role, so ACK reconciles it back to
