@@ -1509,6 +1509,12 @@ spec:
                    - --compressed-caching=false
                    - --snapshot-mode=redo
                    - --use-new-run
+                   # A JVM in a RUN step (e.g. gradle in the Java build stage) writes
+                   # /tmp/hsperfdata_<user>/<pid> and deletes it on exit. Kaniko can list the
+                   # file while the JVM is alive and then fail the snapshot with
+                   # "Failed to get file info for /tmp/hsperfdata_root/<pid>". Skip these
+                   # JVM perf-data dirs (never needed in an image) for every snapshot.
+                   - --ignore-path=/tmp/hsperfdata_*
                    - --verbosity=info
                  env:
                    - name: AWS_REGION
