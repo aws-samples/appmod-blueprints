@@ -3517,7 +3517,9 @@ tasks:
   hub:keycloak-identity-handover:
     desc: "Hand the Keycloak client-provisioner IAM role from Crossplane to ACK on an upgraded hub (Orphan, then delete the Crossplane objects; no-op on fresh hubs)"
     cmds:
+      # A kubeconfig failure must not stop the install: the reads below then fail and say so.
       - task: hub:kubeconfig
+        ignore_error: true
       - cmd: |
           set +e
           KC={{.ROOT_DIR}}/private/hub-kubeconfig
@@ -3526,7 +3528,15 @@ tasks:
           OLD=""
           for r in "roles.iam.aws.upbound.io/$H-keycloak-client-provisioner-role" \
                    "podidentityassociations.eks.aws.upbound.io/$H-keycloak-client-provisioner"; do
-            if k get "$r" >/dev/null 2>&1; then OLD="$OLD $r"; fi
+            if ERR=$(k get "$r" 2>&1 >/dev/null); then OLD="$OLD $r"; continue; fi
+            # Only "not found" (object or Crossplane CRD absent) means absent. Any other error
+            # (Unauthorized, timeout) leaves everything in place and says so.
+            case "$ERR" in
+              *NotFound*|*"not found"*|*"doesn't have a resource type"*) ;;
+              *)
+                printf '{{.C_ERR}}  ⚠ could not read %s: %s. Nothing changed. Re-run: task kind-kro-ack:hub:keycloak-identity-handover{{.C_RESET}}\n' "$r" "$ERR"
+                exit 0 ;;
+            esac
           done
           if [ -z "$OLD" ]; then
             echo "  keycloak client-provisioner identity: no Crossplane object, nothing to hand over."

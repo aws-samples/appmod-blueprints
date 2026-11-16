@@ -10,6 +10,7 @@ Run:  python -m pytest workshop/scripts/tests/test_keycloak_identity_handover.py
 """
 import os
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -30,7 +31,8 @@ echo "kubectl $*" >> "$LOG"
 verb="$1"; r="$2"; f="$ST/$(echo "$r" | tr / _)"
 case "$verb" in
   get)
-    [ -f "$f" ] || exit 1
+    [ "${KFAIL:-0}" = 1 ] && { echo "error: You must be logged in to the server (Unauthorized)" >&2; exit 1; }
+    [ -f "$f" ] || { echo "Error from server (NotFound): $r not found" >&2; exit 1; }
     case "$*" in
       *ACK.ResourceSynced*) cat "$f" ;;
       *deletionPolicy*) cat "$f" ;;
@@ -41,7 +43,7 @@ esac
 """
 
 
-def _run(tmp_path, crossplane=True, ack="True", patch_fail=False):
+def _run(tmp_path, crossplane=True, ack="True", patch_fail=False, kfail=False):
     st = tmp_path / "st"
     st.mkdir(exist_ok=True)
     if crossplane:
@@ -60,7 +62,7 @@ def _run(tmp_path, crossplane=True, ack="True", patch_fail=False):
     block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", BLOCK).replace("{{.ROOT_DIR}}", str(tmp_path)) \
         .replace("{{.HUB_CLUSTER_NAME}}", H)
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(log), ST=str(st),
-               PATCH_FAIL="1" if patch_fail else "0")
+               PATCH_FAIL="1" if patch_fail else "0", KFAIL="1" if kfail else "0")
     r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block], env=env, capture_output=True,
                        text=True, timeout=30)
     return r, log.read_text().splitlines(), st
@@ -107,3 +109,35 @@ def test_task_is_non_fatal_and_runs_after_keycloak_in_finalize():
     assert [c for c in TASK["cmds"] if isinstance(c, dict) and "cmd" in c][0].get("ignore_error") is True
     fin = [c.get("task") if isinstance(c, dict) else None for c in KRO["install:finalize"]["cmds"]]
     assert fin.index("hub:wait-for-keycloak") < fin.index("hub:keycloak-identity-handover")
+
+
+def test_a_read_error_is_not_taken_for_absent(tmp_path):
+    r, log, st = _run(tmp_path, kfail=True)
+    assert r.returncode == 0, r.stderr
+    assert "nothing to hand over" not in r.stdout and "could not read" in r.stdout and "Re-run" in r.stdout
+    assert not [ln for ln in log if ln.split()[1] in ("patch", "delete")]
+    assert (st / XROLE.replace("/", "_")).read_text() == "Delete"
+
+
+@pytest.mark.skipif(not (shutil.which("task") and shutil.which("yq")), reason="needs go-task and yq")
+def test_a_failed_kubeconfig_does_not_stop_the_install(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    shutil.copy(os.path.join(REPO, "Taskfile.yaml"), root / "Taskfile.yaml")
+    shutil.copytree(os.path.join(REPO, "cluster-providers"), root / "cluster-providers")
+    shutil.copytree(os.path.join(REPO, "gitops", "addons", "registry"), root / "gitops" / "addons" / "registry")
+    (root / "config.local.yaml").write_text(
+        'clusterProvider: kind-kro-ack\nresourcePrefix: acme\naws: {region: us-west-2, accountId: "111122223333"}\n'
+        "hub: {clusterName: acme-hub}\nrepo: {url: https://example.invalid/r, revision: main, basepath: gitops/addons/}\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "aws").write_text("#!/bin/sh\necho 'An error occurred (ExpiredToken)' >&2\nexit 255\n")
+    (bindir / "kubectl").write_text("#!/bin/sh\necho 'error: no configuration has been provided' >&2\nexit 1\n")
+    for f in ("aws", "kubectl"):
+        (bindir / f).chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in ("AWS_PROFILE", "AWS_CONFIG_FILE", "KUBECONFIG")}
+    env.update(PATH=f"{bindir}:{os.environ['PATH']}", HOME=str(tmp_path))
+    r = subprocess.run([shutil.which("task"), "-d", str(root), "kind-kro-ack:hub:keycloak-identity-handover"],
+                       env=env, capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout[-800:] + r.stderr[-800:]
+    assert "could not read" in r.stdout + r.stderr
