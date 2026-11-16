@@ -758,8 +758,10 @@ tasks:
   hub:create-mgmt-roles:apply:
     internal: true
     vars:
+      # Empty lookup (no hub yet: privileged:pre) -> the name the ack-capability-role claim
+      # gives it (claims/ack-capability-role.yaml external-name), never an empty role/.
       ACK_CAPABILITY_ROLE:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole"
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-ACKCapabilityRole"
     cmds:
       - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
       - |
@@ -831,12 +833,9 @@ tasks:
           }]
         }'
         # Allow ACK capability role to assume cluster-mgmt roles. The role exists only
-        # once the hub does: when this runs before the hub (task privileged:pre, the
-        # privilegedSteps=external runner), the lookup above is empty, so skip it here;
-        # hub:seed / task privileged:post apply it on the next pass.
-        if [ -z "{{.ACK_CAPABILITY_ROLE}}" ]; then
-          echo "  (hub ACK capability role not found yet: ack-assume-role applied on the next pass)"
-        else
+        # once the hub does. Before it (task privileged:pre, the privilegedSteps=external
+        # runner) this put fails and is reported; task privileged:post applies it once the
+        # hub exists. Inline, hub:seed runs this after the capabilities are Ready.
         aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
           "Version": "2012-10-17",
           "Statement": [{
@@ -844,8 +843,7 @@ tasks:
             "Action": ["sts:AssumeRole", "sts:TagSession"],
             "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
           }]
-        }'
-        fi
+        }' 2>/dev/null || echo "  (ACK capability role {{.ACK_CAPABILITY_ROLE}} not available yet: ack-assume-role is applied by task privileged:post)"
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
   hub:install-eso:
