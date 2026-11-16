@@ -42,7 +42,7 @@
     {
       "Sid": "DenyAttachAwsManagedPolicyOutsideAllowlist",
       "Effect": "Deny",
-      "Action": "iam:AttachRolePolicy",
+      "Action": ["iam:AttachRolePolicy", "iam:AttachUserPolicy", "iam:AttachGroupPolicy"],
       "Resource": "*",
       "Condition": {
         "ArnLike": {

@@ -591,3 +591,50 @@ def test_legacy_step_never_deletes_an_mr_that_did_not_take_orphan(tmp_path):
     r, events, _ = run_legacy_step(tmp_path, LEGACY, ignore_patch=True)
     assert r.returncode != 0
     assert events == [], "deleting without Orphan would detach AdministratorAccess"
+
+
+# ------------------------------------------------------------------ user/group attach, rg-eks copy
+
+RG_EKS = os.path.join(REPO, "gitops", "addons", "charts", "kro", "resource-groups", "manifests", "eks", "rg-eks.yaml")
+ATTACH_ACTIONS = ["iam:AttachRolePolicy", "iam:AttachUserPolicy", "iam:AttachGroupPolicy"]
+RESOURCE_FOR = {"iam:AttachRolePolicy": ROLE,
+                "iam:AttachUserPolicy": f"arn:aws:iam::{ACCT}:user/u",
+                "iam:AttachGroupPolicy": f"arn:aws:iam::{ACCT}:group/g"}
+
+
+def with_blanket_allow(doc):
+    """The same document next to a role that keeps AdministratorAccess (seeded spokes): the
+    Deny alone has to hold."""
+    d = copy.deepcopy(doc)
+    d["Statement"].append({"Effect": "Allow", "Action": "*", "Resource": "*"})
+    return d
+
+
+@pytest.mark.parametrize("action", ATTACH_ACTIONS)
+@pytest.mark.parametrize("name", ADMIN_LIKE)
+def test_admin_like_attach_denied_for_role_user_and_group(action, name):
+    doc = with_blanket_allow(load_doc())
+    assert not allowed(doc, action, RESOURCE_FOR[action], {"iam:PolicyARN": aws_managed(name)})
+
+
+@pytest.mark.parametrize("action", ATTACH_ACTIONS)
+def test_allowlisted_attach_stays_allowed_for_role_user_and_group(action):
+    doc = with_blanket_allow(load_doc())
+    assert allowed(doc, action, RESOURCE_FOR[action], {"iam:PolicyARN": aws_managed("AmazonS3FullAccess")})
+
+
+def rg_eks_policy_documents():
+    with open(RG_EKS) as f:
+        text = f.read()
+    docs = []
+    for m in re.finditer(r"policyDocument: '(\{.*\})'\s*$", text, re.M):
+        docs.append(json.loads(m.group(1)))
+    return docs
+
+
+def test_rg_eks_inline_copy_equals_the_policy_file():
+    """The kro-ack spoke carries the same document inline; the two must not drift."""
+    docs = [d for d in rg_eks_policy_documents()
+            if any(s.get("Sid") == "DenyAttachAwsManagedPolicyOutsideAllowlist" for s in d["Statement"])]
+    assert len(docs) == 1, len(docs)
+    assert docs[0] == load_doc()
