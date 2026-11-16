@@ -27,6 +27,7 @@ val() { prev=""; for a in "$@"; do [ "$prev" = "$KEY" ] && { echo "$a"; return; 
 case "$1 $2" in
   "sts get-caller-identity") echo 111122223333 ;;
   "eks list-clusters")
+    if [ "$FAKE_CLUSTERS" = __DENY__ ]; then echo "An error occurred (AccessDeniedException) when calling the ListClusters operation" >&2; exit 254; fi
     echo "$FAKE_CLUSTERS" ;;
   "eks describe-capability")
     C=$(KEY=--cluster-name val "$@")
@@ -73,7 +74,7 @@ def _run(tmp_path, wait, clusters=ALL, task_args=()):
         "clusterProvider: kind-kro-ack\nresourcePrefix: acme\naws: {region: us-west-2}\n")
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name, body in (("aws", FAKE_AWS), ("sleep", "#!/bin/sh\nexit 0\n")):
+    for name, body in (("aws", FAKE_AWS), ("sleep", "#!/bin/sh\necho \"sleep $*\" >> \"$FAKE_AWS_LOG\"\n")):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
     tmpd = tmp_path / "tmp"
@@ -129,6 +130,17 @@ def test_wait_is_capped_at_cap_logs_wait(tmp_path):
     res, out, _ = _run(tmp_path, "50", "acme-spoke-prod")
     assert res.returncode == 0, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 50s" in out, out
+    sleeps = [l for l in (tmp_path / "calls.log").read_text().splitlines() if l.startswith("sleep ")]
+    assert sleeps == ["sleep 15", "sleep 15", "sleep 15", "sleep 5"], sleeps
+
+
+def test_list_clusters_failure_is_not_a_success(tmp_path):
+    res, out, sources = _run(tmp_path, "45", "__DENY__")
+    assert res.returncode == 0, out
+    assert "WARN: list-clusters failed: An error occurred (AccessDeniedException)" in out, out
+    assert "⚠ kro capability logs NOT enabled for: (all: list-clusters failed)" in out, out
+    assert "✓ kro capability logs enabled" not in out, out
+    assert sources == [], sources
 
 
 @pytest.mark.parametrize("wait", ["08", "010", "99999999999999999999"])
