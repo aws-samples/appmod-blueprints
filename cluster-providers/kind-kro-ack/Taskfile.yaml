@@ -3529,10 +3529,12 @@ tasks:
           for r in "roles.iam.aws.upbound.io/$H-keycloak-client-provisioner-role" \
                    "podidentityassociations.eks.aws.upbound.io/$H-keycloak-client-provisioner"; do
             if ERR=$(k get "$r" 2>&1 >/dev/null); then OLD="$OLD $r"; continue; fi
-            # Only "not found" (object or Crossplane CRD absent) means absent. Any other error
-            # (Unauthorized, timeout) leaves everything in place and says so.
+            # Only NotFound (object absent) or an unknown resource type (Crossplane CRD absent)
+            # means absent. Any other error (Unauthorized, timeout, kubeconfig) leaves everything
+            # in place and says so. No parentheses in the pattern: go-task's shell then matches
+            # any string.
             case "$ERR" in
-              *NotFound*|*"not found"*|*"doesn't have a resource type"*) ;;
+              *"Error from server "?NotFound?*|*"server doesn't have a resource type"*) ;;
               *)
                 printf '{{.C_ERR}}  ⚠ could not read %s: %s. Nothing changed. Re-run: task kind-kro-ack:hub:keycloak-identity-handover{{.C_RESET}}\n' "$r" "$ERR"
                 exit 0 ;;

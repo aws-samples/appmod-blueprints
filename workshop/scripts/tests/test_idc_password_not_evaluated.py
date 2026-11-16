@@ -153,3 +153,8 @@ def test_real_script_refuses_an_empty_password(tmp_path, env_pw):
     r, kw = _real_script(tmp_path, env_pw)
     assert r.returncode == 1 and kw is None
     assert "no Keycloak admin password" in r.stderr
+
+
+def test_no_caller_puts_the_password_on_the_command_line():
+    for rel in ("hack/.bashrc.d/ssm-setup-ide-logs.sh", "workshop/Taskfile.yaml"):
+        assert "--keycloak-admin-password" not in open(os.path.join(REPO, rel)).read(), rel

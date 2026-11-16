@@ -32,6 +32,7 @@ verb="$1"; r="$2"; f="$ST/$(echo "$r" | tr / _)"
 case "$verb" in
   get)
     [ "${KFAIL:-0}" = 1 ] && { echo "error: You must be logged in to the server (Unauthorized)" >&2; exit 1; }
+    [ "${KFAIL:-0}" = 2 ] && { echo "exec: executable aws not found" >&2; exit 1; }
     [ -f "$f" ] || { echo "Error from server (NotFound): $r not found" >&2; exit 1; }
     case "$*" in
       *ACK.ResourceSynced*) cat "$f" ;;
@@ -62,7 +63,7 @@ def _run(tmp_path, crossplane=True, ack="True", patch_fail=False, kfail=False):
     block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", BLOCK).replace("{{.ROOT_DIR}}", str(tmp_path)) \
         .replace("{{.HUB_CLUSTER_NAME}}", H)
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", LOG=str(log), ST=str(st),
-               PATCH_FAIL="1" if patch_fail else "0", KFAIL="1" if kfail else "0")
+               PATCH_FAIL="1" if patch_fail else "0", KFAIL=str(kfail) if kfail else "0")
     r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block], env=env, capture_output=True,
                        text=True, timeout=30)
     return r, log.read_text().splitlines(), st
@@ -111,8 +112,9 @@ def test_task_is_non_fatal_and_runs_after_keycloak_in_finalize():
     assert fin.index("hub:wait-for-keycloak") < fin.index("hub:keycloak-identity-handover")
 
 
-def test_a_read_error_is_not_taken_for_absent(tmp_path):
-    r, log, st = _run(tmp_path, kfail=True)
+@pytest.mark.parametrize("kfail", ["1", "2"])  # Unauthorized; kubeconfig exec plugin missing
+def test_a_read_error_is_not_taken_for_absent(tmp_path, kfail):
+    r, log, st = _run(tmp_path, kfail=kfail)
     assert r.returncode == 0, r.stderr
     assert "nothing to hand over" not in r.stdout and "could not read" in r.stdout and "Re-run" in r.stdout
     assert not [ln for ln in log if ln.split()[1] in ("patch", "delete")]
