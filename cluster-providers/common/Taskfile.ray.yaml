@@ -7,7 +7,7 @@ silent: true
 # Required vars: HUB_CLUSTER_NAME, RESOURCE_PREFIX, AWS_ACCOUNT_ID, AWS_REGION, ROOT_DIR
 tasks:
   setup:
-    desc: "Set up Ray ML infrastructure: S3 bucket, ECR repo, vLLM image, S3 CSI driver, IAM + Pod Identity"
+    desc: "Set up Ray ML infrastructure: S3 bucket, ECR repo, vLLM image, IAM roles, Pod Identity associations, then the S3 CSI driver addon"
     vars:
       RAY_BUCKET: "{{.RESOURCE_PREFIX}}-ray-models-{{.AWS_ACCOUNT_ID}}"
       RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
