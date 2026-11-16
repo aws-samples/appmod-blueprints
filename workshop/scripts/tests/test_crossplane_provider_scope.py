@@ -522,7 +522,12 @@ case $verb in
       *) echo "rolepolicyattachment.iam.aws.upbound.io/$name" ;;
     esac ;;
   patch)
-    [ -f "$STATE/ignore_patch" ] || echo Orphan > "$STATE/mr/$name" ;;
+    # Apply the deletionPolicy the patch actually sends (not a fixed value), so a wrong
+    # payload is caught.
+    if [ ! -f "$STATE/ignore_patch" ]; then
+      pol=$(printf '%s\n' "$*" | sed -n 's/.*"deletionPolicy":"\([A-Za-z]*\)".*/\1/p')
+      echo "${pol:-unset}" > "$STATE/mr/$name"
+    fi ;;
   delete)
     echo "delete $name policy=$(cat "$STATE/mr/$name")" >> "$STATE/events"
     rm -f "$STATE/mr/$name" ;;
