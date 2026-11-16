@@ -165,6 +165,34 @@ def test_idc_wrapper_clears_a_stale_status_file(tmp_path):
     assert out.startswith("FAILED rc=1"), out
 
 
+@pytest.mark.skipif(not (shutil.which("task") and shutil.which("yq")), reason="needs go-task and yq on PATH")
+@pytest.mark.parametrize("args,env_skip,want", [
+    (["IDC_CONFIGURE_SKIP=true"], None, "true"),   # CLI var: a nested task does not inherit it
+    ([], "true", "true"),                          # env form
+    ([], None, "false"),
+])
+def test_idc_wrapper_forwards_the_skip_knob_to_the_nested_task(tmp_path, args, env_skip, want):
+    """Real go-task: the wrapper's nested `task idc:configure` must see IDC_CONFIGURE_SKIP."""
+    doc = yaml.safe_load(open(os.path.join(REPO, "workshop", "Taskfile.yaml")))
+    sf = tmp_path / "idc-configure-status"
+    seen = tmp_path / "seen"
+    doc["tasks"]["idc:configure"] = {"cmds": [f'printf "%s" "{{{{.IDC_CONFIGURE_SKIP}}}}" > {seen}']}
+    doc["tasks"]["probe"] = {"cmds": [IDC_WRAPPER.replace("/tmp/idc-configure-status", str(sf))]}
+    ws = tmp_path / "workshop"
+    ws.mkdir()
+    (ws / "Taskfile.yaml").write_text(yaml.safe_dump(doc, sort_keys=False))
+    (tmp_path / "config.local.yaml").write_text("aws: {region: us-west-2}\nhub: {clusterName: acme-hub}\n")
+    env = {k: v for k, v in os.environ.items() if k != "IDC_CONFIGURE_SKIP"}
+    if env_skip:
+        env["IDC_CONFIGURE_SKIP"] = env_skip
+    r = subprocess.run([shutil.which("task"), "-d", str(ws), "probe", *args], env=env,
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert seen.read_text() == want
+    if want == "true":
+        assert sf.read_text().startswith("SKIPPED")
+
+
 # ---------------------------------------------------------------- credentials step of idc:configure
 
 CRED = [c for c in IDC if "DEBUG: LAMBDA_ARN" in c][0]

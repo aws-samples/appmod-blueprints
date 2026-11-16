@@ -526,7 +526,9 @@ tasks:
       # build to publish: the task's own SUCCESS/FAILED, or SKIPPED / UP-TO-DATE / FAILED rc=N.
       - |
         rm -f /tmp/idc-configure-status
-        rc=0; task idc:configure IDC_STRICT=false || rc=$?
+        # A nested `task` does not inherit CLI vars: forward the knob, so
+        # `task install:remote IDC_CONFIGURE_SKIP=true` skips idc:configure too.
+        rc=0; task idc:configure IDC_STRICT=false IDC_CONFIGURE_SKIP='{{.IDC_CONFIGURE_SKIP | default "false"}}' || rc=$?
         if [ ! -s /tmp/idc-configure-status ]; then
           if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then S="SKIPPED"
           elif [ "$rc" = "0" ]; then S="UP-TO-DATE"
