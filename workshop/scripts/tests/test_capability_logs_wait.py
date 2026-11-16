@@ -57,7 +57,7 @@ esac
 ALL = "acme-hub acme-spoke-dev acme-spoke-upd acme-spoke-prod acme-spoke-deg acme-spoke-none acme-spoke-err"
 
 
-def _run(tmp_path, wait, clusters=ALL):
+def _run(tmp_path, wait, clusters=ALL, timeout=120):
     r = tmp_path / "repo"
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
@@ -88,7 +88,7 @@ def _run(tmp_path, wait, clusters=ALL):
     for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG"):
         env.pop(k, None)
     res = subprocess.run([TASK, "-d", str(r), "enable-capability-logs"], env=env,
-                         capture_output=True, text=True, timeout=120)
+                         capture_output=True, text=True, timeout=timeout)
     sources = [l for l in log.read_text().splitlines() if l.startswith("logs put-delivery-source")]
     return res, res.stdout + res.stderr, sources
 
@@ -152,3 +152,12 @@ def test_non_numeric_wait_falls_back_to_default(tmp_path):
     assert "CAP_LOGS_WAIT='abc' is not a number of seconds" in out, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 600s" in out, out
     assert sum(int(n) for n in _naps(tmp_path)) == 600, out
+
+
+@pytest.mark.parametrize("wait,secs,naps", [("010", 10, ["10"]), ("08", 8, ["8"]), ("0", 0, []), ("000", 0, [])])
+def test_leading_zero_wait_is_decimal(tmp_path, wait, secs, naps):
+    # shell arithmetic would read 010 as octal 8 and 08 as an error; 0 must not loop forever
+    res, out, _ = _run(tmp_path, wait, "acme-spoke-prod", timeout=20)
+    assert res.returncode == 0, out
+    assert f"acme-spoke-prod: 'kro' capability is CREATING after {secs}s (wait budget {secs}/{secs}s used)" in out, out
+    assert _naps(tmp_path) == naps, out

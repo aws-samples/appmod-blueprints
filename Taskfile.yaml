@@ -247,6 +247,8 @@ tasks:
         aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
         WAIT_MAX="${CAP_LOGS_WAIT:-600}"
         case "$WAIT_MAX" in ''|*[!0-9]*) echo "  CAP_LOGS_WAIT='$WAIT_MAX' is not a number of seconds — using 600"; WAIT_MAX=600 ;; esac
+        # Shell arithmetic reads a leading 0 as octal (010 = 8, 08 = error): strip it.
+        while case "$WAIT_MAX" in 0?*) true ;; *) false ;; esac; do WAIT_MAX=${WAIT_MAX#0}; done
         ERRF=$(mktemp); trap 'rm -f "$ERRF"' EXIT
         SKIPPED=""; SPENT=0
         for C in $(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
