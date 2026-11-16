@@ -77,6 +77,7 @@ def test_existing_addon_new_association_restarts_node_driver(tmp_path):
     k = [l for l in calls if l.startswith("kubectl")]
     assert k == ["kubectl -n kube-system rollout restart daemonset/s3-csi-node"]
     assert _first(calls, "eks create-pod-identity-association") < _first(calls, "kubectl")
+    assert "could not restart" not in r.stdout  # kubectl saw a real kubeconfig
 
 
 def test_existing_addon_existing_association_no_restart(tmp_path):
