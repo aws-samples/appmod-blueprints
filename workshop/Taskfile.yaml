@@ -2408,7 +2408,14 @@ tasks:
         if [ "$KC_READY" != "true" ]; then
           printf '{{.C_ERR}}⚠ Keycloak still not reachable after %sx%ss (last HTTP %s) at %s{{.C_RESET}}\n' "$KC_WAIT_ATTEMPTS" "$KC_WAIT_INTERVAL" "$KC_STATUS" "$KC_URL"
           printf '{{.C_INFO}}  Run: task idc:configure once Keycloak is up.{{.C_RESET}}\n'
-          exit 1
+          echo "FAILED $(date -u +%FT%TZ) keycloak-unreachable" > "${IDC_STATUS_FILE:-/tmp/idc-configure-status}"
+          # Same rule as the outcome step below: standalone is strict by default, `task install`
+          # (post-install passes IDC_STRICT=false) carries on so a slow Keycloak does not skip
+          # ray:setup, setup-env and the OAP block. The remaining steps re-check Keycloak and
+          # run the configuration if it came up meanwhile; otherwise the federation is NOT
+          # active and `task idc:configure` must be re-run. Last statement is an `if`, not `&&`.
+          if [ "{{.IDC_STRICT | default "true"}}" = "true" ]; then exit 1; fi
+          printf '{{.C_ERR}}⚠ IDC_STRICT=false: continuing. ArgoCD SSO is NOT configured until you re-run: task idc:configure{{.C_RESET}}\n'
         fi
       - printf '{{.C_STEP}}▸ Refreshing IDC integration credentials via Lambda...{{.C_RESET}}\n'
       - |
