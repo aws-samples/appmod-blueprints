@@ -615,7 +615,8 @@ tasks:
         printf '{{.C_INFO}}  gitlab:init-ec2 started in background (PID=%s, log: /tmp/gitlab-init.log){{.C_RESET}}\n' "$(cat /tmp/gitlab-init.pid)"
       - task: platform:prepare
       - '{{.MARK}} step workshop wait for the CodeBuild install'
-      - 'sh "{{.REPO}}/scripts/install-remote-wait.sh"'
+      # A failed gitlab:init-ec2 means the build waits for a PAT that never comes: stop at once.
+      - 'INSTALL_REMOTE_LOCAL_RC=/tmp/gitlab-init.rc sh "{{.REPO}}/scripts/install-remote-wait.sh"'
       - '{{.MARK}} step workshop join gitlab:init-ec2'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-gitlab-init'
       # Identity Center federation (post-install) runs in the CodeBuild install, with the Ray setup.
@@ -659,7 +660,23 @@ tasks:
         ignore_error: true
       - '{{.MARK}} step workshop -'
       - '{{.MARK}} dump'
-      - 'printf "{{.C_OK}}✓ IDE install complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # What the build reported for the two steps it runs for this host: Identity Center
+      # (idc-status) and install:remote-extras (extras-status, often still RUNNING here: the
+      # image build continues after the install is OK). Read-only, never fatal.
+      - |
+        rd() { aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/$1" --region {{.AWS_REGION}} --query Parameter.Value --output text 2>/dev/null || true; }
+        IDC=$(rd idc-status); EXTRAS=$(rd extras-status)
+        printf '{{.C_INFO}}  Identity Center (idc-status): %s{{.C_RESET}}\n' "${IDC:-unknown}"
+        printf '{{.C_INFO}}  install:remote-extras (extras-status): %s{{.C_RESET}}\n' "${EXTRAS:-unknown}"
+        ALL_OK=true
+        case "$IDC" in SUCCESS*|SKIPPED*|UP-TO-DATE*) ;; *) ALL_OK=false ;; esac
+        case "$EXTRAS" in OK*|RUNNING*) ;; *) ALL_OK=false ;; esac
+        case "$EXTRAS" in RUNNING*) printf '{{.C_INFO}}  extras still running in the build: aws logs tail /aws/codebuild/{{.RESOURCE_PREFIX}}-install --follow{{.C_RESET}}\n' ;; esac
+        if [ "$ALL_OK" = true ]; then
+          printf '{{.C_OK}}✓ IDE install complete in %ds.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+        else
+          printf '{{.C_ERR}}⚠ IDE install finished in %ds, but a step of the build did not succeed (see above).{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+        fi
 
   # ============================================================
   # DESTROY — full ordered teardown

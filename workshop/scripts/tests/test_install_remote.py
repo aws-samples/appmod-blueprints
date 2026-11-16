@@ -363,10 +363,22 @@ case "$1 $2" in
     prev=""; for a in "$@"; do [ "$prev" = "--value" ] && echo "$a" > "$FAKE_PUT_VALUE"; prev="$a"; done; exit 0 ;;
   "ssm get-parameter")
     case "$*" in
-      *install-state*) [ -n "${FAKE_STATE:-}" ] && echo "$FAKE_STATE" || exit 254 ;;
+      *install-state*)
+        # FAKE_STATE_NEXT: the value from the second read on (the build wrote OK meanwhile).
+        n=$(cat "$FAKE_LOG.reads" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_LOG.reads"
+        V="${FAKE_STATE:-}"; [ "$n" -gt 1 ] && [ -n "${FAKE_STATE_NEXT:-}" ] && V="$FAKE_STATE_NEXT"
+        [ -n "$V" ] || exit 254
+        case "$*" in
+          *LastModifiedDate*) printf '%s\t%s\n' "$V" "${FAKE_STATE_AT:-2026-11-15T10:00:00.123000+00:00}" ;;
+          *) echo "$V" ;;
+        esac ;;
       *install-build-id*) [ -n "${FAKE_BUILD:-}" ] && echo "b-1" || exit 254 ;;
     esac; exit 0 ;;
-  "codebuild batch-get-builds") echo "${FAKE_BUILD:-}"; exit 0 ;;
+  "codebuild batch-get-builds")
+    case "$*" in
+      *startTime*) printf '%s\t%s\n' "${FAKE_BUILD:-}" "${FAKE_BUILD_START:-2026-11-15T09:00:00.500000+00:00}" ;;
+      *) echo "${FAKE_BUILD:-}" ;;
+    esac; exit 0 ;;
   "secretsmanager get-secret-value") [ -n "${FAKE_CFG:-}" ] && cat "$FAKE_CFG" || exit 254; exit 0 ;;
 esac
 exit 0
@@ -423,6 +435,70 @@ def test_install_remote_wait(tmp_path, state, build, rc):
         assert f"ended as {build}" in r.stderr
     elif rc == 1:
         assert "did not finish" in r.stderr
+
+
+@needs_tools
+def test_install_remote_wait_fails_fast_on_a_build_that_succeeded_without_ok(tmp_path):
+    # install-state.sh drops a failed write: the build can end SUCCEEDED with no OK recorded.
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="RUNNING step=oap 2026-11-15T10:00:00Z",
+                                                   FAKE_BUILD="SUCCEEDED", INSTALL_REMOTE_TIMEOUT="600"))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "ended as SUCCEEDED without recording OK" in r.stderr
+    assert "did not finish" not in r.stderr  # not a wait until the timeout
+
+
+@needs_tools
+def test_install_remote_wait_rereads_the_state_when_the_build_succeeded(tmp_path):
+    # OK was written between the state read and the build-status read.
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="RUNNING step=oap 2026-11-15T10:00:00Z",
+                                                   FAKE_STATE_NEXT="OK 2026-11-15T10:05:00Z", FAKE_BUILD="SUCCEEDED"))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "remote install finished: OK" in r.stdout
+
+
+@needs_tools
+@pytest.mark.parametrize("state", ["OK 2026-11-14T10:00:00Z", "FAILED rc=1 step=hub:seed 2026-11-14T10:00:00Z"])
+def test_install_remote_wait_ignores_a_state_from_an_earlier_build(tmp_path, state):
+    # The state was last written BEFORE the current build started: it is the previous build's.
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE=state, FAKE_BUILD="IN_PROGRESS",
+                                                   FAKE_STATE_AT="2026-11-14T10:00:00+00:00",
+                                                   FAKE_BUILD_START="2026-11-15T09:00:00+00:00"))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "ignoring a state from an earlier build" in r.stdout
+    assert "did not finish" in r.stderr and "remote install failed" not in r.stderr
+
+
+@needs_tools
+@pytest.mark.parametrize("state_at,build_start,rc", [
+    ("1700000100.25", "1700000000.75", 0),   # epoch timestamps (CLI v1 / cli_timestamp_format)
+    ("1699999000.0", "1700000000.75", 1),    # stale, epoch form
+    ("2026-11-15T09:00:00.900000+00:00", "2026-11-15T09:00:00.100000+00:00", 0),  # same second
+])
+def test_install_remote_wait_compares_timestamps_in_both_cli_formats(tmp_path, state_at, build_start, rc):
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="OK now", FAKE_BUILD="IN_PROGRESS",
+                                                   FAKE_STATE_AT=state_at, FAKE_BUILD_START=build_start))
+    assert r.returncode == rc, r.stdout + r.stderr
+
+
+@needs_tools
+@pytest.mark.parametrize("local_rc,rc,msg", [("1", 1, "failed on this host"), ("0", 1, "did not finish")])
+def test_install_remote_wait_stops_on_a_failed_local_step(tmp_path, local_rc, rc, msg):
+    f = tmp_path / "gitlab-init.rc"
+    f.write_text(local_rc + "\n")
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="RUNNING step=hub:claim now",
+                                                   FAKE_BUILD="IN_PROGRESS", INSTALL_REMOTE_LOCAL_RC=str(f)))
+    assert r.returncode == rc and msg in r.stderr, r.stdout + r.stderr
+
+
+def test_ide_passes_the_gitlab_init_rc_to_the_wait():
+    line = IDE[_index(IDE, "install-remote-wait.sh")]
+    assert "INSTALL_REMOTE_LOCAL_RC=/tmp/gitlab-init.rc" in line
+
+
+def test_wait_documents_no_unused_variable():
+    text = open(os.path.join(REPO, "scripts", "install-remote-wait.sh")).read()
+    for var in re.findall(r"^#\s+(INSTALL_REMOTE_[A-Z_]+)", text, re.M):
+        assert text.count(var) > 1, var  # documented AND read
 
 
 def test_install_remote_wait_is_read_only(tmp_path):
@@ -575,3 +651,31 @@ def test_wait_image_is_lenient_by_default_and_strict_on_request(tmp_path):
 def test_remote_extras_asks_for_strict_wait_image():
     line = [ln for ln in EXTRAS if ":ray:wait-image" in ln][0]
     assert "RAY_WAIT_STRICT" in line
+
+
+# ---------------------------------------------------------------- install:ide final report
+
+IDE_REPORT = [c for c in IDE if "idc-status" in c and "extras-status" in c][0]
+
+
+@pytest.mark.parametrize("idc,extras,ok", [
+    ("SUCCESS 2026-11-16T00:00:00Z", "OK 2026-11-16T00:00:00Z", True),
+    ("SKIPPED 2026-11-16T00:00:00Z", "RUNNING 2026-11-16T00:00:00Z", True),  # the image build goes on
+    ("FAILED rc=1 2026-11-16T00:00:00Z", "OK 2026-11-16T00:00:00Z", False),
+    ("SUCCESS 2026-11-16T00:00:00Z", "FAILED: install:remote-extras, see the CodeBuild log", False),
+    ("", "", False),                                                          # unreadable
+])
+def test_ide_reports_both_build_statuses(tmp_path, idc, extras, ok):
+    (tmp_path / "bin").mkdir()
+    fake = tmp_path / "bin" / "aws"
+    fake.write_text('#!/bin/sh\ncase "$*" in\n  *idc-status*) [ -n "$IDC" ] && echo "$IDC" || exit 254 ;;\n'
+                    '  *extras-status*) [ -n "$EXTRAS" ] && echo "$EXTRAS" || exit 254 ;;\nesac\n')
+    fake.chmod(0o755)
+    block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", IDE_REPORT).replace("{{.RESOURCE_PREFIX}}", "acme") \
+        .replace("{{.AWS_REGION}}", "us-west-2").replace("{{.INSTALL_START}}", "0")
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", IDC=idc, EXTRAS=extras)
+    r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr  # never fatal
+    assert f"(idc-status): {idc or 'unknown'}" in r.stdout and f"(extras-status): {extras or 'unknown'}" in r.stdout
+    assert ("IDE install complete" in r.stdout) is ok, r.stdout
+    assert ("did not succeed" in r.stdout) is (not ok), r.stdout
