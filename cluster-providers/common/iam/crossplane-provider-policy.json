@@ -86,7 +86,9 @@
       ],
       "Resource": [
         "arn:*:iam::*:policy/*crossplane-provider-scoped",
-        "arn:*:iam::*:policy/*ProviderRole-scoped"
+        "arn:*:iam::*:policy/*crossplane-provider-scoped-*",
+        "arn:*:iam::*:policy/*ProviderRole-scoped",
+        "arn:*:iam::*:policy/*ProviderRole-scoped-*"
       ]
     }
   ]

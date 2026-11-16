@@ -169,6 +169,19 @@ def test_provider_scoped_policies_cannot_be_changed(prefix, role, action):
         assert not allowed(doc, action, f"arn:aws:iam::{ACCT}:policy/{name}"), name
 
 
+@pytest.mark.parametrize("prefix,role", OWN_POLICIES)
+@pytest.mark.parametrize("action", ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion",
+                                    "iam:DeletePolicyVersion", "iam:DeletePolicy"])
+def test_provider_scoped_policies_under_the_second_name_cannot_be_changed(prefix, role, action):
+    """After a document change managed-policy.sh names the policy <base>-<sha8>: the Deny must
+    cover that name too, or the first install after an upgrade moves it out of the Deny."""
+    import hashlib
+    doc = load_doc()
+    sha8 = hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:8]
+    for name in (scoped_name(prefix, role), role + "-scoped"):
+        assert not allowed(doc, action, f"arn:aws:iam::{ACCT}:policy/{name}-{sha8}"), name
+
+
 def test_scoped_name_matches_script():
     assert scoped_name("peeks", "peeks-hub-crossplane-provider") == "peeks-hub-crossplane-provider-scoped"
     assert scoped_name("peeks", "acme-spoke1-CrossplaneIAMProviderRole") == "peeks-acme-spoke1-CrossplaneIAMProviderRole-scoped"

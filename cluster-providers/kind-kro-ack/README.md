@@ -160,7 +160,8 @@ hand out in-cluster:
   (`workshop/scripts/tests/test_crossplane_provider_scope.py` fails until it does).
 - `DenyChangeProviderScopedPolicies`: no `iam:CreatePolicyVersion`, `SetDefaultPolicyVersion`,
   `DeletePolicyVersion` or `DeletePolicy` on `policy/*-crossplane-provider-scoped` (hub and
-  rg-eks spoke) or `policy/*ProviderRole-scoped` (`spokes:seed-provider-identity`). The provider
+  rg-eks spoke) or `policy/*ProviderRole-scoped` (`spokes:seed-provider-identity`), nor on
+  the second names `managed-policy.sh` uses after a document change (`...-scoped-<sha8>`). The provider
   cannot edit or delete these documents. It can still detach them, and create and attach a new
   customer-managed policy, so this protects the documents, not the rights.
 
