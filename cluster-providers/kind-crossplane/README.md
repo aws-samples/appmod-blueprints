@@ -59,7 +59,7 @@ The bootstrap uses the same Helm charts that run on the hub, ensuring consistent
 | Chart | Bootstrap flags | What it creates |
 |-------|----------------|-----------------|
 | `crossplane-base` | `providerConfig.enabled=false`, only iam+eks+ec2+family versions set, `createIdentity=false` for all | SAs, DRCs, functions, family+iam+eks+ec2 providers (no pod identities in this step) |
-| `crossplane-base` (claims step) | iam+eks+ec2 with `createIdentity=true` (default) | IAM+EKS+EC2 roles + pod identities |
+| `crossplane-base` (claims step) | iam+eks with `createIdentity=true` and `policyArns={arn:aws:iam::aws:policy/AdministratorAccess}` set explicitly (the chart default for both is `createIdentity=false`) | IAM+EKS provider roles + pod identities |
 | `crossplane-pod-identity` | `identities.eso.enabled=true` | ESO IAM role + policy + pod identity only |
 
 ### What the hub manages (after ArgoCD takes over)
