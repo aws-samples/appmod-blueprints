@@ -74,7 +74,8 @@ tasks:
       - task: "{{.PROVIDER}}:install"
       # Activate EKS Capability (kro) controller log delivery for all provisioned
       # clusters. Idempotent; skips clusters whose kro capability is not yet
-      # ACTIVE or DEGRADED (re-run `task enable-capability-logs` after enabling more spokes).
+      # ACTIVE or DEGRADED after waiting up to CAP_LOGS_WAIT s while CREATING/UPDATING, and
+      # lists them in a final ⚠ line (re-run `task enable-capability-logs` after enabling more spokes).
       # NOTE: imperative for now because ACK/Crossplane lack DeliverySource/
       # DeliveryDestination/Delivery CRDs. Tracking issue to move this into the
       # RGD/composition (option 2) or declarative CRs (option 3).
@@ -291,6 +292,10 @@ tasks:
       AWS_ACCOUNT_ID:
         sh: aws sts get-caller-identity --query Account --output text
       CAP: '{{.CAP | default "kro"}}'
+    env:
+      # Settable as a task var (task enable-capability-logs CAP_LOGS_WAIT=30) or as an env var;
+      # an env var already set in the caller wins (go-task does not override it).
+      CAP_LOGS_WAIT: '{{.CAP_LOGS_WAIT}}'
     cmds:
       - |
         REGION="{{.AWS_REGION}}"; ACCT="{{.AWS_ACCOUNT_ID}}"; CAP="{{.CAP}}"
@@ -325,7 +330,11 @@ tasks:
           if [ "$RC" -ne 0 ]; then
             # Only ResourceNotFound means "no capability"; anything else (expired
             # credentials, AccessDenied, throttling) is reported, not hidden.
-            if grep -q ResourceNotFoundException "$ERRF"; then echo "  $C: no '$CAP' capability — skipping"
+            if grep -q ResourceNotFoundException "$ERRF"; then
+              # A cluster still being created has no capability yet: that is a skip, not "absent".
+              CL_STATUS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null || echo UNKNOWN)
+              if [ "$CL_STATUS" = "ACTIVE" ]; then echo "  $C: no '$CAP' capability — skipping"
+              else echo "  $C: cluster is $CL_STATUS, no '$CAP' capability yet — skipping"; SKIPPED="$SKIPPED $C"; fi
             else echo "  WARN $C: describe-capability failed (rc=$RC): $(head -c 300 "$ERRF") — skipping, re-run task enable-capability-logs"; SKIPPED="$SKIPPED $C"; fi
             continue
           fi

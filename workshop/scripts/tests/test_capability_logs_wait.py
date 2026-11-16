@@ -32,7 +32,7 @@ case "$1 $2" in
     C=$(KEY=--cluster-name val "$@")
     N=$(grep -c "describe-capability --cluster-name $C " "$FAKE_AWS_LOG")
     case "$C" in
-      acme-spoke-none) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
+      acme-spoke-none|acme-spoke-new) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
       acme-spoke-err) echo "An error occurred (ExpiredTokenException) when calling the DescribeCapability operation" >&2; exit 254 ;;
       acme-spoke-prod) S=CREATING ;;
       acme-spoke-deg) S=DEGRADED ;;
@@ -42,6 +42,8 @@ case "$1 $2" in
     esac
     echo "$S" > "$FAKE_STATE/$C"
     printf 'arn:aws:eks:us-west-2:111122223333:capability/%s/kro\t%s\n' "$C" "$S" ;;
+  "eks describe-cluster")
+    if [ "$(KEY=--name val "$@")" = acme-spoke-new ]; then echo CREATING; else echo ACTIVE; fi ;;
   "logs put-delivery-source")
     N=$(KEY=--name val "$@"); C=${N%-kro}
     case "$(cat "$FAKE_STATE/$C" 2>/dev/null)" in
@@ -57,7 +59,7 @@ esac
 ALL = "acme-hub acme-spoke-dev acme-spoke-upd acme-spoke-prod acme-spoke-deg acme-spoke-none acme-spoke-err"
 
 
-def _run(tmp_path, wait, clusters=ALL):
+def _run(tmp_path, wait, clusters=ALL, task_args=()):
     r = tmp_path / "repo"
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
@@ -81,10 +83,12 @@ def _run(tmp_path, wait, clusters=ALL):
     log = tmp_path / "calls.log"
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(log),
-               FAKE_STATE=str(state), FAKE_CLUSTERS=clusters, HOME=str(tmp_path), TMPDIR=str(tmpd), CAP_LOGS_WAIT=wait)
+               FAKE_STATE=str(state), FAKE_CLUSTERS=clusters, HOME=str(tmp_path), TMPDIR=str(tmpd))
+    if wait is not None:
+        env["CAP_LOGS_WAIT"] = wait
     for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG"):
         env.pop(k, None)
-    res = subprocess.run([TASK, "-d", str(r), "enable-capability-logs"], env=env,
+    res = subprocess.run([TASK, "-d", str(r), "enable-capability-logs", *task_args], env=env,
                          capture_output=True, text=True, timeout=120)
     sources = [l for l in log.read_text().splitlines() if l.startswith("logs put-delivery-source")]
     return res, res.stdout + res.stderr, sources
@@ -140,3 +144,18 @@ def test_non_numeric_wait_falls_back_to_default(tmp_path):
     assert res.returncode == 0, out
     assert "CAP_LOGS_WAIT='abc' is not a number of seconds" in out, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 600s" in out, out
+
+
+def test_cluster_still_creating_is_a_skip_not_absent(tmp_path):
+    res, out, sources = _run(tmp_path, "45", "acme-hub acme-spoke-new acme-spoke-none")
+    assert res.returncode == 0, out
+    assert "acme-spoke-new: cluster is CREATING, no 'kro' capability yet" in out, out
+    assert "acme-spoke-none: no 'kro' capability — skipping" in out, out
+    assert "⚠ kro capability logs NOT enabled for: acme-spoke-new " in out, out
+    assert "✓ kro capability logs enabled" not in out, out
+
+
+def test_wait_settable_as_task_var(tmp_path):
+    res, out, _ = _run(tmp_path, None, "acme-spoke-prod", task_args=("CAP_LOGS_WAIT=30",))
+    assert res.returncode == 0, out
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 30s" in out, out
