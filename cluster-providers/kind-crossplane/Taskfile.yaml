@@ -845,18 +845,28 @@ tasks:
             "Resource": "*"
           }]
         }'
-        # Allow ACK capability role to assume cluster-mgmt roles. The role exists only
+        # Allow ACK capability role to assume cluster-mgmt roles. The capability exists only
         # once the hub does. Before it (task privileged:pre, the privilegedSteps=external
-        # runner) this put fails and is reported; task privileged:post applies it once the
-        # hub exists. Inline, hub:seed runs this after the capabilities are Ready.
-        aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
-          "Version": "2012-10-17",
-          "Statement": [{
-            "Effect": "Allow",
-            "Action": ["sts:AssumeRole", "sts:TagSession"],
-            "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
-          }]
-        }' 2>/dev/null || echo "  (ACK capability role {{.ACK_CAPABILITY_ROLE}} not available yet: ack-assume-role is applied by task privileged:post)"
+        # runner) the put is skipped and task privileged:post applies it. Once the
+        # capability exists, a failed put fails the task. Inline, hub:seed runs this after
+        # the capabilities are Ready.
+        if CAP_ERR=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack \
+            --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>&1 >/dev/null); then
+          aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": ["sts:AssumeRole", "sts:TagSession"],
+              "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
+            }]
+          }'
+        else
+          case "$CAP_ERR" in
+            *ResourceNotFoundException*)
+              echo "  (hub ACK capability not created yet: ack-assume-role is applied once the hub exists, by task privileged:post)" ;;
+            *) printf '{{.C_ERR}}✗ cannot read the hub ACK capability: %s{{.C_RESET}}\n' "$CAP_ERR"; exit 1 ;;
+          esac
+        fi
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
   hub:install-eso:
