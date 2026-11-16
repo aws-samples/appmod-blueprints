@@ -498,3 +498,96 @@ def test_grafana_inline_policy_keeps_managed_policy_attached(tmp_path):
     atts = [a["spec"]["forProvider"]["policyArn"] for a in docs_of(r.stdout, "RolePolicyAttachment")
             if a["spec"]["forProvider"]["roleRef"]["name"] == "grafana-provider-role"]
     assert atts == [aws_managed("AWSGrafanaAccountAdministrator")]
+
+
+# ------------------------------------------------------------------ claims: legacy attachments
+
+FAKE_KUBECTL = r'''#!/bin/sh
+# Fake kubectl for the legacy-attachment step: one file per MR holds its deletionPolicy.
+# STATE/ignore_patch makes patch a no-op (an MR that never takes the policy).
+echo "kubectl $*" >> "$STATE/log"
+verb=$1; shift
+name=$2   # $1 is the resource type
+case $verb in
+  get)
+    [ -f "$STATE/mr/$name" ] || exit 0   # --ignore-not-found: empty output
+    case " $* " in
+      *jsonpath*) cat "$STATE/mr/$name" ;;
+      *) echo "rolepolicyattachment.iam.aws.upbound.io/$name" ;;
+    esac ;;
+  patch)
+    [ -f "$STATE/ignore_patch" ] || echo Orphan > "$STATE/mr/$name" ;;
+  delete)
+    echo "delete $name policy=$(cat "$STATE/mr/$name")" >> "$STATE/events"
+    rm -f "$STATE/mr/$name" ;;
+esac
+'''
+
+
+def legacy_step_script():
+    with open(KC) as f:
+        cmds = yaml.safe_load(f)["tasks"]["crossplane:claims"]["cmds"]
+    texts = [c if isinstance(c, str) else c.get("cmd", "") for c in cmds]
+    idx = [i for i, t in enumerate(texts) if "provider-admin-attachment" in t]
+    assert len(idx) == 1, idx
+    render = [i for i, t in enumerate(texts) if "helm template crossplane-base" in t]
+    assert len(render) == 1 and idx[0] < render[0], "legacy MRs must be gone before the new render is applied"
+    return texts[idx[0]]
+
+
+def run_legacy_step(tmp_path, existing, ignore_patch=False):
+    state = tmp_path / "state"
+    (state / "mr").mkdir(parents=True)
+    for n in existing:
+        (state / "mr" / n).write_text("Delete\n")
+    if ignore_patch:
+        (state / "ignore_patch").write_text("")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    k = bindir / "kubectl"
+    k.write_text(FAKE_KUBECTL)
+    k.chmod(0o755)
+    for tool in ("sleep",):  # no real waiting in the tests
+        s = bindir / tool
+        s.write_text("#!/bin/sh\nexit 0\n")
+        s.chmod(0o755)
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", STATE=str(state))
+    r = subprocess.run(["sh", "-e", "-c", legacy_step_script()], capture_output=True, text=True, env=env)
+    ev = state / "events"
+    return r, (ev.read_text().splitlines() if ev.exists() else []), (state / "log").read_text()
+
+
+LEGACY = ["iam-provider-admin-attachment", "eks-provider-admin-attachment"]
+
+
+def test_legacy_step_is_a_noop_on_a_fresh_cluster(tmp_path):
+    r, events, log = run_legacy_step(tmp_path, [])
+    assert r.returncode == 0, r.stderr
+    assert events == [] and "patch" not in log and "delete" not in log
+
+
+def test_legacy_step_orphans_before_deleting_on_an_existing_cluster(tmp_path):
+    r, events, log = run_legacy_step(tmp_path, LEGACY)
+    assert r.returncode == 0, r.stderr
+    assert events == [f"delete {n} policy=Orphan" for n in LEGACY], events
+    assert "--wait=true" in log
+
+
+def test_legacy_step_rerun_is_a_noop(tmp_path):
+    r, events, _ = run_legacy_step(tmp_path, LEGACY)
+    assert r.returncode == 0 and len(events) == 2
+    # second pass: the MRs are gone (state dir recreated without them)
+    r2, events2, log2 = run_legacy_step(tmp_path / "again", [])
+    assert r2.returncode == 0 and events2 == [] and "delete" not in log2
+
+
+def test_legacy_step_only_touches_one_when_only_one_exists(tmp_path):
+    r, events, _ = run_legacy_step(tmp_path, LEGACY[:1])
+    assert r.returncode == 0, r.stderr
+    assert events == [f"delete {LEGACY[0]} policy=Orphan"]
+
+
+def test_legacy_step_never_deletes_an_mr_that_did_not_take_orphan(tmp_path):
+    r, events, _ = run_legacy_step(tmp_path, LEGACY, ignore_patch=True)
+    assert r.returncode != 0
+    assert events == [], "deleting without Orphan would detach AdministratorAccess"

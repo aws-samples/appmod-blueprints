@@ -646,6 +646,29 @@ tasks:
             fi
           fi
         ignore_error: true
+      # Re-run on an existing kind cluster: the older chart named the hub iam/eks attachments
+      # <name>-provider-admin-attachment. The render below names them after the policy, so both
+      # sets would own the same AWS attachment and deleting an old one would detach the policy
+      # until the new one next polls. Orphan the old MRs first (Crossplane then leaves the AWS
+      # attachment in place), delete them, and let the new MRs adopt it. No-op when absent.
+      - cmd: |
+          for P in iam eks; do
+            MR="$P-provider-admin-attachment"
+            FOUND=$(kubectl get rolepolicyattachments.iam.aws.upbound.io "$MR" --ignore-not-found -o name)
+            [ -n "$FOUND" ] || continue
+            kubectl patch rolepolicyattachments.iam.aws.upbound.io "$MR" --type merge \
+              -p '{"spec":{"deletionPolicy":"Orphan"}}'
+            N=0
+            until [ "$(kubectl get rolepolicyattachments.iam.aws.upbound.io "$MR" -o jsonpath='{.spec.deletionPolicy}')" = "Orphan" ]; do
+              N=$((N+1))
+              if [ "$N" -gt 30 ]; then
+                echo "✗ $MR did not take deletionPolicy Orphan; not deleting it." >&2
+                exit 1
+              fi
+              sleep 1
+            done
+            kubectl delete rolepolicyattachments.iam.aws.upbound.io "$MR" --wait=true --timeout=120s
+          done
       # The hub's provider-aws-iam/eks identity (role + Pod Identity association), created
       # from kind under the installer's aws-credentials. The chart defaults iam/eks to
       # createIdentity: false (the GitOps registry path), so it is enabled here explicitly.
