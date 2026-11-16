@@ -275,6 +275,8 @@ elif op == "delete-role-policy":
 elif op == "list-role-policies":
     print("\t".join(inl.get(role, [])))
 elif op == "list-attached-role-policies":
+    if role not in roles:
+        err("NoSuchEntity")
     print("\t".join(legacy + att.get(role, [])))
 elif op == "attach-role-policy":
     arn = opt["policy-arn"]
@@ -585,8 +587,10 @@ def test_mp_never_touches_inline_policies(tmp_path):
 
 def test_mp_missing_role_is_fatal(tmp_path):
     seed_state(tmp_path)
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
-    assert r.returncode != 0, out
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "role pfx-r does not exist" in out, out
+    assert not calls_of(log, "create-policy"), log  # no orphan policy for a missing role
+    assert state(tmp_path)["policies"] == {}
 
 
 
@@ -699,6 +703,16 @@ def test_mp_failed_delete_of_the_old_policy_keeps_it_attached_and_fails(tmp_path
     assert r.returncode == 0, out
     s = state(tmp_path)
     assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_failed_delete_does_not_attach_an_old_policy_the_role_never_had(tmp_path):
+    """The old base-name policy exists but is attached only to another role: the failed delete
+    must not attach it to this role."""
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "DeleteConflict" in out, out
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn(ALT_POL)]
 
 
 def test_mp_second_name_with_a_foreign_document_is_fatal(tmp_path):

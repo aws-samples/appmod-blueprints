@@ -22,7 +22,7 @@
 #   The new policy is attached before the old one is detached, so the role always holds a
 #   scoped policy. A failed CreatePolicy or AttachRolePolicy changes nothing on the old one. A
 #   failed delete of an old one (e.g. DeleteConflict: still attached to another role) attaches
-#   it again and fails, so the next run sees it and retries.
+#   it again if it was attached to the role, and fails, so the next run sees it and retries.
 #   CreatePolicyVersion is NOT used on purpose: a consumer may grant CreatePolicy and
 #   DeletePolicy on policy/<prefix>-* but not CreatePolicyVersion (PEEKS does not).
 # delete: for each scoped policy of <role>: DetachRolePolicy from <role>, DeletePolicyVersion
@@ -213,8 +213,11 @@ iam attach-role-policy --role-name "$ROLE" --policy-arn "$(arn_of "$KEEP")" \
   || { echo "ERROR: aws iam attach-role-policy failed: $KEEP -> $ROLE" >&2; exit 1; }
 for N in $OLD; do
   if ! delete_policy "$N"; then
-    # Attach it again so the next run sees it (it may be under a name it cannot probe).
-    iam attach-role-policy --role-name "$ROLE" --policy-arn "$(arn_of "$N")" >/dev/null 2>&1 || true
+    # If it was attached to the role, attach it again so the next run sees it (it may be
+    # under a name it cannot probe). One that was not attached is found by name again.
+    case " $(printf '%s' "$ATT" | tr '\n' ' ') " in *" $N "*)
+      iam attach-role-policy --role-name "$ROLE" --policy-arn "$(arn_of "$N")" >/dev/null 2>&1 || true ;;
+    esac
     echo "ERROR: could not remove the older scoped policy $N from $ROLE ($KEEP is attached); re-run after fixing it" >&2
     exit 1
   fi
