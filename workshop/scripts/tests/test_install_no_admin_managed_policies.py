@@ -347,7 +347,7 @@ def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
             **{c: "" for c in ("C_INFO", "C_OK", "C_STEP", "C_ERR", "C_WARN", "C_RESET")},
         },
         "tasks": {
-            "mgmt": {"cmds": [block("hub:create-mgmt-roles", 1, taskfile)]},
+            "mgmt": {"cmds": [block("hub:create-mgmt-roles:apply", 1, taskfile)]},
             "seed": {"cmds": [block("spokes:seed-provider-identity", 0, taskfile)]},
         },
     }
@@ -434,9 +434,9 @@ def logical_lines_of(text):
     return text.replace("\\\n", " ").splitlines()
 
 
-BLOCKS = [(KRO, "hub:scope-crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles", 1),
+BLOCKS = [(KRO, "hub:scope-crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles:apply", 1),
           (KRO, "spokes:seed-provider-identity", 0),
-          (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)]
+          (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)]
 
 
 # managed-policy.sh on its own (same fake aws, no go-task)
@@ -954,12 +954,13 @@ def test_schema_hub_iam_rejects_unknown_keys():
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
 @pytest.mark.parametrize("taskfile,task,index", [
     (KRO, "hub:scope-crossplane-provider-role", 0),
-    (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
+    (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles:apply", 1),
     (KRO, "spokes:seed-provider-identity", 0),
-    (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)])
+    (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)])
 def test_blocks_shellcheck(tmp_path, taskfile, task, index):
-    # go-task templates are not shell; replace them with a plain word first.
-    body = re.sub(r"\{\{[^}]*\}\}", "X", block(task, index, taskfile))
+    # go-task templates are not shell; replace them with a variable first (a literal word
+    # would trip SC2157 on `[ -z "{{.VAR}}" ]` guards).
+    body = re.sub(r"\{\{[^}]*\}\}", "${X}", block(task, index, taskfile))
     p = tmp_path / "b.sh"
     p.write_text("#!/bin/bash\n" + body)
     r = subprocess.run(["shellcheck", "-S", "error", str(p)], capture_output=True, text=True)

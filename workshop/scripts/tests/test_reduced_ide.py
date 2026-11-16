@@ -28,6 +28,8 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")
 ROLE = "arn:aws:iam::111122223333:role/acme-kind-install"
 VERIFY_SH = os.path.join(REPO, "cluster-providers", "common", "scripts", "mgmt-roles-verify.sh")
 ALL_POLICIES = sorted(set(re.findall(r"arn:aws:iam::aws:policy/[A-Za-z0-9]+", open(VERIFY_SH).read())))
+SCOPED_IAM = "arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped"
+ALL_POLICIES.append(SCOPED_IAM)
 IDE_ROLE = "arn:aws:iam::111122223333:role/acme-ide"
 PROVIDERS = ["kind-kro-ack", "kind-crossplane"]
 ALL_PROVIDER_FILES = ["kind-kro-ack", "kind-crossplane", "terraform"]
@@ -38,6 +40,7 @@ echo "PROFILE=${AWS_PROFILE:-} CFG=${AWS_CONFIG_FILE:-} :: $*" >> "$FAKE_AWS_LOG
 case "$1 $2" in
   "sts get-caller-identity") echo 111122223333 ;;
   "iam get-role"|"iam get-role-policy") echo ok ;;
+  "iam get-policy") echo "NoSuchEntity" >&2; exit 254 ;;  # scoped policy absent: managed-policy.sh creates it
   "iam list-attached-role-policies") printf '%s\t' $FAKE_ALL_POLICIES; echo ;;
   "eks describe-capability"|"eks describe-cluster") exit 254 ;;
   *) echo ok ;;
