@@ -2,7 +2,8 @@
 
 The password comes from the <hub>/keycloak secret. If go-task templated it into the script
 text, a `$(...)` or backticks in the value would run as the role of the caller (the install
-role in the CodeBuild install). The task passes it through `env:` instead.
+role in the CodeBuild install). The task passes it through `env:` instead, and the script reads
+KC_ADMIN_PASSWORD, so the value is not on the command line either.
 
 The real go-task runs the real `idc:configure` cmd that calls the script, on a copy of the
 Taskfile (status and the network/Lambda/pip steps removed). `aws` and `curl` are fakes and
@@ -33,8 +34,8 @@ case "$1 $2" in
 esac
 """
 FAKE_CURL = "#!/usr/bin/env bash\necho 200\n"
-STAND_IN = """import json, sys
-json.dump(sys.argv[1:], open(sys.argv[0] + ".argv", "w"))
+STAND_IN = """import json, os, sys
+json.dump({"argv": sys.argv[1:], "env": os.environ.get("KC_ADMIN_PASSWORD")}, open(sys.argv[0] + ".argv", "w"))
 """
 CONFIG = """aws: {region: us-west-2, accountId: "111122223333"}
 hub: {clusterName: acme-hub}
@@ -50,7 +51,7 @@ def _run(tmp_path, password):
     task = doc["tasks"]["idc:configure"]
     task.pop("status")
     # Only the real cmd that runs the script (Keycloak/SAML probes answered by the fake curl).
-    (cmd,) = [c for c in task["cmds"] if isinstance(c, str) and "--keycloak-admin-password" in c]
+    (cmd,) = [c for c in task["cmds"] if isinstance(c, str) and "configure_identity_center.py" in c]
     task["cmds"] = [cmd]
     ws = tmp_path / "workshop"
     ws.mkdir()
@@ -86,7 +87,9 @@ def test_password_reaches_the_script_verbatim_and_is_never_run(tmp_path, passwor
     assert res.returncode == 0, res.stdout + res.stderr
     assert not canary.exists(), "the password was evaluated by the shell"
     want = password.replace("CANARY", str(canary))
-    assert f"--keycloak-admin-password={want}" in argv, argv
+    assert argv["env"] == want, argv
+    # never on the command line either (visible to every process on the host)
+    assert not [a for a in argv["argv"] if "keycloak-admin-password" in a or want in a], argv
 
 
 def test_the_script_text_never_holds_the_password():
@@ -95,3 +98,9 @@ def test_the_script_text_never_holds_the_password():
     for c in task["cmds"]:
         text = c if isinstance(c, str) else c.get("cmd", "")
         assert "{{.KC_ADMIN_PASSWORD}}" not in text
+
+
+def test_script_reads_the_password_from_the_environment():
+    src = open(os.path.join(REPO, "scripts", "configure_identity_center.py")).read()
+    assert 'os.environ.get("KC_ADMIN_PASSWORD"' in src
+    assert 'add_argument("--keycloak-admin-password", required=True)' not in src
