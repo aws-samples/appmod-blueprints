@@ -160,7 +160,9 @@ does the work, and stops the task on any IAM error other than `NoSuchEntity`:
   `CreatePolicyVersion` is not used, because a consumer may not grant it. The cost: during that
   recreate the role has no scoped policy for a few seconds, so a Crossplane or ACK call made in
   that window gets `AccessDenied` and is retried by the controller. If the run fails in the
-  window, the policy is absent and the next run creates it.
+  window, the policy is absent and the next run creates it. If the delete itself fails (for
+  example `DeleteConflict` because the policy is attached to another role), the old policy is
+  attached to the role again and the task fails, so the role keeps its permissions.
 
 IAM calls it makes: `GetPolicy`, `GetPolicyVersion`, `ListPolicyVersions`, `CreatePolicy`,
 `AttachRolePolicy`, `DetachRolePolicy`, `DeletePolicyVersion`, `DeletePolicy`.
