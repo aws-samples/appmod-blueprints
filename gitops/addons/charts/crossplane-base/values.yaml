@@ -111,12 +111,7 @@ providers:
     # Proven by CloudTrail (UnauthorizedOperation, caller grafana.amazonaws.com): DescribeSubnets,
     # DescribeDhcpOptions. The others are read-only and unproven (the create fails before them):
     # DescribeSecurityGroups, DescribeVpcs, DescribeVpcAttribute, DescribeNetworkInterfaces,
-    # DescribeAvailabilityZones.
-    # CreateWorkspace with a VPC also creates the Grafana service-linked role with the caller's
-    # rights: 403 "You do not have permissions to create a service-linked role" without
-    # iam:CreateServiceLinkedRole. Limited to Grafana's own service-linked role path and
-    # service name. The role carries only the permissions Grafana defines, and no other iam:*
-    # action is granted.
+    # DescribeAvailabilityZones. No iam:CreateServiceLinkedRole.
     inlineStatements:
       - Effect: Allow
         Action:
@@ -128,12 +123,6 @@ providers:
           - ec2:DescribeNetworkInterfaces
           - ec2:DescribeAvailabilityZones
         Resource: "*"
-      - Effect: Allow
-        Action: iam:CreateServiceLinkedRole
-        Resource: arn:aws:iam::*:role/aws-service-role/grafana.amazonaws.com/*
-        Condition:
-          StringEquals:
-            iam:AWSServiceName: grafana.amazonaws.com
   kubernetes:
     version: ""
     serviceAccount: provider-kubernetes
