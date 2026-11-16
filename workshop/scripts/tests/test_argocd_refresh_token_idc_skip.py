@@ -211,16 +211,31 @@ def test_remote_knob_still_gets_a_token(tmp_path):
 
 
 def test_setup_env_marks_the_ide_when_the_install_is_remote(tmp_path):
-    cfg = tmp_path / "cfg.yaml"
-    cfg.write_text(CONFIG + "privilegedSteps: external\n")
-    out = _setup_env(tmp_path, CONFIG_FILE=str(cfg))
+    # only install:ide passes IDC_CONFIGURE_REMOTE=true; a config with privilegedSteps: external
+    # alone (install:codebuild of #1296, which runs idc:configure on the IDE) must not mark it
+    out = _setup_env(tmp_path, IDC_CONFIGURE_REMOTE="true")
     assert re.findall(r"^export IDC_CONFIGURE_REMOTE=.*$", out, re.M) == ['export IDC_CONFIGURE_REMOTE="true"']
     # ...and a new IDE shell then leaves Identity Center alone
     res, calls = _refresh(tmp_path, preamble='source "$HOME/.bashrc.d/platform.sh"')
     assert res.returncode == 1 and _idc_calls(calls) == [] and NOTICE_REMOTE in res.stderr, (calls, res.stderr)
 
 
+def test_setup_env_does_not_mark_an_offload_only_install(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(CONFIG + "privilegedSteps: external\n")
+    assert "IDC_CONFIGURE_REMOTE" not in _setup_env(tmp_path, CONFIG_FILE=str(cfg))
+
+
 def test_setup_env_does_not_mark_an_inline_install(tmp_path):
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text(CONFIG)
     assert "IDC_CONFIGURE_REMOTE" not in _setup_env(tmp_path, CONFIG_FILE=str(cfg))
+
+
+def test_install_ide_is_the_only_caller_that_marks_the_ide():
+    tasks = yaml.safe_load(open(TASKFILE))["tasks"]
+    step = [c for c in tasks["install:ide"]["cmds"] if isinstance(c, dict) and c.get("task") == "setup-env"]
+    assert step and step[0]["vars"]["IDC_CONFIGURE_REMOTE"] == "true", step
+    for name in ("install", "install:codebuild"):
+        for c in tasks[name]["cmds"]:
+            assert not (isinstance(c, dict) and c.get("task") == "setup-env" and "IDC_CONFIGURE_REMOTE" in (c.get("vars") or {})), name
