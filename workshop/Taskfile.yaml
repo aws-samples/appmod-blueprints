@@ -549,7 +549,7 @@ tasks:
       - '{{.MARK}} step workshop ray:prestage-models'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
       - '{{.MARK}} step workshop ray:wait-image'
-      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:wait-image'
+      - 'cd {{.PLATFORM_DIR}} && RAY_WAIT_STRICT=1 task {{.PROVIDER}}:ray:wait-image'
 
   kargo-identity:
     desc: "Create the Kargo controller IAM role + Pod Identity association (the IAM part of applications/java/kargo/deploy-kargo.sh)"

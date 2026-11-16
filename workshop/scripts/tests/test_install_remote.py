@@ -209,7 +209,7 @@ KARGO_FAKE_AWS = r"""#!/bin/sh
 echo "aws $*" >> "$FAKE_LOG"
 case "$1 $2" in
   "iam get-role") if [ "$FAKE_ROLE" = 1 ] || grep -q "iam create-role" "$FAKE_LOG"; then
-      case "$*" in *query*) echo arn:aws:iam::111122223333:role/x;; esac; exit 0; else exit 254; fi ;;
+      case "$*" in *query*) echo arn:aws:iam::000000000000:role/x;; esac; exit 0; else exit 254; fi ;;
   "eks list-pod-identity-associations") [ "$FAKE_PIA" = 1 ] && echo a-123; exit 0 ;;
 esac
 exit 0
@@ -535,3 +535,43 @@ def test_kind_create_on_cgroup_v1_host_disables_fail_cgroup_v1(tmp_path):
     patches = [yaml.safe_load(x) for x in doc["kubeadmConfigPatches"]]
     assert {"kind": "KubeletConfiguration", "failCgroupV1": False} in patches
     assert doc["nodes"] == [{"role": "control-plane"}]
+
+
+# ---------------------------------------------------------------- ray:wait-image strict mode
+
+RAY = yaml.safe_load(open(os.path.join(REPO, "cluster-providers", "common", "Taskfile.ray.yaml")))["tasks"]
+
+
+def _wait_image_block():
+    c = RAY["wait-image"]["cmds"][0]
+    b = c["cmd"] if isinstance(c, dict) else c
+    return (b.replace("{{.RAY_ECR_REPO}}", "acme-ray-vllm-custom").replace("{{.AWS_REGION}}", "us-west-2"))
+
+
+def _run_wait_image(tmp_path, strict, ecr_ok):
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    f = tmp_path / "bin" / "aws"
+    f.write_text("#!/bin/sh\n" + ("exit 0\n" if ecr_ok else "exit 254\n"))
+    f.chmod(0o755)
+    (tmp_path / "bin" / "sleep").write_text("#!/bin/sh\nexit 0\n")
+    (tmp_path / "bin" / "sleep").chmod(0o755)
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    if strict:
+        env["RAY_WAIT_STRICT"] = "1"
+    return subprocess.run(["bash", "-c", _wait_image_block()], env=env, capture_output=True, text=True, timeout=30)
+
+
+def test_wait_image_is_lenient_by_default_and_strict_on_request(tmp_path):
+    # default (task install on the IDE): a slow build must not fail the install
+    assert _run_wait_image(tmp_path, False, False).returncode == 0
+    # install:remote-extras: a missing image after the timeout is a visible failure
+    r = _run_wait_image(tmp_path, True, False)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "vLLM image" in r.stdout
+    # strict mode still succeeds when the image is there
+    assert _run_wait_image(tmp_path, True, True).returncode == 0
+
+
+def test_remote_extras_asks_for_strict_wait_image():
+    line = [ln for ln in EXTRAS if ":ray:wait-image" in ln][0]
+    assert "RAY_WAIT_STRICT" in line

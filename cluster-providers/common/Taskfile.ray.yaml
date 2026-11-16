@@ -169,6 +169,9 @@ tasks:
           done
           echo "⚠ Timeout waiting for image after 30min (check /tmp/ray-build.log)."
           echo "  The background build may still be running — re-run 'task ray:wait-image' to keep waiting."
+          # RAY_WAIT_STRICT=1 (install:remote-extras, in the CodeBuild install): the build ends right
+          # after this and kills the background push, so a missing vLLM image must be a visible failure.
+          [ "${RAY_WAIT_STRICT:-0}" = "1" ] && { echo "✗ vLLM image not in ECR (strict)."; exit 1; }
           exit 0
 
   wait-neuron-image:
