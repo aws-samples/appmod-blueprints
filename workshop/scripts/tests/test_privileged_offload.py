@@ -230,3 +230,52 @@ def test_verify_lists_match_providers():
         block = block[block.index("get_policies() {"):block.index("        }\n", block.index("get_policies() {"))]
         assert _expected_policies(block) == want, provider
         assert re.search(r"for service in " + " ".join(SERVICES) + r"; do", text), provider
+
+
+# ---------------------------------------------------------------- BYO cluster-mgmt roles in external mode
+
+FAKE_AWS_BYO = r"""#!/usr/bin/env bash
+echo "$*" >> "$FAKE_AWS_LOG"
+role=""; prev=""; for a in "$@"; do [ "$prev" = "--role-name" ] && role="$a"; prev="$a"; done
+case "$1 $2" in
+  "iam get-role") echo ok ;;
+  "iam get-role-policy") case " $BYO_ROLES " in *" $role "*) echo NoSuchEntity >&2; exit 254 ;; esac; echo ok ;;
+  "iam list-attached-role-policies")
+    case " $BYO_ROLES " in *" $role "*) echo ;; *) printf '%s\t' $FAKE_ALL_POLICIES; echo ;; esac ;;
+  *) echo ok ;;
+esac
+"""
+
+
+@pytest.mark.parametrize("byo", [["iam"], ["iam", "eks", "rds"], []])
+def test_verify_accepts_byo_roles_without_platform_policies(tmp_path, byo):
+    """A pre-created role carries the consumer's policies, not the platform's: apply never
+    attaches <prefix>-cluster-mgmt-iam-scoped to it, so verify must not require it."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "aws").write_text(FAKE_AWS_BYO)
+    (bindir / "aws").chmod(0o755)
+    cfg = tmp_path / "config.local.yaml"
+    arns = "".join(f'      {s}: "arn:aws:iam::111122223333:role/acme-cluster-mgmt-{s}"\n' for s in byo)
+    cfg.write_text("hub:\n  iam:\n    clusterMgmtRoleArns:\n" + arns if byo else "hub: {}\n")
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(tmp_path / "l"),
+               FAKE_ALL_POLICIES=" ".join(ALL_POLICIES), RESOURCE_PREFIX="acme", CONFIG_FILE=str(cfg),
+               BYO_ROLES=" ".join(f"acme-cluster-mgmt-{s}" for s in byo))
+    res = subprocess.run(["sh", VERIFY_SH], env=env, capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stdout + res.stderr
+    # without CONFIG_FILE the same BYO roles fail: the check is what the config says, not a skip
+    if byo:
+        env.pop("CONFIG_FILE")
+        res = subprocess.run(["sh", VERIFY_SH], env=env, capture_output=True, text=True, timeout=60)
+        assert res.returncode == 1 and "acme-cluster-mgmt-" + byo[0] in res.stderr
+
+
+def test_verify_takes_the_scoped_policy_name_from_managed_policy_sh():
+    text = open(VERIFY_SH).read()
+    assert 'managed-policy.sh" name' in text
+    assert "-cluster-mgmt-iam-scoped\"" not in text  # no second copy of the naming rule
+
+
+def test_kro_ack_verify_reads_the_config():
+    text = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
+    assert "CONFIG_FILE='{{.CONFIG_FILE}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'" in text

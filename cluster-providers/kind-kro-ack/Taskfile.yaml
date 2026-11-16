@@ -4376,7 +4376,7 @@ tasks:
   hub:create-mgmt-roles:verify:
     desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
     cmds:
-      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' CONFIG_FILE='{{.CONFIG_FILE}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
 
   hub:create-mgmt-roles:apply:
     internal: true
