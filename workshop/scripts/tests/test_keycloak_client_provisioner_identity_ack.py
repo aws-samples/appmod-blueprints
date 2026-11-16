@@ -131,7 +131,7 @@ def test_registry_selects_ack_only_for_kro_ack_provider():
     text = open(REGISTRY).read()
     assert "identityBackend" in text
     line = next(l for l in text.splitlines() if "identityBackend" in l)
-    assert "kro-ack" in line and "crossplane" in line
+    assert 'eq (index .metadata.labels "provider" | default "") "kro-ack"}}ack{{else}}crossplane{{end}}' in line
 
 
 def test_chart_comment_no_longer_claims_no_new_ordering_constraint():
