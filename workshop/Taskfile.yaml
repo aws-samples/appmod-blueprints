@@ -540,15 +540,16 @@ tasks:
       # The same steps `install` runs on the IDE, with the build role's IAM rights. The vLLM image
       # build is started in the background by ray:setup (docker is available in the build); the
       # build waits for it so the push is not killed when the build ends.
+      # Module 30.4 (deploy-kargo.sh, run by the participant) skips its IAM write when these exist.
+      # First: it is quick, the Ray image build below is not.
+      - '{{.MARK}} step workshop kargo-identity'
+      - task: kargo-identity
       - '{{.MARK}} step workshop ray:setup'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
       - '{{.MARK}} step workshop ray:prestage-models'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
       - '{{.MARK}} step workshop ray:wait-image'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:wait-image'
-      # Module 30.4 (deploy-kargo.sh, run by the participant) skips its IAM write when these exist.
-      - '{{.MARK}} step workshop kargo-identity'
-      - task: kargo-identity
 
   kargo-identity:
     desc: "Create the Kargo controller IAM role + Pod Identity association (the IAM part of applications/java/kargo/deploy-kargo.sh)"

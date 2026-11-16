@@ -168,7 +168,7 @@ EXTRAS = _flat(WS["install:remote-extras"]["cmds"])
 
 
 def test_remote_extras_order_and_content():
-    order = [":ray:setup", ":ray:prestage-models", ":ray:wait-image", "task: kargo-identity"]
+    order = ["task: kargo-identity", ":ray:setup", ":ray:prestage-models", ":ray:wait-image"]
     idx = [_index(EXTRAS, n) for n in order]
     assert idx == sorted(idx), dict(zip(order, idx))
     # the build wraps this task as non-fatal (own status); inside it nothing may swallow a failure
