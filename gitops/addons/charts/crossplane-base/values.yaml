@@ -108,20 +108,14 @@ providers:
       - arn:aws:iam::aws:policy/AWSGrafanaAccountAdministrator
     # AWSGrafanaAccountAdministrator has no ec2:*, so CreateWorkspace with a VPC fails 403
     # "Access denied when fetching EC2 subnet details" (ec2:DescribeSubnets refused).
-    # Proven by CloudTrail (UnauthorizedOperation, caller grafana.amazonaws.com): DescribeSubnets,
-    # DescribeDhcpOptions. The others are read-only and unproven (the create fails before them):
-    # DescribeSecurityGroups, DescribeVpcs, DescribeVpcAttribute, DescribeNetworkInterfaces,
-    # DescribeAvailabilityZones. No iam:CreateServiceLinkedRole.
+    # DescribeSubnets is the proven one; DescribeSecurityGroups and DescribeVpcs are read-only
+    # and not yet proven needed (the create fails before them). No iam:CreateServiceLinkedRole.
     inlineStatements:
       - Effect: Allow
         Action:
           - ec2:DescribeSubnets
-          - ec2:DescribeDhcpOptions
           - ec2:DescribeSecurityGroups
           - ec2:DescribeVpcs
-          - ec2:DescribeVpcAttribute
-          - ec2:DescribeNetworkInterfaces
-          - ec2:DescribeAvailabilityZones
         Resource: "*"
   kubernetes:
     version: ""
