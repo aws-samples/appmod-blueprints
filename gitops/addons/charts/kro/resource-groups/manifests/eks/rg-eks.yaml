@@ -1852,8 +1852,9 @@ spec:
           # Scoped customer-managed policy crossplaneProviderPolicy above (same document as
           # cluster-providers/common/iam/crossplane-provider-policy.json), not
           # AdministratorAccess. Upgrade note: on the next RGD sync, with no `task install`
-          # re-run, ACK is expected to reconcile the Role to this spec: attach this managed
-          # policy and detach the older AdministratorAccess (not verified live).
+          # re-run, ACK reconciles the Role to this spec. kro resolves the Policy ARN first,
+          # and the ACK iam controller attaches the new policy before it detaches the older
+          # AdministratorAccess, so there is no gap (from the controller code; not verified live).
           policies:
             - ${crossplaneProviderPolicy.status.ackResourceMetadata.arn}
           assumeRolePolicyDocument: |

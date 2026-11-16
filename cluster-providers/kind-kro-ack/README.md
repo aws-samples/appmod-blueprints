@@ -245,7 +245,10 @@ The kro-ack spoke role `<spoke>-crossplane-provider` (`rg-eks.yaml`, spokes with
 spoke. That name has no added `<prefix>-`, so it matches `policy/<prefix>-*` only when the
 spoke name starts with the resource prefix (the default fleet does). Upgrade note: that
 change reaches running spokes on the next RGD sync, without
-re-running `task install`; ACK is expected to drop the older `AdministratorAccess` and attach the managed one (not verified live).
+re-running `task install`. kro creates the `Policy` first (the Role references its ARN), and
+the ACK iam controller attaches the new managed policy before it detaches the older
+`AdministratorAccess`, so the role is never left without one (from reading the controller
+code; not verified live).
 
 Legacy attachments from older installs are detached (best-effort) only when the task runs, and
 only for the two hub roles. `hub:create-mgmt-roles` runs on every `task install`, so
