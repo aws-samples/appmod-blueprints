@@ -797,6 +797,23 @@ def test_mgmt_detaches_legacy_iam_full_access(tmp_path):
 
 
 @needs_task
+@pytest.mark.parametrize("task,role,legacy", [
+    ("scope", "hub-crossplane-provider", "AdministratorAccess"),
+    ("mgmt", "pfx-cluster-mgmt-iam", "IAMFullAccess"),
+])
+def test_denied_attached_policy_read_warns_that_the_legacy_policy_may_stay(tmp_path, task, role, legacy):
+    """ListAttachedRolePolicies denied: the legacy policy may still be attached. That read
+    failing is not "nothing attached", so the run must say so instead of passing silently."""
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, task, existing=role,
+                      attached=f"arn:aws:iam::aws:policy/{legacy}",
+                      fail=f"list-attached-role-policies:{role}")
+    assert r.returncode == 0, out
+    assert f"could not list the policies attached to {role}: {legacy}, if attached, is left attached" in out, out
+    assert not [d for d in calls_of(log, "detach-role-policy") if legacy in d], log
+
+
+@needs_task
 def test_mgmt_byo_roles_are_used_as_is(tmp_path):
     cfg = ("hub:\n  clusterName: hub\n  iam:\n    clusterMgmtRoleArns:\n"
            f"      iam: arn:aws:iam::{ACCT}:role/pfx-cluster-mgmt-iam\n"

@@ -1834,9 +1834,11 @@ tasks:
         sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
           "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json"
         # Older installs attached AdministratorAccess. Detach it when present (best-effort:
-        # the installing principal may lack iam:DetachRolePolicy).
+        # the installing principal may lack iam:DetachRolePolicy). A failed read is not
+        # "nothing attached": warn, since AdministratorAccess may still be there.
         ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" \
-          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
+          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null) \
+          || { ATTACHED=""; printf '{{.C_INFO}}  ⚠ could not list the policies attached to %s: AdministratorAccess, if attached, is left attached{{.C_RESET}}\n' "$ROLE_NAME"; }
         case "$ATTACHED" in *policy/AdministratorAccess*)
           aws iam detach-role-policy --role-name "$ROLE_NAME" \
             --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 \
@@ -4363,9 +4365,11 @@ tasks:
           sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
             "$IAM_ROLE" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
           # Older installs attached IAMFullAccess. Detach it when present (best-effort).
-          # This task has no status gate, so this runs on every `task install`.
+          # This task has no status gate, so this runs on every `task install`. A failed read
+          # is not "nothing attached": warn, since IAMFullAccess may still be there.
           ATTACHED=$(aws iam list-attached-role-policies --role-name "$IAM_ROLE" \
-            --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
+            --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null) \
+            || { ATTACHED=""; printf '{{.C_INFO}}  ⚠ could not list the policies attached to %s: IAMFullAccess, if attached, is left attached{{.C_RESET}}\n' "$IAM_ROLE"; }
           case "$ATTACHED" in *policy/IAMFullAccess*)
             aws iam detach-role-policy --role-name "$IAM_ROLE" \
               --policy-arn arn:aws:iam::aws:policy/IAMFullAccess >/dev/null 2>&1 \
