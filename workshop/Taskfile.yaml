@@ -616,8 +616,9 @@ tasks:
       - task: platform:prepare
       - '{{.MARK}} step workshop wait for the CodeBuild install'
       # A failed gitlab:init-ec2 means the build waits for a PAT that never comes: stop at once.
-      # A state written before this run started is an earlier run's (NOT_BEFORE).
-      - 'INSTALL_REMOTE_LOCAL_RC=/tmp/gitlab-init.rc INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_START}} sh "{{.REPO}}/scripts/install-remote-wait.sh"'
+      # A state written, or a build ended, before this run started is an earlier run's. To follow
+      # a build that already finished (re-running install:ide), pass INSTALL_REMOTE_NOT_BEFORE=0.
+      - 'INSTALL_REMOTE_LOCAL_RC=/tmp/gitlab-init.rc INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_REMOTE_NOT_BEFORE | default .INSTALL_START}} sh "{{.REPO}}/scripts/install-remote-wait.sh"'
       - '{{.MARK}} step workshop join gitlab:init-ec2'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-gitlab-init'
       # Identity Center federation (post-install) runs in the CodeBuild install, with the Ray setup.

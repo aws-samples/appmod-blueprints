@@ -376,6 +376,7 @@ case "$1 $2" in
     esac; exit 0 ;;
   "codebuild batch-get-builds")
     case "$*" in
+      *endTime*) printf '%s\t%s\t%s\n' "${FAKE_BUILD:-}" "${FAKE_BUILD_START:-2026-11-15T09:00:00.500000+00:00}" "${FAKE_BUILD_END:-None}" ;;
       *startTime*) printf '%s\t%s\n' "${FAKE_BUILD:-}" "${FAKE_BUILD_START:-2026-11-15T09:00:00.500000+00:00}" ;;
       *) echo "${FAKE_BUILD:-}" ;;
     esac; exit 0 ;;
@@ -464,7 +465,7 @@ def test_install_remote_wait_ignores_a_state_from_an_earlier_build(tmp_path, sta
                                                    FAKE_STATE_AT="2026-11-14T10:00:00+00:00",
                                                    FAKE_BUILD_START="2026-11-15T09:00:00+00:00"))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "ignoring a state from an earlier build" in r.stdout
+    assert "ignoring a state written before this run started" in r.stdout
     assert "did not finish" in r.stderr and "remote install failed" not in r.stderr
 
 
@@ -502,7 +503,42 @@ def test_install_remote_wait_ignores_a_state_older_than_this_run(tmp_path, state
                                                    INSTALL_REMOTE_NOT_BEFORE=str(not_before)))
     assert r.returncode == rc, r.stdout + r.stderr
     if rc:
-        assert "ignoring a state from an earlier build" in r.stdout and "without recording OK" in r.stderr
+        assert "ignoring a state written before this run started" in r.stdout and "without recording OK" in r.stderr
+
+
+def _epoch(iso):
+    return subprocess.check_output(["date", "-d", iso, "+%s"], text=True).strip()
+
+
+@needs_tools
+@pytest.mark.parametrize("build,state", [("SUCCEEDED", "OK 2026-11-15T10:00:00Z"),
+                                         ("FAILED", "FAILED rc=1 step=hub:seed 2026-11-15T10:00:00Z")])
+def test_install_remote_wait_ignores_a_build_that_ended_before_this_run(tmp_path, build, state):
+    # install-build-id still names the previous build, which ended before this run started.
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE=state, FAKE_BUILD=build,
+                                                   FAKE_STATE_AT="2026-11-15T10:00:00+00:00",
+                                                   FAKE_BUILD_START="2026-11-15T09:00:00+00:00",
+                                                   FAKE_BUILD_END="2026-11-15T10:01:00+00:00",
+                                                   INSTALL_REMOTE_NOT_BEFORE=_epoch("2026-11-15T12:00:00+00:00")))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "did not finish" in r.stderr and "INSTALL_REMOTE_NOT_BEFORE=0" in r.stderr  # waited, then the hint
+    assert "ended (" in r.stdout and "remote install failed" not in r.stderr and "without recording" not in r.stderr
+
+
+@needs_tools
+def test_install_remote_wait_follows_a_finished_build_with_not_before_zero(tmp_path):
+    # re-running install:ide after the build finished: the operator opts in to the earlier build
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="OK 2026-11-15T10:00:00Z", FAKE_BUILD="SUCCEEDED",
+                                                   FAKE_STATE_AT="2026-11-15T10:00:00+00:00",
+                                                   FAKE_BUILD_START="2026-11-15T09:00:00+00:00",
+                                                   FAKE_BUILD_END="2026-11-15T10:01:00+00:00",
+                                                   INSTALL_REMOTE_NOT_BEFORE="0"))
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_ide_lets_the_operator_override_not_before():
+    line = IDE[_index(IDE, "install-remote-wait.sh")]
+    assert "INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_REMOTE_NOT_BEFORE | default .INSTALL_START}}" in line
 
 
 def test_install_remote_wait_refuses_a_bad_not_before(tmp_path):
@@ -512,7 +548,7 @@ def test_install_remote_wait_refuses_a_bad_not_before(tmp_path):
 
 def test_ide_passes_its_start_time_to_the_wait():
     line = IDE[_index(IDE, "install-remote-wait.sh")]
-    assert "INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_START}}" in line
+    assert "INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_REMOTE_NOT_BEFORE | default .INSTALL_START}}" in line
 
 
 def test_ide_passes_the_gitlab_init_rc_to_the_wait():
