@@ -1853,8 +1853,7 @@ spec:
           # cluster-providers/common/iam/crossplane-provider-policy.json), not
           # AdministratorAccess. Upgrade note: on the next RGD sync, with no `task install`
           # re-run, ACK is expected to reconcile the Role to this spec: attach this managed
-          # policy, detach the older AdministratorAccess, and delete the inline
-          # crossplane-provider-scoped policy an earlier revision set (not verified live).
+          # policy and detach the older AdministratorAccess (not verified live).
           policies:
             - ${crossplaneProviderPolicy.status.ackResourceMetadata.arn}
           assumeRolePolicyDocument: |

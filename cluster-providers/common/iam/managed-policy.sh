@@ -1,7 +1,7 @@
 #!/bin/sh
 # Scoped customer-managed IAM policy for a role that `task install` creates.
 #
-#   managed-policy.sh ensure <account-id> <prefix> <role> <document.json> [<legacy-inline-name>]
+#   managed-policy.sh ensure <account-id> <prefix> <role> <document.json>
 #   managed-policy.sh delete <account-id> <prefix> <role>
 #   managed-policy.sh name   <prefix> <role>
 #
@@ -15,8 +15,6 @@
 #   same default document   -> AttachRolePolicy only (a no-op when already attached)
 #   different document      -> DetachRolePolicy, DeletePolicyVersion (each non-default),
 #                              DeletePolicy, CreatePolicy, AttachRolePolicy
-#   then, with <legacy-inline-name>: DeleteRolePolicy of the inline policy an earlier
-#   version of the install wrote with the same document (NoSuchEntity = nothing to do).
 #   CreatePolicyVersion is NOT used on purpose: a consumer may grant CreatePolicy and
 #   DeletePolicy on policy/<prefix>-* but not CreatePolicyVersion (PEEKS does not). The cost
 #   is a short window, during a drift recreate only, where the role has no scoped policy.
@@ -26,7 +24,7 @@
 #   DeletePolicy fail (DeleteConflict) instead of being torn off another role.
 set -eu
 
-usage() { echo "usage: $0 ensure <account-id> <prefix> <role> <document.json> [<legacy-inline-name>] | delete <account-id> <prefix> <role> | name <prefix> <role>" >&2; exit 2; }
+usage() { echo "usage: $0 ensure <account-id> <prefix> <role> <document.json> | delete <account-id> <prefix> <role> | name <prefix> <role>" >&2; exit 2; }
 
 policy_name() {  # policy_name <prefix> <role>
   case "$2" in
@@ -90,7 +88,7 @@ sys.exit(0 if cur == want else 1)
 CMD=${1:-}
 case "$CMD" in
   name) [ $# -eq 3 ] || usage; policy_name "$2" "$3"; exit 0 ;;
-  ensure) [ $# -eq 5 ] || [ $# -eq 6 ] || usage ;;
+  ensure) [ $# -eq 5 ] || usage ;;
   delete) [ $# -eq 4 ] || usage ;;
   *) usage ;;
 esac
@@ -104,7 +102,7 @@ if [ "$CMD" = delete ]; then
   exit 0
 fi
 
-DOC=$5; LEGACY=${6:-}
+DOC=$5
 # Validate the desired document before any AWS call: a broken file must stop here, not
 # after the drift path has deleted the live policy.
 python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$DOC" 2>/dev/null \
@@ -134,7 +132,4 @@ if [ "$CREATE" = true ]; then
 fi
 iam attach-role-policy --role-name "$ROLE" --policy-arn "$ARN" \
   || { echo "ERROR: aws iam attach-role-policy failed: $NAME -> $ROLE" >&2; exit 1; }
-if [ -n "$LEGACY" ]; then
-  ok_or_absent iam delete-role-policy --role-name "$ROLE" --policy-name "$LEGACY"
-fi
 echo "  ✓ $ROLE: managed policy $NAME"
