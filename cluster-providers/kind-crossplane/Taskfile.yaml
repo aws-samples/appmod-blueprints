@@ -6,6 +6,7 @@ includes:
   ray:
     taskfile: ../common/Taskfile.ray.yaml
     vars:
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
       AWS_REGION: '{{.AWS_REGION}}'
       AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
@@ -720,8 +721,27 @@ tasks:
       - task: hub:seed-secret
       - task: hub:apply-root-appset
 
+  # ── privilegedSteps: external (root Taskfile privileged:*) ──────────────────
+  # Every IAM role this provider creates from the host with the AWS CLI during install
+  # (see kind-kro-ack for the same contract).
+  privileged:pre:
+    desc: "Create every IAM role install creates from the host (privilegedSteps runner, before task install)"
+    cmds:
+      - task: hub:create-mgmt-roles
+      - task: ray:roles
+
+  privileged:verify:
+    desc: "Read-only check that every role privileged:pre creates exists (no IAM write)"
+    cmds:
+      - >-
+        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+        '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
+
   hub:create-mgmt-roles:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       # Same contract as kind-kro-ack: privilegedSteps=external -> read-only verify,
       # the roles were created by a separate privileged runner (`task privileged:pre`).

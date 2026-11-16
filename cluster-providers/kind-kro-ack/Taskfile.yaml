@@ -6,6 +6,7 @@ includes:
   ray:
     taskfile: ../common/Taskfile.ray.yaml
     vars:
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
       AWS_REGION: '{{.AWS_REGION}}'
       AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
@@ -300,6 +301,8 @@ tasks:
       # bootstrap can't self-heal an already-running hub. crossplane-base only declares the
       # downstream provider PIAs (createIdentity:false for iam/eks) — nothing else seeds the first
       # credential, so without this the whole crossplane chain stays credential-less.
+      - '{{.MARK}} step hub hub:crossplane-provider-role'
+      - task: hub:crossplane-provider-role
       - '{{.MARK}} step hub hub:bootstrap-crossplane-identity'
       - task: hub:bootstrap-crossplane-identity
       # Enable spokes EARLY (kro-ack-specific optimization): KRO-provisioned spokes are
@@ -1796,6 +1799,37 @@ tasks:
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
+  hub:crossplane-provider-role:
+    desc: "IAM role <hub>-crossplane-provider for the hub Crossplane provider-aws-iam/eks (verify-only when privilegedSteps=external)"
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
+    vars:
+      MODE:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
+    cmds:
+      - task: 'hub:crossplane-provider-role:{{if eq .MODE "external"}}verify{{else}}apply{{end}}'
+
+  hub:crossplane-provider-role:verify:
+    internal: true
+    cmds:
+      - sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-check.sh' '{{.HUB_CLUSTER_NAME}}-crossplane-provider'
+
+  # Only IAM, no hub: privileged:pre runs it before the hub exists. Not gated on the pod
+  # identity associations (hub:bootstrap-crossplane-identity is), so it runs every install.
+  hub:crossplane-provider-role:apply:
+    internal: true
+    cmds:
+      - |
+        ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
+        TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
+        aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
+          aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
+            --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
+        aws iam attach-role-policy --role-name "$ROLE_NAME" \
+          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 || true
+        echo "  ✓ IAM role $ROLE_NAME ready"
+
   hub:bootstrap-crossplane-identity:
     desc: Seed hub Crossplane provider creds (provider-aws-iam/eks pod identities) so crossplane-base can provision
     internal: true
@@ -1818,14 +1852,8 @@ tasks:
     cmds:
       - printf '{{.C_STEP}}▸ Bootstrapping Crossplane provider pod identities (iam/eks)...{{.C_RESET}}\n'
       - |
-        ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
-        TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
-        aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
-          aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
-            --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
-        aws iam attach-role-policy --role-name "$ROLE_NAME" \
-          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 || true
-        ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE_NAME"
+        # The role comes from hub:crossplane-provider-role (privileged:pre in external mode).
+        ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.HUB_CLUSTER_NAME}}-crossplane-provider"
         for SA in provider-aws-iam provider-aws-eks; do
           EXISTS=$(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
             --query "associations[?serviceAccount=='$SA'] | [0].associationId" --output text 2>/dev/null)
@@ -4195,8 +4223,30 @@ tasks:
           printf '{{.C_INFO}}  PENDING: AMP ACTIVE=%s, AMG ACTIVE=%s. Once both are ACTIVE run: task observability-seed (or re-run task install).{{.C_RESET}}\n' "$AMP_OK" "$AMG_OK"
         fi
 
+  # ── privilegedSteps: external (root Taskfile privileged:*) ──────────────────
+  # Every IAM role this provider creates from the host with the AWS CLI during install.
+  # privileged:pre creates them (inline config, before the hub exists); task install in
+  # external mode only verifies them, read-only, before kind. The pod identity
+  # associations stay on the host; the hub's ack-assume-role policy is privileged:post.
+  privileged:pre:
+    desc: "Create every IAM role install creates from the host (privilegedSteps runner, before task install)"
+    cmds:
+      - task: hub:create-mgmt-roles
+      - task: hub:crossplane-provider-role
+      - task: ray:roles
+
+  privileged:verify:
+    desc: "Read-only check that every role privileged:pre creates exists (no IAM write)"
+    cmds:
+      - >-
+        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+        '{{.HUB_CLUSTER_NAME}}-crossplane-provider' '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
+
   hub:create-mgmt-roles:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       # privilegedSteps (config.yaml): "inline" (default) creates the roles here, as
       # before. "external" means a separate, more privileged runner (e.g. a CodeBuild
