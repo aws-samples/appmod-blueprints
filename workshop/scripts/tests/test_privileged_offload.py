@@ -37,8 +37,11 @@ case "$1 $2" in
   "sts get-caller-identity")
     case "$*" in *Account*) echo 111122223333 ;; *) echo "arn:aws:sts::111122223333:assumed-role/Runner/s" ;; esac ;;
   "iam get-role"|"iam get-role-policy")
-    [ "${FAKE_ROLES:-present}" = present ] || { echo "NoSuchEntity" >&2; exit 254; }
-    echo ok ;;
+    case "${FAKE_ROLES:-present}" in
+      present) echo ok ;;
+      expired) echo "An error occurred (ExpiredToken) when calling the GetRole operation: The security token included in the request is expired" >&2; exit 254 ;;
+      *) echo "An error occurred (NoSuchEntity) when calling the GetRole operation: not found" >&2; exit 254 ;;
+    esac ;;
   "iam list-attached-role-policies")
     [ "${FAKE_ROLES:-present}" = present ] || exit 254
     printf '%s\t' $FAKE_ALL_POLICIES; echo ;;
@@ -198,13 +201,137 @@ def test_workshop_install_codebuild_sets_external_and_fails_fast(tmp_path, repo)
     assert not (_verbs(calls, "iam") & IAM_WRITES)
 
 
+def _inline_pairs_verify(text):
+    """[(service, policy name)] the verify script checks as inline policies."""
+    m = re.search(r"^for pair in ([a-z0-9:\- ]+); do", text, re.M)
+    return sorted(tuple(p.split(":", 1)) for p in m.group(1).split())
+
+
+def _inline_pairs_apply(block):
+    """[(service, policy name)] apply puts on $EKS_ROLE / $RDS_ROLE."""
+    roles = dict(re.findall(r'^\s+([A-Z]+_ROLE)="\{\{\.RESOURCE_PREFIX\}\}-cluster-mgmt-([a-z0-9]+)"', block, re.M))
+    puts = re.findall(r'put-role-policy --role-name "\$([A-Z]+_ROLE)" --policy-name ([A-Za-z0-9\-]+)', block)
+    return sorted((roles[var], name) for var, name in puts)
+
+
+def _apply_block(text):
+    block = text[text.index("hub:create-mgmt-roles:apply:"):]
+    return block[:block.index("cluster-mgmt roles ready")]
+
+
 def test_verify_lists_match_providers():
-    """The verify script's role/policy lists must match what apply creates."""
-    want = _expected_policies(open(VERIFY_SH).read())
+    """The verify script's role/policy lists, managed AND inline, must match what apply creates."""
+    verify = open(VERIFY_SH).read()
+    want = _expected_policies(verify)
+    want_inline = _inline_pairs_verify(verify)
     assert sorted(want) == sorted(SERVICES)
+    assert want_inline == [("eks", "eks-access-management"), ("rds", "rds-kms")]
     for provider in PROVIDERS:
         text = open(os.path.join(REPO, "cluster-providers", provider, "Taskfile.yaml")).read()
-        block = text[text.index("hub:create-mgmt-roles:apply:"):]
-        block = block[block.index("get_policies() {"):block.index("        }\n", block.index("get_policies() {"))]
-        assert _expected_policies(block) == want, provider
+        block = _apply_block(text)
+        pol = block[block.index("get_policies() {"):block.index("        }\n", block.index("get_policies() {"))]
+        assert _expected_policies(pol) == want, provider
+        assert _inline_pairs_apply(block) == want_inline, provider
         assert re.search(r"for service in " + " ".join(SERVICES) + r"; do", text), provider
+
+
+def test_drift_check_catches_an_inline_policy_rename(tmp_path):
+    """Renaming rds-kms in one provider's apply must break the drift check (review #1296)."""
+    p = os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")
+    renamed = open(p).read().replace("--policy-name rds-kms", "--policy-name rds-kms-v2", 1)
+    assert _inline_pairs_apply(_apply_block(renamed)) != _inline_pairs_verify(open(VERIFY_SH).read())
+
+
+# ── review #1296: unknown values, early verify, read errors, other host roles ──
+
+UNKNOWN = "extrenal"
+
+
+@pytest.mark.parametrize("args", [["install"], ["install:hub"], ["install:complete"], ["privileged:pre"],
+                                  ["privileged:post"], ["kind-kro-ack:hub:create-mgmt-roles"],
+                                  ["kind-kro-ack:hub:crossplane-provider-role"], ["kind-kro-ack:ray:roles"]])
+def test_unknown_mode_is_refused_before_any_write(tmp_path, repo, args):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", args, mode=UNKNOWN, roles="absent")
+    assert res.returncode != 0, res.stdout
+    assert "must be inline or external" in res.stderr or "must not set privilegedSteps" in res.stderr, res.stderr
+    assert not (_verbs(calls, "iam") & IAM_WRITES), calls
+    assert not any(c[0] == "kind" for c in calls)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_crossplane_provider_unknown_mode_refused(tmp_path, repo, provider):
+    res, calls = _run(tmp_path, repo, provider, [f"{provider}:hub:create-mgmt-roles"], mode=UNKNOWN, roles="absent")
+    assert res.returncode != 0 and "must be inline or external" in res.stderr
+    assert not (_verbs(calls, "iam") & IAM_WRITES), calls
+
+
+@pytest.mark.parametrize("entry", ["install", "install:hub"])
+def test_external_install_verifies_before_kind(tmp_path, repo, entry):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", [entry], mode="external", roles="absent")
+    assert res.returncode != 0 and "not ready" in res.stderr, res.stdout + res.stderr
+    assert "acme-hub-crossplane-provider" in res.stderr and "acme-ray-worker-role" in res.stderr
+    assert not any(c[0] == "kind" for c in calls), "install must stop before kind:create"
+    assert not (_verbs(calls, "iam") & IAM_WRITES)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_verify_reports_read_errors_not_missing_roles(tmp_path, repo, provider):
+    res, calls = _run(tmp_path, repo, provider, [f"{provider}:privileged:verify"], mode="external", roles="expired")
+    assert res.returncode != 0
+    assert "ExpiredToken" in res.stderr and "could not read" in res.stderr, res.stderr
+    assert "not ready" not in res.stderr and "privileged:pre" not in res.stderr, res.stderr
+
+
+def test_role_check_reports_read_errors(tmp_path, repo):
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:ray:roles"], mode="external", roles="expired")
+    assert res.returncode != 0 and "ExpiredToken" in res.stderr and "do not exist" not in res.stderr
+
+
+def test_kro_ack_privileged_pre_creates_every_host_role(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:pre"], roles="absent")
+    assert res.returncode == 0, res.stdout + res.stderr
+    created = {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "create-role"]}
+    assert {"acme-hub-crossplane-provider", "acme-model-prestage-role", "acme-ray-worker-role"} <= created
+    assert not any(c[0] == "eks" and c[1] == "create-pod-identity-association" for c in calls)
+
+
+@pytest.mark.parametrize("task,roles", [
+    ("kind-kro-ack:hub:crossplane-provider-role", ["acme-hub-crossplane-provider"]),
+    ("kind-kro-ack:ray:roles", ["acme-model-prestage-role", "acme-ray-worker-role"]),
+    ("kind-crossplane:ray:roles", ["acme-model-prestage-role", "acme-ray-worker-role"]),
+])
+def test_external_mode_other_host_roles_only_read(tmp_path, repo, task, roles):
+    provider = task.split(":", 1)[0]
+    res, calls = _run(tmp_path, repo, provider, [task], mode="external")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not (_verbs(calls, "iam") & IAM_WRITES), calls
+    res, calls = _run(tmp_path, repo, provider, [task], mode="external", roles="absent")
+    assert res.returncode != 0 and all(r in res.stderr for r in roles) and "privileged:pre" in res.stderr
+    assert not (_verbs(calls, "iam") & IAM_WRITES), calls
+    res, calls = _run(tmp_path, repo, provider, [task], roles="absent")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "create-role"]} == set(roles)
+
+
+def test_bootstrap_crossplane_identity_makes_no_iam_write():
+    text = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
+    block = text[text.index("  hub:bootstrap-crossplane-identity:"):]
+    block = block[:block.index("\n  # ──")]
+    assert not re.search(r"aws iam (create-role|attach-role-policy|put-role-policy)", block)
+    dag = text[:text.index("  hub:bootstrap-crossplane-identity:")]
+    assert dag.index("task: hub:crossplane-provider-role") < dag.index("task: hub:bootstrap-crossplane-identity")
+
+
+def test_crossplane_pre_never_writes_an_empty_role_arn(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-crossplane", ["privileged:pre"], roles="absent")
+    assert res.returncode == 0, res.stdout + res.stderr
+    raw = (tmp_path / "calls.log").read_text()
+    assert "create-role --role-name acme-cluster-mgmt-iam" in raw
+    assert ':role/"' not in raw and "role/acme-hub-ACKCapabilityRole" in raw, raw
+    puts = [c for c in calls if c[:2] == ["iam", "put-role-policy"] and "ack-assume-role" in c]
+    assert puts and puts[0][puts[0].index("--role-name") + 1] == "acme-hub-ACKCapabilityRole"
+
+
+def test_workshop_install_codebuild_says_the_key_persists(tmp_path, repo):
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["install:codebuild"], roles="absent", cwd=repo / "workshop")
+    assert "stay external until the key is removed" in res.stdout
