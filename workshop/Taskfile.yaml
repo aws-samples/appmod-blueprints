@@ -521,8 +521,19 @@ tasks:
       # and reachable (CloudFront joined). Tolerant like `install` (IDC_STRICT=false): the outcome is
       # in /tmp/idc-configure-status, which the build publishes as /<prefix>/idc-status.
       - '{{.STATE}} "RUNNING step=idc:configure"'
-      - task: idc:configure
-        vars: { IDC_STRICT: "false" }
+      # Never stops the install, whatever fails inside (no domain, Keycloak down, pip, no
+      # credentials: those exit 1 whatever IDC_STRICT says) and always leaves a status for the
+      # build to publish: the task's own SUCCESS/FAILED, or SKIPPED / UP-TO-DATE / FAILED rc=N.
+      - |
+        rm -f /tmp/idc-configure-status
+        rc=0; task idc:configure IDC_STRICT=false || rc=$?
+        if [ ! -s /tmp/idc-configure-status ]; then
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then S="SKIPPED"
+          elif [ "$rc" = "0" ]; then S="UP-TO-DATE"
+          else S="FAILED rc=$rc"; fi
+          echo "$S $(date -u +%FT%TZ)" > /tmp/idc-configure-status
+        fi
+        [ "$rc" = "0" ] || printf '{{.C_ERR}}⚠ idc:configure failed (rc=%s): the install goes on, SSO is NOT configured (see idc-status).{{.C_RESET}}\n' "$rc"
       # The pivot detaches the hub from the kind cluster, which dies with this build: the spokes
       # must exist (ACTIVE) first, as in `install` where the pivot is the last step.
       - '{{.STATE}} "RUNNING step=wait-for-spokes"'
@@ -2571,6 +2582,12 @@ tasks:
         esac
         case "$LAMBDA_ARN" in
           ""|None)
+            # In the CodeBuild install there is no instance profile to fall back to (and its
+            # credentials would not be the Identity Center role): stop here.
+            if [ -n "${IDC_CONSOLE_ROLE_ARN:-}" ]; then
+              echo "ERROR: the IDC credentials Lambda was not found; no instance-profile fallback in the build."
+              exit 1
+            fi
             echo "WARN: Lambda not found. Falling back to instance profile."
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
             ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
