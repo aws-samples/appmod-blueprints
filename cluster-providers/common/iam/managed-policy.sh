@@ -18,7 +18,8 @@
 #   CreatePolicyVersion is NOT used on purpose: a consumer may grant CreatePolicy and
 #   DeletePolicy on policy/<prefix>-* but not CreatePolicyVersion (PEEKS does not). The cost
 #   is a short window, during a drift recreate only, where the role has no scoped policy.
-#   A failure inside that window leaves the policy absent, and the next run creates it.
+#   A failure inside that window leaves the policy absent, and the next run creates it. A
+#   failed delete (e.g. DeleteConflict) re-attaches the old policy, so the role keeps it.
 # delete: DetachRolePolicy from <role>, DeletePolicyVersion (each non-default), DeletePolicy.
 #   NoSuchEntity is success. Only <role> is detached: a policy still attached elsewhere makes
 #   DeletePolicy fail (DeleteConflict) instead of being torn off another role.
@@ -48,7 +49,16 @@ iam() {
 # ok_or_absent <cmd...>: success or NoSuchEntity -> 0, any other error -> exit 1.
 ok_or_absent() {
   rc=0; "$@" >/dev/null || rc=$?
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || { echo "ERROR: aws iam $2 failed for $ARN" >&2; exit 1; }
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || { echo "ERROR: aws iam $2 failed for $ARN" >&2; reattach_old; exit 1; }
+}
+
+# reattach_old: in the drift path only (REATTACH=true), put the old policy back on the role
+# after a failed delete (e.g. DeleteConflict: still attached to another role), so a failed run
+# does not leave the role without a policy. Best effort.
+reattach_old() {
+  if [ "${REATTACH:-}" = true ]; then
+    iam attach-role-policy --role-name "$ROLE" --policy-arn "$ARN" >/dev/null 2>&1 || true
+  fi
 }
 
 delete_policy() {  # detach from $ROLE, delete non-default versions, delete the policy
@@ -58,7 +68,7 @@ delete_policy() {  # detach from $ROLE, delete non-default versions, delete the 
   VERSIONS=$(iam list-policy-versions --policy-arn "$ARN" \
     --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text) || rc=$?
   [ "$rc" -eq 3 ] && return 0
-  [ "$rc" -eq 0 ] || { echo "ERROR: aws iam list-policy-versions failed for $ARN" >&2; exit 1; }
+  [ "$rc" -eq 0 ] || { echo "ERROR: aws iam list-policy-versions failed for $ARN" >&2; reattach_old; exit 1; }
   for V in $VERSIONS; do
     [ "$V" = None ] && continue
     ok_or_absent iam delete-policy-version --policy-arn "$ARN" --version-id "$V"
@@ -120,7 +130,7 @@ case "$rc" in
     case "$src" in
       0) ;;
       1) echo "  policy $NAME differs from $(basename "$DOC"): recreating it (no CreatePolicyVersion)"
-         delete_policy; CREATE=true ;;
+         REATTACH=true; delete_policy; REATTACH=false; CREATE=true ;;
       *) echo "ERROR: cannot compare the document of $ARN" >&2; exit 1 ;;
     esac ;;
   *) echo "ERROR: aws iam get-policy failed for $ARN" >&2; exit 1 ;;

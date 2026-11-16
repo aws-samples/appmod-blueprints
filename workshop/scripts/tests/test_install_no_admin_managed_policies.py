@@ -581,6 +581,18 @@ def test_mp_errors_are_fatal(tmp_path, fail):
     assert f"ERROR: aws iam {fail.split(':')[0]} failed" in out and "AccessDenied" in out, out
 
 
+def test_mp_delete_conflict_in_the_drift_path_keeps_the_old_policy_attached(tmp_path):
+    """The policy is also attached to another role, so DeletePolicy fails with DeleteConflict.
+    The role must not be left detached: every re-run would detach it again and fail again."""
+    old = {"Version": "2012-10-17", "Statement": []}
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": old},
+               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "DeleteConflict" in out, out
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": old}
+
+
 def test_mp_never_touches_inline_policies(tmp_path):
     """No release ever wrote the inline policies the first revisions cleaned up, so ensure must
     not call DeleteRolePolicy: a consumer without iam:DeleteRolePolicy must still pass."""
