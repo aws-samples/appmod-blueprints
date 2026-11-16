@@ -1813,7 +1813,7 @@ tasks:
     # No status gate on purpose. hub:bootstrap-crossplane-identity is skipped while both pod
     # identity associations exist, so gating this there kept a live hub on AdministratorAccess
     # and never applied a later change of the policy document. Idempotent: managed-policy.sh
-    # creates, recreates on drift, or only attaches.
+    # creates, replaces on drift (new policy attached before the old one is removed), or only attaches.
     cmds:
       - |
         ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
@@ -4359,7 +4359,7 @@ tasks:
         # cluster-mgmt-iam: scoped customer-managed policy <prefix>-cluster-mgmt-iam-scoped
         # instead of IAMFullAccess (done here, not in the parallel subshells above, so a
         # failure stops the install instead of being lost). managed-policy.sh creates or
-        # recreates it (no CreatePolicyVersion) and attaches it.
+        # replaces it on drift (no CreatePolicyVersion, no window without it) and attaches it.
         IAM_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-iam"
         if ! is_byo iam; then
           sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \

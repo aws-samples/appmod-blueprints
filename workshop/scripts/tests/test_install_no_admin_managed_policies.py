@@ -12,8 +12,8 @@ condition). That only works if the install never attaches them itself. The two p
 
 Customer-managed, not inline, and no CreatePolicyVersion: the consumer may grant
 CreatePolicy/AttachRolePolicy/DeletePolicy on <prefix>-* but neither iam:PutRolePolicy on these
-roles nor iam:CreatePolicyVersion. common/iam/managed-policy.sh creates, recreates on drift and
-attaches the policy.
+roles nor iam:CreatePolicyVersion. common/iam/managed-policy.sh creates the policy, replaces it on drift
+(new name attached first, then the old one removed) and attaches it.
 Plus the bring-your-own option (hub.iam.*): a set ARN is used as is, nothing is created.
 
 What these tests pin:
@@ -24,8 +24,9 @@ What these tests pin:
    <role>-scoped name, and that node stays spoke-only (gated on provider == "kro-ack", which
    hub:claim never sets);
 3. behaviour, against a stateful fake `aws` on PATH: managed-policy.sh alone (create, identical
-   = attach only, drift = detach/prune/delete/create/attach in that order, no inline
-   policy calls, fatal errors, convergence after a failure inside the recreate window, delete);
+   = attach only, drift = create under the second name and attach before the old policy is
+   detached/pruned/deleted, no inline policy calls, fatal errors, convergence after a failed
+   create/attach/delete, delete of both names);
    the REAL Taskfile blocks under go-task (default, legacy detach, re-run
    on the roles a failed run left, BYO, fatal policy errors, seed tasks of both providers);
    kind-kro-ack destroy step 6b deletes the scoped policies before their roles;
@@ -521,21 +522,6 @@ def test_mp_identical_but_detached_is_reattached(tmp_path):
     assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
 
 
-def test_mp_drift_recreates_in_order_without_create_policy_version(tmp_path):
-    old = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
-    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [old, old, old]},
-               attached={"pfx-r": [arn("pfx-r-scoped")]})
-    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
-    assert r.returncode == 0, out
-    ops = [c.split()[2] for c in log if c.split()[2] in (
-        "detach-role-policy", "delete-policy-version", "delete-policy", "create-policy", "attach-role-policy")]
-    assert ops == ["detach-role-policy", "delete-policy-version", "delete-policy-version",
-                   "delete-policy", "create-policy", "attach-role-policy"], ops
-    s = state(tmp_path)
-    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
-    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
-    assert not calls_of(log, "create-policy-version")
-
 
 def test_mp_document_compare_ignores_key_order(tmp_path):
     reordered = json.loads(json.dumps(XP_DOC))
@@ -581,17 +567,6 @@ def test_mp_errors_are_fatal(tmp_path, fail):
     assert f"ERROR: aws iam {fail.split(':')[0]} failed" in out and "AccessDenied" in out, out
 
 
-def test_mp_delete_conflict_in_the_drift_path_keeps_the_old_policy_attached(tmp_path):
-    """The policy is also attached to another role, so DeletePolicy fails with DeleteConflict.
-    The role must not be left detached: every re-run would detach it again and fail again."""
-    old = {"Version": "2012-10-17", "Statement": []}
-    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": old},
-               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
-    assert r.returncode != 0 and "DeleteConflict" in out, out
-    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
-    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": old}
-
 
 def test_mp_never_touches_inline_policies(tmp_path):
     """No release ever wrote the inline policies the first revisions cleaned up, so ensure must
@@ -611,18 +586,151 @@ def test_mp_missing_role_is_fatal(tmp_path):
     assert r.returncode != 0, out
 
 
-def test_mp_failure_in_the_recreate_window_converges_on_rerun(tmp_path):
-    old = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
-    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": old},
+
+def sha8(doc):
+    import hashlib
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:8]
+
+
+ALT_POL = f"pfx-r-scoped-{sha8(XP_DOC)}"
+OLD_DOC = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
+
+
+def test_mp_drift_attaches_the_new_policy_before_removing_the_old(tmp_path):
+    """No window without a scoped policy: the new document is created under the second name and
+    attached, and only then is the old one detached and deleted. No CreatePolicyVersion."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [OLD_DOC, OLD_DOC, OLD_DOC]},
                attached={"pfx-r": [arn("pfx-r-scoped")]})
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail="create-policy:pfx-r-scoped")
-    assert r.returncode != 0, out
-    assert "pfx-r-scoped" not in state(tmp_path)["policies"]  # inside the window: no policy
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    ops = [c.split()[2] for c in log if c.split()[2] in (
+        "detach-role-policy", "delete-policy-version", "delete-policy", "create-policy", "attach-role-policy")]
+    assert ops == ["create-policy", "attach-role-policy", "detach-role-policy",
+                   "delete-policy-version", "delete-policy-version", "delete-policy"], ops
+    assert f"--policy-name {ALT_POL} " in calls_of(log, "create-policy")[0] + " ", log
+    assert ALT_POL in calls_of(log, "attach-role-policy")[0], log
+    s = state(tmp_path)
+    assert s["policies"] == {ALT_POL: {"default": "v1", "docs": {"v1": XP_DOC}}}
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)]
+    assert not calls_of(log, "create-policy-version")
+    assert len(ALT_POL) <= 128
+
+
+def test_mp_role_always_holds_a_scoped_policy_during_drift(tmp_path):
+    """Replay the call log against the attachments: after every call the role has one."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    held = {"pfx-r-scoped"}
+    for c in log:
+        op, last = c.split()[2], c.split()[-1].rsplit("/", 1)[-1]
+        if op == "attach-role-policy":
+            held.add(last)
+        elif op == "detach-role-policy":
+            held.discard(last)
+        assert held, (c, log)
+
+
+def test_mp_drift_alternates_back_to_the_base_name_and_converges(tmp_path):
+    """Second drift: the policy is under the second name, the base name is free, so the new
+    document goes back to the base name. A re-run with no change is attach-only."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={f"pfx-r-scoped-{sha8(OLD_DOC)}": OLD_DOC},
+               attached={"pfx-r": [arn(f"pfx-r-scoped-{sha8(OLD_DOC)}")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert list(s["policies"]) == ["pfx-r-scoped"] and s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    n = len(log)
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    new = log[n:]
+    for verb in ("create-policy", "delete-policy", "detach-role-policy"):
+        assert not calls_of(new, verb), (verb, new)
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+
+
+def test_mp_failed_create_in_drift_keeps_the_old_policy_and_converges(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail=f"create-policy:{ALT_POL}")
+    assert r.returncode != 0 and "ERROR: aws iam create-policy failed" in out, out
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")] and s["policies"]["pfx-r-scoped"]["docs"] == {"v1": OLD_DOC}
+    assert not calls_of(log, "detach-role-policy") and not calls_of(log, "delete-policy"), log
     r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
     assert r.returncode == 0, out
     s = state(tmp_path)
-    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
-    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_failed_attach_in_drift_keeps_the_old_policy_and_converges(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail=f"attach-role-policy:{ALT_POL}")
+    assert r.returncode != 0, out
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    n = len((tmp_path / "calls.log").read_text().splitlines())
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    assert not calls_of(log[n:], "create-policy"), log[n:]  # the unattached new one is reused
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_failed_delete_of_the_old_policy_keeps_it_attached_and_fails(tmp_path):
+    """The old policy is also attached to another role, so DeletePolicy fails (DeleteConflict).
+    The new policy stays attached, the old one is attached again so the next run sees it, and
+    the run fails. Once the other attachment is gone, the next run removes it."""
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "DeleteConflict" in out and "could not remove the older scoped policy" in out, out
+    s = state(tmp_path)
+    assert sorted(s["attached"]["pfx-r"]) == sorted([arn(ALT_POL), arn("pfx-r-scoped")])
+    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": OLD_DOC}
+    s["attached"]["other"] = []
+    (tmp_path / "state.json").write_text(json.dumps(s))
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_second_name_with_a_foreign_document_is_fatal(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC, ALT_POL: OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "exists with another document" in out, out
+    assert not calls_of(log, "detach-role-policy") and not calls_of(log, "create-policy"), log
+
+
+def test_mp_denied_attached_read_warns_and_still_converges_by_name(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail="list-attached-role-policies:pfx-r")
+    assert r.returncode == 0 and "could not list the policies attached to pfx-r" in out, out
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_name_too_long_is_fatal_before_any_write(tmp_path):
+    role = "pfx-" + "r" * 120
+    seed_state(tmp_path, roles=[role])
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", role, DOC_FILE)
+    assert r.returncode != 0 and "longer than 128 characters" in out, out
+    assert log == [], log
+
+
+def test_mp_delete_removes_both_names(tmp_path):
+    other = f"pfx-r-scoped-{sha8(OLD_DOC)}"
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [OLD_DOC, XP_DOC], other: OLD_DOC},
+               attached={"pfx-r": [arn(other)]})
+    r, out, log = mp(tmp_path, "delete", ACCT, "pfx", "pfx-r")
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["policies"] == {} and s["attached"]["pfx-r"] == []
 
 
 def test_mp_delete_detaches_prunes_versions_and_deletes(tmp_path):
@@ -716,7 +824,10 @@ def test_scope_applies_a_changed_policy_document_to_a_live_hub(tmp_path):
                attached={"hub-crossplane-provider": [arn(HUB_POL)]})
     r, out, _ = run(tmp_path, b, "scope")
     assert r.returncode == 0, out
-    assert state(tmp_path)["policies"][HUB_POL]["docs"] == {"v1": XP_DOC}
+    s = state(tmp_path)
+    new = f"{HUB_POL}-{sha8(XP_DOC)}"
+    assert s["policies"] == {new: {"default": "v1", "docs": {"v1": XP_DOC}}}, s["policies"]
+    assert s["attached"]["hub-crossplane-provider"] == [arn(new)]
 
 
 @needs_task
@@ -937,6 +1048,20 @@ def test_destroy_sweep_deletes_scoped_managed_policies(tmp_path):
         assert order.index("delete-policy-version") < order.index("delete-policy"), order
     assert "iam-scoped-policy(6b)" not in ((tmp_path / "private" / "destroy-sweep-failures").read_text()
                                            if (tmp_path / "private" / "destroy-sweep-failures").exists() else "")
+
+
+@needs_task
+def test_destroy_sweep_deletes_a_scoped_policy_under_the_second_name(tmp_path):
+    """After a drift the policy is <base>-<sha8>: 6b deletes it before the role too."""
+    b = harness(tmp_path)
+    alt = f"{MGMT_POL}-{sha8(MGMT_DOC)}"
+    seed_state(tmp_path, roles=["pfx-cluster-mgmt-iam"], policies={alt: MGMT_DOC},
+               attached={"pfx-cluster-mgmt-iam": [arn(alt)]})
+    r, out, log = run(tmp_path, b, "sweep", stub_python=True)
+    assert r.returncode == 0, out
+    assert state(tmp_path)["policies"] == {}
+    order = [c.split()[2] for c in log if f"policy/{alt}" in c or (" delete-role " in c + " ")]
+    assert order.index("delete-policy") < order.index("delete-role"), order
 
 
 @needs_task

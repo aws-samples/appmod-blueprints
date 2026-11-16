@@ -788,7 +788,7 @@ tasks:
           echo "  ✓ $ROLE_NAME"
         done
         # cluster-mgmt-iam: scoped customer-managed policy instead of IAMFullAccess
-        # (common/iam/managed-policy.sh: create or recreate, attach).
+        # (common/iam/managed-policy.sh: create, or replace on drift, and attach).
         sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
           "{{.RESOURCE_PREFIX}}-cluster-mgmt-iam" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole

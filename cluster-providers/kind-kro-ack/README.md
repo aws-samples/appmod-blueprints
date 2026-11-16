@@ -137,7 +137,8 @@ Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `
 | other `<prefix>-cluster-mgmt-<svc>` | unchanged service managed policies (`AmazonEC2FullAccess`, `AmazonS3FullAccess`, …) |
 
 ¹ The policy is named `<role>-scoped`, with `<prefix>-` in front when the role name does not
-already start with it, so every scoped policy matches `policy/<prefix>-*`.
+already start with it, so every scoped policy matches `policy/<prefix>-*`. After a document
+change it may be named `<that name>-<sha8>` (see below).
 
 Both scoped policies keep `iam:*` on roles, policies, instance profiles and OIDC providers: the
 Crossplane and ACK IAM controllers create roles with arbitrary names for the addons and apps.
@@ -212,21 +213,28 @@ The documents are customer-managed policies, not inline ones: a consumer may all
 on `policy/<prefix>-*` and `role/<prefix>-*`. [`common/iam/managed-policy.sh`](../common/iam/managed-policy.sh)
 does the work, and stops the task on any IAM error other than `NoSuchEntity`:
 
-- policy absent: `CreatePolicy`, `AttachRolePolicy`;
-- policy present with the same default document: `AttachRolePolicy` only;
-- policy present with another document: `DetachRolePolicy`, `DeletePolicyVersion` for each
-  non-default version, `DeletePolicy`, then `CreatePolicy` and `AttachRolePolicy`.
-  `CreatePolicyVersion` is not used, because a consumer may not grant it. The cost: during that
-  recreate the role has no scoped policy for a few seconds, so a Crossplane or ACK call made in
-  that window gets `AccessDenied` and is retried by the controller. If the run fails in the
-  window, the policy is absent and the next run creates it. If the delete itself fails (for
-  example `DeleteConflict` because the policy is attached to another role), the old policy is
-  attached to the role again and the task fails, so the role keeps its permissions.
+- no scoped policy yet: `CreatePolicy`, `AttachRolePolicy`;
+- a scoped policy has the same default document: `AttachRolePolicy` only (a no-op when attached);
+- none has it: `CreatePolicy` under a free name, `AttachRolePolicy`, and only then
+  `DetachRolePolicy`, `DeletePolicyVersion` for each non-default version and `DeletePolicy`
+  on the old one. The new document goes under a second name, `<base>-<sha8>` (the first 8 hex
+  digits of the SHA-256 of the canonical document), or back under the base name when that one
+  is free, so names alternate across changes. The new policy is attached before the old one
+  is detached, so the role always holds a scoped policy. `CreatePolicyVersion` is not used,
+  because a consumer may not grant it. A failed `CreatePolicy` or `AttachRolePolicy` leaves
+  the old policy attached and untouched. If deleting the old one fails (for example
+  `DeleteConflict` because it is attached to another role), it is attached again and the task
+  fails; the next run finds it and retries.
 
-IAM calls it makes: `GetPolicy`, `GetPolicyVersion`, `ListPolicyVersions`, `CreatePolicy`,
-`AttachRolePolicy`, `DetachRolePolicy`, `DeletePolicyVersion`, `DeletePolicy`.
+The scoped policies of a role are the policies named `<base>` or `<base>-<8 hex digits>` that
+exist or are attached to it (`ListAttachedRolePolicies`; when that read is denied a warning is
+printed and only the two names are probed).
 
-`task destroy` (step 6b) skips the roles named in `hub.iam.*` (bring-your-own), and deletes the scoped policy of each other role it deletes, before the role:
+IAM calls it makes: `GetPolicy`, `GetPolicyVersion`, `ListPolicyVersions`,
+`ListAttachedRolePolicies`, `CreatePolicy`, `AttachRolePolicy`, `DetachRolePolicy`,
+`DeletePolicyVersion`, `DeletePolicy`.
+
+`task destroy` (step 6b) skips the roles named in `hub.iam.*` (bring-your-own), and deletes the scoped policies (both names) of each other role it deletes, before the role:
 detach, non-default versions, delete. Step 6c and the prefix-based sweeps also delete any
 leftover `<prefix>-*` policy. kind-crossplane's destroy keeps the `cluster-mgmt-*` and
 Crossplane provider roles, so their scoped policies stay attached to them.
