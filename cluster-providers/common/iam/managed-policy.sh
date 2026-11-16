@@ -1,7 +1,7 @@
 #!/bin/sh
 # Scoped customer-managed IAM policy for a role that `task install` creates.
 #
-#   managed-policy.sh ensure <account-id> <prefix> <role> <document.json> [<legacy-inline-name>]
+#   managed-policy.sh ensure <account-id> <prefix> <role> <document.json>
 #   managed-policy.sh delete <account-id> <prefix> <role>
 #   managed-policy.sh name   <prefix> <role>
 #
@@ -15,18 +15,17 @@
 #   same default document   -> AttachRolePolicy only (a no-op when already attached)
 #   different document      -> DetachRolePolicy, DeletePolicyVersion (each non-default),
 #                              DeletePolicy, CreatePolicy, AttachRolePolicy
-#   then, with <legacy-inline-name>: DeleteRolePolicy of the inline policy an earlier
-#   version of the install wrote with the same document (NoSuchEntity = nothing to do).
 #   CreatePolicyVersion is NOT used on purpose: a consumer may grant CreatePolicy and
 #   DeletePolicy on policy/<prefix>-* but not CreatePolicyVersion (PEEKS does not). The cost
 #   is a short window, during a drift recreate only, where the role has no scoped policy.
-#   A failure inside that window leaves the policy absent, and the next run creates it.
+#   A failure inside that window leaves the policy absent, and the next run creates it. A
+#   failed delete (e.g. DeleteConflict) re-attaches the old policy, so the role keeps it.
 # delete: DetachRolePolicy from <role>, DeletePolicyVersion (each non-default), DeletePolicy.
 #   NoSuchEntity is success. Only <role> is detached: a policy still attached elsewhere makes
 #   DeletePolicy fail (DeleteConflict) instead of being torn off another role.
 set -eu
 
-usage() { echo "usage: $0 ensure <account-id> <prefix> <role> <document.json> [<legacy-inline-name>] | delete <account-id> <prefix> <role> | name <prefix> <role>" >&2; exit 2; }
+usage() { echo "usage: $0 ensure <account-id> <prefix> <role> <document.json> | delete <account-id> <prefix> <role> | name <prefix> <role>" >&2; exit 2; }
 
 policy_name() {  # policy_name <prefix> <role>
   case "$2" in
@@ -50,7 +49,16 @@ iam() {
 # ok_or_absent <cmd...>: success or NoSuchEntity -> 0, any other error -> exit 1.
 ok_or_absent() {
   rc=0; "$@" >/dev/null || rc=$?
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || { echo "ERROR: aws iam $2 failed for $ARN" >&2; exit 1; }
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || { echo "ERROR: aws iam $2 failed for $ARN" >&2; reattach_old; exit 1; }
+}
+
+# reattach_old: in the drift path only (REATTACH=true), put the old policy back on the role
+# after a failed delete (e.g. DeleteConflict: still attached to another role), so a failed run
+# does not leave the role without a policy. Best effort.
+reattach_old() {
+  if [ "${REATTACH:-}" = true ]; then
+    iam attach-role-policy --role-name "$ROLE" --policy-arn "$ARN" >/dev/null 2>&1 || true
+  fi
 }
 
 delete_policy() {  # detach from $ROLE, delete non-default versions, delete the policy
@@ -60,7 +68,7 @@ delete_policy() {  # detach from $ROLE, delete non-default versions, delete the 
   VERSIONS=$(iam list-policy-versions --policy-arn "$ARN" \
     --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text) || rc=$?
   [ "$rc" -eq 3 ] && return 0
-  [ "$rc" -eq 0 ] || { echo "ERROR: aws iam list-policy-versions failed for $ARN" >&2; exit 1; }
+  [ "$rc" -eq 0 ] || { echo "ERROR: aws iam list-policy-versions failed for $ARN" >&2; reattach_old; exit 1; }
   for V in $VERSIONS; do
     [ "$V" = None ] && continue
     ok_or_absent iam delete-policy-version --policy-arn "$ARN" --version-id "$V"
@@ -90,7 +98,7 @@ sys.exit(0 if cur == want else 1)
 CMD=${1:-}
 case "$CMD" in
   name) [ $# -eq 3 ] || usage; policy_name "$2" "$3"; exit 0 ;;
-  ensure) [ $# -eq 5 ] || [ $# -eq 6 ] || usage ;;
+  ensure) [ $# -eq 5 ] || usage ;;
   delete) [ $# -eq 4 ] || usage ;;
   *) usage ;;
 esac
@@ -104,7 +112,7 @@ if [ "$CMD" = delete ]; then
   exit 0
 fi
 
-DOC=$5; LEGACY=${6:-}
+DOC=$5
 # Validate the desired document before any AWS call: a broken file must stop here, not
 # after the drift path has deleted the live policy.
 python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$DOC" 2>/dev/null \
@@ -122,7 +130,7 @@ case "$rc" in
     case "$src" in
       0) ;;
       1) echo "  policy $NAME differs from $(basename "$DOC"): recreating it (no CreatePolicyVersion)"
-         delete_policy; CREATE=true ;;
+         REATTACH=true; delete_policy; REATTACH=false; CREATE=true ;;
       *) echo "ERROR: cannot compare the document of $ARN" >&2; exit 1 ;;
     esac ;;
   *) echo "ERROR: aws iam get-policy failed for $ARN" >&2; exit 1 ;;
@@ -134,7 +142,4 @@ if [ "$CREATE" = true ]; then
 fi
 iam attach-role-policy --role-name "$ROLE" --policy-arn "$ARN" \
   || { echo "ERROR: aws iam attach-role-policy failed: $NAME -> $ROLE" >&2; exit 1; }
-if [ -n "$LEGACY" ]; then
-  ok_or_absent iam delete-role-policy --role-name "$ROLE" --policy-name "$LEGACY"
-fi
 echo "  ✓ $ROLE: managed policy $NAME"

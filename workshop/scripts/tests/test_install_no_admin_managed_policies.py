@@ -13,7 +13,7 @@ condition). That only works if the install never attaches them itself. The two p
 Customer-managed, not inline, and no CreatePolicyVersion: the consumer may grant
 CreatePolicy/AttachRolePolicy/DeletePolicy on <prefix>-* but neither iam:PutRolePolicy on these
 roles nor iam:CreatePolicyVersion. common/iam/managed-policy.sh creates, recreates on drift and
-attaches the policy, and removes the inline policy an earlier version of the install wrote.
+attaches the policy.
 Plus the bring-your-own option (hub.iam.*): a set ARN is used as is, nothing is created.
 
 What these tests pin:
@@ -23,9 +23,9 @@ What these tests pin:
    <role>-scoped name, and that node stays spoke-only (gated on provider == "kro-ack", which
    hub:claim never sets);
 3. behaviour, against a stateful fake `aws` on PATH: managed-policy.sh alone (create, identical
-   = attach only, drift = detach/prune/delete/create/attach in that order, legacy inline
-   removal, fatal errors, convergence after a failure inside the recreate window, delete);
-   the REAL Taskfile blocks under go-task (default, legacy detach, upgrade from inline, re-run
+   = attach only, drift = detach/prune/delete/create/attach in that order, no inline
+   policy calls, fatal errors, convergence after a failure inside the recreate window, delete);
+   the REAL Taskfile blocks under go-task (default, legacy detach, re-run
    on the roles a failed run left, BYO, fatal policy errors, seed tasks of both providers);
    kind-kro-ack destroy step 6b deletes the scoped policies before their roles;
 4. config.schema.json hub.iam rejects unknown keys; shellcheck on the blocks and the script.
@@ -203,7 +203,7 @@ while i < len(args):
         i += 1
 if svc != "iam":
     if (svc, op) == ("eks", "list-pod-identity-associations"):
-        print("None")
+        print("a-1" if os.environ.get("FAKE_PIA") else "None")
     elif (svc, op) == ("eks", "describe-cluster"):
         print("ACTIVE")
     sys.exit(0)
@@ -352,7 +352,10 @@ def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
         },
     }
     if taskfile == KRO:  # kind-crossplane has no hub:bootstrap-crossplane-identity
-        tf["tasks"]["bootstrap"] = {"cmds": [block("hub:bootstrap-crossplane-identity", 1)]}
+        scope = block("hub:scope-crossplane-provider-role", 0)
+        tf["tasks"]["scope"] = {"cmds": [scope]}
+        # install order: scope (ungated) first, then bootstrap (PIAs)
+        tf["tasks"]["bootstrap"] = {"cmds": [scope, block("hub:bootstrap-crossplane-identity", 1)]}
         # destroy step 6, with its own task vars; python3 is a no-op stub here (the
         # sweep helpers it runs would call AWS) and the destroy deadline is off.
         with open(KRO) as f:
@@ -431,7 +434,7 @@ def logical_lines_of(text):
     return text.replace("\\\n", " ").splitlines()
 
 
-BLOCKS = [(KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
+BLOCKS = [(KRO, "hub:scope-crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles", 1),
           (KRO, "spokes:seed-provider-identity", 0),
           (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)]
 
@@ -549,25 +552,39 @@ def test_mp_invalid_desired_document_is_fatal_before_any_aws_call(tmp_path):
     assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
 
 
-def test_mp_removes_legacy_inline_and_tolerates_its_absence(tmp_path):
-    seed_state(tmp_path, roles=["pfx-r", "pfx-s"], inline={"pfx-r": ["crossplane-provider-scoped", "other"]})
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, "crossplane-provider-scoped")
-    assert r.returncode == 0, out
-    assert state(tmp_path)["inline"]["pfx-r"] == ["other"]
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-s", DOC_FILE, "crossplane-provider-scoped")
-    assert r.returncode == 0, out  # NoSuchEntity on the legacy inline = nothing to do
-
-
 @pytest.mark.parametrize("fail", [
     "get-policy:pfx-r-scoped", "create-policy:pfx-r-scoped", "attach-role-policy:pfx-r",
-    "delete-role-policy:pfx-r",
 ])
 def test_mp_errors_are_fatal(tmp_path, fail):
-    seed_state(tmp_path, roles=["pfx-r"], inline={"pfx-r": ["crossplane-provider-scoped"]})
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, "crossplane-provider-scoped", fail=fail)
+    seed_state(tmp_path, roles=["pfx-r"])
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail=fail)
     assert r.returncode != 0, out
     # the failing call itself is reported (not a later call failing because of it)
     assert f"ERROR: aws iam {fail.split(':')[0]} failed" in out and "AccessDenied" in out, out
+
+
+def test_mp_delete_conflict_in_the_drift_path_keeps_the_old_policy_attached(tmp_path):
+    """The policy is also attached to another role, so DeletePolicy fails with DeleteConflict.
+    The role must not be left detached: every re-run would detach it again and fail again."""
+    old = {"Version": "2012-10-17", "Statement": []}
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": old},
+               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "DeleteConflict" in out, out
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": old}
+
+
+def test_mp_never_touches_inline_policies(tmp_path):
+    """No release ever wrote the inline policies the first revisions cleaned up, so ensure must
+    not call DeleteRolePolicy: a consumer without iam:DeleteRolePolicy must still pass."""
+    seed_state(tmp_path, roles=["pfx-r"], inline={"pfx-r": ["other"]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail="delete-role-policy:pfx-r")
+    assert r.returncode == 0, out
+    assert not calls_of(log, "delete-role-policy"), log
+    assert state(tmp_path)["inline"]["pfx-r"] == ["other"]
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, "crossplane-provider-scoped")
+    assert r.returncode == 2 and "usage" in out, out  # the legacy argument is gone
 
 
 def test_mp_missing_role_is_fatal(tmp_path):
@@ -644,17 +661,53 @@ def test_bootstrap_detaches_legacy_administrator_access(tmp_path):
     assert len(det) == 1, log
 
 
+def test_scope_task_is_not_gated_and_runs_before_bootstrap():
+    """hub:bootstrap-crossplane-identity is skipped while both PIAs exist. The scoping must not
+    live behind that gate, or a live hub keeps AdministratorAccess and never gets a later change
+    of the policy document."""
+    with open(KRO) as f:
+        tasks = yaml.safe_load(f)["tasks"]
+    scope = tasks["hub:scope-crossplane-provider-role"]
+    assert "status" not in scope and "sources" not in scope and "generates" not in scope
+    assert "managed-policy.sh" not in "".join(
+        c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:bootstrap-crossplane-identity"]["cmds"])
+    for name, t in tasks.items():
+        order = [c["task"] for c in t.get("cmds", []) if isinstance(c, dict) and "task" in c]
+        if "hub:bootstrap-crossplane-identity" in order:
+            assert order.index("hub:scope-crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
+
+
 @needs_task
-def test_bootstrap_upgrade_from_inline_converges(tmp_path):
-    """Re-run on a role an earlier version of this PR gave an inline policy."""
+def test_scope_runs_on_a_live_hub_whose_pias_exist(tmp_path, monkeypatch):
+    """Both PIAs exist (bootstrap would be skipped) and the role keeps AdministratorAccess: the
+    ungated scope task still attaches the scoped policy and detaches Admin."""
+    monkeypatch.setenv("FAKE_PIA", "1")
     b = harness(tmp_path)
-    seed_state(tmp_path, roles=["hub-crossplane-provider"],
-               inline={"hub-crossplane-provider": ["crossplane-provider-scoped"]})
-    r, out, log = run(tmp_path, b, "bootstrap")
+    r, out, log = run(tmp_path, b, "scope", existing="hub-crossplane-provider",
+                      attached="arn:aws:iam::aws:policy/AdministratorAccess")
     assert r.returncode == 0, out
-    s = state(tmp_path)
-    assert s["inline"]["hub-crossplane-provider"] == []
-    assert s["attached"]["hub-crossplane-provider"] == [arn(HUB_POL)]
+    assert state(tmp_path)["attached"]["hub-crossplane-provider"] == [arn(HUB_POL)]
+    assert len([d for d in calls_of(log, "detach-role-policy") if "policy/AdministratorAccess" in d]) == 1, log
+
+
+@needs_task
+def test_scope_applies_a_changed_policy_document_to_a_live_hub(tmp_path):
+    b = harness(tmp_path)
+    old = {"Version": "2012-10-17", "Statement": []}
+    seed_state(tmp_path, roles=["hub-crossplane-provider"], policies={HUB_POL: old},
+               attached={"hub-crossplane-provider": [arn(HUB_POL)]})
+    r, out, _ = run(tmp_path, b, "scope")
+    assert r.returncode == 0, out
+    assert state(tmp_path)["policies"][HUB_POL]["docs"] == {"v1": XP_DOC}
+
+
+@needs_task
+def test_scope_skips_a_bring_your_own_role(tmp_path):
+    b = harness(tmp_path)
+    byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
+    r, out, log = run(tmp_path, b, "scope", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}", existing="cfn-crossplane")
+    assert r.returncode == 0, out
+    assert [c for c in log if " iam " in c] == [], log
 
 
 @needs_task
@@ -778,11 +831,9 @@ def test_bootstrap_byo_role_read_from_config(tmp_path):
 
 
 @needs_task
-@pytest.mark.parametrize("fail", [f"create-policy:{MGMT_POL}", "attach-role-policy:pfx-cluster-mgmt-iam",
-                                  "delete-role-policy:pfx-cluster-mgmt-iam"])
+@pytest.mark.parametrize("fail", [f"create-policy:{MGMT_POL}", "attach-role-policy:pfx-cluster-mgmt-iam"])
 def test_mgmt_policy_failure_is_fatal(tmp_path, fail):
     b = harness(tmp_path)
-    seed_state(tmp_path, inline={"pfx-cluster-mgmt-iam": ["cluster-mgmt-iam-scoped"]})
     r, out, log = run(tmp_path, b, "mgmt", fail=fail)
     assert r.returncode != 0, out
 
@@ -816,14 +867,12 @@ def test_seed_provider_identity_policy_failure_is_fatal(tmp_path, taskfile):
 @needs_task
 def test_kind_crossplane_mgmt_creates_managed_policy_and_no_admin(tmp_path):
     b = harness(tmp_path, taskfile=XP)
-    seed_state(tmp_path, inline={"pfx-cluster-mgmt-iam": ["cluster-mgmt-iam-scoped"]})
     r, out, log = run(tmp_path, b, "mgmt")
     assert r.returncode == 0, out
     attaches = calls_of(log, "attach-role-policy")
     assert not [a for a in attaches if ADMIN_ARN.search(a)], attaches
     s = state(tmp_path)
     assert s["attached"]["pfx-cluster-mgmt-iam"] == [arn(MGMT_POL)]
-    assert s["inline"]["pfx-cluster-mgmt-iam"] == []  # legacy inline removed
 
 
 @needs_task
@@ -865,19 +914,29 @@ def test_destroy_sweep_records_a_failed_scoped_policy_delete(tmp_path):
     assert "iam-scoped-policy(6b)" in (tmp_path / "private" / "destroy-sweep-failures").read_text()
 
 
+@needs_task
+def test_destroy_sweep_skips_bring_your_own_roles(tmp_path):
+    """A BYO clusterMgmtRoleArns role must be named <prefix>-cluster-mgmt-<svc>, so it matches the
+    6b sweep: destroy must leave it (and its policy) alone, or the next install fails BYO validation."""
+    cfg = ("hub:\n  clusterName: hub\n  iam:\n    crossplaneProviderRoleArn: "
+           f"arn:aws:iam::{ACCT}:role/pfx-cfn-crossplane\n    clusterMgmtRoleArns:\n"
+           f"      iam: arn:aws:iam::{ACCT}:role/pfx-cluster-mgmt-iam\n")
+    b = harness(tmp_path, cfg)
+    roles = ["pfx-cluster-mgmt-iam", "pfx-cluster-mgmt-eks", "pfx-cfn-crossplane"]
+    seed_state(tmp_path, roles=roles, policies={MGMT_POL: MGMT_DOC},
+               attached={"pfx-cluster-mgmt-iam": [arn(MGMT_POL)]})
+    r, out, log = run(tmp_path, b, "sweep", stub_python=True)
+    assert r.returncode == 0, out
+    deleted = [c.split()[-1] for c in calls_of(log, "delete-role")]
+    assert deleted == ["pfx-cluster-mgmt-eks"], deleted
+    assert state(tmp_path)["attached"]["pfx-cluster-mgmt-iam"] == [arn(MGMT_POL)]
+    assert "bring-your-own" in out, out
+
+
 def test_destroy_role_loop_deletes_the_scoped_policy_before_the_role():
     body = block("destroy", destroy_index())
     sixb = body[body.index("6b. ALL remaining"):body.index("6b2.")]
     assert sixb.index('managed-policy.sh" delete') < sixb.index("aws iam delete-role --role-name"), sixb
-
-
-@needs_task
-def test_kind_crossplane_seed_upgrade_from_inline(tmp_path):
-    b = harness(tmp_path, taskfile=XP)
-    seed_state(tmp_path, roles=SPOKE_ROLES, inline={r: ["crossplane-provider-scoped"] for r in SPOKE_ROLES})
-    r, out, log = run(tmp_path, b, "seed")
-    assert r.returncode == 0, out
-    assert all(state(tmp_path)["inline"][r] == [] for r in SPOKE_ROLES)
 
 
 # ------------------------------------------------------------------ 4. config schema
@@ -894,6 +953,7 @@ def test_schema_hub_iam_rejects_unknown_keys():
 
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
 @pytest.mark.parametrize("taskfile,task,index", [
+    (KRO, "hub:scope-crossplane-provider-role", 0),
     (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
     (KRO, "spokes:seed-provider-identity", 0),
     (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)])
