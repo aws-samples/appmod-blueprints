@@ -304,7 +304,7 @@ tasks:
         POLICY='{"Version":"2012-10-17","Statement":[{"Sid":"EKSCapabilityVendedLogsDelivery","Effect":"Allow","Principal":{"Service":"delivery.logs.amazonaws.com"},"Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:'"$REGION"':'"$ACCT"':log-group:/aws/eks/*/capability/*:*","Condition":{"StringEquals":{"aws:SourceAccount":"'"$ACCT"'"}}}]}'
         aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
         WAIT_MAX="${CAP_LOGS_WAIT:-600}"
-        case "$WAIT_MAX" in ''|*[!0-9]*) echo "  CAP_LOGS_WAIT='$WAIT_MAX' is not a number of seconds — using 600"; WAIT_MAX=600 ;; esac
+        case "$WAIT_MAX" in ''|*[!0-9]*|0?*|???????*) echo "  CAP_LOGS_WAIT='$WAIT_MAX' is not a number of seconds — using 600"; WAIT_MAX=600 ;; esac
         ERRF=$(mktemp); trap 'rm -f "$ERRF"' EXIT
         SKIPPED=""
         for C in $(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
@@ -319,7 +319,7 @@ tasks:
             CAP_ARN=$(echo "$OUT" | awk '{print $1}'); CAP_STATUS=$(echo "$OUT" | awk '{print $2}')
             case "$CAP_STATUS" in CREATING|UPDATING) ;; *) break ;; esac
             [ "$WAITED" -ge "$WAIT_MAX" ] && break
-            NAP=$((WAIT_MAX - WAITED)); [ "$NAP" -gt 15 ] && NAP=15
+            NAP=$((WAIT_MAX - WAITED)); [ "$NAP" -gt 15 ] && NAP=15; [ "$NAP" -gt 0 ] || break
             sleep "$NAP"; WAITED=$((WAITED + NAP))
           done
           if [ "$RC" -ne 0 ]; then

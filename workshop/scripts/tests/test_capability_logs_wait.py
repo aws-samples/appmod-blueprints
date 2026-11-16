@@ -111,8 +111,6 @@ def test_waits_for_creating_and_skips_never_active(tmp_path):
     # skips are summarised instead of a success line (spoke-none has no capability: not a skip)
     assert "✓ kro capability logs enabled" not in out, out
     assert "⚠ kro capability logs NOT enabled for: acme-spoke-prod acme-spoke-err " in out, out
-    # the wait never overshoots CAP_LOGS_WAIT (45 s = 15+15+15)
-    assert "CREATING after 45s" in out, out
 
 
 def test_all_ready_prints_success_and_cleans_tmp(tmp_path):
@@ -125,7 +123,16 @@ def test_all_ready_prints_success_and_cleans_tmp(tmp_path):
 
 def test_wait_is_capped_at_cap_logs_wait(tmp_path):
     res, out, _ = _run(tmp_path, "50", "acme-spoke-prod")
+    assert res.returncode == 0, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 50s" in out, out
+
+
+@pytest.mark.parametrize("wait", ["08", "010", "99999999999999999999"])
+def test_octal_or_huge_wait_falls_back_without_spinning(tmp_path, wait):
+    res, out, _ = _run(tmp_path, wait, "acme-spoke-prod")
+    assert res.returncode == 0, out
+    assert f"CAP_LOGS_WAIT='{wait}' is not a number of seconds" in out, out
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 600s" in out, out
 
 
 def test_non_numeric_wait_falls_back_to_default(tmp_path):
