@@ -1,14 +1,14 @@
 # TEST-ONLY (branch feature/alb-prefix-list-test, never merged to main).
 #
-# Restricts the hub's shared "platform" ALB to an AWS managed prefix list instead of
-# 0.0.0.0/0. Read by every cluster labelled environment=control-plane (the hub) through
+# Restricts the hub's shared "platform" ALB to one operator address instead of 0.0.0.0/0.
+# Read by every cluster labelled environment=control-plane (the hub) through
 # $defaults/gitops/overlays/environments/control-plane/ingress-class-alb/values.yaml at the
 # hub's addonsRepoRevision. The hub's own NAT egress /32 (clusterEgressCidrs, from
 # nat_egress_cidrs) is appended automatically. Spoke NAT EIPs are NOT: add them to
 # extraInboundCidrs once the spokes exist (docs/platform/alb-ip-allowlist.md, pitfall 1).
 #
-# pl-f8a64391 = com.amazonaws.firewall.regional-corp-only (us-west-2, 8 entries).
-# Switch to pl-c0b451a9 (com.amazonaws.firewall.global.corp, 58 entries) only after
-# checking its max size against the security group rule quota (pitfall 3).
-prefixListIds:
-  - pl-f8a64391
+# The earlier version of this file used the managed prefix list pl-f8a64391
+# (regional corp). The operator's address was not in it, so the pages did not load.
+# If the address changes, the pages stop loading until this value is updated.
+inboundCidrs:
+  - "104.49.114.105/32"
