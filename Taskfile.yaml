@@ -305,7 +305,8 @@ tasks:
         aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
         WAIT_MAX="${CAP_LOGS_WAIT:-600}"
         case "$WAIT_MAX" in ''|*[!0-9]*) echo "  CAP_LOGS_WAIT='$WAIT_MAX' is not a number of seconds — using 600"; WAIT_MAX=600 ;; esac
-        ERRF=$(mktemp)
+        ERRF=$(mktemp); trap 'rm -f "$ERRF"' EXIT
+        SKIPPED=""
         for C in $(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
           # A capability still CREATING/UPDATING rejects put-delivery-source with a
           # ConflictException, which aborted the install when spokes were just created.
@@ -318,19 +319,20 @@ tasks:
             CAP_ARN=$(echo "$OUT" | awk '{print $1}'); CAP_STATUS=$(echo "$OUT" | awk '{print $2}')
             case "$CAP_STATUS" in CREATING|UPDATING) ;; *) break ;; esac
             [ "$WAITED" -ge "$WAIT_MAX" ] && break
-            sleep 15; WAITED=$((WAITED + 15))
+            NAP=$((WAIT_MAX - WAITED)); [ "$NAP" -gt 15 ] && NAP=15
+            sleep "$NAP"; WAITED=$((WAITED + NAP))
           done
           if [ "$RC" -ne 0 ]; then
             # Only ResourceNotFound means "no capability"; anything else (expired
             # credentials, AccessDenied, throttling) is reported, not hidden.
             if grep -q ResourceNotFoundException "$ERRF"; then echo "  $C: no '$CAP' capability — skipping"
-            else echo "  WARN $C: describe-capability failed (rc=$RC): $(head -c 300 "$ERRF") — skipping, re-run task enable-capability-logs"; fi
+            else echo "  WARN $C: describe-capability failed (rc=$RC): $(head -c 300 "$ERRF") — skipping, re-run task enable-capability-logs"; SKIPPED="$SKIPPED $C"; fi
             continue
           fi
           if [ -z "$CAP_ARN" ] || [ "$CAP_ARN" = "None" ]; then echo "  $C: no '$CAP' capability — skipping"; continue; fi
           case "$CAP_STATUS" in
             ACTIVE|DEGRADED) ;;
-            *) echo "  $C: '$CAP' capability is $CAP_STATUS after ${WAITED}s — skipping (re-run task enable-capability-logs later)"; continue ;;
+            *) echo "  $C: '$CAP' capability is $CAP_STATUS after ${WAITED}s — skipping (re-run task enable-capability-logs later)"; SKIPPED="$SKIPPED $C"; continue ;;
           esac
           LG="/aws/eks/$C/capability/$CAP"; LG_ARN="arn:aws:logs:$REGION:$ACCT:log-group:$LG"
           aws logs create-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
@@ -364,8 +366,11 @@ tasks:
             echo "  $C: $CAP log delivery already present -> $LG"
           fi
         done
-        rm -f "$ERRF"
-        echo "✓ $CAP capability logs enabled for {{.RESOURCE_PREFIX}}-* clusters (CloudWatch Vended Logs; billable)"
+        if [ -n "$SKIPPED" ]; then
+          echo "⚠ $CAP capability logs NOT enabled for:$SKIPPED (see above); re-run task enable-capability-logs"
+        else
+          echo "✓ $CAP capability logs enabled for {{.RESOURCE_PREFIX}}-* clusters (CloudWatch Vended Logs; billable)"
+        fi
 
   kubeconfig:
     desc: Grant IDE access and write kubeconfig contexts for the hub and all spoke clusters
