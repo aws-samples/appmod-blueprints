@@ -31,10 +31,12 @@
       The CRs live in the namespace named after the cluster, where the multi-acct /
       kro-clusters IAMRoleSelectors route iam and eks to cluster-mgmt-iam / -eks;
       that namespace is created by the multi-acct chart, with the selectors.
-      Upgrade note: switching an existing hub from crossplane to ack leaves the old
-      Crossplane Role and PodIdentityAssociation in the cluster (prune is off). Delete
-      them with the Crossplane deletion policy set to Orphan BEFORE the switch, or the
-      later delete would remove the IAM role ACK now owns. Fresh installs are unaffected.
+      Upgrade note (existing hub switching from crossplane to ack): (1) patch
+      spec.deletionPolicy=Orphan on the old Crossplane Role and PodIdentityAssociation
+      (the chart does not set it, the default is Delete, which would delete the IAM
+      role); (2) switch the backend (prune is off, the old objects stay); (3) delete the
+      two old objects. Deleting them before the switch does not work: selfHeal
+      recreates them while the chart still renders them. Fresh installs are unaffected.
   Keep the two backends semantically identical (name, trust, permissions, waves);
   the test test_keycloak_client_provisioner_identity_ack.py enforces it.
 
