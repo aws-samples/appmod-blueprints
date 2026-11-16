@@ -34,7 +34,8 @@ prev=""; for a in "$@"; do
   if [ "$prev" = "--role-name" ] && [ -z "$a" ]; then echo "empty --role-name" >&2; exit 252; fi
   prev="$a"; done
 if [ -n "${FAKE_DENY:-}" ] && [ "$2" = "$FAKE_DENY" ]; then
-  echo "An error occurred (AccessDenied) when calling the $2 operation: denied" >&2; exit 254; fi
+  case " $* " in *" ${FAKE_DENY_ROLE:-} "*|*"${FAKE_DENY_ROLE:-}"*)
+    echo "An error occurred (AccessDenied) when calling the $2 operation: denied" >&2; exit 254 ;; esac; fi
 case "$1 $2" in
   "sts get-caller-identity")
     case "$*" in *Account*) echo 111122223333 ;; *) echo "arn:aws:sts::111122223333:assumed-role/Runner/s" ;; esac ;;
@@ -50,7 +51,9 @@ case "$1 $2" in
   "eks describe-cluster")
     [ "${FAKE_HUB:-gone}" = live ] && { echo ACTIVE; exit 0; }
     echo "An error occurred (ResourceNotFoundException) when calling the DescribeCluster operation: No cluster found" >&2; exit 254 ;;
-  "eks describe-capability") exit 254 ;;
+  "eks describe-capability")
+    [ -n "${FAKE_CAP_ARN:-}" ] && { echo "$FAKE_CAP_ARN"; exit 0; }
+    echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation: not found" >&2; exit 254 ;;
   "eks list-clusters") echo "" ;;
   *) echo ok ;;
 esac
@@ -334,8 +337,49 @@ def test_crossplane_pre_never_writes_an_empty_role_arn(tmp_path, repo):
     raw = (tmp_path / "calls.log").read_text()
     assert "create-role --role-name acme-cluster-mgmt-iam" in raw
     assert ':role/"' not in raw and "role/acme-hub-ACKCapabilityRole" in raw, raw
+    # before the hub: the ack-assume-role put is skipped, privileged:post applies it
+    assert not [c for c in calls if c[:2] == ["iam", "put-role-policy"] and "ack-assume-role" in c]
+    assert "applied once the hub exists" in res.stdout
+
+
+@pytest.mark.parametrize("entry", ["kind-crossplane:hub:create-mgmt-roles", "privileged:post"])
+def test_crossplane_ack_assume_put_fails_when_hub_exists(tmp_path, repo, entry):
+    env = {"FAKE_CAP_ARN": "arn:aws:iam::111122223333:role/acme-hub-ACKCapabilityRole",
+           "FAKE_DENY": "put-role-policy", "FAKE_DENY_ROLE": "acme-hub-ACKCapabilityRole"}
+    res, calls = _run(tmp_path, repo, "kind-crossplane", [entry], env_extra=env)
+    assert res.returncode != 0, res.stdout
+    assert "AccessDenied" in res.stderr and "roles ready" not in res.stdout
+    res, calls = _run(tmp_path, repo, "kind-crossplane", [entry],
+                      env_extra={"FAKE_CAP_ARN": env["FAKE_CAP_ARN"]})
+    assert res.returncode == 0, res.stdout + res.stderr
     puts = [c for c in calls if c[:2] == ["iam", "put-role-policy"] and "ack-assume-role" in c]
     assert puts and puts[0][puts[0].index("--role-name") + 1] == "acme-hub-ACKCapabilityRole"
+
+
+def test_crossplane_ack_capability_read_error_fails(tmp_path, repo):
+    res, _ = _run(tmp_path, repo, "kind-crossplane", ["kind-crossplane:hub:create-mgmt-roles"],
+                  env_extra={"FAKE_DENY": "describe-capability"})
+    assert res.returncode != 0 and "cannot read the hub ACK capability" in res.stdout + res.stderr
+
+
+def test_verify_inline_policy_read_error_is_not_missing(tmp_path, repo):
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:privileged:verify"], mode="external",
+                  env_extra={"FAKE_DENY": "get-role-policy"})
+    assert res.returncode != 0
+    assert "could not read" in res.stderr and "AccessDenied" in res.stderr
+    assert "not ready" not in res.stderr, res.stderr
+
+
+def test_external_mode_unsupported_provider_is_named(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "terraform", ["install"], mode="external")
+    assert res.returncode != 0 and "supported by the kind-kro-ack and kind-crossplane providers only" in res.stderr
+    assert not (_verbs(calls, "iam") & IAM_WRITES)
+
+
+def test_install_codebuild_is_an_alias_of_install_external(tmp_path, repo):
+    for entry in ("install:external", "install:codebuild"):
+        res, _ = _run(tmp_path, repo, "kind-kro-ack", [entry])
+        assert res.returncode != 0 and "needs privilegedSteps: external" in res.stderr, entry
 
 
 def test_workshop_install_codebuild_says_the_key_persists(tmp_path, repo):
@@ -358,7 +402,54 @@ def test_privileged_destroy_deletes_what_pre_created(tmp_path, repo, provider):
     assert res.returncode == 0, res.stdout + res.stderr
     deleted = {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "delete-role"]}
     assert deleted == PRE_ROLES[provider]
-    assert any(c[0] == "python3" and "sweep-log-deliveries.py" in c[1] for c in calls)
+    assert any(c[0] == "python3" and "sweep-log-deliveries.py" in c[1] and "--strict" in c for c in calls)
+
+
+FAKE_PY_FAIL = "#!/usr/bin/env bash\necho \"python3 $*\" >> \"$FAKE_AWS_LOG\"\nexit 1\n"
+
+
+def test_privileged_destroy_fails_when_a_delivery_delete_fails(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:destroy"], fakes=(("python3", FAKE_PY_FAIL),))
+    assert res.returncode != 0
+    deleted = {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "delete-role"]}
+    assert deleted == PRE_ROLES["kind-kro-ack"], "the role deletes still run after a delivery failure"
+
+
+def test_privileged_destroy_sweeps_deliveries_even_if_a_role_fails(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:destroy"], env_extra={"FAKE_DENY": "delete-role"},
+                      fakes=(("python3", FAKE_PY),))
+    assert res.returncode != 0
+    assert any(c[0] == "python3" for c in calls)
+
+
+def test_sweep_log_deliveries_strict_fails_on_a_failed_delete():
+    import importlib.util
+    path = os.path.join(REPO, "scripts", "sweep-log-deliveries.py")
+    spec = importlib.util.spec_from_file_location("sweep_log_deliveries_cli", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sl = mod.sl
+
+    class Eks:
+        pass
+
+    class Logs:
+        pass
+
+    orig = (sl.cluster_inventory, sl.sweep_log_deliveries)
+    try:
+        sl.cluster_inventory = lambda eks: {}
+
+        def fake_sweep(logs, gone, dry_run=False, failures=None):
+            failures.append("delivery d-1")
+            return ["d-1"], [], [], 0
+        sl.sweep_log_deliveries = fake_sweep
+        import io
+        args = ["acme", "us-west-2", "acme-hub"]
+        assert mod.main(args, eks=Eks(), logs=Logs(), out=io.StringIO()) == 0
+        assert mod.main(args + ["--strict"], eks=Eks(), logs=Logs(), out=io.StringIO()) == 1
+    finally:
+        sl.cluster_inventory, sl.sweep_log_deliveries = orig
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -383,8 +474,24 @@ def test_privileged_destroy_refuses_external_config(tmp_path, repo):
     assert not any(c[:2] == ["iam", "delete-role"] for c in calls)
 
 
-def test_kro_ack_destroy_6b_records_a_role_it_could_not_delete():
+def test_kro_ack_destroy_6b_records_a_role_it_could_not_delete(tmp_path):
+    """Run the real 6b delete-role snippet with a fake aws: AccessDenied is recorded, NoSuchEntity is not."""
     text = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
     block = text[text.index("# 6b. ALL remaining"):text.index("# 6b2. Shared fixed-name roles")]
-    assert 'delete-role --role-name "$ROLE" 2>/dev/null || true' not in block
-    assert 'iam-delete-role(6b)" >> "$FAILED"' in block
+    start = block.index('echo "  deleting IAM role $ROLE"')
+    snippet = block[start:block.rindex("done")]
+    awserr = re.search(r"^\s*(awserr\(\) \{.*\})$", text, re.M).group(1)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "aws").write_text("#!/bin/sh\necho \"$FAKE_ERR\" >&2\nexit 254\n")
+    (bindir / "aws").chmod(0o755)
+    for err, recorded in (("An error occurred (AccessDenied) when calling DeleteRole: no", True),
+                          ("An error occurred (NoSuchEntity) when calling DeleteRole: gone", False)):
+        failed = tmp_path / "failed"
+        failed.write_text("")
+        script = f'set -eu\n{awserr}\nFAILED="{failed}"\nROLE=acme-x\n{snippet}\n'
+        r = subprocess.run(["sh", "-c", script], env=dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
+                                                         FAKE_ERR=err), capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        assert ("iam-delete-role(6b)" in failed.read_text()) is recorded, (err, r.stdout)
+        assert ("not deleted (AccessDenied)" in r.stdout) is recorded
