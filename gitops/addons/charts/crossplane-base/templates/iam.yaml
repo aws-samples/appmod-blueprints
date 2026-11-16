@@ -68,7 +68,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "5"
 spec:
   forProvider:
-    policy: {{ tpl (dict "Version" "2012-10-17" "Statement" $provider.inlineStatements | toJson) $ | quote }}
+    policy: {{ dict "Version" "2012-10-17" "Statement" $provider.inlineStatements | toJson | quote }}
     roleRef:
       name: {{ $name }}-provider-role
   providerConfigRef:
