@@ -60,9 +60,12 @@ ADMIN_ARN = re.compile(r"arn:aws[\w-]*:iam::aws:policy/(AdministratorAccess|Powe
 # Files run (or rendered with the installing principal's creds) by `task install`.
 # Not here, on purpose: cluster-providers/terraform (iam.tf, not the install path of
 # kind-kro-ack/kind-crossplane) and scripts/create-cross-account-roles.sh (manual
-# multi-account helper run with the TARGET account's creds). In-cluster attachments made by
-# provider-aws-iam (crossplane-base, crossplane-pod-identity charts) are not the installing
-# principal's and are out of scope too.
+# multi-account helper run with the TARGET account's creds). Attachments that Crossplane's
+# provider-aws-iam makes in-cluster (crossplane-base, crossplane-pod-identity charts) are not
+# in these files and are out of scope here. On kind-crossplane that provider runs on the
+# installer's aws-credentials Secret, so crossplane-base still attaches AdministratorAccess to
+# <hub>-Crossplane{IAM,EKS}ProviderRole with the installer's credentials (see
+# kind-crossplane/Taskfile.yaml IAM_POLICY_DIR); scoping it is follow-up work.
 INSTALL_PATH = [
     "Taskfile.yaml",
     "workshop/Taskfile.yaml",
