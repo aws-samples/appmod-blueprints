@@ -2728,7 +2728,10 @@ tasks:
               #    Not the effective permission on its own: the hub's crossplane-pod-identity
               #    addon (provider NotIn [kro-ack]) adopts these same <spoke>-Crossplane{IAM,EKS}ProviderRole
               #    roles and attaches AdministratorAccess through an in-cluster Crossplane
-              #    RolePolicyAttachment, so the spoke iam/eks providers stay AdministratorAccess.
+              #    RolePolicyAttachment. The spoke iam/eks providers therefore hold
+              #    AdministratorAccess minus what this document explicitly denies (an
+              #    explicit Deny beats an Allow): attaching an AWS managed policy outside
+              #    the allowlist, and changing the provider scoped policies.
               #    That attachment is made by provider-aws-iam, not the installing principal;
               #    scoping it is follow-up work.
               sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \

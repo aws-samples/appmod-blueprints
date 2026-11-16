@@ -188,6 +188,13 @@ syncs with `prune: false`, so on a live cluster the old `<name>-provider-admin-a
 (`kubectl delete rolepolicyattachments.iam.aws.upbound.io <name>-provider-admin-attachment`);
 provider-aws-iam then detaches `AdministratorAccess`. Until then the `crossplane-base-<cluster>`
 Argo CD app shows those attachments (5 per cluster with the registry values) as OutOfSync.
+Delete an old attachment only after the new `<name>-provider-<policy>` attachments of that
+role are `Synced=True` and `Ready=True`; before that the role would have no permissions.
+
+The allowlist is checked against this repository only. A chart or composition in another
+repository that attaches an AWS managed policy through provider-aws-iam must add that ARN to
+`common/iam/crossplane-provider-policy.json` (and the inline copy in `rg-eks.yaml`), or the
+attach is refused at runtime.
 
 kind-crossplane exception: its hub `<hub>-CrossplaneIAMProviderRole` /
 `<hub>-CrossplaneEKSProviderRole` are created from kind by a direct render of `crossplane-base`
