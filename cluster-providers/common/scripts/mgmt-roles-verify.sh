@@ -25,6 +25,9 @@ if [ -n "${CONFIG_FILE:-}" ] && [ -f "$CONFIG_FILE" ]; then
   for svc in $SERVICES; do
     ARN=$(yq ".hub.iam.clusterMgmtRoleArns.$svc // \"\"" "$CONFIG_FILE" 2>/dev/null || true)
     if [ -n "$ARN" ] && [ "$ARN" != null ]; then BYO="$BYO $svc"; fi
+    # Same naming rule as apply: the IAMRoleSelectors derive the name from the prefix.
+    case "$ARN" in ""|null|*":role/${RESOURCE_PREFIX}-cluster-mgmt-${svc}") ;;
+      *) BAD_BYO="${BAD_BYO:-} byo-name:hub.iam.clusterMgmtRoleArns.$svc:must-be-role/${RESOURCE_PREFIX}-cluster-mgmt-${svc}" ;; esac
   done
 fi
 is_byo() { case " $BYO " in *" $1 "*) return 0;; esac; return 1; }
@@ -42,7 +45,7 @@ expected_policies() {
   esac
 }
 
-MISSING=""
+MISSING="${BAD_BYO:-}"
 for svc in $SERVICES; do
   ROLE="${RESOURCE_PREFIX}-cluster-mgmt-${svc}"
   if ! aws iam get-role --role-name "$ROLE" --query 'Role.RoleName' --output text >/dev/null 2>&1; then

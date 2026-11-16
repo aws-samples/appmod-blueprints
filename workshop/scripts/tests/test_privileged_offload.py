@@ -279,3 +279,17 @@ def test_verify_takes_the_scoped_policy_name_from_managed_policy_sh():
 def test_kro_ack_verify_reads_the_config():
     text = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
     assert "CONFIG_FILE='{{.CONFIG_FILE}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'" in text
+
+
+def test_verify_refuses_a_byo_arn_with_another_name(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "aws").write_text(FAKE_AWS_BYO)
+    (bindir / "aws").chmod(0o755)
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text('hub:\n  iam:\n    clusterMgmtRoleArns:\n      iam: "arn:aws:iam::111122223333:role/my-own-iam-role"\n')
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(tmp_path / "l"),
+               FAKE_ALL_POLICIES=" ".join(ALL_POLICIES), RESOURCE_PREFIX="acme", CONFIG_FILE=str(cfg),
+               BYO_ROLES="acme-cluster-mgmt-iam")
+    res = subprocess.run(["sh", VERIFY_SH], env=env, capture_output=True, text=True, timeout=60)
+    assert res.returncode == 1 and "byo-name:hub.iam.clusterMgmtRoleArns.iam" in res.stderr, res.stderr
