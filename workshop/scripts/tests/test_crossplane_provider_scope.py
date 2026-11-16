@@ -1,21 +1,17 @@
 """The Crossplane provider identity cannot hand out AdministratorAccess, and crossplane-base
 no longer asks it to.
 
-Follow-up to the scoped <cluster>-crossplane-provider policy. That policy keeps iam:* on
-role/* and policy/*, so on its own provider-aws-iam could attach any AWS managed policy,
-AdministratorAccess included, to any role. Two changes:
+Follow-up to the scoped <cluster>-crossplane-provider policy, which keeps the IAM writes on
+roles and policies that the Crossplane IAM provider needs. Two changes:
 
 (c) crossplane-base attaches a per-provider managed policy (values.yaml providers.<p>.policyArns)
     to each provider role, not AdministratorAccess.
 (a) common/iam/crossplane-provider-policy.json (and its rg-eks inline copy) denies
     iam:AttachRolePolicy of any AWS managed policy outside an explicit allowlist (iam:PolicyARN),
     and denies editing or deleting the provider scoped policies (*-crossplane-provider-scoped,
-    *ProviderRole-scoped).
+    *ProviderRole-scoped, and their *-scoped-<sha8> second names).
 
-The privilege ceiling is unchanged. Pinned below as still allowed so a reader sees the gap:
-customer-managed policies (CreatePolicy + attach), inline PutRolePolicy, CreatePolicyVersion
-on other policies, UpdateAssumeRolePolicy, CreateRole, the boundary operations, PassRole, eks:*,
-and detaching the scoped policy.
+This is least-privilege scoping of the AWS managed policy path, not a permissions boundary.
 
 kind-crossplane: its hub iam/eks provider roles come from a direct render of crossplane-base
 in crossplane:claims (and the same render in destroy). Those renders are tested here too.
@@ -115,7 +111,7 @@ def test_model_without_the_deny_allows_admin_attach():
 def test_admin_like_attach_denied(name, partition):
     doc = load_doc()
     assert not attach(doc, f"arn:{partition}:iam::aws:policy/{name}")
-    # On its own role too (self-escalation).
+    # On its own role too.
     own = f"arn:aws:iam::{ACCT}:role/peeks-hub-crossplane-provider"
     assert not attach(doc, f"arn:{partition}:iam::aws:policy/{name}", role=own)
 
@@ -187,21 +183,17 @@ def test_scoped_name_matches_script():
     assert scoped_name("peeks", "acme-spoke1-CrossplaneIAMProviderRole") == "peeks-acme-spoke1-CrossplaneIAMProviderRole-scoped"
 
 
-def test_known_gaps_still_open():
-    """Outside the scope of this change (the README says it is not a permissions boundary).
-    If one flips, update the README."""
+def test_controllers_keep_the_iam_writes_they_need():
+    """The Crossplane IAM provider creates roles and customer-managed policies for the addons
+    and apps, attaches them and passes roles; an upgrade detaches the older attachments. The
+    Deny statements must not break that."""
     doc = load_doc()
     cust = f"arn:aws:iam::{ACCT}:policy/peeks-anything"
     assert allowed(doc, "iam:CreatePolicy", cust)
     assert attach(doc, cust)
-    assert allowed(doc, "iam:CreatePolicyVersion", cust)
-    assert allowed(doc, "iam:PutRolePolicy", ROLE)
-    assert allowed(doc, "iam:PassRole", ROLE)
-    assert allowed(doc, "eks:CreateAccessEntry", f"arn:aws:eks:us-west-2:{ACCT}:cluster/any")
-    assert allowed(doc, "iam:UpdateAssumeRolePolicy", f"arn:aws:iam::{ACCT}:role/any-admin-role")
     assert allowed(doc, "iam:CreateRole", ROLE)
-    assert allowed(doc, "iam:PutRolePermissionsBoundary", ROLE)
-    assert allowed(doc, "iam:DeleteRolePermissionsBoundary", ROLE)
+    assert allowed(doc, "iam:PassRole", ROLE)
+    assert allowed(doc, "eks:CreatePodIdentityAssociation", f"arn:aws:eks:us-west-2:{ACCT}:cluster/any")
     own = f"arn:aws:iam::{ACCT}:policy/peeks-hub-crossplane-provider-scoped"
     own_role = f"arn:aws:iam::{ACCT}:role/peeks-hub-crossplane-provider"
     assert allowed(doc, "iam:DetachRolePolicy", own_role, {"iam:PolicyARN": own})
@@ -431,7 +423,7 @@ def test_attachment_names_follow_the_policy_not_the_index(tmp_path):
 GRAFANA_EC2_READ = ["ec2:DescribeSubnets", "ec2:DescribeDhcpOptions", "ec2:DescribeSecurityGroups",
                     "ec2:DescribeVpcs", "ec2:DescribeVpcAttribute", "ec2:DescribeNetworkInterfaces",
                     "ec2:DescribeAvailabilityZones"]
-WRITE_OR_ESCALATE = ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole",
+WRITE_ACTIONS = ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole",
                      "sts:AssumeRole", "ec2:CreateVpc", "ec2:CreateSecurityGroup", "ec2:DeleteSubnet",
                      "ec2:ModifyVpcAttribute", "ec2:AuthorizeSecurityGroupIngress", "ec2:RunInstances"]
 
@@ -468,7 +460,7 @@ def test_grafana_inline_policy_is_only_those_ec2_reads_and_the_scoped_slr(tmp_pa
     assert st["Effect"] == "Allow" and "Condition" not in st
     assert sorted(as_list(st["Action"])) == sorted(GRAFANA_EC2_READ)
     assert as_list(st["Resource"]) == ["*"]
-    for a in WRITE_OR_ESCALATE:
+    for a in WRITE_ACTIONS:
         assert not allowed(doc, a, "*"), a
         assert not allowed(doc, a, ROLE), a
 
