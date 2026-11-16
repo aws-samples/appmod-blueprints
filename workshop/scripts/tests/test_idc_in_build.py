@@ -61,7 +61,8 @@ def test_remote_records_the_idc_step():
 
 def test_ide_half_does_not_configure_identity_center():
     text = "\n".join(IDE)
-    assert "idc" not in text and "post-install" not in text
+    # it only reads the build's /<prefix>/idc-status
+    assert "idc:" not in text and "post-install" not in text and "configure_identity_center" not in text
 
 
 def test_default_install_still_runs_post_install():
