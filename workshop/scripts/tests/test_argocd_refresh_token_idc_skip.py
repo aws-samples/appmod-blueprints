@@ -187,3 +187,40 @@ def test_setup_env_persists_the_knob_under_go_task(tmp_path):
         out = platform_sh.read_text()
         assert "export USER1_PASSWORD=" in out, out
         assert ('export IDC_CONFIGURE_SKIP="true"' in out) == persisted, (args, extra)
+
+
+# ---------------------------------------------------------------- idc:configure runs in the CodeBuild install
+# Remote install (config privilegedSteps: external on the IDE): the IDE role has no sso/identitystore
+# right, so the IDE must never try to (re)configure Identity Center.
+NOTICE_REMOTE = "IDC_CONFIGURE_REMOTE=true: Identity Center is configured by the CodeBuild install"
+
+
+def test_remote_knob_skips_the_identity_center_fallback(tmp_path):
+    res, calls = _refresh(tmp_path, IDC_CONFIGURE_REMOTE="true")
+    assert res.returncode == 1, res.stderr
+    assert sum("argocd_token_automation.py" in c for c in calls) == 1, calls
+    assert _idc_calls(calls) == [], calls
+    assert NOTICE_REMOTE in res.stderr and "idc-status" in res.stderr, res.stderr
+    assert "Running IDC-Keycloak federation setup" not in res.stderr
+
+
+def test_remote_knob_still_gets_a_token(tmp_path):
+    res, calls = _refresh(tmp_path, IDC_CONFIGURE_REMOTE="true", FAKE_TOKEN="not-a-real-token")
+    assert res.returncode == 0, res.stderr
+    assert _idc_calls(calls) == [] and NOTICE_REMOTE not in res.stderr, (calls, res.stderr)
+
+
+def test_setup_env_marks_the_ide_when_the_install_is_remote(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(CONFIG + "privilegedSteps: external\n")
+    out = _setup_env(tmp_path, CONFIG_FILE=str(cfg))
+    assert re.findall(r"^export IDC_CONFIGURE_REMOTE=.*$", out, re.M) == ['export IDC_CONFIGURE_REMOTE="true"']
+    # ...and a new IDE shell then leaves Identity Center alone
+    res, calls = _refresh(tmp_path, preamble='source "$HOME/.bashrc.d/platform.sh"')
+    assert res.returncode == 1 and _idc_calls(calls) == [] and NOTICE_REMOTE in res.stderr, (calls, res.stderr)
+
+
+def test_setup_env_does_not_mark_an_inline_install(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text(CONFIG)
+    assert "IDC_CONFIGURE_REMOTE" not in _setup_env(tmp_path, CONFIG_FILE=str(cfg))

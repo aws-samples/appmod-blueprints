@@ -516,6 +516,13 @@ tasks:
           printf '{{.C_INFO}}  re-running cloudfront:attach inline (background run did not succeed).{{.C_RESET}}\n'
           task cloudfront:attach
         fi
+      # Identity Center <-> Keycloak federation (SAML + SCIM, Playwright/Chromium) runs HERE, under
+      # the install role: the IDE role has no sso/identitystore right. Keycloak is up (install:complete)
+      # and reachable (CloudFront joined). Tolerant like `install` (IDC_STRICT=false): the outcome is
+      # in /tmp/idc-configure-status, which the build publishes as /<prefix>/idc-status.
+      - '{{.STATE}} "RUNNING step=idc:configure"'
+      - task: idc:configure
+        vars: { IDC_STRICT: "false" }
       # The pivot detaches the hub from the kind cluster, which dies with this build: the spokes
       # must exist (ACTIVE) first, as in `install` where the pivot is the last step.
       - '{{.STATE}} "RUNNING step=wait-for-spokes"'
@@ -598,8 +605,7 @@ tasks:
       - 'sh "{{.REPO}}/scripts/install-remote-wait.sh"'
       - '{{.MARK}} step workshop join gitlab:init-ec2'
       - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-gitlab-init'
-      - '{{.MARK}} step workshop post-install'
-      - task: post-install
+      # Identity Center federation (post-install) runs in the CodeBuild install, with the Ray setup.
       # The Ray setup and the Kargo controller identity create IAM roles and Pod Identity
       # associations: this host has no IAM write, so they run in the CodeBuild install
       # (install:remote-extras), not here.
@@ -2469,6 +2475,10 @@ tasks:
         # Keep IDC_CONFIGURE_SKIP=true for the IDE shell too, so argocd-refresh-token's fallback
         # (hack/.bashrc.d/ssm-setup-ide-logs.sh) leaves the shared IAM Identity Center alone.
         if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then set_var IDC_CONFIGURE_SKIP "true"; fi
+        # Remote install (config written by workshop/fetch-install-config.sh): Identity Center was
+        # configured by the CodeBuild install and this IDE role holds no sso/identitystore right, so
+        # the same fallback must not run from here.
+        if [ "$(yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}} 2>/dev/null)" = "external" ]; then set_var IDC_CONFIGURE_REMOTE "true"; fi
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         source "$PLATFORM_FILE" 2>/dev/null || true
 
@@ -2571,7 +2581,11 @@ tasks:
               --type "SecureString" --overwrite --region {{.AWS_REGION}} > /dev/null
           ;;
           *)
-            ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+            # The CodeBuild install sets IDC_CONSOLE_ROLE_ARN: the role whose console session the
+            # flow uses (it holds the Identity Center rights; the IDE role holds none). Otherwise
+            # (inline install on the IDE) the IDE role, as before.
+            ROLE_ARN="${IDC_CONSOLE_ROLE_ARN:-}"
+            [ -n "$ROLE_ARN" ] || ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
               --query "Stacks[?contains(StackName,'{{.RESOURCE_PREFIX}}-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
               --output text 2>/dev/null | grep -o 'arn:aws:iam::[^[:space:]]*' | head -1) || ROLE_ARN=""
             case "$ROLE_ARN" in
@@ -2603,9 +2617,9 @@ tasks:
           ;;
         esac
       - printf '{{.C_STEP}}▸ Installing Playwright...{{.C_RESET}}\n'
-      - pip install playwright boto3 requests tenacity --quiet 2>/dev/null
+      - python3 -m pip install playwright boto3 requests tenacity --quiet
       - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
-      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
+      - S=sudo; [ "$(id -u)" = 0 ] && S=""; $S yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
       - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
       - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
       - |

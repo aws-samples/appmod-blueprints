@@ -152,7 +152,7 @@ def test_ide_half_has_no_platform_install_no_iam_write_no_pivot():
 def test_ide_waits_for_the_build_before_anything_that_needs_the_hub():
     wait = _index(IDE, "install-remote-wait.sh")
     gitlab_bg = _index(IDE, "task -x gitlab:init-ec2")
-    for later in ("hub:wait-for-gitlab-init", "task: post-install", "task: wait-for-spokes", "task: setup-env"):
+    for later in ("hub:wait-for-gitlab-init", "task: wait-for-spokes", "task: setup-env"):
         assert wait < _index(IDE, later), later
     assert gitlab_bg < wait  # GitLab init must run while the build waits for its PAT
 
