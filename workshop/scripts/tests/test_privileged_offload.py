@@ -33,6 +33,8 @@ echo "$*" >> "$FAKE_AWS_LOG"
 prev=""; for a in "$@"; do
   if [ "$prev" = "--role-name" ] && [ -z "$a" ]; then echo "empty --role-name" >&2; exit 252; fi
   prev="$a"; done
+if [ -n "${FAKE_DENY:-}" ] && [ "$2" = "$FAKE_DENY" ]; then
+  echo "An error occurred (AccessDenied) when calling the $2 operation: denied" >&2; exit 254; fi
 case "$1 $2" in
   "sts get-caller-identity")
     case "$*" in *Account*) echo 111122223333 ;; *) echo "arn:aws:sts::111122223333:assumed-role/Runner/s" ;; esac ;;
@@ -45,7 +47,10 @@ case "$1 $2" in
   "iam list-attached-role-policies")
     [ "${FAKE_ROLES:-present}" = present ] || exit 254
     printf '%s\t' $FAKE_ALL_POLICIES; echo ;;
-  "eks describe-capability"|"eks describe-cluster") exit 254 ;;
+  "eks describe-cluster")
+    [ "${FAKE_HUB:-gone}" = live ] && { echo ACTIVE; exit 0; }
+    echo "An error occurred (ResourceNotFoundException) when calling the DescribeCluster operation: No cluster found" >&2; exit 254 ;;
+  "eks describe-capability") exit 254 ;;
   "eks list-clusters") echo "" ;;
   *) echo ok ;;
 esac
@@ -90,11 +95,11 @@ def repo(tmp_path):
     return r
 
 
-def _run(tmp_path, repo, provider, args, mode=None, roles="present", cwd=None):
+def _run(tmp_path, repo, provider, args, mode=None, roles="present", cwd=None, env_extra=None, fakes=()):
     (repo / "config.local.yaml").write_text(_config(provider, mode))
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
-    for name, body in (("aws", FAKE_AWS), ("curl", FAKE_FAIL), ("kind", FAKE_FAIL)):
+    for name, body in (("aws", FAKE_AWS), ("curl", FAKE_FAIL), ("kind", FAKE_FAIL)) + tuple(fakes):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
     log = tmp_path / "calls.log"
@@ -104,6 +109,7 @@ def _run(tmp_path, repo, provider, args, mode=None, roles="present", cwd=None):
                INSTALL_TIMING_LOG=str(tmp_path / "timing.log"))
     for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG"):
         env.pop(k, None)
+    env.update(env_extra or {})
     res = subprocess.run([TASK, "-d", str(cwd or repo), *args], env=env, capture_output=True,
                          text=True, timeout=180)
     calls = [line.split() for line in log.read_text().splitlines() if line.strip()]
@@ -335,3 +341,50 @@ def test_crossplane_pre_never_writes_an_empty_role_arn(tmp_path, repo):
 def test_workshop_install_codebuild_says_the_key_persists(tmp_path, repo):
     res, _ = _run(tmp_path, repo, "kind-kro-ack", ["install:codebuild"], roles="absent", cwd=repo / "workshop")
     assert "stay external until the key is removed" in res.stdout
+
+
+FAKE_PY = "#!/usr/bin/env bash\necho \"python3 $*\" >> \"$FAKE_AWS_LOG\"\n"
+PRE_ROLES = {
+    "kind-kro-ack": {f"acme-cluster-mgmt-{s}" for s in SERVICES}
+    | {"acme-hub-crossplane-provider", "acme-model-prestage-role", "acme-ray-worker-role"},
+    "kind-crossplane": {f"acme-cluster-mgmt-{s}" for s in SERVICES}
+    | {"acme-model-prestage-role", "acme-ray-worker-role"},
+}
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_privileged_destroy_deletes_what_pre_created(tmp_path, repo, provider):
+    res, calls = _run(tmp_path, repo, provider, ["privileged:destroy"], fakes=(("python3", FAKE_PY),))
+    assert res.returncode == 0, res.stdout + res.stderr
+    deleted = {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "delete-role"]}
+    assert deleted == PRE_ROLES[provider]
+    assert any(c[0] == "python3" and "sweep-log-deliveries.py" in c[1] for c in calls)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_privileged_destroy_refuses_while_hub_exists(tmp_path, repo, provider):
+    res, calls = _run(tmp_path, repo, provider, ["privileged:destroy"], env_extra={"FAKE_HUB": "live"},
+                      fakes=(("python3", FAKE_PY),))
+    assert res.returncode != 0 and "still exists" in res.stderr
+    assert not any(c[:2] == ["iam", "delete-role"] for c in calls)
+
+
+def test_privileged_destroy_reports_a_role_it_could_not_delete(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:destroy"], env_extra={"FAKE_DENY": "delete-role"},
+                      fakes=(("python3", FAKE_PY),))
+    assert res.returncode != 0
+    assert "not deleted" in res.stderr and "acme-hub-crossplane-provider" in res.stderr and "AccessDenied" in res.stderr
+
+
+def test_privileged_destroy_refuses_external_config(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:destroy"], mode="external",
+                      fakes=(("python3", FAKE_PY),))
+    assert res.returncode != 0 and "must not set privilegedSteps" in res.stderr
+    assert not any(c[:2] == ["iam", "delete-role"] for c in calls)
+
+
+def test_kro_ack_destroy_6b_records_a_role_it_could_not_delete():
+    text = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
+    block = text[text.index("# 6b. ALL remaining"):text.index("# 6b2. Shared fixed-name roles")]
+    assert 'delete-role --role-name "$ROLE" 2>/dev/null || true' not in block
+    assert 'iam-delete-role(6b)" >> "$FAILED"' in block

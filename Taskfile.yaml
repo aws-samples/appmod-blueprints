@@ -282,6 +282,18 @@ tasks:
       - task: enable-capability-logs
       - printf '\033[1;32m✓ privileged:post complete.\033[0m\n'
 
+  privileged:destroy:
+    desc: "Privileged runner, after task destroy: delete the roles privileged:pre created and the capability-log deliveries"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    preconditions:
+      - sh: '[ "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" = "inline" ]'
+        msg: "privileged:* runs the privileged steps itself: its config must not set privilegedSteps (or must set it to inline)."
+    cmds:
+      - task: "{{.PROVIDER}}:privileged:destroy"
+      - printf '\033[1;32m✓ privileged:destroy complete.\033[0m\n'
+
   # Called at the top of install / install:hub with the (already validated) mode.
   privileged:verify:inline:
     internal: true
