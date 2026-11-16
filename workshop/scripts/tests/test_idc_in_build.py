@@ -95,7 +95,7 @@ def test_chromium_deps_install_still_uses_sudo_for_a_normal_user(tmp_path):
 
 
 def test_pip_goes_through_the_interpreter_and_is_not_silenced():
-    (c,) = [c for c in IDC if "playwright boto3" in c]
+    (c,) = [c for c in IDC if "pip install playwright" in c]
     assert c.startswith("python3 -m pip install") and "2>/dev/null" not in c
 
 
@@ -242,3 +242,58 @@ def test_no_lambda_in_the_build_is_an_error_not_an_instance_profile_fallback(tmp
     r, log = _run_cred(tmp_path, False, "arn:aws:iam::000000000000:role/idc-console")
     assert r.returncode == 1, r.stdout + r.stderr
     assert "curl" not in log and "ssm put-parameter" not in log
+
+
+# ---------------------------------------------------------------- console credentials lifetime, pins
+
+def _idc_task():
+    return yaml.safe_load(open(os.path.join(REPO, "workshop", "Taskfile.yaml")))["tasks"]["idc:configure"]
+
+
+def _creds_cmds():
+    cmds = _idc_task()["cmds"]
+    (defer,) = [c for c in cmds if isinstance(c, dict) and "defer" in c]
+    (get,) = [c for c in cmds if isinstance(c, str) and "ssm get-parameter" in c]
+    return defer, get
+
+
+FAKE_AWS_SSM = r"""#!/bin/sh
+echo "aws $*" >> "$LOG"
+case "$1 $2" in
+  "ssm get-parameter") echo '{"AccessKeyId":"x"}' ;;
+  "ssm delete-parameter") [ "${FAKE_DELETE_FAIL:-0}" = 1 ] && exit 254 ;;
+esac
+exit 0
+"""
+
+
+@pytest.mark.skipif(not shutil.which("task"), reason="needs go-task on PATH")
+@pytest.mark.parametrize("later_rc,delete_fail", [(3, False), (0, False), (0, True)])
+def test_console_credentials_are_deleted_when_the_task_ends(tmp_path, later_rc, delete_fail):
+    defer, get = _creds_cmds()
+    local = tmp_path / "creds.json"
+    sub = lambda s: (s.replace("/tmp/keycloak-idc-integration-credentials.json", str(local))
+                     .replace("{{.RESOURCE_PREFIX}}", "acme").replace("{{.AWS_REGION}}", "us-west-2"))
+    doc = {"version": "3", "tasks": {"t": {"cmds": [
+        {"defer": sub(defer["defer"])}, sub(get), f"stat -c %a {local} > {tmp_path / 'mode'}", f"exit {later_rc}"]}}}
+    (tmp_path / "Taskfile.yml").write_text(yaml.safe_dump(doc, sort_keys=False))
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "aws").write_text(FAKE_AWS_SSM)
+    (tmp_path / "bin" / "aws").chmod(0o755)
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", LOG=str(tmp_path / "log"),
+               FAKE_DELETE_FAIL="1" if delete_fail else "0")
+    r = subprocess.run([shutil.which("task"), "-d", str(tmp_path), "t"], env=env, capture_output=True,
+                       text=True, timeout=60)
+    assert (r.returncode == 0) is (later_rc == 0), r.stdout + r.stderr  # a failed delete is not fatal
+    assert (tmp_path / "mode").read_text().strip() == "600"
+    assert not local.exists()
+    assert "ssm delete-parameter --name /acme/keycloak-idc-integration-credentials" in (tmp_path / "log").read_text()
+    assert ("could not delete" in r.stdout) is delete_fail
+
+
+def test_python_packages_are_pinned():
+    (pip,) = [c for c in _flat(_idc_task()["cmds"]) if "pip install" in c]
+    assert pip.startswith("python3 -m pip install") and "2>/dev/null" not in pip
+    pkgs = [w for w in pip.split()[4:] if not w.startswith("-")]
+    assert sorted(p.split("==")[0] for p in pkgs) == ["boto3", "playwright", "requests", "tenacity"]
+    assert all(re.fullmatch(r"[a-z0-9]+==\d+(\.\d+)+", p) for p in pkgs), pkgs
