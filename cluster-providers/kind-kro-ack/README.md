@@ -163,7 +163,8 @@ hand out in-cluster:
   the second names `managed-policy.sh` uses after a document change (`...-scoped-<sha8>`), so
   the provider cannot edit or delete these documents.
 
-This removes `AdministratorAccess` from the `crossplane-base` provider roles and refuses
+This removes `AdministratorAccess` from the `crossplane-base` provider roles and, where
+provider-aws-iam runs with this document (the kind-kro-ack hub and kro-ack spokes), refuses
 AWS managed admin policies through provider-aws-iam. It covers that path only; broader
 least-privilege work for the controller roles (for example a permissions boundary) is
 tracked separately.
@@ -250,7 +251,8 @@ absent, attaches the scoped policy and detaches `AdministratorAccess` (best effo
 is therefore scoped on its next `task install`, and a later change of the policy document
 reaches it too. `hub:bootstrap-crossplane-identity` only creates the PIAs and stays skipped while
 both exist. The kind-crossplane provider and
-`spokes:seed-provider-identity` create the scoped policy but do not detach `AdministratorAccess`.
+`spokes:seed-provider-identity` create the scoped policy but do not detach the legacy policy
+(`AdministratorAccess`, or `IAMFullAccess` on the kind-crossplane `<prefix>-cluster-mgmt-iam`).
 
 On kind-crossplane spokes the seeded scoped policy is additive, not the effective permission:
 the hub addon `crossplane-pod-identity` (selected for `provider NotIn [kro-ack]`) adopts the same
@@ -270,7 +272,8 @@ To create these roles yourself (for example in CloudFormation), set their ARNs u
 IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
 `crossplaneProviderRoleArn` applies when the PIAs are created (fresh hub, or reinstall after
 `task destroy`). Existing associations are not repointed: on an existing hub, setting it has
-no effect until the PIAs are recreated.
+no effect until the PIAs are recreated, and the default `<hub>-crossplane-provider` keeps its
+policies; `hub:scope-crossplane-provider-role` prints a warning when that role still exists.
 
 ## Credentials on Kind
 

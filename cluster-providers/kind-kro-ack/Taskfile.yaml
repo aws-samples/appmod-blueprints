@@ -1820,6 +1820,11 @@ tasks:
         BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
         if [ -n "$BYO_ARN" ]; then
           echo "  hub.iam.crossplaneProviderRoleArn is set: that role and its permissions are the consumer's, not scoped here"
+          # Existing pod identity associations are not repointed to the BYO role, so a default
+          # role left by an earlier install is still the one the providers use.
+          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            printf '{{.C_INFO}}  ⚠ %s still exists and existing pod identity associations may still use it with its current policies; recreate them (task destroy, or delete the crossplane-system PIAs) to switch to the bring-your-own role{{.C_RESET}}\n' "$ROLE_NAME"
+          fi
           exit 0
         fi
         TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'

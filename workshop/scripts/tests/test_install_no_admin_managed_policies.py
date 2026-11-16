@@ -853,7 +853,24 @@ def test_scope_skips_a_bring_your_own_role(tmp_path):
     byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
     r, out, log = run(tmp_path, b, "scope", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}", existing="cfn-crossplane")
     assert r.returncode == 0, out
-    assert [c for c in log if " iam " in c] == [], log
+    # read-only: only the check for a default role left by an earlier install
+    assert [c.split()[2] for c in log if " iam " in c] == ["get-role"], log
+    assert "still exists" not in out, out
+
+
+@needs_task
+def test_scope_with_byo_warns_when_the_default_role_is_still_there(tmp_path):
+    """An existing hub upgraded with a BYO ARN: its PIAs still point at the default role, which
+    keeps its policies. The task does not touch it, but must say so."""
+    b = harness(tmp_path)
+    byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
+    r, out, log = run(tmp_path, b, "scope", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}",
+                      existing="cfn-crossplane hub-crossplane-provider",
+                      attached="arn:aws:iam::aws:policy/AdministratorAccess")
+    assert r.returncode == 0, out
+    assert "hub-crossplane-provider still exists" in out and "bring-your-own role" in out, out
+    for verb in ("create-policy", "attach-role-policy", "detach-role-policy", "create-role"):
+        assert not calls_of(log, verb), (verb, log)
 
 
 @needs_task
