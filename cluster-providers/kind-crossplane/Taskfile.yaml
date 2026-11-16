@@ -646,6 +646,14 @@ tasks:
             fi
           fi
         ignore_error: true
+      # The hub's provider-aws-iam/eks identity (role + Pod Identity association), created
+      # from kind under the installer's aws-credentials. The chart defaults iam/eks to
+      # createIdentity: false (the GitOps registry path), so it is enabled here explicitly.
+      # Exception to "no admin-like managed policy from the installer": these two roles
+      # keep AdministratorAccess as before (shortcut: scope them to the customer-managed
+      # crossplane-provider-policy.json document, which also needs crossplane-pod-identity's
+      # spoke iam/eks identities moved off AdministratorAccess). Keep the flags in step with
+      # the destroy render below (test_crossplane_provider_scope.py).
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -653,6 +661,10 @@ tasks:
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
           --set providers.iam.version=v2.7.0
           --set providers.eks.version=v2.7.0
+          --set providers.iam.createIdentity=true
+          --set providers.eks.createIdentity=true
+          --set 'providers.iam.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}'
+          --set 'providers.eks.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}'
           | kubectl apply -f -
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
           --set aws.region={{.AWS_REGION}}
@@ -2367,7 +2379,19 @@ tasks:
             --set providers.iam.version=v2.7.0 \
             --set providers.eks.version=v2.7.0 \
             --set providers.ec2.version=v2.7.0 \
+            --set providers.iam.createIdentity=true \
+            --set providers.eks.createIdentity=true \
+            --set 'providers.iam.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}' \
+            --set 'providers.eks.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}' \
             | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          # Attachment names from older chart versions (<name>-provider-admin-attachment): the
+          # render above no longer produces them, and a role delete fails (DeleteConflict) while
+          # a policy is still attached.
+          for P in iam eks ec2; do
+            kubectl delete rolepolicyattachments.iam.aws.upbound.io "$P-provider-admin-attachment" \
+              --ignore-not-found --wait=false 2>/dev/null || true
+          done
+          kubectl wait --for=delete rolepolicyattachments.iam.aws.upbound.io --all --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
         ignore_error: true
@@ -2707,7 +2731,10 @@ tasks:
               #    Not the effective permission on its own: the hub's crossplane-pod-identity
               #    addon (provider NotIn [kro-ack]) adopts these same <spoke>-Crossplane{IAM,EKS}ProviderRole
               #    roles and attaches AdministratorAccess through an in-cluster Crossplane
-              #    RolePolicyAttachment, so the spoke iam/eks providers stay AdministratorAccess.
+              #    RolePolicyAttachment. The spoke iam/eks providers therefore hold
+              #    AdministratorAccess minus what this document explicitly denies (an
+              #    explicit Deny beats an Allow): attaching an AWS managed policy outside
+              #    the allowlist, and changing the provider scoped policies.
               #    That attachment is made by provider-aws-iam, not the installing principal;
               #    scoping it is follow-up work.
               sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
