@@ -123,6 +123,89 @@ Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `
 > Prevention and recovery steps:
 > [custom-install.md, section 3a](../../docs/install/custom-install.md#3a-shared-account-or-forked-fleet-repo-scope-the-fleet).
 
+## IAM roles created by `task install`
+
+`task install` never attaches an admin-like AWS managed policy (`AdministratorAccess`,
+`PowerUserAccess`, `IAMFullAccess`). A consumer can therefore deny that on the installing role
+(an `iam:AttachRolePolicy` Deny with an `iam:PolicyARN` condition) without breaking the install.
+
+| Role | Policy |
+|---|---|
+| `<hub>-crossplane-provider` (Crossplane provider-aws-iam/eks) | customer-managed `<hub>-crossplane-provider-scoped`¹ = [`common/iam/crossplane-provider-policy.json`](../common/iam/crossplane-provider-policy.json) |
+| `<prefix>-cluster-mgmt-iam` (ACK iam) | customer-managed `<prefix>-cluster-mgmt-iam-scoped` = [`common/iam/cluster-mgmt-iam-policy.json`](../common/iam/cluster-mgmt-iam-policy.json) |
+| `<spoke>-Crossplane{IAM,EKS}ProviderRole` (`spokes:seed-provider-identity`) | customer-managed `<role>-scoped`¹ = `crossplane-provider-policy.json` |
+| other `<prefix>-cluster-mgmt-<svc>` | unchanged service managed policies (`AmazonEC2FullAccess`, `AmazonS3FullAccess`, …) |
+
+¹ The policy is named `<role>-scoped`, with `<prefix>-` in front when the role name does not
+already start with it, so every scoped policy matches `policy/<prefix>-*`.
+
+Both scoped policies keep `iam:*` on roles, policies, instance profiles and OIDC providers: the
+Crossplane and ACK IAM controllers create roles with arbitrary names for the addons and apps.
+They no longer grant IAM users, groups, access keys or account settings. Outside IAM they grant
+only `sts:GetCallerIdentity`, plus `eks:*` and `ec2:Describe*` for the Crossplane role. This is
+not a privilege boundary: a principal that can create a role and write its policy can still
+grant itself more.
+
+### Why customer-managed, and how re-runs converge
+
+The documents are customer-managed policies, not inline ones: a consumer may allow
+`iam:PutRolePolicy` only on a few named roles, but `iam:CreatePolicy`/`iam:AttachRolePolicy`
+on `policy/<prefix>-*` and `role/<prefix>-*`. [`common/iam/managed-policy.sh`](../common/iam/managed-policy.sh)
+does the work, and stops the task on any IAM error other than `NoSuchEntity`:
+
+- policy absent: `CreatePolicy`, `AttachRolePolicy`;
+- policy present with the same default document: `AttachRolePolicy` only;
+- policy present with another document: `DetachRolePolicy`, `DeletePolicyVersion` for each
+  non-default version, `DeletePolicy`, then `CreatePolicy` and `AttachRolePolicy`.
+  `CreatePolicyVersion` is not used, because a consumer may not grant it. The cost: during that
+  recreate the role has no scoped policy for a few seconds, so a Crossplane or ACK call made in
+  that window gets `AccessDenied` and is retried by the controller. If the run fails in the
+  window, the policy is absent and the next run creates it. If the delete itself fails (for
+  example `DeleteConflict` because the policy is attached to another role), the old policy is
+  attached to the role again and the task fails, so the role keeps its permissions.
+
+IAM calls it makes: `GetPolicy`, `GetPolicyVersion`, `ListPolicyVersions`, `CreatePolicy`,
+`AttachRolePolicy`, `DetachRolePolicy`, `DeletePolicyVersion`, `DeletePolicy`.
+
+`task destroy` (step 6b) skips the roles named in `hub.iam.*` (bring-your-own), and deletes the scoped policy of each other role it deletes, before the role:
+detach, non-default versions, delete. Step 6c and the prefix-based sweeps also delete any
+leftover `<prefix>-*` policy. kind-crossplane's destroy keeps the `cluster-mgmt-*` and
+Crossplane provider roles, so their scoped policies stay attached to them.
+
+The kro-ack spoke role `<spoke>-crossplane-provider` (`rg-eks.yaml`, spokes with
+`enable_crossplane_aws`) gets the same document as an ACK `Policy` named
+`<spoke>-crossplane-provider-scoped`, attached through `policies`, and ACK deletes it with the
+spoke. That name has no added `<prefix>-`, so it matches `policy/<prefix>-*` only when the
+spoke name starts with the resource prefix (the default fleet does). Upgrade note: that
+change reaches running spokes on the next RGD sync, without
+re-running `task install`; ACK is expected to drop the older `AdministratorAccess` and attach the managed one (not verified live).
+
+Legacy attachments from older installs are detached (best-effort) only when the task runs, and
+only for the two hub roles. `hub:create-mgmt-roles` runs on every `task install`, so
+`IAMFullAccess` is detached from `<prefix>-cluster-mgmt-iam` on the next install.
+`hub:scope-crossplane-provider-role` runs on every `task install` (not gated on the pod identity
+associations, skipped for a bring-your-own role): it creates `<hub>-crossplane-provider` if
+absent, attaches the scoped policy and detaches `AdministratorAccess` (best effort). A live hub
+is therefore scoped on its next `task install`, and a later change of the policy document
+reaches it too. `hub:bootstrap-crossplane-identity` only creates the PIAs and stays skipped while
+both exist. The kind-crossplane provider and
+`spokes:seed-provider-identity` create the scoped policy but do not detach `AdministratorAccess`.
+
+On kind-crossplane spokes the seeded scoped policy is additive, not the effective permission:
+the hub addon `crossplane-pod-identity` (selected for `provider NotIn [kro-ack]`) adopts the same
+`<spoke>-CrossplaneIAMProviderRole` / `<spoke>-CrossplaneEKSProviderRole` roles and still attaches
+`AdministratorAccess` to them through a Crossplane `RolePolicyAttachment`. That attachment is made
+in-cluster by provider-aws-iam, like `crossplane-base`, not by the installing principal, so it is
+out of scope here; scoping it is follow-up work.
+
+To create these roles yourself (for example in CloudFormation), set their ARNs under `hub.iam`
+(see `config.yaml`). A set ARN is used as is: no create, no trust update, no policy. Each
+`clusterMgmtRoleArns.<svc>` must be named `<resourcePrefix>-cluster-mgmt-<svc>`, because the
+IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
+`crossplaneProviderRoleArn` applies when the PIAs are created (fresh hub, or reinstall after
+`task destroy`). Existing associations are not repointed: on an existing hub, setting it has
+no effect until the PIAs are recreated.
+
 ## Credentials on Kind
 
 ACK controllers on Kind cannot use Pod Identity (no IMDS). The Taskfile creates an `aws-credentials` Secret and configures each ACK controller Helm chart with:
