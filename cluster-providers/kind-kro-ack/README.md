@@ -144,8 +144,7 @@ Both scoped policies keep `iam:*` on roles, policies, instance profiles and OIDC
 Crossplane and ACK IAM controllers create roles with arbitrary names for the addons and apps.
 They no longer grant IAM users, groups, access keys or account settings. Outside IAM they grant
 only `sts:GetCallerIdentity`, plus `eks:*` and `ec2:Describe*` for the Crossplane role. This is
-not a privilege boundary: a principal that can create a role and write its policy can still
-grant itself more.
+least-privilege scoping, not a permissions boundary.
 
 The Crossplane document also has two `Deny` statements, which narrow what provider-aws-iam can
 hand out in-cluster:
@@ -161,26 +160,13 @@ hand out in-cluster:
 - `DenyChangeProviderScopedPolicies`: no `iam:CreatePolicyVersion`, `SetDefaultPolicyVersion`,
   `DeletePolicyVersion` or `DeletePolicy` on `policy/*-crossplane-provider-scoped` (hub and
   rg-eks spoke) or `policy/*ProviderRole-scoped` (`spokes:seed-provider-identity`), nor on
-  the second names `managed-policy.sh` uses after a document change (`...-scoped-<sha8>`). The provider
-  cannot edit or delete these documents. It can still detach them, and create and attach a new
-  customer-managed policy, so this protects the documents, not the rights.
+  the second names `managed-policy.sh` uses after a document change (`...-scoped-<sha8>`), so
+  the provider cannot edit or delete these documents.
 
-This removes `AdministratorAccess` from the `crossplane-base` provider roles and stops the
-attach-an-AWS-managed-admin-policy path. It does **not** change what provider-aws-iam can
-ultimately grant: whoever can get a Crossplane IAM managed resource reconciled can still reach
-full admin, for example with a `Policy` of `*:*` plus a `RolePolicyAttachment`, or a `Role` with
-an inline policy. Still allowed:
-
-- `iam:CreatePolicy` then attach (customer-managed policies are not restricted);
-- inline `iam:PutRolePolicy`;
-- `iam:CreatePolicyVersion` on any other policy;
-- `iam:UpdateAssumeRolePolicy` on any role (take over an existing admin role by rewriting its
-  trust) and `iam:CreateRole`;
-- `iam:PutRolePermissionsBoundary` / `iam:DeleteRolePermissionsBoundary`;
-- `iam:PassRole` of any role;
-- `eks:*` (access entries and pod identity associations on any cluster).
-
-A permissions boundary is the fix for those; it must also deny the boundary operations above.
+This removes `AdministratorAccess` from the `crossplane-base` provider roles and refuses
+AWS managed admin policies through provider-aws-iam. It covers that path only; broader
+least-privilege work for the controller roles (for example a permissions boundary) is
+tracked separately.
 
 `crossplane-base` attaches a per-provider service policy to each provider role it creates
 (`providers.<name>.policyArns`, e.g. `AmazonEC2FullAccess` for ec2), not `AdministratorAccess`.

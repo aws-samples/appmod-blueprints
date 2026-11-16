@@ -188,7 +188,8 @@ def test_scoped_name_matches_script():
 
 
 def test_known_gaps_still_open():
-    """Not closed by this change (see the PR description). If one flips, update the docs."""
+    """Outside the scope of this change (the README says it is not a permissions boundary).
+    If one flips, update the README."""
     doc = load_doc()
     cust = f"arn:aws:iam::{ACCT}:policy/peeks-anything"
     assert allowed(doc, "iam:CreatePolicy", cust)
