@@ -150,8 +150,8 @@ grant itself more.
 The Crossplane document also has two `Deny` statements, which narrow what provider-aws-iam can
 hand out in-cluster:
 
-- `DenyAttachAwsManagedPolicyOutsideAllowlist`: `iam:AttachRolePolicy` of an AWS managed policy
-  (`arn:*:iam::aws:policy/*`) is refused unless it is on an explicit list (`iam:PolicyARN`).
+- `DenyAttachAwsManagedPolicyOutsideAllowlist`: `iam:AttachRolePolicy`, `iam:AttachUserPolicy` and `iam:AttachGroupPolicy` of an AWS managed
+  policy (`arn:*:iam::aws:policy/*`) is refused unless it is on an explicit list (`iam:PolicyARN`).
   The list is the service policies the charts attach through Crossplane (`crossplane-base`
   provider roles, the Karpenter node role, the Grafana workspace role, the `platform-cluster`
   composition). `AdministratorAccess`, `PowerUserAccess` and `IAMFullAccess` are not on it.
@@ -204,7 +204,11 @@ kind-crossplane exception: its hub `<hub>-CrossplaneIAMProviderRole` /
 and keep `AdministratorAccess`, as before this change. So on kind-crossplane the installer does
 attach `AdministratorAccess`, and a consumer Deny on that breaks the install. The kind-crossplane
 destroy deletes these attachments, including the older `<name>-provider-admin-attachment` names,
-before the roles.
+before the roles. A `crossplane:claims` re-run first sets `deletionPolicy: Orphan` on the older iam/eks
+`<name>-provider-admin-attachment` objects and deletes them, so the renamed objects take over the
+same attachment without detaching it. Do not apply the generic upgrade step above (delete the old
+attachment once the new one is Ready) to these two: old and new reference the same
+`AdministratorAccess` ARN, so a plain delete detaches the policy.
 
 ### Why customer-managed, and how re-runs converge
 
