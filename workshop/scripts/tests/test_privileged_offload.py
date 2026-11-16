@@ -495,3 +495,35 @@ def test_kro_ack_destroy_6b_records_a_role_it_could_not_delete(tmp_path):
         assert r.returncode == 0, r.stderr
         assert ("iam-delete-role(6b)" in failed.read_text()) is recorded, (err, r.stdout)
         assert ("not deleted (AccessDenied)" in r.stdout) is recorded
+
+
+@pytest.mark.parametrize("entry", ["kind-kro-ack:hub:create-mgmt-roles", "privileged:post"])
+def test_kro_ack_ack_assume_put_fails_when_hub_exists(tmp_path, repo, entry):
+    env = {"FAKE_CAP_ARN": "arn:aws:iam::111122223333:role/acme-hub-ack-capability-role",
+           "FAKE_DENY": "put-role-policy", "FAKE_DENY_ROLE": "acme-hub-ack-capability-role"}
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", [entry], env_extra=env)
+    assert res.returncode != 0, res.stdout
+    assert "AccessDenied" in res.stderr and "roles ready" not in res.stdout
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", [entry], env_extra={"FAKE_CAP_ARN": env["FAKE_CAP_ARN"]})
+    assert res.returncode == 0, res.stdout + res.stderr
+    puts = [c for c in calls if c[:2] == ["iam", "put-role-policy"] and "ack-assume-role" in c]
+    assert puts and puts[0][puts[0].index("--role-name") + 1] == "acme-hub-ack-capability-role"
+
+
+def test_kro_ack_ack_assume_put_skipped_before_the_hub(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:pre"], roles="absent")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not [c for c in calls if c[:2] == ["iam", "put-role-policy"] and "ack-assume-role" in c]
+    assert "ack-assume-role is applied once the hub is up" in res.stdout
+
+
+def test_role_check_without_arguments_is_an_error():
+    r = subprocess.run(["sh", os.path.join(REPO, "cluster-providers", "common", "scripts", "iam-role-check.sh")],
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "usage" in r.stderr
+
+
+def test_workshop_install_codebuild_names_supported_providers(tmp_path, repo):
+    res, calls = _run(tmp_path, repo, "terraform", ["install:codebuild"], cwd=repo / "workshop")
+    assert res.returncode != 0 and "kind-kro-ack and kind-crossplane providers only" in res.stderr
+    assert not (_verbs(calls, "iam") & IAM_WRITES)

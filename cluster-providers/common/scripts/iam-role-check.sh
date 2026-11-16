@@ -19,7 +19,8 @@ iam_role_state() {
   fi
 }
 
-if [ "${IAM_ROLE_CHECK_LIB:-}" != 1 ] && [ "$#" -gt 0 ]; then
+if [ "${IAM_ROLE_CHECK_LIB:-}" != 1 ]; then
+  [ "$#" -gt 0 ] || { echo "usage: sh iam-role-check.sh ROLE..." >&2; exit 2; }
   _irc_missing=""; _irc_errors=""
   for _irc_role in "$@"; do
     _irc_state=$(iam_role_state "$_irc_role")

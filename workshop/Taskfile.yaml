@@ -424,6 +424,9 @@ tasks:
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    preconditions:
+      - sh: 'case "{{.PROVIDER}}" in kind-kro-ack|kind-crossplane) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps: external is supported by the kind-kro-ack and kind-crossplane providers only (clusterProvider is {{.PROVIDER}})."
     cmds:
       - yq -i '.privilegedSteps = "external"' {{.CONFIG_FILE}}
       - "printf '{{.C_INFO}}  privilegedSteps=external written to {{.CONFIG_FILE}}; later task install runs stay external until the key is removed.{{.C_RESET}}\\n'"

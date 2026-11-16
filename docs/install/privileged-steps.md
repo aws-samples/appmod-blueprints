@@ -40,7 +40,8 @@ The runner's role must allow, on the role names above (`<prefix>-cluster-mgmt-*`
 
 - `privileged:pre`: `iam:GetRole`, `iam:CreateRole`, `iam:UpdateAssumeRolePolicy`,
   `iam:AttachRolePolicy` (the managed policies each role gets, see `get_policies()` in the
-  provider's `hub:create-mgmt-roles:apply` and `hub:crossplane-provider-role:apply`),
+  provider's `hub:create-mgmt-roles:apply`; on `kind-kro-ack`, `<hub>-crossplane-provider`
+  gets `arn:aws:iam::aws:policy/AdministratorAccess`, see `hub:crossplane-provider-role:apply`),
   `iam:PutRolePolicy`; `eks:DescribeCapability` on the hub (read; it may not exist yet).
 - `privileged:post`: the same, plus `iam:PutRolePolicy` on the hub's ACK capability role, and
   what `task enable-capability-logs` calls (`eks:DescribeCapability`, `eks:ListClusters`, the
