@@ -5076,7 +5076,7 @@ tasks:
           # is a string, but Argo CD / Kubernetes parse YAML 1.1, where it is a boolean. A
           # platformTags value like auto-delete: "no" then reached the hub as `false` and the
           # sync failed: ".spec.awsTags.auto-delete: expected string, got &v...", so the
-          # adoption gate timed out and the pivot aborted (rosa PoC run, 2026-11-15).
+          # adoption gate timed out and the pivot aborted (PoC run, 2026-11-15).
           yq -p=json -o=yaml '(.. | select(tag == "!!str")) style="double"' "$WORK/hub-instance.json" > "$WORK/hub-instance.yaml"
           if OVERLAY_GIT_PASSWORD="$REPO_PASS" OVERLAY_GIT_USERNAME="${REPO_USER:-x-access-token}" \
                bash '{{.ROOT_DIR}}/cluster-providers/kind-kro-ack/scripts/pivot-overlay-git.sh' publish \
