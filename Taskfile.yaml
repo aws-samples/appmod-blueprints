@@ -303,14 +303,19 @@ tasks:
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    preconditions:
+      - sh: 'case "{{.PROVIDER}}" in kind-kro-ack|kind-crossplane) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps: external is supported by the kind-kro-ack and kind-crossplane providers only (clusterProvider is {{.PROVIDER}})."
     cmds:
       - task: "{{.PROVIDER}}:privileged:verify"
 
-  install:codebuild:
+  # install:codebuild: earlier name, kept so existing callers keep working.
+  install:external:
     desc: "task install for a host whose privileged steps run elsewhere (privilegedSteps: external; see privileged:pre/post)"
+    aliases: [install:codebuild]
     preconditions:
       - sh: '[ "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" = "external" ]'
-        msg: "install:codebuild needs privilegedSteps: external in {{.CONFIG_FILE}} (use task install otherwise)."
+        msg: "install:external needs privilegedSteps: external in {{.CONFIG_FILE}} (use task install otherwise)."
     cmds:
       # task install verifies, read-only and before kind/ACK, that privileged:pre ran.
       - task: install

@@ -86,8 +86,8 @@ fi
 if [ -n "$MISSING" ]; then
   echo "✗ privilegedSteps=external but the IAM roles are not ready:" >&2
   for m in $MISSING; do echo "    - $m" >&2; done
-  echo "  They are created by the privileged runner (task privileged:pre, e.g. the" >&2
-  echo "  InstallOffload CodeBuild project). This host does not create them in external mode." >&2
+  echo "  They are created by the privileged runner (task privileged:pre). This host does" >&2
+  echo "  not create them in external mode." >&2
 fi
 [ -z "$ERRORS$MISSING" ] || exit 1
 echo "✓ cluster-mgmt IAM roles present (verified read-only, privilegedSteps=external)."
