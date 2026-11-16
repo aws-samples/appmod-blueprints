@@ -204,7 +204,20 @@ To create these roles yourself (for example in CloudFormation), set their ARNs u
 IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
 `crossplaneProviderRoleArn` applies when the PIAs are created (fresh hub, or reinstall after
 `task destroy`). Existing associations are not repointed: on an existing hub, setting it has
-no effect until the PIAs are recreated.
+no effect until the PIAs are recreated. Under `privilegedSteps: external`, the read-only
+`hub:create-mgmt-roles:verify` only checks that a role set here exists: its policies are yours.
+
+### Keycloak client-provisioner identity: Crossplane to ACK on an existing hub
+
+On kro-ack the keycloak chart renders the client-provisioner IAM Role and
+PodIdentityAssociation as ACK objects (`clientProvisioner.identityBackend=ack`); older hubs had
+Crossplane ones. The ACK pair adopts the existing role and association, and the Crossplane pair is
+no longer rendered but stays (prune is off) with `deletionPolicy: Delete`. `task install` runs
+`hub:keycloak-identity-handover` after Keycloak is up: once both ACK objects report
+`ACK.ResourceSynced=True`, it sets `deletionPolicy: Orphan` on the Crossplane pair, reads it back,
+then deletes the pair, so the AWS role and association stay with ACK. With no Crossplane object
+left (fresh hub, or done) it does nothing; if ACK is not synced yet it changes nothing and says so.
+Run it alone with `task kind-kro-ack:hub:keycloak-identity-handover`.
 
 ## Credentials on Kind
 

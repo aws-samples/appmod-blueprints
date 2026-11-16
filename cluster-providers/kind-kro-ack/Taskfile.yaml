@@ -421,6 +421,8 @@ tasks:
     cmds:
       - '{{.MARK}} step finalize hub:wait-for-keycloak'
       - task: hub:wait-for-keycloak
+      - '{{.MARK}} step finalize hub:keycloak-identity-handover'
+      - task: hub:keycloak-identity-handover
       - '{{.MARK}} step finalize hub:restart-langfuse'
       - task: hub:restart-langfuse
       - '{{.MARK}} step finalize hub:restart-backstage'
@@ -3503,6 +3505,58 @@ tasks:
           printf '  log:    /tmp/hub-full-sync-settle.log\n'
           printf '  status: %s\n' "$(cat /tmp/hub-full-sync-settle.status 2>/dev/null || echo 'running')"
         fi
+  # Upgrade of a hub whose keycloak chart rendered the client-provisioner IAM Role and
+  # PodIdentityAssociation with Crossplane (before identityBackend=ack on kro-ack): once the
+  # chart renders the ACK pair and ACK holds them (ACK.ResourceSynced=True, adopt-or-create),
+  # the old Crossplane objects are no longer rendered but stay (prune is off), with the
+  # default deletionPolicy Delete, which would delete the IAM role and the association ACK now
+  # owns on any later prune or delete. Set deletionPolicy=Orphan, read it back, then delete
+  # the Crossplane objects: the AWS resources stay with ACK. Idempotent: no Crossplane object
+  # (fresh hub, or already handed over) = nothing to do. Never fails the install: anything
+  # not ready leaves the objects in place and says so (re-run this task later).
+  hub:keycloak-identity-handover:
+    desc: "Hand the Keycloak client-provisioner IAM role from Crossplane to ACK on an upgraded hub (Orphan, then delete the Crossplane objects; no-op on fresh hubs)"
+    cmds:
+      - task: hub:kubeconfig
+      - cmd: |
+          set +e
+          KC={{.ROOT_DIR}}/private/hub-kubeconfig
+          H="{{.HUB_CLUSTER_NAME}}"
+          k() { KUBECONFIG="$KC" kubectl "$@"; }
+          OLD=""
+          for r in "roles.iam.aws.upbound.io/$H-keycloak-client-provisioner-role" \
+                   "podidentityassociations.eks.aws.upbound.io/$H-keycloak-client-provisioner"; do
+            if k get "$r" >/dev/null 2>&1; then OLD="$OLD $r"; fi
+          done
+          if [ -z "$OLD" ]; then
+            echo "  keycloak client-provisioner identity: no Crossplane object, nothing to hand over."
+            exit 0
+          fi
+          for r in "roles.iam.services.k8s.aws/$H-keycloak-client-provisioner-role" \
+                   "podidentityassociations.eks.services.k8s.aws/$H-keycloak-client-provisioner"; do
+            S=$(k get "$r" -n "$H" -o jsonpath='{.status.conditions[?(@.type=="ACK.ResourceSynced")].status}' 2>/dev/null)
+            if [ "$S" != True ]; then
+              printf '{{.C_INFO}}  ⚠ %s is not synced by ACK yet: the Crossplane objects (%s) are left in place. Re-run: task kind-kro-ack:hub:keycloak-identity-handover{{.C_RESET}}\n' "$r" "$OLD"
+              exit 0
+            fi
+          done
+          for r in $OLD; do
+            k patch "$r" --type merge -p '{"spec":{"deletionPolicy":"Orphan"}}' >/dev/null
+            P=$(k get "$r" -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null)
+            if [ "$P" != Orphan ]; then
+              printf '{{.C_ERR}}  ⚠ could not set deletionPolicy=Orphan on %s (got %s): nothing deleted. Re-run: task kind-kro-ack:hub:keycloak-identity-handover{{.C_RESET}}\n' "$r" "${P:-none}"
+              exit 0
+            fi
+          done
+          for r in $OLD; do
+            if k delete "$r" --wait=false >/dev/null; then
+              echo "  ✓ $r deleted (Orphan: the AWS resource stays, owned by ACK)"
+            else
+              printf '{{.C_INFO}}  ⚠ could not delete %s (deletionPolicy is Orphan, so a later delete is safe){{.C_RESET}}\n' "$r"
+            fi
+          done
+        ignore_error: true
+
   # ---- from kind-crossplane ----
   hub:wait-for-keycloak:
     desc: "Narrow gate — wait for keycloak-<hub> Synced/Healthy with its config op Succeeded (bounded 15min, non-fatal). Much shorter than the global full-sync; what Keycloak-dependent steps actually need (review #1053 §3/§4)."

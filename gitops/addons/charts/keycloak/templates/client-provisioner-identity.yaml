@@ -37,6 +37,8 @@
       role); (2) switch the backend (prune is off, the old objects stay); (3) delete the
       two old objects. Deleting them before the switch does not work: selfHeal
       recreates them while the chart still renders them. Fresh installs are unaffected.
+      kind-kro-ack `task install` does (1) and (3) itself once the ACK pair is synced
+      (hub:keycloak-identity-handover, a no-op when no Crossplane object is left).
   Trust: only the hub cluster's keycloak/<serviceAccountName> service account can use the
   role (EKS Pod Identity session tags eks-cluster-name, kubernetes-namespace,
   kubernetes-service-account); the secrets it writes are pinned to the hub region, the one
