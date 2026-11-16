@@ -2494,7 +2494,7 @@ tasks:
         # No amount of retrying helps — skip immediately with a clear message.
         KC_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "https://{{.KEYCLOAK_DNS}}/keycloak/realms/master" --max-time 30 2>/dev/null || echo "000")
         case "$KC_STATUS" in
-          000|000000|404)
+          000|000000|404|5??)
             printf '{{.C_ERR}}⚠ IDC skipped: Keycloak not reachable (HTTP %s). Run: task idc:configure{{.C_RESET}}\n' "$KC_STATUS"
           ;;
           *)

@@ -68,11 +68,13 @@ tasks:
       # 5. Pod Identity associations, THEN the S3 CSI driver addon. EKS Pod Identity injects
       #    credentials into a pod at admission, so driver pods that start before the
       #    kube-system/s3-csi-driver-sa association exists run without credentials and every
-      #    Mountpoint pod they spawn fails with "Failed to create S3 client" (event 93e4f783).
+      #    Mountpoint pod they spawn fails with "Failed to create S3 client" .
       #    If the addon is already installed and the association was only created now, restart
-      #    the node driver DaemonSet. Selector from the upstream chart (awslabs/mountpoint-s3-csi-driver
-      #    charts/.../templates/node.yaml, also used by the EKS addon): DaemonSet s3-csi-node,
-      #    pod label app=s3-csi-node, in kube-system.
+      #    the node driver DaemonSet. Name from the upstream chart (awslabs/mountpoint-s3-csi-driver
+      #    charts/.../templates/node.yaml, also used by the EKS addon): DaemonSet s3-csi-node in
+      #    kube-system (app=s3-csi-node is a POD label, not a DaemonSet label). A hub that already
+      #    ran the old order has its association, so nothing is restarted: run
+      #    kubectl -n kube-system rollout restart daemonset/s3-csi-node once.
       - cmd: |
           PRESTAGE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RAY_ROLE_PRESTAGE}}"
           WORKER_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RAY_ROLE_WORKER}}"
@@ -91,8 +93,16 @@ tasks:
             echo "  ✓ S3 CSI driver addon installed"
             if [ "$CSI_PIA_NEW" = "true" ]; then
               echo "  ▸ s3-csi-driver-sa association is new: restarting the S3 CSI node driver so it gets credentials"
-              KUBECONFIG="{{.ROOT_DIR}}/private/hub-kubeconfig" kubectl -n kube-system rollout restart daemonset -l app=s3-csi-node \
-                || echo "  ⚠ could not restart the S3 CSI node driver; run: kubectl -n kube-system rollout restart daemonset -l app=s3-csi-node"
+              # Own kubeconfig: private/hub-kubeconfig is deleted at the end of every task that
+              # creates it and ray:setup does not create it.
+              KC=$(mktemp)
+              if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1 \
+                 && KUBECONFIG="$KC" kubectl -n kube-system rollout restart daemonset/s3-csi-node; then
+                :
+              else
+                echo "  ⚠ could not restart the S3 CSI node driver; run: kubectl -n kube-system rollout restart daemonset/s3-csi-node"
+              fi
+              rm -f "$KC"
             fi
           else
             aws eks create-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} --output text >/dev/null

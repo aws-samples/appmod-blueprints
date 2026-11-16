@@ -3,7 +3,7 @@
 EKS Pod Identity injects credentials at pod admission: driver pods started before the
 kube-system/s3-csi-driver-sa association exists have none, and every Mountpoint pod
 fails with "Failed to create S3 client". When the addon already exists and the
-association is new, the node driver DaemonSet (label app=s3-csi-node) is restarted.
+association is new, the node driver DaemonSet (daemonset/s3-csi-node) is restarted.
 
 Runs the real task with fake `aws`/`kubectl` on PATH that log every call. No AWS.
 
@@ -27,11 +27,17 @@ case "$1 $2" in
   "iam get-role") exit 1 ;;
   "eks list-pod-identity-associations")
       if [ -n "${EXISTING_PIA:-}" ]; then echo a-123; else echo None; fi; exit 0 ;;
+  "eks update-kubeconfig")
+      while [ $# -gt 0 ]; do [ "$1" = "--kubeconfig" ] && echo "apiVersion: v1" > "$2"; shift; done; exit 0 ;;
   "eks describe-addon") [ -n "${ADDON_EXISTS:-}" ]; exit $? ;;
 esac
 exit 0
 '''
-FAKE_KUBECTL = '#!/bin/bash\necho "kubectl $*" >> "$CALLS"\nexit ${KUBECTL_RC:-0}\n'
+FAKE_KUBECTL = (
+    '#!/bin/bash\necho "kubectl $*" >> "$CALLS"\n'
+    '[ -s "${KUBECONFIG:-}" ] || { echo "no kubeconfig at call time" >&2; exit 1; }\n'
+    'exit ${KUBECTL_RC:-0}\n'
+)
 
 
 def _run(tmp_path, **extra_env):
@@ -69,7 +75,7 @@ def test_existing_addon_new_association_restarts_node_driver(tmp_path):
     assert r.returncode == 0, r.stderr
     assert not any("eks create-addon" in l for l in calls)
     k = [l for l in calls if l.startswith("kubectl")]
-    assert k == ["kubectl -n kube-system rollout restart daemonset -l app=s3-csi-node"]
+    assert k == ["kubectl -n kube-system rollout restart daemonset/s3-csi-node"]
     assert _first(calls, "eks create-pod-identity-association") < _first(calls, "kubectl")
 
 
