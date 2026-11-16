@@ -102,6 +102,7 @@ These pages are not install paths. Each one states which modes it applies to.
 | Solution cost | All (nothing to pay at an AWS event) | What the solution creates, how to estimate, track, reduce and stop the cost | [cost.md](cost.md) |
 | Delete a spoke | All (the workshop also has ready-made tasks) | Cleanly tear down one spoke (spec → prune → sweep) | [delete-spoke.md](delete-spoke.md) |
 | Document your deployment | Any mode where you keep your own fork | Record your deployment choices in your fork's README, zero‑secret | [custom-install.md — section 5](custom-install.md#5-document-your-deployment) |
+| Privileged steps on a separate runner | `kind-kro-ack` and `kind-crossplane` direct installs | `privilegedSteps: external`: `task privileged:pre/post/destroy`, the runner config, the IAM the install host still needs | [privileged-steps.md](privileged-steps.md) |
 
 ## How the paths relate
 
