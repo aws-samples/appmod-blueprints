@@ -154,6 +154,27 @@ def test_destroy_external_final_check_does_not_need_the_hub_gone(tmp_path, repo)
     assert 'if [ "external" = external ]' in res.stderr and "Kubernetes teardown complete" in res.stderr
 
 
+def test_destroy_external_names_what_is_left_for_the_sweep(tmp_path, repo):
+    # a privilegedSteps=external user without a stack sweep (install:codebuild) must be told
+    # which cluster is still there, not only "complete"
+    _echo_commands(repo)
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:destroy", "--dry"], mode="external")
+    assert "If no stack sweep runs after this" in res.stderr, res.stderr[-600:]
+    assert "EKS cluster" in res.stderr and "remain" in res.stderr
+
+
+def test_schema_documents_that_external_changes_destroy():
+    import json
+    d = json.load(open(os.path.join(REPO, "config.schema.json")))["properties"]["privilegedSteps"]["description"]
+    assert "destroy" in d.lower() and "sweep" in d.lower()
+
+
+def test_schema_install_role_is_not_claimed_for_kind_acks():
+    import json
+    d = json.load(open(os.path.join(REPO, "config.schema.json")))["properties"]["aws"]["properties"]["installRoleArn"]["description"]
+    assert "ACK controllers in the kind bootstrap cluster keep the instance role" in d
+
+
 def test_workshop_destroy_passes_ide_only_when_external():
     text = open(os.path.join(REPO, "workshop", "Taskfile.yaml")).read()
     assert "export PEEKS_AWS_IDE_ONLY=true" in text
