@@ -24,19 +24,6 @@ functions:
 # All providers disabled by default. Set version to enable.
 # Each enabled provider (except family) gets its own SA, DRC, IAM role, and pod identity.
 # Set createIdentity: false to skip IAM role + pod identity creation (for bootstrap-managed providers).
-#
-# policyArns: the managed policies attached to the provider's role (templates/iam.yaml), one
-# RolePolicyAttachment each. Scoped to the AWS service the provider manages, not
-# AdministratorAccess. A provider with createIdentity and no policyArns fails the render.
-# Every AWS managed ARN listed here must also be in the attach allowlist of
-# cluster-providers/common/iam/crossplane-provider-policy.json (Sid
-# DenyAttachAwsManagedPolicyOutsideAllowlist): provider-aws-iam, which makes these
-# attachments, is denied any other AWS managed policy. A test keeps the two in step.
-# iam and eks default to createIdentity: false: a provider cannot create the credentials it
-# runs with, so their role comes from outside this addon's GitOps sync. kind-kro-ack: the
-# cluster provider's <cluster>-crossplane-provider role. kind-crossplane: the bootstrap render
-# of this chart from kind (cluster-providers/kind-crossplane/Taskfile.yaml crossplane:claims),
-# which sets createIdentity and policyArns for them explicitly.
 providers:
   family:
     version: ""
@@ -44,14 +31,12 @@ providers:
     version: ""
     serviceAccount: provider-aws-iam
     roleName: CrossplaneIAMProviderRole
-    createIdentity: false
+    createIdentity: true
   ec2:
     version: ""
     serviceAccount: provider-aws-ec2
     roleName: CrossplaneEC2ProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/AmazonEC2FullAccess
     # ec2 holds the most (live heap ~203MB, ~5k goroutines, highest fragmentation), so it
     # gets more room than the default. Any key of providerResources can be set here.
     resources:
@@ -61,49 +46,37 @@ providers:
     version: ""
     serviceAccount: provider-aws-eks
     roleName: CrossplaneEKSProviderRole
-    createIdentity: false
+    createIdentity: true
   s3:
     version: ""
     serviceAccount: provider-aws-s3
     roleName: CrossplaneS3ProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/AmazonS3FullAccess
   dynamodb:
     version: ""
     serviceAccount: provider-aws-dynamodb
     roleName: CrossplaneDynamoDBProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess_v2
   rds:
     version: ""
     serviceAccount: provider-aws-rds
     roleName: CrossplaneRDSProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/AmazonRDSFullAccess
   secretsmanager:
     version: ""
     serviceAccount: provider-aws-secretsmanager
     roleName: CrossplaneSecretsManagerProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/SecretsManagerReadWrite
   amp:
     version: ""
     serviceAccount: provider-aws-amp
     roleName: CrossplaneAMPProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/AmazonPrometheusFullAccess
   grafana:
     version: ""
     serviceAccount: provider-aws-grafana
     roleName: CrossplaneGrafanaProviderRole
     createIdentity: true
-    policyArns:
-      - arn:aws:iam::aws:policy/AWSGrafanaAccountAdministrator
   kubernetes:
     version: ""
     serviceAccount: provider-kubernetes

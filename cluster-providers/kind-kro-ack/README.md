@@ -146,57 +146,6 @@ only `sts:GetCallerIdentity`, plus `eks:*` and `ec2:Describe*` for the Crossplan
 not a privilege boundary: a principal that can create a role and write its policy can still
 grant itself more.
 
-The Crossplane document also has two `Deny` statements, which narrow what provider-aws-iam can
-hand out in-cluster:
-
-- `DenyAttachAwsManagedPolicyOutsideAllowlist`: `iam:AttachRolePolicy` of an AWS managed policy
-  (`arn:*:iam::aws:policy/*`) is refused unless it is on an explicit list (`iam:PolicyARN`).
-  The list is the service policies the charts attach through Crossplane (`crossplane-base`
-  provider roles, the Karpenter node role, the Grafana workspace role, the `platform-cluster`
-  composition). `AdministratorAccess`, `PowerUserAccess` and `IAMFullAccess` are not on it.
-  `DetachRolePolicy` is not conditioned, so an upgrade can still remove them. A chart that
-  attaches a new AWS managed policy through Crossplane must add it to the list
-  (`workshop/scripts/tests/test_crossplane_provider_scope.py` fails until it does).
-- `DenyChangeProviderScopedPolicies`: no `iam:CreatePolicyVersion`, `SetDefaultPolicyVersion`,
-  `DeletePolicyVersion` or `DeletePolicy` on `policy/*-crossplane-provider-scoped` (hub and
-  rg-eks spoke) or `policy/*ProviderRole-scoped` (`spokes:seed-provider-identity`). The provider
-  cannot edit or delete these documents. It can still detach them, and create and attach a new
-  customer-managed policy, so this protects the documents, not the rights.
-
-This removes `AdministratorAccess` from the `crossplane-base` provider roles and stops the
-attach-an-AWS-managed-admin-policy path. It does **not** change what provider-aws-iam can
-ultimately grant: whoever can get a Crossplane IAM managed resource reconciled can still reach
-full admin, for example with a `Policy` of `*:*` plus a `RolePolicyAttachment`, or a `Role` with
-an inline policy. Still allowed:
-
-- `iam:CreatePolicy` then attach (customer-managed policies are not restricted);
-- inline `iam:PutRolePolicy`;
-- `iam:CreatePolicyVersion` on any other policy;
-- `iam:UpdateAssumeRolePolicy` on any role (take over an existing admin role by rewriting its
-  trust) and `iam:CreateRole`;
-- `iam:PutRolePermissionsBoundary` / `iam:DeleteRolePermissionsBoundary`;
-- `iam:PassRole` of any role;
-- `eks:*` (access entries and pod identity associations on any cluster).
-
-A permissions boundary is the fix for those; it must also deny the boundary operations above.
-
-`crossplane-base` attaches a per-provider service policy to each provider role it creates
-(`providers.<name>.policyArns`, e.g. `AmazonEC2FullAccess` for ec2), not `AdministratorAccess`.
-The attachment is named after the policy (`<name>-provider-<policy>`). Upgrade note: the addon
-syncs with `prune: false`, so on a live cluster the old `<name>-provider-admin-attachment`
-`RolePolicyAttachment` stays, and keeps `AdministratorAccess` attached, until it is deleted
-(`kubectl delete rolepolicyattachments.iam.aws.upbound.io <name>-provider-admin-attachment`);
-provider-aws-iam then detaches `AdministratorAccess`. Until then the `crossplane-base-<cluster>`
-Argo CD app shows those attachments (5 per cluster with the registry values) as OutOfSync.
-
-kind-crossplane exception: its hub `<hub>-CrossplaneIAMProviderRole` /
-`<hub>-CrossplaneEKSProviderRole` are created from kind by a direct render of `crossplane-base`
-(`kind-crossplane/Taskfile.yaml` `crossplane:claims`), under the installer's `aws-credentials`,
-and keep `AdministratorAccess`, as before this change. So on kind-crossplane the installer does
-attach `AdministratorAccess`, and a consumer Deny on that breaks the install. The kind-crossplane
-destroy deletes these attachments, including the older `<name>-provider-admin-attachment` names,
-before the roles.
-
 ### Why customer-managed, and how re-runs converge
 
 The documents are customer-managed policies, not inline ones: a consumer may allow
@@ -246,12 +195,7 @@ the hub addon `crossplane-pod-identity` (selected for `provider NotIn [kro-ack]`
 `<spoke>-CrossplaneIAMProviderRole` / `<spoke>-CrossplaneEKSProviderRole` roles and still attaches
 `AdministratorAccess` to them through a Crossplane `RolePolicyAttachment`. That attachment is made
 in-cluster by provider-aws-iam, like `crossplane-base`, not by the installing principal, so it is
-out of scope here; scoping it is follow-up work. The hub's provider-aws-iam runs as
-`<hub>-CrossplaneIAMProviderRole` (AdministratorAccess, see the kind-crossplane exception above),
-not with the scoped document, so the attach `Deny` does not refuse that attachment. The `Deny`
-does apply on a spoke whose role also has the seeded scoped policy (an explicit Deny wins over
-AdministratorAccess), for calls made by that spoke's own providers. `spokes:seed-provider-identity`
-is not part of the install DAG.
+out of scope here; scoping it is follow-up work.
 
 To create these roles yourself (for example in CloudFormation), set their ARNs under `hub.iam`
 (see `config.yaml`). A set ARN is used as is: no create, no trust update, no policy. Each
