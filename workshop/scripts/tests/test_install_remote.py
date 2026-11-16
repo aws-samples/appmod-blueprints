@@ -381,6 +381,7 @@ case "$1 $2" in
       *) echo "${FAKE_BUILD:-}" ;;
     esac; exit 0 ;;
   "secretsmanager get-secret-value") [ -n "${FAKE_CFG:-}" ] && cat "$FAKE_CFG" || exit 254; exit 0 ;;
+  "secretsmanager describe-secret") [ -n "${FAKE_CONFIG_AT:-}" ] && echo "$FAKE_CONFIG_AT" || exit 254; exit 0 ;;
 esac
 exit 0
 """
@@ -465,7 +466,7 @@ def test_install_remote_wait_ignores_a_state_from_an_earlier_build(tmp_path, sta
                                                    FAKE_STATE_AT="2026-11-14T10:00:00+00:00",
                                                    FAKE_BUILD_START="2026-11-15T09:00:00+00:00"))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "ignoring a state written before this run started" in r.stdout
+    assert "ignoring a state of an earlier build" in r.stdout
     assert "did not finish" in r.stderr and "remote install failed" not in r.stderr
 
 
@@ -503,7 +504,7 @@ def test_install_remote_wait_ignores_a_state_older_than_this_run(tmp_path, state
                                                    INSTALL_REMOTE_NOT_BEFORE=str(not_before)))
     assert r.returncode == rc, r.stdout + r.stderr
     if rc:
-        assert "ignoring a state written before this run started" in r.stdout and "without recording OK" in r.stderr
+        assert "ignoring a state of an earlier build" in r.stdout and "without recording OK" in r.stderr
 
 
 def _epoch(iso):
@@ -521,7 +522,7 @@ def test_install_remote_wait_ignores_a_build_that_ended_before_this_run(tmp_path
                                                    FAKE_BUILD_END="2026-11-15T10:01:00+00:00",
                                                    INSTALL_REMOTE_NOT_BEFORE=_epoch("2026-11-15T12:00:00+00:00")))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "did not finish" in r.stderr and "INSTALL_REMOTE_NOT_BEFORE=0" in r.stderr  # waited, then the hint
+    assert "did not finish" in r.stderr and "Re-run fetch-install-config.sh" in r.stderr  # waited, then the hint
     assert "ended (" in r.stdout and "remote install failed" not in r.stderr and "without recording" not in r.stderr
 
 
@@ -536,19 +537,51 @@ def test_install_remote_wait_follows_a_finished_build_with_not_before_zero(tmp_p
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_ide_lets_the_operator_override_not_before():
+def test_ide_does_not_tie_the_cut_off_to_its_own_start():
+    # the cut-off is the publish time of the config this host fetched (the script's default):
+    # the build may fail before install:ide starts, and that FAILED must still end the wait
     line = IDE[_index(IDE, "install-remote-wait.sh")]
-    assert "INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_REMOTE_NOT_BEFORE | default .INSTALL_START}}" in line
+    assert "INSTALL_START" not in line and "INSTALL_REMOTE_NOT_BEFORE=" not in line
+
+
+@needs_tools
+@pytest.mark.parametrize("case,state,state_at,build,build_end,rc,msg", [
+    # the build that published the config failed after the publish, before install:ide started
+    ("early-fail", "FAILED rc=2 step=install 2026-11-15T12:10:00Z", "2026-11-15T12:10:00+00:00",
+     "FAILED", "2026-11-15T12:11:00+00:00", 1, "remote install failed"),
+    # re-running install:ide after its build finished: follows that build
+    ("rerun", "OK 2026-11-15T13:00:00Z", "2026-11-15T13:00:00+00:00",
+     "SUCCEEDED", "2026-11-15T13:20:00+00:00", 0, "remote install finished"),
+    # the previous build's OK, the new build has published its config but not written its id
+    ("stale-ok", "OK 2026-11-15T10:00:00Z", "2026-11-15T10:00:00+00:00",
+     "SUCCEEDED", "2026-11-15T10:01:00+00:00", 1, "did not finish"),
+])
+def test_install_remote_wait_cut_off_is_the_config_publish_time(tmp_path, case, state, state_at, build, build_end, rc, msg):
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE=state, FAKE_BUILD=build, FAKE_STATE_AT=state_at,
+                                                   FAKE_BUILD_START="2026-11-15T09:00:00+00:00" if case == "stale-ok"
+                                                   else "2026-11-15T11:58:00+00:00",
+                                                   FAKE_BUILD_END=build_end, FAKE_CONFIG_AT="2026-11-15T12:00:00+00:00"))
+    assert r.returncode == rc, r.stdout + r.stderr
+    assert msg in r.stdout + r.stderr
+    if case == "early-fail":
+        assert "did not finish" not in r.stderr  # at once, not after the timeout
+
+
+@needs_tools
+def test_install_remote_wait_prints_its_cut_off(tmp_path):
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_CONFIG_AT="2026-11-15T12:00:00+00:00"), "--print-not-before")
+    assert (r.returncode, r.stdout.strip()) == (0, _epoch("2026-11-15T12:00:00+00:00"))
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path), "--print-not-before")  # secret unreadable: no cut-off
+    assert (r.returncode, r.stdout.strip()) == (0, "")
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_CONFIG_AT="2026-11-15T12:00:00+00:00",
+                                                   INSTALL_REMOTE_NOT_BEFORE="5"), "--print-not-before")
+    assert r.stdout.strip() == "5"  # operator override
 
 
 def test_install_remote_wait_refuses_a_bad_not_before(tmp_path):
     r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="OK now", INSTALL_REMOTE_NOT_BEFORE="yesterday"))
     assert r.returncode == 1 and "must be epoch seconds" in r.stderr
 
-
-def test_ide_passes_its_start_time_to_the_wait():
-    line = IDE[_index(IDE, "install-remote-wait.sh")]
-    assert "INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_REMOTE_NOT_BEFORE | default .INSTALL_START}}" in line
 
 
 def test_ide_passes_the_gitlab_init_rc_to_the_wait():
@@ -732,12 +765,13 @@ def test_ide_reports_both_build_statuses(tmp_path, idc, extras, ok):
     (tmp_path / "bin").mkdir()
     fake = tmp_path / "bin" / "aws"
     fake.write_text('#!/bin/sh\ncase "$*" in\n  *idc-status*) [ -n "$IDC" ] && echo "$IDC" || exit 254 ;;\n'
-                    '  *extras-status*) [ -n "$EXTRAS" ] && echo "$EXTRAS" || exit 254 ;;\nesac\n')
+                    '  *extras-status*) [ -n "$EXTRAS" ] && echo "$EXTRAS" || exit 254 ;;\n'
+                    '  *describe-secret*) echo 2026-11-15T12:00:00+00:00 ;;\nesac\n')
     fake.chmod(0o755)
     block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", IDE_REPORT).replace("{{.RESOURCE_PREFIX}}", "acme") \
-        .replace("{{.AWS_REGION}}", "us-west-2").replace(
-        "{{.INSTALL_START}}", subprocess.check_output(["date", "-d", "2026-11-15T12:00:00Z", "+%s"], text=True).strip())
-    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", IDC=idc, EXTRAS=extras)
+        .replace("{{.AWS_REGION}}", "us-west-2").replace("{{.INSTALL_START}}", "0").replace("{{.REPO}}", REPO)
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", IDC=idc, EXTRAS=extras, RESOURCE_PREFIX="acme")
+    env.pop("INSTALL_REMOTE_NOT_BEFORE", None)
     r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr  # never fatal
     assert f"(idc-status): " in r.stdout and (idc or "unknown") in r.stdout and (extras or "unknown") in r.stdout

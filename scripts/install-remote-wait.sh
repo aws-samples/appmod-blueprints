@@ -1,7 +1,11 @@
 #!/bin/sh
 # Wait for the remote half of the install (task workshop:install:remote, run in CodeBuild)
-# from the host that follows it (the IDE). Read-only: it only calls ssm get-parameter and
-# codebuild batch-get-builds, so the host needs no write right for this.
+# from the host that follows it (the IDE). Read-only: it only calls ssm get-parameter,
+# codebuild batch-get-builds and secretsmanager describe-secret, so the host needs no write
+# right for this.
+#
+#   install-remote-wait.sh                       wait
+#   install-remote-wait.sh --print-not-before    print the cut-off described below and exit
 #
 #   RESOURCE_PREFIX   resource prefix (default: resourcePrefix of the config)
 #   INSTALL_REMOTE_TIMEOUT   seconds to wait (default 6600)
@@ -9,19 +13,20 @@
 #   INSTALL_REMOTE_LOCAL_RC  optional file holding the exit code of a step this host runs in
 #                            the background and the build depends on (install:ide passes
 #                            /tmp/gitlab-init.rc): a non-zero code there ends the wait at once
-#   INSTALL_REMOTE_NOT_BEFORE  optional epoch seconds (install:ide passes its start time): a
-#                            state written earlier, and a build that ended earlier, belong to an
-#                            earlier run and are ignored. On a fresh account the build cannot
-#                            record OK before the IDE half starts (it waits for the GitLab PAT the
-#                            IDE half writes). To follow a build that already finished (re-running
-#                            install:ide), pass INSTALL_REMOTE_NOT_BEFORE=0.
+#   INSTALL_REMOTE_NOT_BEFORE  cut-off, epoch seconds. Default: when <prefix>/install-config
+#                            was last written, that is when the build this host took its config
+#                            from published it (fetch-install-config.sh), before its install
+#                            step. A state written earlier, and a build that ended earlier, belong
+#                            to an earlier build and are ignored; every state of the current build
+#                            that matters (FAILED of a step after the publish, OK) is later. An
+#                            empty default (secret unreadable) disables the check; 0 also does.
 #
 # The build records its id in /<prefix>/install-build-id. A state written before that build
-# started, or before INSTALL_REMOTE_NOT_BEFORE, is ignored (an earlier build's OK or FAILED),
-# and so is the end status of a build that ended before INSTALL_REMOTE_NOT_BEFORE. A current
-# build that ended SUCCEEDED without recording OK is a failure, not a wait until the timeout,
-# and one that ended FAILED/FAULT/TIMED_OUT/STOPPED ends the wait at once. A build that fails
-# before it writes its id is only caught by the timeout.
+# started, or before the cut-off, is ignored (an earlier build's OK or FAILED), and so is the
+# end status of a build that ended before the cut-off. A current build that ended SUCCEEDED
+# without recording OK is a failure, not a wait until the timeout, and one that ended
+# FAILED/FAULT/TIMED_OUT/STOPPED ends the wait at once. Re-running install:ide after its build
+# finished follows that build (its states are later than its publish).
 # Timestamps need GNU date -d for the ISO 8601 form (AL2023, CodeBuild); without it the
 # comparison is skipped and every state counts as current.
 #
@@ -47,6 +52,12 @@ epoch() {
   esac
 }
 
+if [ -z "$NOT_BEFORE" ] && [ -z "${INSTALL_REMOTE_NOT_BEFORE+set}" ]; then
+  NOT_BEFORE=$(epoch "$(aws secretsmanager describe-secret --secret-id "$PREFIX/install-config" \
+    --query LastChangedDate --output text 2>/dev/null || true)")
+fi
+if [ "${1:-}" = --print-not-before ]; then echo "$NOT_BEFORE"; exit 0; fi
+
 # read_state: sets S (value) and S_AT (epoch of its last write).
 read_state() {
   OUT=$(aws ssm get-parameter --name "/$PREFIX/install-state" \
@@ -58,7 +69,7 @@ read_state() {
 }
 
 # read_build: sets BS (status), B_START and B_END (epoch) of the build in /<prefix>/install-build-id.
-# A build that ended before INSTALL_REMOTE_NOT_BEFORE is an earlier run's: BS is cleared.
+# A build that ended before the cut-off is an earlier build's: BS is cleared.
 read_build() {
   BS=""; B_START=""; B_END=""
   BID=$(aws ssm get-parameter --name "/$PREFIX/install-build-id" --query Parameter.Value --output text 2>/dev/null || echo "")
@@ -73,7 +84,7 @@ read_build() {
   esac
   if [ -n "$B_END" ] && [ -n "$NOT_BEFORE" ] && [ "$B_END" -lt "$NOT_BEFORE" ]; then
     if [ -z "$OLD_BUILD_SAID" ]; then
-      echo "  build $BID ended ($BS) before this run started: waiting for a new build (INSTALL_REMOTE_NOT_BEFORE=0 follows that one instead)"
+      echo "  build $BID ended ($BS) before the config this host uses was published: waiting for the new build"
       OLD_BUILD_SAID=1
     fi
     BS=""
@@ -81,7 +92,7 @@ read_build() {
 }
 
 # current: the state belongs to the current run: written after the build in install-build-id
-# started and not before INSTALL_REMOTE_NOT_BEFORE (each check applies when its time is known).
+# started and not before the cut-off (each check applies when its time is known).
 current() {
   [ -z "$S_AT" ] && return 0
   if [ -n "$B_START" ] && [ "$S_AT" -lt "$B_START" ]; then return 1; fi
@@ -106,7 +117,7 @@ while [ "$W" -lt "$MAX" ]; do
   read_state
   if [ -n "$S" ] && ! current; then
     if [ "$S" != "$STALE" ]; then
-      echo "  [${W}s] ignoring a state written before this run started: $S"
+      echo "  [${W}s] ignoring a state of an earlier build (written before the config this host uses was published): $S"
       STALE="$S"
     fi
     S=""
@@ -136,5 +147,5 @@ while [ "$W" -lt "$MAX" ]; do
   W=$((W + EVERY))
 done
 echo "✗ the remote install did not finish within ${MAX}s (last state: ${LAST:-none})" >&2
-[ -z "$STALE$OLD_BUILD_SAID" ] || echo "  Only an earlier run's state or build was seen. To follow a build that already finished, re-run with INSTALL_REMOTE_NOT_BEFORE=0." >&2
+[ -z "$STALE$OLD_BUILD_SAID" ] || echo "  Only an earlier build's state or status was seen (cut-off ${NOT_BEFORE:-none}: when ${PREFIX}/install-config was last published). Re-run fetch-install-config.sh once the new build has published it." >&2
 exit 1
