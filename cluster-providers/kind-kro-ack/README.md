@@ -126,8 +126,21 @@ Several hubs can share one fleet repo by setting `fleetScopeByPrefix: true` in `
 ## IAM roles created by `task install`
 
 `task install` never attaches an admin-like AWS managed policy (`AdministratorAccess`,
-`PowerUserAccess`, `IAMFullAccess`). A consumer can therefore deny that on the installing role
-(an `iam:AttachRolePolicy` Deny with an `iam:PolicyARN` condition) without breaking the install.
+`PowerUserAccess`, `IAMFullAccess`) **from the installing principal on kind-kro-ack**. A consumer
+can therefore deny that on the installing role (an `iam:AttachRolePolicy` Deny with an
+`iam:PolicyARN` condition) without breaking a kind-kro-ack install.
+
+Limits of that statement:
+
+- In-cluster, `crossplane-base` still attaches `AdministratorAccess` to each provider role it
+  creates (`<name>-provider-admin-attachment`, e.g. the AMP and EC2 provider roles). That
+  attachment is made by Crossplane provider-aws-iam running as `<hub>-crossplane-provider`, not
+  by the installing principal; the scoped document below does not refuse it.
+- kind-crossplane exception: its hub `<hub>-CrossplaneIAMProviderRole` /
+  `<hub>-CrossplaneEKSProviderRole` are created from kind by a direct render of `crossplane-base`
+  (`kind-crossplane/Taskfile.yaml` `crossplane:claims`) under the installer's `aws-credentials`,
+  and keep `AdministratorAccess`. So on kind-crossplane the installer does attach
+  `AdministratorAccess`, and a consumer Deny on that breaks the install.
 
 | Role | Policy |
 |---|---|
