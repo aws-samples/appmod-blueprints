@@ -132,6 +132,7 @@ def test_all_ready_prints_success_and_cleans_tmp(tmp_path):
 
 def test_wait_is_capped_at_cap_logs_wait(tmp_path):
     res, out, _ = _run(tmp_path, "50", "acme-spoke-prod")
+    assert res.returncode == 0, out
     assert "acme-spoke-prod: 'kro' capability is CREATING after 50s" in out, out
     assert _naps(tmp_path) == ["15", "15", "15", "5"], out   # last nap trimmed, no overshoot
 
@@ -154,10 +155,19 @@ def test_non_numeric_wait_falls_back_to_default(tmp_path):
     assert sum(int(n) for n in _naps(tmp_path)) == 600, out
 
 
-@pytest.mark.parametrize("wait,secs,naps", [("010", 10, ["10"]), ("08", 8, ["8"]), ("0", 0, []), ("000", 0, [])])
-def test_leading_zero_wait_is_decimal(tmp_path, wait, secs, naps):
-    # shell arithmetic would read 010 as octal 8 and 08 as an error; 0 must not loop forever
+@pytest.mark.parametrize("wait", ["08", "010", "99999999999999999999"])
+def test_octal_or_huge_wait_falls_back_without_spinning(tmp_path, wait):
+    # same contract as the v0.5 fix: a leading zero (octal in shell arithmetic) or a
+    # value of 7+ digits (int64 overflow) is refused and the default 600 s is used
     res, out, _ = _run(tmp_path, wait, "acme-spoke-prod", timeout=20)
     assert res.returncode == 0, out
-    assert f"acme-spoke-prod: 'kro' capability is CREATING after {secs}s (wait budget {secs}/{secs}s used)" in out, out
-    assert _naps(tmp_path) == naps, out
+    assert f"CAP_LOGS_WAIT='{wait}' is not a number of seconds" in out, out
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 600s" in out, out
+    assert sum(int(n) for n in _naps(tmp_path)) == 600, out
+
+
+def test_zero_wait_skips_at_once(tmp_path):
+    res, out, _ = _run(tmp_path, "0", "acme-spoke-prod", timeout=20)
+    assert res.returncode == 0, out
+    assert "acme-spoke-prod: 'kro' capability is CREATING after 0s (wait budget 0/0s used)" in out, out
+    assert _naps(tmp_path) == [], out
