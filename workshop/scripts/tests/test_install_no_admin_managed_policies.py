@@ -661,6 +661,29 @@ def test_bootstrap_detaches_legacy_administrator_access(tmp_path):
     assert len(det) == 1, log
 
 
+@needs_task
+def test_scope_warns_when_attached_policies_cannot_be_listed(tmp_path):
+    """A list-attached-role-policies error (ExpiredToken, AccessDenied, throttle) is not
+    'nothing attached': the task must say AdministratorAccess may still be attached."""
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, "scope", existing="hub-crossplane-provider",
+                      attached="arn:aws:iam::aws:policy/AdministratorAccess",
+                      fail="list-attached-role-policies:hub-crossplane-provider")
+    assert r.returncode == 0, out
+    assert "could not list the managed policies attached to hub-crossplane-provider" in out, out
+    assert not [d for d in calls_of(log, "detach-role-policy") if "AdministratorAccess" in d], log
+
+
+@needs_task
+def test_mgmt_warns_when_attached_policies_cannot_be_listed(tmp_path):
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, "mgmt", existing="pfx-cluster-mgmt-iam",
+                      attached="arn:aws:iam::aws:policy/IAMFullAccess",
+                      fail="list-attached-role-policies:pfx-cluster-mgmt-iam")
+    assert r.returncode == 0, out
+    assert "could not list the managed policies attached to pfx-cluster-mgmt-iam" in out, out
+
+
 def test_scope_task_is_not_gated_and_runs_before_bootstrap():
     """hub:bootstrap-crossplane-identity is skipped while both PIAs exist. The scoping must not
     live behind that gate, or a live hub keeps AdministratorAccess and never gets a later change
