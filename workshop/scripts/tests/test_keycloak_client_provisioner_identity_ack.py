@@ -138,3 +138,25 @@ def test_chart_comment_no_longer_claims_no_new_ordering_constraint():
     text = open(IDENTITY_TPL).read()
     assert "introduces no new ordering constraint" not in text
     assert "crossplane-base" in text
+
+
+@pytest.mark.parametrize("backend", ["ack", "crossplane"])
+def test_policy_absolute_content_is_pinned(ack, crossplane, backend):
+    """Parity alone misses a drift applied to both backends: pin the actual grants."""
+    docs = ack if backend == "ack" else crossplane
+    if backend == "ack":
+        (role,) = ack_kind(docs, "Role")
+        trust = json.loads(role["spec"]["assumeRolePolicyDocument"])
+        (policy,) = role["spec"]["inlinePolicies"].values()
+    else:
+        (role,) = [d for d in upbound(docs) if d["kind"] == "Role"]
+        trust = json.loads(role["spec"]["forProvider"]["assumeRolePolicy"])
+        policy = role["spec"]["forProvider"]["inlinePolicy"][0]["policy"]
+    (ts,) = trust["Statement"]
+    assert ts["Principal"] == {"Service": "pods.eks.amazonaws.com"}
+    assert sorted(ts["Action"]) == ["sts:AssumeRole", "sts:TagSession"]
+    (ps,) = json.loads(policy)["Statement"]
+    assert ps["Effect"] == "Allow"
+    assert sorted(ps["Action"]) == ["secretsmanager:CreateSecret", "secretsmanager:DescribeSecret",
+                                    "secretsmanager:PutSecretValue"]
+    assert ps["Resource"] == "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
