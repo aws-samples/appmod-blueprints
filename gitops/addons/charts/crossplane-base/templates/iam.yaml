@@ -57,23 +57,6 @@ spec:
   providerConfigRef:
     name: default
 {{- end }}
-{{- if $provider.inlineStatements }}
----
-apiVersion: iam.aws.upbound.io/v1beta1
-kind: RolePolicy
-metadata:
-  name: {{ $name }}-provider-inline
-  annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "5"
-spec:
-  forProvider:
-    policy: {{ dict "Version" "2012-10-17" "Statement" $provider.inlineStatements | toJson | quote }}
-    roleRef:
-      name: {{ $name }}-provider-role
-  providerConfigRef:
-    name: default
-{{- end }}
 {{- end }}
 {{- end }}
 {{- range $name, $provider := .Values.providers }}
