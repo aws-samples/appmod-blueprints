@@ -104,3 +104,52 @@ def test_script_reads_the_password_from_the_environment():
     src = open(os.path.join(REPO, "scripts", "configure_identity_center.py")).read()
     assert 'os.environ.get("KC_ADMIN_PASSWORD"' in src
     assert 'add_argument("--keycloak-admin-password", required=True)' not in src
+
+
+# ---------------------------------------------------------------- the real script reads the variable
+
+FAKE_ORCH = """import json, os
+async def configure_identity_center(**kw):
+    json.dump(kw, open(os.environ["FAKE_ORCH_OUT"], "w"))
+    return {"ok": True}
+"""
+
+
+def _real_script(tmp_path, env_pw, flag_pw=None):
+    pytest.importorskip("tenacity")  # the script pip-installs it otherwise
+    pytest.importorskip("urllib3")
+    d = tmp_path / "s"
+    (d / "idc").mkdir(parents=True)
+    shutil.copy(os.path.join(REPO, "scripts", "configure_identity_center.py"), d / "configure_identity_center.py")
+    (d / "idc" / "__init__.py").write_text("")
+    (d / "idc" / "constants.py").write_text("SCIM_DATA_FILE = '/nonexistent'\n")
+    (d / "idc" / "orchestrator.py").write_text(FAKE_ORCH)
+    out = tmp_path / "kw.json"
+    env = {k: v for k, v in os.environ.items() if k != "KC_ADMIN_PASSWORD"}
+    env["FAKE_ORCH_OUT"] = str(out)
+    if env_pw is not None:
+        env["KC_ADMIN_PASSWORD"] = env_pw
+    args = ["python3", str(d / "configure_identity_center.py"), "--region", "r", "--instance-id", "i",
+            "--keycloak-dns", "kc.example.invalid"]
+    if flag_pw is not None:
+        args.append(f"--keycloak-admin-password={flag_pw}")
+    r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=60)
+    return r, (json.loads(out.read_text()) if out.exists() else None)
+
+
+def test_real_script_uses_the_environment_variable(tmp_path):
+    r, kw = _real_script(tmp_path, "from-env $(x)")
+    assert r.returncode == 0, r.stderr
+    assert kw["keycloak_admin_password"] == "from-env $(x)"
+
+
+def test_real_script_flag_still_wins_for_manual_runs(tmp_path):
+    r, kw = _real_script(tmp_path, "from-env", flag_pw="from-flag")
+    assert r.returncode == 0 and kw["keycloak_admin_password"] == "from-flag", r.stderr
+
+
+@pytest.mark.parametrize("env_pw", [None, ""])
+def test_real_script_refuses_an_empty_password(tmp_path, env_pw):
+    r, kw = _real_script(tmp_path, env_pw)
+    assert r.returncode == 1 and kw is None
+    assert "no Keycloak admin password" in r.stderr
