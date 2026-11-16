@@ -185,9 +185,10 @@ re-running `task install`; ACK is expected to drop the old inline policy (or the
 Legacy attachments from older installs are detached (best-effort) only when the task runs, and
 only for the two hub roles. `hub:create-mgmt-roles` runs on every `task install`, so
 `IAMFullAccess` is detached from `<prefix>-cluster-mgmt-iam` on the next install.
-`hub:bootstrap-crossplane-identity` is skipped while both crossplane-system PIAs exist, so on a
-live hub `<hub>-crossplane-provider` keeps `AdministratorAccess` (and an earlier inline policy)
-until a fresh install or a reinstall after `task destroy`. The kind-crossplane provider and
+`hub:bootstrap-crossplane-identity` is skipped while both crossplane-system PIAs exist and
+`<hub>-crossplane-provider` has no `AdministratorAccess` attached. A live hub whose role still
+has it re-runs the task on the next `task install`: it attaches the scoped policy and detaches
+`AdministratorAccess` (best effort), and leaves the PIAs alone. The kind-crossplane provider and
 `spokes:seed-provider-identity` create the scoped policy but do not detach `AdministratorAccess`.
 
 On kind-crossplane spokes the seeded scoped policy is additive, not the effective permission:

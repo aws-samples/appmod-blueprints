@@ -1824,6 +1824,15 @@ tasks:
             --query "associations[?serviceAccount=='$SA' && namespace=='crossplane-system'] | [0].associationId" --output text 2>/dev/null)
           [ -n "$ID" ] && [ "$ID" != "None" ] || exit 1
         done
+      # ...and the role carries no legacy AdministratorAccess. Without this a live hub
+      # (both PIAs present) skipped the task and kept the old Admin attachment until a
+      # destroy and reinstall. The task is idempotent: it attaches the scoped policy,
+      # detaches Admin, and leaves the existing PIAs alone. A bring-your-own role has a
+      # different name, so it is never checked here.
+      - |
+        ATTACHED=$(aws iam list-attached-role-policies --role-name "{{.HUB_CLUSTER_NAME}}-crossplane-provider" \
+          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
+        case "$ATTACHED" in *policy/AdministratorAccess*) exit 1 ;; esac
     cmds:
       - printf '{{.C_STEP}}▸ Bootstrapping Crossplane provider pod identities (iam/eks)...{{.C_RESET}}\n'
       - |
@@ -1859,8 +1868,8 @@ tasks:
             "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" crossplane-provider-scoped
           # Older installs attached AdministratorAccess here. Detach it when present
           # (best-effort: the installing principal may lack iam:DetachRolePolicy).
-          # This only runs when the task runs: on a live hub whose two PIAs exist the
-          # status gate skips the task, so the old attachment stays until a reinstall.
+          # The status gate re-runs this task on a live hub while AdministratorAccess is
+          # still attached, so an existing hub is scoped on the next `task install`.
           ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" \
             --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || true)
           case "$ATTACHED" in *policy/AdministratorAccess*)

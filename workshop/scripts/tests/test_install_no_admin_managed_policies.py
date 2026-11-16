@@ -203,7 +203,7 @@ while i < len(args):
         i += 1
 if svc != "iam":
     if (svc, op) == ("eks", "list-pod-identity-associations"):
-        print("None")
+        print("a-1" if os.environ.get("FAKE_PIA") else "None")
     elif (svc, op) == ("eks", "describe-cluster"):
         print("ACTIVE")
     sys.exit(0)
@@ -642,6 +642,45 @@ def test_bootstrap_detaches_legacy_administrator_access(tmp_path):
     assert not calls_of(log, "create-role")
     det = [d for d in calls_of(log, "detach-role-policy") if "policy/AdministratorAccess" in d]
     assert len(det) == 1, log
+
+
+def gate_taskfile(tmp_path):
+    """The REAL status gate of hub:bootstrap-crossplane-identity, with a cmd that says it ran."""
+    b = harness(tmp_path)
+    with open(KRO) as f:
+        status = yaml.safe_load(f)["tasks"]["hub:bootstrap-crossplane-identity"]["status"]
+    tf = yaml.safe_load((tmp_path / "Taskfile.yml").read_text())
+    tf["tasks"]["gate"] = {"status": status, "cmds": ["echo GATE_RAN"]}
+    (tmp_path / "Taskfile.yml").write_text(yaml.safe_dump(tf, sort_keys=False))
+    return b
+
+
+@needs_task
+def test_bootstrap_gate_reruns_on_a_live_hub_that_still_has_admin(tmp_path, monkeypatch):
+    """Both PIAs exist but the role keeps the legacy AdministratorAccess: the task must run,
+    or an existing hub keeps Admin until destroy + reinstall."""
+    monkeypatch.setenv("FAKE_PIA", "1")
+    b = gate_taskfile(tmp_path)
+    r, out, _ = run(tmp_path, b, "gate", existing="hub-crossplane-provider",
+                    attached="arn:aws:iam::aws:policy/AdministratorAccess")
+    assert r.returncode == 0 and "GATE_RAN" in out, out
+
+
+@needs_task
+def test_bootstrap_gate_skips_when_pias_exist_and_role_is_clean(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_PIA", "1")
+    b = gate_taskfile(tmp_path)
+    seed_state(tmp_path, roles=["hub-crossplane-provider"], policies={HUB_POL: XP_DOC},
+               attached={"hub-crossplane-provider": [arn(HUB_POL)]})
+    r, out, _ = run(tmp_path, b, "gate")
+    assert r.returncode == 0 and "GATE_RAN" not in out, out
+
+
+@needs_task
+def test_bootstrap_gate_runs_when_a_pia_is_missing(tmp_path):
+    b = gate_taskfile(tmp_path)  # fake aws: no PIAs
+    r, out, _ = run(tmp_path, b, "gate", existing="hub-crossplane-provider")
+    assert r.returncode == 0 and "GATE_RAN" in out, out
 
 
 @needs_task
