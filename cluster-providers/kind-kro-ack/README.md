@@ -245,7 +245,7 @@ code; not verified live).
 Legacy attachments from older installs are detached (best-effort) only when the task runs, and
 only for the two hub roles. `hub:create-mgmt-roles` runs on every `task install`, so
 `IAMFullAccess` is detached from `<prefix>-cluster-mgmt-iam` on the next install.
-`hub:scope-crossplane-provider-role` runs on every `task install` (not gated on the pod identity
+`hub:crossplane-provider-role` runs on every `task install` (not gated on the pod identity
 associations, skipped for a bring-your-own role): it creates `<hub>-crossplane-provider` if
 absent, attaches the scoped policy and detaches `AdministratorAccess` (best effort). A live hub
 is therefore scoped on its next `task install`, and a later change of the policy document
@@ -273,7 +273,7 @@ IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
 `crossplaneProviderRoleArn` applies when the PIAs are created (fresh hub, or reinstall after
 `task destroy`). Existing associations are not repointed: on an existing hub, setting it has
 no effect until the PIAs are recreated, and the default `<hub>-crossplane-provider` keeps its
-policies; `hub:scope-crossplane-provider-role` prints a warning when that role still exists.
+policies; `hub:crossplane-provider-role` prints a warning when that role still exists.
 
 ## Credentials on Kind
 

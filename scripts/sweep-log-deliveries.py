@@ -10,7 +10,9 @@ cluster: delivery source <cluster>-<cap>, destination <cluster>-<cap>-cwl, and t
 delivery between them, for the removed clusters of THIS stack only (exact names: the
 hub, the inventory's spokes, PREFIX-spoke-dev/-prod; not live, not retained; never a
 PREFIX-* pattern). Deliveries first, then sources, then destinations.
-Never fails destroy (exit 0); errors print the AWS error code only.
+Never fails destroy (exit 0); errors print the AWS error code only. With --strict
+(task privileged:destroy) it exits 1 when the clusters cannot be read or any selected
+delete failed.
 """
 import os
 import sys
@@ -25,6 +27,7 @@ def main(argv, eks=None, logs=None, out=sys.stdout):
         print(__doc__, file=sys.stderr)
         return 2
     prefix, region, hub = pos[:3]
+    fail_rc = 1 if o['strict'] else 0
     inventory = sl.load_inventory(o['inventory'])
     try:
         eks = eks or sl.client('eks', region)
@@ -32,18 +35,19 @@ def main(argv, eks=None, logs=None, out=sys.stdout):
     except Exception as e:
         sl.reraise_credentials(e)
         print(f'  ⚠ cannot read the EKS clusters ({sl.err_code(e)}): log deliveries not swept', file=out)
-        return 0
+        return fail_rc
     is_gone = sl.gone_stack_clusters(prefix, hub, clusters, inventory, o['assume_deleted'])
     gone = {c for c in sl.stack_cluster_names(prefix, hub, inventory) if is_gone(c)}
+    failures = []
     try:
         logs = logs or sl.client('logs', region)
-        ids, srcs, dsts, n = sl.sweep_log_deliveries(logs, gone, o['dry_run'])
+        ids, srcs, dsts, n = sl.sweep_log_deliveries(logs, gone, o['dry_run'], failures)
     except Exception as e:
         sl.reraise_credentials(e)
         print(f'  ⚠ log delivery sweep stopped ({sl.err_code(e)})', file=out)
-        return 0
+        return fail_rc
     print(f'  log deliveries: {len(ids) + len(srcs) + len(dsts)} selected, {n} deleted', file=out)
-    return 0
+    return fail_rc if failures else 0
 
 
 if __name__ == '__main__':

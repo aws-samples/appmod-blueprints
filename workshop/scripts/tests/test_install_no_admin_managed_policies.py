@@ -376,7 +376,7 @@ def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
         },
     }
     if taskfile == KRO:  # kind-crossplane has no hub:bootstrap-crossplane-identity
-        scope = block("hub:scope-crossplane-provider-role", 0)
+        scope = block("hub:crossplane-provider-role", 0)
         tf["tasks"]["scope"] = {"cmds": [scope]}
         # install order: scope (ungated) first, then bootstrap (PIAs)
         tf["tasks"]["bootstrap"] = {"cmds": [scope, block("hub:bootstrap-crossplane-identity", 1)]}
@@ -458,7 +458,7 @@ def logical_lines_of(text):
     return text.replace("\\\n", " ").splitlines()
 
 
-BLOCKS = [(KRO, "hub:scope-crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles", 1),
+BLOCKS = [(KRO, "hub:crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles", 1),
           (KRO, "spokes:seed-provider-identity", 0),
           (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)]
 
@@ -810,14 +810,14 @@ def test_scope_task_is_not_gated_and_runs_before_bootstrap():
     of the policy document."""
     with open(KRO) as f:
         tasks = yaml.safe_load(f)["tasks"]
-    scope = tasks["hub:scope-crossplane-provider-role"]
+    scope = tasks["hub:crossplane-provider-role"]
     assert "status" not in scope and "sources" not in scope and "generates" not in scope
     assert "managed-policy.sh" not in "".join(
         c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:bootstrap-crossplane-identity"]["cmds"])
     for name, t in tasks.items():
         order = [c["task"] for c in t.get("cmds", []) if isinstance(c, dict) and "task" in c]
         if "hub:bootstrap-crossplane-identity" in order:
-            assert order.index("hub:scope-crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
+            assert order.index("hub:crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
 
 
 @needs_task
@@ -1147,7 +1147,7 @@ def test_schema_hub_iam_rejects_unknown_keys():
 
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
 @pytest.mark.parametrize("taskfile,task,index", [
-    (KRO, "hub:scope-crossplane-provider-role", 0),
+    (KRO, "hub:crossplane-provider-role", 0),
     (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
     (KRO, "spokes:seed-provider-identity", 0),
     (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)])

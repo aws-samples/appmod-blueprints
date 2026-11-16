@@ -48,6 +48,7 @@ def reap(ctx):
 
         tag_errors = 0
         count = 0
+        failed = []
         for role in sum(
             [p["Roles"] for p in iam.get_paginator("list_roles").paginate()], []
         ):
@@ -61,13 +62,17 @@ def reap(ctx):
                     iam.delete_role_policy(RoleName=n, PolicyName=ip)
                 iam.delete_role(RoleName=n)
                 count += 1
-            except Exception:
-                pass
+            except Exception as e:
+                # Not silent: a role left behind (AccessDenied, still in use...) is named.
+                failed.append(f"{n} ({_err_code(e)})")
         if tag_errors:
             log(f"  IAM: {tag_errors} role tag lookup(s) failed — those roles were left alone")
         log(f"  Deleted {count} IAM roles")
+        if failed:
+            log(f"  ⚠ IAM: {len(failed)} role(s) not deleted: {', '.join(failed)}")
 
         tag_owned_deleted = 0
+        pol_failed = []
         for pol in sum(
             [p["Policies"] for p in iam.get_paginator("list_policies").paginate(Scope="Local")],
             [],
@@ -88,12 +93,19 @@ def reap(ctx):
                 if by_tag:
                     tag_owned_deleted += 1
                     log(f"  Deleted IAM policy {n} (owned by tag, no attachment)")
-            except Exception:
-                pass
+            except Exception as e:
+                pol_failed.append(f"{n} ({_err_code(e)})")
         if tag_owned_deleted:
             log(f"  Deleted {tag_owned_deleted} unprefixed IAM policy(ies) owned by tag")
+        if pol_failed:
+            log(f"  ⚠ IAM: {len(pol_failed)} policy(ies) not deleted: {', '.join(pol_failed)}")
     except Exception as e:
         log(f"IAM: {e}")
+
+
+def _err_code(e):
+    """The AWS error code of a botocore ClientError, else the exception class."""
+    return getattr(e, "response", {}).get("Error", {}).get("Code") or e.__class__.__name__
 
 
 def policy_tag_owned(ctx, pol):
