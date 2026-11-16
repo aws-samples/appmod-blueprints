@@ -245,8 +245,19 @@ tasks:
         POLICY='{"Version":"2012-10-17","Statement":[{"Sid":"EKSCapabilityVendedLogsDelivery","Effect":"Allow","Principal":{"Service":"delivery.logs.amazonaws.com"},"Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:'"$REGION"':'"$ACCT"':log-group:/aws/eks/*/capability/*:*","Condition":{"StringEquals":{"aws:SourceAccount":"'"$ACCT"'"}}}]}'
         aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
         for C in $(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
-          CAP_ARN=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.arn' --output text 2>/dev/null || echo "")
+          # A capability still CREATING/UPDATING rejects put-delivery-source with a
+          # ConflictException, which aborted the install when spokes were just created.
+          # Wait for ACTIVE (bounded, CAP_LOGS_WAIT seconds), else skip this cluster.
+          WAITED=0
+          while :; do
+            OUT=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.[arn,status]' --output text 2>/dev/null || true)
+            CAP_ARN=$(echo "$OUT" | awk '{print $1}'); CAP_STATUS=$(echo "$OUT" | awk '{print $2}')
+            case "$CAP_STATUS" in CREATING|UPDATING) ;; *) break ;; esac
+            [ "$WAITED" -ge "${CAP_LOGS_WAIT:-600}" ] && break
+            sleep 15; WAITED=$((WAITED + 15))
+          done
           if [ -z "$CAP_ARN" ] || [ "$CAP_ARN" = "None" ]; then echo "  $C: no '$CAP' capability — skipping"; continue; fi
+          if [ "$CAP_STATUS" != "ACTIVE" ]; then echo "  $C: '$CAP' capability is $CAP_STATUS after ${WAITED}s — skipping (re-run task enable-capability-logs later)"; continue; fi
           LG="/aws/eks/$C/capability/$CAP"; LG_ARN="arn:aws:logs:$REGION:$ACCT:log-group:$LG"
           aws logs create-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
           aws logs put-retention-policy --log-group-name "$LG" --retention-in-days 30 --region "$REGION" >/dev/null 2>&1 || true
