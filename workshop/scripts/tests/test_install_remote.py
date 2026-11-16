@@ -81,13 +81,33 @@ def test_remote_sets_a_git_identity_before_the_first_commit(tmp_path):
     env = dict(os.environ, HOME=str(home), GIT_CONFIG_NOSYSTEM="1")
     env.pop("GIT_CONFIG_GLOBAL", None)
     subprocess.run(["bash", "-c", block], env=env, check=True, timeout=30)
-    got = subprocess.run(["git", "config", "--global", "user.email"], env=env, capture_output=True, text=True)
-    assert got.stdout.strip() == "platform@workshops.aws"
-    # an existing identity is kept
+    def get(key):
+        return subprocess.run(["git", "config", "--global", key], env=env, capture_output=True, text=True).stdout.strip()
+
+    assert get("user.email") == "platform@workshops.aws"
+    assert get("user.name") == "PEEKS platform"
+    # an existing identity is kept (name and email)
     subprocess.run(["git", "config", "--global", "user.email", "me@example.com"], env=env, check=True)
+    subprocess.run(["git", "config", "--global", "user.name", "Me Myself"], env=env, check=True)
     subprocess.run(["bash", "-c", block], env=env, check=True, timeout=30)
-    got = subprocess.run(["git", "config", "--global", "user.email"], env=env, capture_output=True, text=True)
-    assert got.stdout.strip() == "me@example.com"
+    assert get("user.email") == "me@example.com"
+    assert get("user.name") == "Me Myself"
+    # a half identity is completed, never overwritten: email without name, name without email
+    for k, v, other, want in (("user.email", "only@example.com", "user.name", "PEEKS platform"),
+                              ("user.name", "Only Name", "user.email", "platform@workshops.aws")):
+        h = tmp_path / ("half-" + k)
+        h.mkdir()
+        e2 = dict(env, HOME=str(h))
+        subprocess.run(["git", "config", "--global", k, v], env=e2, check=True)
+        subprocess.run(["bash", "-c", block], env=e2, check=True, timeout=30)
+        got = lambda key: subprocess.run(["git", "config", "--global", key], env=e2, capture_output=True, text=True).stdout.strip()
+        assert got(k) == v and got(other) == want, (k, got(k), got(other))
+    # and a real commit works with the identity the block sets (the spokes:enable-kro failure)
+    repo = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", str(repo)], env=env, check=True)
+    (repo / "f").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "f"], env=env, check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "t"], env=env, check=True)
 
 
 def test_remote_has_no_silent_failure_and_a_fatal_pivot():
@@ -210,6 +230,16 @@ def test_remote_wait_fails_without_a_real_pat(tmp_path, token):
     "glpat-abcDEF0123456789_-xyz`touch PWNED`",
     "glpat-abcDEF0123456789_-xyz\nextra",
     "glpat-abcDEF0123456789_-xyz@evil.example",
+    # appended to a token that is long enough on its own (pre-review nit of f27e0f1ed)
+    "glpat-abcDEF0123456789_-xyz;",
+    "glpat-abcDEF0123456789_-xyz;touch PWNED",
+    "glpat-abcDEF0123456789_-xyz&&touch PWNED",
+    "glpat-abcDEF0123456789_-xyz|touch PWNED",
+    "glpat-abcDEF0123456789_-xyz touch PWNED",
+    "glpat-abcDEF0123456789_-xyz..",
+    "glpat-abcDEF0123456789_-xyz../..",
+    "glpat-abcDEF0123456789_-xyz.",
+    "glpat-abcDEF0123456789_-xyz.01..abcdefghi",
 ])
 def test_remote_wait_refuses_a_token_that_could_inject_shell(tmp_path, token):
     # the IDE can write <hub>/secrets; go-task pastes the token into shell text later

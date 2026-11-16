@@ -474,10 +474,8 @@ tasks:
       # The build container has no git identity, and spokes:enable-kro commits to fleet-config
       # ("Author identity unknown", exit 128). Set one only when none is configured.
       - |
-        git config --global user.email >/dev/null 2>&1 || {
-          git config --global user.name "PEEKS platform"
-          git config --global user.email "platform@workshops.aws"
-        }
+        git config --global user.name >/dev/null 2>&1 || git config --global user.name "PEEKS platform"
+        git config --global user.email >/dev/null 2>&1 || git config --global user.email "platform@workshops.aws"
       - '{{.MARK}} reset {{.INSTALL_START}}'
       - '{{.STATE}} "RUNNING step=platform:prepare"'
       - task: platform:prepare
