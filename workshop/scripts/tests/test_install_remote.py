@@ -490,6 +490,31 @@ def test_install_remote_wait_stops_on_a_failed_local_step(tmp_path, local_rc, rc
     assert r.returncode == rc and msg in r.stderr, r.stdout + r.stderr
 
 
+@needs_tools
+@pytest.mark.parametrize("state_at,rc", [
+    ("2026-11-15T10:00:00+00:00", 1),   # the previous run's OK, its build id still current: ignored
+    ("2026-11-15T12:00:01+00:00", 0),   # written after this run started
+])
+def test_install_remote_wait_ignores_a_state_older_than_this_run(tmp_path, state_at, rc):
+    not_before = int(subprocess.check_output(["date", "-d", "2026-11-15T12:00:00+00:00", "+%s"]).strip())
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="OK 2026-11-15T10:00:00Z", FAKE_BUILD="SUCCEEDED",
+                                                   FAKE_STATE_AT=state_at, FAKE_BUILD_START="2026-11-15T09:00:00+00:00",
+                                                   INSTALL_REMOTE_NOT_BEFORE=str(not_before)))
+    assert r.returncode == rc, r.stdout + r.stderr
+    if rc:
+        assert "ignoring a state from an earlier build" in r.stdout and "without recording OK" in r.stderr
+
+
+def test_install_remote_wait_refuses_a_bad_not_before(tmp_path):
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, FAKE_STATE="OK now", INSTALL_REMOTE_NOT_BEFORE="yesterday"))
+    assert r.returncode == 1 and "must be epoch seconds" in r.stderr
+
+
+def test_ide_passes_its_start_time_to_the_wait():
+    line = IDE[_index(IDE, "install-remote-wait.sh")]
+    assert "INSTALL_REMOTE_NOT_BEFORE={{.INSTALL_START}}" in line
+
+
 def test_ide_passes_the_gitlab_init_rc_to_the_wait():
     line = IDE[_index(IDE, "install-remote-wait.sh")]
     assert "INSTALL_REMOTE_LOCAL_RC=/tmp/gitlab-init.rc" in line
@@ -664,6 +689,8 @@ IDE_REPORT = [c for c in IDE if "idc-status" in c and "extras-status" in c][0]
     ("FAILED rc=1 2026-11-16T00:00:00Z", "OK 2026-11-16T00:00:00Z", False),
     ("SUCCESS 2026-11-16T00:00:00Z", "FAILED: install:remote-extras, see the CodeBuild log", False),
     ("", "", False),                                                          # unreadable
+    ("SUCCESS 2026-11-15T00:00:00Z", "OK 2026-11-16T13:00:00Z", False),      # idc-status of an earlier run
+    ("SUCCESS 2026-11-16T13:00:00Z", "RUNNING 2026-11-15T00:00:00Z", False),  # extras of an earlier run
 ])
 def test_ide_reports_both_build_statuses(tmp_path, idc, extras, ok):
     (tmp_path / "bin").mkdir()
@@ -672,10 +699,12 @@ def test_ide_reports_both_build_statuses(tmp_path, idc, extras, ok):
                     '  *extras-status*) [ -n "$EXTRAS" ] && echo "$EXTRAS" || exit 254 ;;\nesac\n')
     fake.chmod(0o755)
     block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", IDE_REPORT).replace("{{.RESOURCE_PREFIX}}", "acme") \
-        .replace("{{.AWS_REGION}}", "us-west-2").replace("{{.INSTALL_START}}", "0")
+        .replace("{{.AWS_REGION}}", "us-west-2").replace(
+        "{{.INSTALL_START}}", subprocess.check_output(["date", "-d", "2026-11-15T12:00:00Z", "+%s"], text=True).strip())
     env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", IDC=idc, EXTRAS=extras)
     r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr  # never fatal
-    assert f"(idc-status): {idc or 'unknown'}" in r.stdout and f"(extras-status): {extras or 'unknown'}" in r.stdout
+    assert f"(idc-status): " in r.stdout and (idc or "unknown") in r.stdout and (extras or "unknown") in r.stdout
+    assert ("from an earlier run" in r.stdout) is ("2026-11-15" in idc + extras), r.stdout
     assert ("IDE install complete" in r.stdout) is ok, r.stdout
     assert ("did not succeed" in r.stdout) is (not ok), r.stdout

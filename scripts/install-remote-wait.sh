@@ -9,12 +9,17 @@
 #   INSTALL_REMOTE_LOCAL_RC  optional file holding the exit code of a step this host runs in
 #                            the background and the build depends on (install:ide passes
 #                            /tmp/gitlab-init.rc): a non-zero code there ends the wait at once
+#   INSTALL_REMOTE_NOT_BEFORE  optional epoch seconds (install:ide passes its start time): a
+#                            state written earlier belongs to an earlier run and is ignored. The
+#                            build cannot record OK before the IDE half starts (it waits for the
+#                            GitLab PAT the IDE half writes).
 #
 # The build records its id in /<prefix>/install-build-id. A state written before that build
-# started (an earlier build's OK or FAILED) is ignored, and a build that ended SUCCEEDED
-# without recording OK is a failure, not a wait until the timeout.
-# shortcut: until the current build has written its id, the previous build's id and state are
-# what the wait sees; the IDE has no other way to know which build to expect.
+# started, or before INSTALL_REMOTE_NOT_BEFORE, is ignored (an earlier build's OK or FAILED),
+# and a build that ended SUCCEEDED without recording OK is a failure, not a wait until the
+# timeout. A build that ended FAILED/FAULT/TIMED_OUT/STOPPED still ends the wait at once.
+# Timestamps need GNU date -d for the ISO 8601 form (AL2023, CodeBuild); without it the
+# comparison is skipped and every state counts as current.
 #
 # Exit: 0 = install-state is OK, 1 = FAILED / build ended badly / local step failed / timeout.
 # The state parameter is written by the build; the IDE role can write it too (it is not
@@ -25,6 +30,8 @@ PREFIX="${RESOURCE_PREFIX:-$(yq '.resourcePrefix // ""' "$CFG" 2>/dev/null)}"
 MAX="${INSTALL_REMOTE_TIMEOUT:-6600}"
 EVERY="${INSTALL_REMOTE_INTERVAL:-20}"
 LOCAL_RC="${INSTALL_REMOTE_LOCAL_RC:-}"
+NOT_BEFORE="${INSTALL_REMOTE_NOT_BEFORE:-}"
+case "$NOT_BEFORE" in *[!0-9]*) echo "install-remote-wait: INSTALL_REMOTE_NOT_BEFORE must be epoch seconds" >&2; exit 1 ;; esac
 TAB=$(printf '\t')
 
 # epoch <time>: whole seconds from what the CLI prints for a timestamp (ISO 8601 or epoch).
@@ -58,8 +65,14 @@ read_build() {
   esac
 }
 
-# current: the state belongs to the current build (no build known, or written after it started).
-current() { [ -z "$B_START" ] || [ -z "$S_AT" ] || [ "$S_AT" -ge "$B_START" ]; }
+# current: the state belongs to the current run: written after the build in install-build-id
+# started and not before INSTALL_REMOTE_NOT_BEFORE (each check applies when its time is known).
+current() {
+  [ -z "$S_AT" ] && return 0
+  if [ -n "$B_START" ] && [ "$S_AT" -lt "$B_START" ]; then return 1; fi
+  if [ -n "$NOT_BEFORE" ] && [ "$S_AT" -lt "$NOT_BEFORE" ]; then return 1; fi
+  return 0
+}
 
 LAST=""
 STALE=""
