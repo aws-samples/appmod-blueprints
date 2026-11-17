@@ -1432,6 +1432,8 @@ tasks:
       - |
         # Strictly non-fatal: disable errexit so no internal check can fail the install.
         set +e
+        # nounset stays on (the file's set:): give every flag read later a value first.
+        SCAFFOLD_SUBMITTED=""
         APP="{{.APP_NAME}}"; NS="{{.APP_NS}}"; PREFIX="{{.RESOURCE_PREFIX}}"
         ECR_REPO="${PREFIX}/${APP}"
 

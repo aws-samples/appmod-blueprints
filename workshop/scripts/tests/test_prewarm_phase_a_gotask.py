@@ -204,12 +204,12 @@ def test_phase_b_standalone_no_fallback_message(tmp_path, monkeypatch):
 
 
 # ── Phase A still running when Phase B starts (the join gave up), then ends ────────────
-def run_b_with_late_phase_a(tmp_path, monkeypatch, pa_pid, ends_at, rc, scaffolded=False, repo_after=False):
+def run_b_with_late_phase_a(tmp_path, monkeypatch, pa_pid, ends_at, rc, scaffolded=False, repo_after=False, **at):
     """Phase A is a live launcher-like process with no rc file; the fake `sleep` writes
     its rc (and, for a successful Phase A, the scaffold) once the virtual clock reaches
     ends_at. repo_after: the GitLab project API answers 200 once the rc is written
-    (Phase A failed AFTER publish:gitlab created the repo)."""
-    b, plat = fakes(tmp_path)
+    (Phase A failed AFTER publish:gitlab created the repo). at: passed to fakes()."""
+    b, plat = fakes(tmp_path, **at)
     pid, rcf = tmp_path / "pa.pid", tmp_path / "pa.rc"
     pid.write_text(str(pa_pid))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
@@ -306,6 +306,20 @@ def test_phase_b_no_rescaffold_when_late_phase_a_failed_after_publishing_repo(tm
     assert "Phase A finished (rc=201)" in r.stdout, r.stdout
     assert lines(tmp_path, "scaffold.calls") == [], r.stdout
     assert "PREWARM FALLBACK" not in r.stdout
+
+
+def test_phase_b_repo_left_by_failed_phase_a_without_argo_app(tmp_path, monkeypatch, phase_a_pid):
+    # Review (L1598/L1775): Phase A failed after publish:gitlab and before the Argo CD app
+    # was created. The re-check sets REPO_EXISTS but never SCAFFOLD_SUBMITTED, so under
+    # nounset Phase B died on "SCAFFOLD_SUBMITTED: unbound variable" and never printed
+    # the delete-repo hint.
+    r, _ = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=201,
+                                   repo_after=True, cd_at=10_000_000)
+    assert "unbound variable" not in r.stdout + r.stderr, r.stderr
+    assert "no CICDPipeline and no Argo CD app rust-cicd" in r.stdout, r.stdout + r.stderr
+    assert "delete it, then" in r.stdout
+    assert lines(tmp_path, "scaffold.calls") == []
+    assert r.returncode == 0, r.stderr
 
 
 def test_phase_b_wait_for_phase_a_capped_without_deadline(tmp_path, monkeypatch, phase_a_pid):
