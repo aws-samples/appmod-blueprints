@@ -34,7 +34,8 @@ functions:
 # attachments, is denied any other AWS managed policy. A test keeps the two in step.
 # inlineStatements: optional IAM statements for an inline policy on the provider role (a
 # RolePolicy), for what no allowlisted AWS managed policy gives. Keep them narrowly scoped, with
-# no IAM write and no cluster-admin action (amp creates its scraper's EKS access entry, see below).
+# no IAM write beyond a service's own service-linked role (grafana, see below) and no
+# cluster-admin action (amp creates its scraper's EKS access entry, see below).
 # iam and eks default to createIdentity: false: a provider cannot create the credentials it
 # runs with, so their role comes from outside this addon's GitOps sync. kind-kro-ack: the
 # cluster provider's <cluster>-crossplane-provider role. kind-crossplane: the bootstrap render
