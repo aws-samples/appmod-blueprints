@@ -56,6 +56,14 @@ def as_list(v):
 # live test.
 def _cond_ok(cond, ctx):
     for op, kv in cond.items():
+        if op == "Null":
+            # Null:{key:"true"} -> key must be ABSENT; "false" -> key must be PRESENT.
+            for key, vals in kv.items():
+                want_absent = str(as_list(vals)[0]).lower() == "true"
+                present = ctx.get(key) is not None
+                if present == want_absent:
+                    return False
+            continue
         neg = "Not" in op
         for key, vals in kv.items():
             v = ctx.get(key)
@@ -681,6 +689,7 @@ SCRAPER_SLR = (f"arn:aws:iam::{ACCT}:role/aws-service-role/scraper.aps.amazonaws
 SCRAPER_SLR_NOPATH = f"arn:aws:iam::{ACCT}:role/AWSServiceRoleForAmazonPrometheusScraper_1234abcd-56ef-7"
 CLUSTER = f"arn:aws:eks:us-west-2:{ACCT}:cluster/peeks-spoke-dev"
 EKS_ADMIN = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+SCRAPER_POLICY = "arn:aws:eks::aws:cluster-access-policy/AmazonPrometheusScraperPolicy"
 SCRAPER_NAME = "AWSServiceRoleForAmazonPrometheusScraper_1234abcd-56ef-7"
 
 
@@ -745,15 +754,46 @@ def test_amp_access_entry_is_limited_to_this_account_and_region(tmp_path):
     assert not allowed(doc, "eks:CreateAccessEntry", CLUSTER)  # no principal in the request context
 
 
-def test_amp_cannot_associate_any_access_policy(tmp_path):
-    # No access-policy association is granted, so no entry can be given an EKS access policy
-    # (cluster admin included) through this role. Whether AMP needs one is not proven. The
-    # entry's Kubernetes groups are not bounded (in-cluster RBAC decides what they grant).
+def test_amp_create_access_entry_requires_no_groups_or_username(tmp_path):
+    # The live CreateScraper calls send no kubernetesGroups and no username; a Null condition
+    # pins that, so the role cannot create an entry that carries either (which would otherwise let
+    # it map the scraper principal to an arbitrary RBAC group or username).
     doc = amp_inline_doc(tmp_path)
-    for name in (SCRAPER_NAME, "WSParticipantRole", "peeks-hub-CrossplaneAMPProviderRole", "Admin"):
-        e = entry("peeks-hub", name)
-        for a in ("eks:AssociateAccessPolicy", "eks:DisassociateAccessPolicy", "eks:UpdateAccessEntry"):
-            assert not allowed(doc, a, e, {"eks:policyArn": EKS_ADMIN}), (a, name)
+    base = {"eks:principalArn": SCRAPER_SLR}
+    assert allowed(doc, "eks:CreateAccessEntry", CLUSTER, base)  # neither key present
+    assert not allowed(doc, "eks:CreateAccessEntry", CLUSTER, dict(base, **{"eks:kubernetesGroups": "system:masters"}))
+    assert not allowed(doc, "eks:CreateAccessEntry", CLUSTER, dict(base, **{"eks:username": "admin"}))
+
+
+def test_amp_associates_only_the_scraper_policy_at_cluster_scope(tmp_path):
+    # CreateScraper also associates AmazonPrometheusScraperPolicy at cluster scope to the scraper's
+    # own entry (observed live). Exactly that association is allowed; nothing else.
+    doc = amp_inline_doc(tmp_path)
+    ok = {"eks:policyArn": SCRAPER_POLICY, "eks:accessScope": "cluster"}
+    for cluster in ("peeks-hub", "peeks-spoke-dev", "my-hub"):
+        assert allowed(doc, "eks:AssociateAccessPolicy", entry(cluster, SCRAPER_NAME), ok), cluster
+    # Wrong policy, wrong scope, missing key -> denied.
+    assert not allowed(doc, "eks:AssociateAccessPolicy", entry("peeks-hub", SCRAPER_NAME),
+                       {"eks:policyArn": EKS_ADMIN, "eks:accessScope": "cluster"})
+    assert not allowed(doc, "eks:AssociateAccessPolicy", entry("peeks-hub", SCRAPER_NAME),
+                       {"eks:policyArn": SCRAPER_POLICY, "eks:accessScope": "namespace"})
+    assert not allowed(doc, "eks:AssociateAccessPolicy", entry("peeks-hub", SCRAPER_NAME),
+                       {"eks:policyArn": SCRAPER_POLICY})  # no scope in the request context
+    # Other principals' entries, other accounts -> denied even with the right policy+scope.
+    for name in ("WSParticipantRole", "Admin", "AWSServiceRoleForAmazonPrometheusScraperX"):
+        assert not allowed(doc, "eks:AssociateAccessPolicy", entry("peeks-hub", name), ok), name
+    assert not allowed(doc, "eks:AssociateAccessPolicy", entry("peeks-hub", SCRAPER_NAME, acct="222222222222"), ok)
+    # Disassociate / UpdateAccessEntry are not granted at all.
+    for a in ("eks:DisassociateAccessPolicy", "eks:UpdateAccessEntry"):
+        assert not allowed(doc, a, entry("peeks-hub", SCRAPER_NAME), ok), a
+
+
+def test_amp_cannot_associate_cluster_admin(tmp_path):
+    # The one thing the association must never do: give any entry cluster-admin.
+    doc = amp_inline_doc(tmp_path)
+    for name in (SCRAPER_NAME, "WSParticipantRole", "Admin"):
+        assert not allowed(doc, "eks:AssociateAccessPolicy", entry("peeks-hub", name),
+                           {"eks:policyArn": EKS_ADMIN, "eks:accessScope": "cluster"}), name
 
 
 def test_amp_can_describe_and_delete_only_scraper_entries(tmp_path):
