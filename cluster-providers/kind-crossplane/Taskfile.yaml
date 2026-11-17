@@ -1912,14 +1912,33 @@ tasks:
             echo "WARN: No $SPOKE_ENV spoke found for prefix {{.RESOURCE_PREFIX}} in {{.AWS_REGION}}. Scraper skipped."
             continue
           fi
+          # A spoke that is still CREATING already has an ARN and subnets but no cluster security
+          # group: describe-cluster --output text prints "None" for it, and the observability-aws
+          # chart skips a spoke Scraper whose security group is "None". Wait (bounded, default
+          # 60 x 20s) for the spoke to leave CREATING. An API error is not CREATING: no wait.
+          WAIT_TRIES="${SPOKE_SCRAPER_WAIT_TRIES:-60}"
+          case "$WAIT_TRIES" in ''|*[!0-9]*) WAIT_TRIES=60 ;; esac
+          W=0
+          while [ "$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")" = "CREATING" ] \
+                && [ "$W" -lt "$WAIT_TRIES" ]; do
+            if [ "$W" -eq 0 ]; then echo "Spoke $CLUSTER is CREATING: waiting for it before reading its scraper inputs..."; fi
+            W=$((W + 1))
+            sleep 20
+          done
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
-          if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
+          SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null || echo "")
+          # Never store the text rendering of a null: leave this spoke's keys empty, and
+          # observability:converged re-seeds once the spoke is ACTIVE. (if/elif, not a nested
+          # `continue`: go-task's shell does not skip the rest of an outer `if` on it.)
+          case "$SPOKE_SG" in None|null) SPOKE_SG="" ;; esac
+          if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ] && [ -z "$SPOKE_SG" ]; then
+            echo "WARN: Spoke $CLUSTER has no cluster security group yet (still CREATING?). Scraper skipped; re-run task install once it is ACTIVE."
+          elif [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
             SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_ALL_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' '\n' | awk '!seen[$0]++' | head -2 | paste -sd ',' -)
             if [ -z "$SPOKE_PRIVATE_SUBNETS" ]; then
               SPOKE_PRIVATE_SUBNETS=$(echo "$SPOKE_ALL_SUBNETS" | tr '\t' '\n' | head -2 | paste -sd ',' -)
             fi
-            SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
             # Record the name only when there is something new to remember: on a first run
             # (no PRESET_NAME yet), only when it is not the workshop convention name, which
@@ -2099,7 +2118,8 @@ tasks:
         # checks above pass, install would keep skipping the seed. Report it only on a
         # positive answer: the spoke cluster is ACTIVE and its keys are empty. A spoke that
         # does not exist, or an EKS API error, is skipped: an error must never trigger a
-        # re-seed (each re-seed mints a new AMG service account).
+        # re-seed (each re-seed mints a new AMG service account). A stored "None"/"null"
+        # (an older seed read a spoke that was still CREATING) counts as empty.
         SPOKE_MISSING=""
         for SPOKE_ENV in dev prod; do
           # Same discovery as seed-observability (operator-set name, workshop name, then the
@@ -2113,7 +2133,7 @@ tasks:
             SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_cluster_name"
           fi
           for k in cluster_arn private_subnet_ids security_group_id; do
-            if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") != ""' >/dev/null 2>&1; then
+            if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") as $v | ($v != "" and $v != "None" and $v != "null")' >/dev/null 2>&1; then
               SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_$k"
             fi
           done
