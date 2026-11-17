@@ -493,7 +493,20 @@ def test_privileged_destroy_refuses_while_hub_exists(tmp_path, repo, provider):
     res, calls = _run(tmp_path, repo, provider, ["privileged:destroy"], env_extra={"FAKE_HUB": "live"},
                       fakes=(("python3", FAKE_PY),))
     assert res.returncode != 0 and "still exists" in res.stderr
+    # the kind-kro-ack external destroy leaves the hub: the refusal names how to delete it
+    assert "privilegedSteps: external does not delete the hub" in res.stderr
     assert not any(c[:2] == ["iam", "delete-role"] for c in calls)
+
+
+def test_privileged_steps_doc_matches_the_kro_ack_external_destroy():
+    """The doc must not promise AWS deletes the kind-kro-ack destroy skips under external."""
+    doc = open(os.path.join(REPO, "docs", "install", "privileged-steps.md")).read()
+    kro = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
+    assert 'if [ "{{.AWS_DELETES}}" = external ]; then' in kro, "the Kubernetes-only destroy moved: update this test"
+    assert "Teardown: `task destroy` still deletes" not in doc
+    teardown = doc[doc.index("- Teardown, `kind-kro-ack`"):doc.index("- Teardown, `kind-crossplane`")]
+    assert "only tears down Kubernetes" in teardown and "hub EKS cluster" in teardown
+    assert "| After `task destroy` | `task privileged:destroy`" not in doc
 
 
 def test_privileged_destroy_reports_a_role_it_could_not_delete(tmp_path, repo):

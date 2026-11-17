@@ -61,15 +61,48 @@ vars:
     sh: |
       P=$(yq -r '.aws.profile // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
       [ -n "$P" ] && [ "$P" != "null" ] || P=default
+      # aws.installRoleArn: the install runs as this role (assumed from the instance role)
+      # so the instance role itself needs no IAM write. PLATFORM_SKIP_INSTALL_ROLE=true (set by a
+      # consumer for a step that must run on the host's own role, e.g. its teardown) skips it.
+      IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+      # Only a role ARN in the IAM charset is used (it is written into the generated profile):
+      # anything else, a newline included, is ignored with a warning.
+      case "$IR" in ""|null) ;; arn:aws:iam::[0-9]*:role/*)
+        case "$IR" in *[!A-Za-z0-9+=,.@_/:-]*) echo "aws.installRoleArn is not a role ARN: ignored" >&2; IR="" ;; esac ;;
+        *) echo "aws.installRoleArn is not a role ARN: ignored" >&2; IR="" ;; esac
+      if [ -n "$IR" ] && [ "$IR" != "null" ] && [ "${PLATFORM_SKIP_INSTALL_ROLE:-}" != true ] && [ "$P" = default ]; then P=install; fi
       echo "$P"
   # On EC2: generate a config that resolves the profile to the instance role and
   # return its path. Off-instance: fall back to the user's existing AWS_CONFIG_FILE
   # or ~/.aws/config, so local behavior is unchanged (zero regression).
   AWS_CONFIG_FILE:
     sh: |
-      if curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
+      # In CodeBuild (container credentials) the IMDS probe must not run: any HTTP answer would
+      # swap in a config with no [profile install] and break every aws call.
+      if [ -z "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}" ] && curl -s -m 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60" >/dev/null 2>&1; then
         mkdir -p "{{.ROOT_DIR}}/private"
         printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
+        IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+        # Only a role ARN in the IAM charset is used (it is written into the generated profile):
+        # anything else, a newline included, is ignored with a warning.
+        case "$IR" in ""|null) ;; arn:aws:iam::[0-9]*:role/*)
+          case "$IR" in *[!A-Za-z0-9+=,.@_/:-]*) echo "aws.installRoleArn is not a role ARN: ignored" >&2; IR="" ;; esac ;;
+          *) echo "aws.installRoleArn is not a role ARN: ignored" >&2; IR="" ;; esac
+        if [ -n "$IR" ] && [ "$IR" != "null" ] && [ "${PLATFORM_SKIP_INSTALL_ROLE:-}" != true ]; then
+          # Session name: aws.installRoleSessionName (default platform-install). Only the IAM
+          # session-name charset is written into the file; anything else falls back to the default.
+          SN=$(yq -r '.aws.installRoleSessionName // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+          # A case on the whole value (not grep, which matches line by line): any character
+          # outside the charset, a newline included, makes it invalid.
+          SN_OK=true
+          case "$SN" in ""|null|*[!A-Za-z0-9_+=,.@-]*) SN_OK=false ;; esac
+          if [ "$SN_OK" = true ] && { [ "${#SN}" -lt 2 ] || [ "${#SN}" -gt 64 ]; }; then SN_OK=false; fi
+          if [ "$SN_OK" != true ]; then
+            [ -z "$SN" ] || [ "$SN" = null ] || echo "aws.installRoleSessionName is not a valid session name: using platform-install" >&2
+            SN=platform-install
+          fi
+          printf '[profile install]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = %s\n' "$IR" "$SN" >> "{{.ROOT_DIR}}/private/aws-config"
+        fi
         echo "{{.ROOT_DIR}}/private/aws-config"
       else
         echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"

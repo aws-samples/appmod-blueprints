@@ -14,5 +14,8 @@ aws:
 # See templates/client-provisioner-identity.yaml for the full rationale.
 clientProvisioner:
   serviceAccountName: keycloak-client-provisioner
+  # crossplane | ack. Which controller owns the IAM Role + PodIdentityAssociation.
+  # Default crossplane (kind-crossplane, byoc); the registry sets ack on provider=kro-ack.
+  identityBackend: crossplane
 keycloak:
   resources: {}

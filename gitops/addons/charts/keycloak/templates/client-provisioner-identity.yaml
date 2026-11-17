@@ -14,15 +14,48 @@
   which is set only for the control-plane environment, so it renders exactly
   once. It already owns the keycloak namespace and the `keycloak-config` Secret
   that the provisioner Job mounts as a VOLUME — a pod cannot start until that
-  Secret exists, so the Job already hard-depends on this chart. Moving the
-  ServiceAccount here therefore introduces no new ordering constraint; the
-  existing dependency is strictly stronger.
+  Secret exists, so the Job already hard-depends on this chart.
+
+  ORDERING (read this before adding a backend): the ServiceAccount adds no
+  constraint, but the IAM Role and PodIdentityAssociation do, and it depends on
+  the backend (`clientProvisioner.identityBackend`):
+    - crossplane (kind-crossplane, byoc): the Role/PodIdentityAssociation CRDs
+      (iam.aws.upbound.io / eks.aws.upbound.io) are installed by ANOTHER app,
+      crossplane-base (provider-aws-iam / provider-aws-eks, its waves 3). Nothing
+      orders the two apps, so the first Keycloak sync blocks at wave 1 until
+      crossplane-base got that far (observed ~35 min on a fresh install, where
+      Keycloak itself was only up ~20 min after).
+    - ack (kro-ack, chosen by the registry from the cluster `provider` label): the
+      CRDs (iam/eks.services.k8s.aws) are served by the EKS ACK capability, created
+      with the hub before any addon app, so there is no dependency on crossplane-base.
+      The CRs live in the namespace named after the cluster, where the multi-acct /
+      kro-clusters IAMRoleSelectors route iam and eks to cluster-mgmt-iam / -eks;
+      that namespace is created by the multi-acct chart, with the selectors.
+      Upgrade note (existing hub switching from crossplane to ack): (1) patch
+      spec.deletionPolicy=Orphan on the old Crossplane Role and PodIdentityAssociation
+      (the chart does not set it, the default is Delete, which would delete the IAM
+      role); (2) switch the backend (prune is off, the old objects stay); (3) delete the
+      two old objects. Deleting them before the switch does not work: selfHeal
+      recreates them while the chart still renders them. Fresh installs are unaffected.
+      kind-kro-ack `task install` does (1) and (3) itself once the ACK pair is synced
+      (hub:keycloak-identity-handover, a no-op when no Crossplane object is left).
+  Trust: only the hub cluster's keycloak/<serviceAccountName> service account can use the
+  role (EKS Pod Identity session tags eks-cluster-name, kubernetes-namespace,
+  kubernetes-service-account); the secrets it writes are pinned to the hub region, the one
+  the provisioner Job writes to (gitops/bootstrap/client-provisioner.yaml region).
+  Keep the two backends semantically identical (name, trust, permissions, waves);
+  the test test_keycloak_client_provisioner_identity_ack.py enforces it.
 
   The provisioner Job references the ServiceAccount by name via its own
   `serviceAccountName` value, whose default matches the name rendered here.
 */}}
 {{- $clusterName := required "aws.cluster_name is required for the client-provisioner identity" .Values.aws.cluster_name -}}
 {{- $saName := .Values.clientProvisioner.serviceAccountName -}}
+{{- $backend := .Values.clientProvisioner.identityBackend | default "crossplane" -}}
+{{- if not (has $backend (list "crossplane" "ack")) -}}
+{{- fail (printf "clientProvisioner.identityBackend must be crossplane or ack, got %q" $backend) -}}
+{{- end -}}
+{{- $region := required "aws.region is required for the client-provisioner identity" .Values.aws.region -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -30,6 +63,77 @@ metadata:
   namespace: keycloak
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+{{- if eq $backend "ack" }}
+---
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
+metadata:
+  name: {{ $clusterName }}-keycloak-client-provisioner-role
+  namespace: {{ $clusterName }}
+  annotations:
+    services.k8s.aws/region: {{ $region }}
+    # Adopt a role of this name left by a previous (Crossplane) install instead of
+    # failing CreateRole with 409. No retain: the name is cluster-prefixed, so task
+    # destroy / the prefix sweep may delete it with the hub.
+    services.k8s.aws/adoption-policy: adopt-or-create
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  name: {{ $clusterName }}-KeycloakClientProvisionerRole
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "pods.eks.amazonaws.com"},
+        "Action": ["sts:AssumeRole", "sts:TagSession"],
+        "Condition": {"StringEquals": {
+          "aws:RequestTag/eks-cluster-name": "{{ $clusterName }}",
+          "aws:RequestTag/kubernetes-namespace": "keycloak",
+          "aws:RequestTag/kubernetes-service-account": "{{ $saName }}"
+        }}
+      }]
+    }
+  inlinePolicies:
+    KeycloakClientProvisionerSecretsManager: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Effect": "Allow",
+          "Action": [
+            "secretsmanager:CreateSecret",
+            "secretsmanager:PutSecretValue",
+            "secretsmanager:DescribeSecret"
+          ],
+          "Resource": "arn:aws:secretsmanager:{{ $region }}:*:secret:*/oidc/*"
+        }]
+      }
+  tags:
+    - key: platform.gitops.io/role
+      value: keycloak-client-provisioner
+    - key: platform.gitops.io/cluster
+      value: {{ $clusterName }}
+---
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ $clusterName }}-keycloak-client-provisioner
+  namespace: {{ $clusterName }}
+  annotations:
+    services.k8s.aws/region: {{ $region }}
+    # ACK looks the association up by clusterName + namespace + serviceAccount, so
+    # adopt-or-create alone adopts an existing one (see ack-pod-identity).
+    services.k8s.aws/adoption-policy: adopt-or-create
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  clusterName: {{ $clusterName }}
+  namespace: keycloak
+  serviceAccount: {{ $saName }}
+  roleRef:
+    from:
+      name: {{ $clusterName }}-keycloak-client-provisioner-role
+{{- else }}
 ---
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: Role
@@ -50,7 +154,12 @@ spec:
         "Statement": [{
           "Effect": "Allow",
           "Principal": {"Service": "pods.eks.amazonaws.com"},
-          "Action": ["sts:AssumeRole", "sts:TagSession"]
+          "Action": ["sts:AssumeRole", "sts:TagSession"],
+          "Condition": {"StringEquals": {
+            "aws:RequestTag/eks-cluster-name": "{{ $clusterName }}",
+            "aws:RequestTag/kubernetes-namespace": "keycloak",
+            "aws:RequestTag/kubernetes-service-account": "{{ $saName }}"
+          }}
         }]
       }
     inlinePolicy:
@@ -65,7 +174,7 @@ spec:
                 "secretsmanager:PutSecretValue",
                 "secretsmanager:DescribeSecret"
               ],
-              "Resource": "arn:aws:secretsmanager:*:*:secret:*/oidc/*"
+              "Resource": "arn:aws:secretsmanager:{{ $region }}:*:secret:*/oidc/*"
             }]
           }
     tags:
@@ -90,6 +199,7 @@ spec:
       matchLabels:
         platform.gitops.io/role: keycloak-client-provisioner
         platform.gitops.io/cluster: {{ $clusterName }}
-    region: {{ required "aws.region is required for the client-provisioner identity" .Values.aws.region }}
+    region: {{ $region }}
   providerConfigRef:
     name: default
+{{- end }}

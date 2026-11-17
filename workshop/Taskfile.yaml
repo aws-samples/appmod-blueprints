@@ -443,6 +443,257 @@ tasks:
       - task: install
 
   # ============================================================
+  # REMOTE INSTALL (option A: the install runs in CodeBuild, the IDE follows)
+  # ============================================================
+  # `install` split in two, for a host (the IDE) that must hold no IAM write and no right to
+  # assume the install role. `install:remote` runs in ONE CodeBuild build under a dedicated
+  # role (CloudFormation PEEKS_INSTALL_REMOTE=true, cdk/resources/buildspec-install.yaml):
+  # platform install (kind, ACK, kro, hub, providers), overlay, spokes, CloudFront, hub pivot.
+  # `install:ide` runs on the IDE: GitLab init (the PAT it writes releases the build's wait),
+  # wait for the build, IdC federation, prewarm, env. `install` is unchanged and keeps doing
+  # everything on one host.
+  #
+  # Contract of the remote half: config.local.yaml has gitlabInit: remote (the platform waits
+  # for the PAT in Secrets Manager instead of a local pid file) and the privileged steps stay
+  # inline (the build role is the privileged runner). Progress: SSM /<prefix>/install-state
+  # (scripts/install-state.sh), written at every step; the build writes OK or FAILED.
+  # shortcut: kind-kro-ack only (kind-crossplane has no remote wait); the body of the IDE half
+  # copies the tail of `install`, share it through included tasks when the two are kept long-term.
+  install:remote:
+    desc: "Remote half of the install, run in CodeBuild: platform, overlay, spokes, CloudFront, hub pivot"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
+      STATE: 'sh "{{.REPO}}/scripts/install-state.sh"'
+    preconditions:
+      - sh: '[ "$(yq ''.clusterProvider // "kind-kro-ack"'' {{.CONFIG_FILE}})" = "kind-kro-ack" ]'
+        msg: "install:remote supports clusterProvider kind-kro-ack only."
+      - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" = "remote" ]'
+        msg: "install:remote needs gitlabInit: remote in {{.CONFIG_FILE}} (GitLab runs on the IDE, not here)."
+      - sh: '[ "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" != "external" ]'
+        msg: "install:remote is the privileged runner: privilegedSteps must not be external."
+    cmds:
+      - printf '{{.C_STEP}}▸ Remote install starting (CodeBuild half)...{{.C_RESET}}\n'
+      # The build container has no git identity, and spokes:enable-kro commits to fleet-config
+      # ("Author identity unknown", exit 128). Set one only when none is configured.
+      - |
+        git config --global user.name >/dev/null 2>&1 || git config --global user.name "PEEKS platform"
+        git config --global user.email >/dev/null 2>&1 || git config --global user.email "platform@workshops.aws"
+      - '{{.MARK}} reset {{.INSTALL_START}}'
+      - '{{.STATE}} "RUNNING step=platform:prepare"'
+      - task: platform:prepare
+      - |
+        if ! grep -q '^  install:hub:' "{{.PLATFORM_DIR}}/Taskfile.yaml"; then
+          printf '{{.C_ERR}}✗ platform at {{.PLATFORM_DIR}} has no install:hub: the remote install needs the two-phase platform install.{{.C_RESET}}\n'
+          exit 1
+        fi
+      - '{{.STATE}} "RUNNING step=platform:install:hub"'
+      - 'cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:hub'
+      - 'printf "{{.C_INFO}}  [%ds] platform install:hub done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # CloudFront attach in the background, joined before install ends (same pattern as install).
+      - |
+        rm -f /tmp/cloudfront-attach.pid /tmp/cloudfront-attach.rc
+        sh -c 'echo $$ > /tmp/cloudfront-attach.pid; {{.MARK}} start "cloudfront:attach (bg)"; task cloudfront:attach; rc=$?; echo $rc > /tmp/cloudfront-attach.rc; {{.MARK}} done "cloudfront:attach (bg)" "rc=$rc"' \
+          > /tmp/cloudfront-attach.log 2>&1 < /dev/null &
+      - '{{.STATE}} "RUNNING step=set-overlay-repo"'
+      - task: set-overlay-repo
+      - '{{.STATE}} "RUNNING step=argocd-gitlab-webhook"'
+      - task: argocd-gitlab-webhook
+      - '{{.STATE}} "RUNNING step=spokes:enable-kro"'
+      - task: spokes:enable-kro
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-dev" }
+      - task: spokes:enable-kro
+        vars: { CLI_ARGS: "{{.RESOURCE_PREFIX}}-spoke-prod" }
+      - '{{.STATE}} "RUNNING step=platform:install:complete"'
+      - 'cd {{.PLATFORM_DIR}} && INSTALL_TIMING_T0={{.INSTALL_START}} task install:complete'
+      - '{{.STATE}} "RUNNING step=join cloudfront:attach"'
+      - |
+        CPID=$(cat /tmp/cloudfront-attach.pid 2>/dev/null || echo '')
+        E=0
+        while [ ! -s /tmp/cloudfront-attach.rc ] && [ -n "$CPID" ] && [ -d "/proc/$CPID" ] && [ "$E" -lt 2400 ]; do
+          sleep 5; E=$((E + 5))
+        done
+        CRC=$(cat /tmp/cloudfront-attach.rc 2>/dev/null || echo '')
+        printf '{{.C_INFO}}  cloudfront:attach joined after %ss (rc=%s).{{.C_RESET}}\n' "$E" "${CRC:-none}"
+        if [ "$CRC" != "0" ]; then
+          printf '{{.C_INFO}}  re-running cloudfront:attach inline (background run did not succeed).{{.C_RESET}}\n'
+          task cloudfront:attach
+        fi
+      # Identity Center <-> Keycloak federation (SAML + SCIM, Playwright/Chromium) runs HERE, under
+      # the install role: the IDE role has no sso/identitystore right. Keycloak is up (install:complete)
+      # and reachable (CloudFront joined). Tolerant like `install` (IDC_STRICT=false): the outcome is
+      # in /tmp/idc-configure-status, which the build publishes as /<prefix>/idc-status.
+      - '{{.STATE}} "RUNNING step=idc:configure"'
+      # Never stops the install, whatever fails inside (no domain, Keycloak down, pip, no
+      # credentials: those exit 1 whatever IDC_STRICT says) and always leaves a status for the
+      # build to publish: the task's own SUCCESS/FAILED, or SKIPPED / UP-TO-DATE / FAILED rc=N.
+      - |
+        rm -f /tmp/idc-configure-status
+        # A nested `task` does not inherit CLI vars: forward the knob, so
+        # `task install:remote IDC_CONFIGURE_SKIP=true` skips idc:configure too.
+        rc=0; task idc:configure IDC_STRICT=false IDC_CONFIGURE_SKIP='{{.IDC_CONFIGURE_SKIP | default "false"}}' || rc=$?
+        if [ ! -s /tmp/idc-configure-status ]; then
+          if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then S="SKIPPED"
+          elif [ "$rc" = "0" ]; then S="UP-TO-DATE"
+          else S="FAILED rc=$rc"; fi
+          echo "$S $(date -u +%FT%TZ)" > /tmp/idc-configure-status
+        fi
+        [ "$rc" = "0" ] || printf '{{.C_ERR}}⚠ idc:configure failed (rc=%s): the install goes on, SSO is NOT configured (see idc-status).{{.C_RESET}}\n' "$rc"
+      # The pivot detaches the hub from the kind cluster, which dies with this build: the spokes
+      # must exist (ACTIVE) first, as in `install` where the pivot is the last step.
+      - '{{.STATE}} "RUNNING step=wait-for-spokes"'
+      - task: wait-for-spokes
+        vars: { SPOKE_APPS: "false" }
+      # Hub self-adoption pivot. FATAL here (it is non-fatal in `install`): once this build ends
+      # the bootstrap kind cluster is gone, and a hub nobody manages must not look like success.
+      - '{{.STATE}} "RUNNING step=hub:pivot"'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:pivot PIVOT_DRY_RUN=false PIVOT_CONFIRM=yes PIVOT_DETACH_MODE=stop PIVOT_ADOPT_TIMEOUT_SEC={{.HUB_PIVOT_INSTALL_ADOPT_TIMEOUT_SEC | default "1800"}}'
+      - '{{.MARK}} dump'
+      - 'printf "{{.C_OK}}✓ Remote install (CodeBuild half) complete in %ds.{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+
+  install:remote-extras:
+    desc: "Remote install (CodeBuild half), after the platform is up: Ray + Kargo IAM setup the IDE role cannot do"
+    preconditions:
+      - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" = "remote" ]'
+        msg: "install:remote-extras is for the CodeBuild half of the remote install (gitlabInit: remote)."
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    cmds:
+      # The same steps `install` runs on the IDE, with the build role's IAM rights. The vLLM image
+      # build is started in the background by ray:setup (docker is available in the build); the
+      # build waits for it so the push is not killed when the build ends.
+      # Module 30.4 (deploy-kargo.sh, run by the participant) skips its IAM write when these exist.
+      # First: it is quick, the Ray image build below is not.
+      - '{{.MARK}} step workshop kargo-identity'
+      - task: kargo-identity
+      - '{{.MARK}} step workshop ray:setup'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:setup'
+      - '{{.MARK}} step workshop ray:prestage-models'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:ray:prestage-models'
+      - '{{.MARK}} step workshop ray:wait-image'
+      - 'cd {{.PLATFORM_DIR}} && RAY_WAIT_STRICT=1 task {{.PROVIDER}}:ray:wait-image'
+
+  kargo-identity:
+    desc: "Create the Kargo controller IAM role + Pod Identity association (the IAM part of applications/java/kargo/deploy-kargo.sh)"
+    cmds:
+      - |
+        HUB_CLUSTER="{{.RESOURCE_PREFIX}}-hub"
+        KARGO_ROLE="${HUB_CLUSTER}-kargo-controller-role"
+        if ! aws iam get-role --role-name "$KARGO_ROLE" --region "{{.AWS_REGION}}" >/dev/null 2>&1; then
+          aws iam create-role --role-name "$KARGO_ROLE" \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}' \
+            --description "Kargo controller ECR read access" --no-cli-pager >/dev/null
+          aws iam attach-role-policy --role-name "$KARGO_ROLE" \
+            --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly --region "{{.AWS_REGION}}"
+          echo "  ✓ IAM role $KARGO_ROLE created"
+        fi
+        KARGO_ROLE_ARN=$(aws iam get-role --role-name "$KARGO_ROLE" --query 'Role.Arn' --output text --region "{{.AWS_REGION}}")
+        if ! aws eks list-pod-identity-associations --cluster-name "$HUB_CLUSTER" --region "{{.AWS_REGION}}" \
+          --query "associations[?namespace=='kargo'&&serviceAccount=='kargo-controller']" --output text 2>/dev/null | grep -q .; then
+          aws eks create-pod-identity-association \
+            --cluster-name "$HUB_CLUSTER" --namespace kargo --service-account kargo-controller \
+            --role-arn "$KARGO_ROLE_ARN" --region "{{.AWS_REGION}}" >/dev/null
+          echo "  ✓ pod identity association created"
+        fi
+
+  install:ide:
+    desc: "IDE half of the remote install: GitLab init, wait for the CodeBuild half, IdC, prewarm, env"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+      INSTALL_START:
+        sh: date +%s
+    preconditions:
+      - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" != "remote" ]'
+        msg: "install:ide runs on the IDE with the config published by the remote install (workshop/fetch-install-config.sh), not the build's own."
+    cmds:
+      - printf '{{.C_STEP}}▸ IDE install starting (the platform install runs in CodeBuild)...{{.C_RESET}}\n'
+      - '{{.MARK}} reset {{.INSTALL_START}}'
+      # GitLab init in the background, as in `install`. The build waits for the PAT it writes.
+      - |
+        rm -f /tmp/gitlab-init.rc
+        ( set +e; task -x gitlab:init-ec2; echo $? > /tmp/gitlab-init.rc ) > /tmp/gitlab-init.log 2>&1 < /dev/null &
+        echo $! > /tmp/gitlab-init.pid
+        printf '{{.C_INFO}}  gitlab:init-ec2 started in background (PID=%s, log: /tmp/gitlab-init.log){{.C_RESET}}\n' "$(cat /tmp/gitlab-init.pid)"
+      - task: platform:prepare
+      - '{{.MARK}} step workshop wait for the CodeBuild install'
+      # A failed gitlab:init-ec2 means the build waits for a PAT that never comes: stop at once.
+      # States and builds older than the config this host fetched are an earlier build's
+      # (cut-off: see the script; INSTALL_REMOTE_NOT_BEFORE=<epoch> overrides it).
+      - 'INSTALL_REMOTE_LOCAL_RC=/tmp/gitlab-init.rc sh "{{.REPO}}/scripts/install-remote-wait.sh"'
+      - '{{.MARK}} step workshop join gitlab:init-ec2'
+      - 'cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:hub:wait-for-gitlab-init'
+      # Identity Center federation (post-install) runs in the CodeBuild install, with the Ray setup.
+      # The Ray setup and the Kargo controller identity create IAM roles and Pod Identity
+      # associations: this host has no IAM write, so they run in the CodeBuild install
+      # (install:remote-extras), not here.
+      - |
+        rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
+        sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > /tmp/prewarm-phase-a.rc; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
+          > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
+      - '{{.MARK}} step workshop wait-for-spokes:active'
+      - task: wait-for-spokes
+        vars: { SPOKE_APPS: "false" }
+      - |
+        printf '' > /tmp/spoke-apps-bg.rc
+        S=""; command -v setsid >/dev/null 2>&1 && S=setsid
+        S="$S" sh -c '( exec $S task spoke-apps-bg INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}} ) >> /tmp/spoke-apps-bg.log 2>&1 < /dev/null &'
+      - '{{.MARK}} step workshop setup-env'
+      - task: setup-env
+        vars: { IDC_CONFIGURE_REMOTE: "true" }
+      - |
+        if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}; then
+          kubectl config use-context {{.HUB_CLUSTER_NAME}}
+        else
+          printf '{{.C_ERR}}  ⚠ Could not restore hub kubeconfig context — run: aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --alias {{.HUB_CLUSTER_NAME}}{{.C_RESET}}\n'
+        fi
+      - '{{.MARK}} step workshop join prewarm Phase A'
+      - cmd: |
+          APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
+          E=0
+          while [ ! -s /tmp/prewarm-phase-a.rc ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt 900 ]; do
+            sleep 5; E=$((E + 5))
+          done
+          printf '{{.C_INFO}}  prewarm Phase A: rc=%s after %ss (log: /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$(cat /tmp/prewarm-phase-a.rc 2>/dev/null || echo none)" "$E"
+        ignore_error: true
+      - '{{.MARK}} step workshop prewarm-rust-cicd'
+      - task: prewarm-rust-cicd
+        vars:
+          INSTALL_START: '{{.INSTALL_START}}'
+          INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+        ignore_error: true
+      - '{{.MARK}} step workshop -'
+      - '{{.MARK}} dump'
+      # What the build reported for the two steps it runs for this host: Identity Center
+      # (idc-status) and install:remote-extras (extras-status, often still RUNNING here: the
+      # image build continues after the install is OK). Read-only, never fatal.
+      - |
+        rd() { aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/$1" --region {{.AWS_REGION}} --query Parameter.Value --output text 2>/dev/null || true; }
+        IDC=$(rd idc-status); EXTRAS=$(rd extras-status)
+        # A value ending in a UTC stamp older than the cut-off the wait used is an earlier
+        # build's: say so.
+        NB=$(sh "{{.REPO}}/scripts/install-remote-wait.sh" --print-not-before 2>/dev/null || true)
+        fresh() { t="${1##* }"; case "$t" in 20[0-9][0-9]-*T*Z) ;; *) return 0 ;; esac
+          [ -n "$NB" ] || return 0
+          at=$(date -d "$t" +%s 2>/dev/null) || return 0; [ "$at" -ge "$NB" ]; }
+        if [ -n "$IDC" ] && ! fresh "$IDC"; then IDC="stale, from an earlier run: $IDC"; fi
+        if [ -n "$EXTRAS" ] && ! fresh "$EXTRAS"; then EXTRAS="stale, from an earlier run: $EXTRAS"; fi
+        printf '{{.C_INFO}}  Identity Center (idc-status): %s{{.C_RESET}}\n' "${IDC:-unknown}"
+        printf '{{.C_INFO}}  install:remote-extras (extras-status): %s{{.C_RESET}}\n' "${EXTRAS:-unknown}"
+        ALL_OK=true
+        case "$IDC" in SUCCESS*|SKIPPED*|UP-TO-DATE*) ;; *) ALL_OK=false ;; esac
+        case "$EXTRAS" in OK*|RUNNING*) ;; *) ALL_OK=false ;; esac
+        case "$EXTRAS" in RUNNING*) printf '{{.C_INFO}}  extras still running in the build: aws logs tail /aws/codebuild/{{.RESOURCE_PREFIX}}-install --follow{{.C_RESET}}\n' ;; esac
+        if [ "$ALL_OK" = true ]; then
+          printf '{{.C_OK}}✓ IDE install complete in %ds.{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+        else
+          printf '{{.C_ERR}}⚠ IDE install finished in %ds, but a step of the build did not succeed (see above).{{.C_RESET}}\n' "$(($(date +%s) - {{.INSTALL_START}}))"
+        fi
+
+  # ============================================================
   # DESTROY — full ordered teardown
   # ============================================================
   credentials:refresh:
@@ -455,6 +706,9 @@ tasks:
 
   destroy:
     desc: "Full teardown: drain workloads from spokes → delete spokes → destroy hub platform"
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
@@ -997,6 +1251,17 @@ tasks:
           fi
           DL=$(cat "{{.DESTROY_DEADLINE_FILE}}" 2>/dev/null || echo 0)
           case "$DL" in ''|*[!0-9]*) DL=0 ;; esac
+          # privilegedSteps=external: Kubernetes-only teardown on this host, on the host's own
+          # (instance) role. kind-kro-ack skips its direct AWS deletes (the stack sweep does
+          # them) and the install role (aws.installRoleArn) is not used. The other providers
+          # have no Kubernetes-only destroy: they still make their AWS deletes, with this
+          # host's credentials, and the operator is told so.
+          if [ "$(yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}} 2>/dev/null || true)" = external ]; then
+            export PLATFORM_SKIP_INSTALL_ROLE=true
+            if [ "{{.PROVIDER}}" != kind-kro-ack ]; then
+              printf '{{.C_INFO}}  privilegedSteps=external: only the kind-kro-ack destroy is Kubernetes-only; the {{.PROVIDER}} destroy makes its AWS deletes with this host'"'"'s credentials.{{.C_RESET}}\n'
+            fi
+          fi
           cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy HUB_DELETE_WAIT="$WAIT" DESTROY_DEADLINE="$DL"
 
       - '{{.DESTROY_MARK}} "done $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true'
@@ -2411,6 +2676,10 @@ tasks:
         # Keep IDC_CONFIGURE_SKIP=true for the IDE shell too, so argocd-refresh-token's fallback
         # (hack/.bashrc.d/ssm-setup-ide-logs.sh) leaves the shared IAM Identity Center alone.
         if [ "{{.IDC_CONFIGURE_SKIP | default "false"}}" = "true" ]; then set_var IDC_CONFIGURE_SKIP "true"; fi
+        # Remote install (install:ide passes IDC_CONFIGURE_REMOTE=true): Identity Center was
+        # configured by the CodeBuild install and this IDE role holds no sso/identitystore right, so
+        # the same fallback must not run from here.
+        if [ "{{.IDC_CONFIGURE_REMOTE | default "false"}}" = "true" ]; then set_var IDC_CONFIGURE_REMOTE "true"; fi
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         source "$PLATFORM_FILE" 2>/dev/null || true
 
@@ -2451,6 +2720,11 @@ tasks:
           D=$(yq -r '.domain // ""' {{.CONFIG_FILE}} 2>/dev/null | tr -d '[:space:]')
           if [ "$D" = "null" ]; then D=""; fi
           echo "$D"
+    env:
+      # The password reaches configure_identity_center.py as an environment variable (it
+      # reads KC_ADMIN_PASSWORD), never as text of the script, where go-task would paste it and
+      # $(...) or backticks in the value would be evaluated, and never on the command line.
+      KC_ADMIN_PASSWORD: '{{.KC_ADMIN_PASSWORD}}'
     cmds:
       - |
         case "{{.KEYCLOAK_DNS}}" in
@@ -2503,6 +2777,12 @@ tasks:
         esac
         case "$LAMBDA_ARN" in
           ""|None)
+            # In the CodeBuild install there is no instance profile to fall back to (and its
+            # credentials would not be the Identity Center role): stop here.
+            if [ -n "${IDC_CONSOLE_ROLE_ARN:-}" ]; then
+              echo "ERROR: the IDC credentials Lambda was not found; no instance-profile fallback in the build."
+              exit 1
+            fi
             echo "WARN: Lambda not found. Falling back to instance profile."
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
             ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/)
@@ -2513,7 +2793,11 @@ tasks:
               --type "SecureString" --overwrite --region {{.AWS_REGION}} > /dev/null
           ;;
           *)
-            ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
+            # The CodeBuild install sets IDC_CONSOLE_ROLE_ARN: the role whose console session the
+            # flow uses (it holds the Identity Center rights; the IDE role holds none). Otherwise
+            # (inline install on the IDE) the IDE role, as before.
+            ROLE_ARN="${IDC_CONSOLE_ROLE_ARN:-}"
+            [ -n "$ROLE_ARN" ] || ROLE_ARN=$(aws cloudformation describe-stacks --region {{.AWS_REGION}} \
               --query "Stacks[?contains(StackName,'{{.RESOURCE_PREFIX}}-workshop')].Outputs[?OutputKey=='SharedRoleArn'].OutputValue | [0][0]" \
               --output text 2>/dev/null | grep -o 'arn:aws:iam::[^[:space:]]*' | head -1) || ROLE_ARN=""
             case "$ROLE_ARN" in
@@ -2545,11 +2829,24 @@ tasks:
           ;;
         esac
       - printf '{{.C_STEP}}▸ Installing Playwright...{{.C_RESET}}\n'
-      - pip install playwright boto3 requests tenacity --quiet 2>/dev/null
+      # The console-role session the Lambda stored (valid 1 h) is only needed by this run:
+      # delete it, and the local copy, when the task ends, whatever the outcome. The next run
+      # gets a fresh one from the Lambda. A failed delete is reported, never fatal.
+      - defer: |
+          rm -f /tmp/keycloak-idc-integration-credentials.json
+          aws ssm delete-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --region {{.AWS_REGION}} >/dev/null 2>&1 \
+            || printf '{{.C_INFO}}  ⚠ could not delete SSM /{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials (it expires within 1 h).{{.C_RESET}}\n'
+      # Pinned: these run under a role with Identity Center rights. The newest releases that
+      # still support Python 3.9 (the IDE's python3); bump them together.
+      - python3 -m pip install playwright==1.60.0 boto3==1.42.97 requests==2.32.5 tenacity==9.1.2 --quiet
       - python3 -m playwright install chromium --quiet 2>/dev/null || python3 -m playwright install chromium
-      - sudo yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
+      - S=sudo; [ "$(id -u)" = 0 ] && S=""; $S yum install -y atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr mesa-libgbm pango alsa-lib nss nspr libXScrnSaver libXtst gtk3 --quiet 2>/dev/null || true
       - printf '{{.C_STEP}}▸ Running IDC ↔ Keycloak SAML/SCIM configuration...{{.C_RESET}}\n'
-      - aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > /tmp/keycloak-idc-integration-credentials.json
+      # Mode 600 before any content is written (go-task's shell has no umask builtin).
+      - |
+        F=/tmp/keycloak-idc-integration-credentials.json
+        rm -f "$F" && touch "$F" && chmod 600 "$F"
+        aws ssm get-parameter --name "/{{.RESOURCE_PREFIX}}/keycloak-idc-integration-credentials" --with-decryption --region {{.AWS_REGION}} --query 'Parameter.Value' --output text > "$F"
       - |
         IDC_SUCCESS=false
         # Fail-fast: if KEYCLOAK_DNS is empty (no domain in config) don't waste time
@@ -2591,7 +2888,6 @@ tasks:
                 --region {{.AWS_REGION}} \
                 --instance-id {{.IDC_INSTANCE_ID}} \
                 --keycloak-dns {{.KEYCLOAK_DNS}} \
-                --keycloak-admin-password="{{.KC_ADMIN_PASSWORD}}" \
                 --verify-username "{{.GIT_USERNAME}}"; then
               IDC_SUCCESS=true
             fi

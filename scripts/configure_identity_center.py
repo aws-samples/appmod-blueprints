@@ -56,7 +56,9 @@ def main():
     parser.add_argument("--region", required=True)
     parser.add_argument("--instance-id", required=True)
     parser.add_argument("--keycloak-dns", required=True)
-    parser.add_argument("--keycloak-admin-password", required=True)
+    # Prefer the KC_ADMIN_PASSWORD environment variable: a command-line value is visible to
+    # every process on the host (ps, /proc/<pid>/cmdline). The flag is kept for manual runs.
+    parser.add_argument("--keycloak-admin-password", default=os.environ.get("KC_ADMIN_PASSWORD", ""))
     parser.add_argument("--no-headless", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-reuse-session", action="store_true")
@@ -68,6 +70,11 @@ def main():
         help="Username expected to be SCIM-provisioned; used for the post-config federation assertion.",
     )
     args = parser.parse_args()
+
+    if not args.keycloak_admin_password:
+        print("ERROR: no Keycloak admin password: set KC_ADMIN_PASSWORD (or --keycloak-admin-password).",
+              file=sys.stderr)
+        sys.exit(1)
 
     if not args.keycloak_dns or args.keycloak_dns in ("null", "None", ""):
         print(

@@ -80,7 +80,8 @@ tasks:
       - task: "{{.PROVIDER}}:install"
       # Activate EKS Capability (kro) controller log delivery for all provisioned
       # clusters. Idempotent; skips clusters whose kro capability is not yet
-      # ACTIVE (re-run `task enable-capability-logs` after enabling more spokes).
+      # ACTIVE or DEGRADED after waiting up to CAP_LOGS_WAIT s while CREATING/UPDATING, and
+      # lists them in a final ⚠ line (re-run `task enable-capability-logs` after enabling more spokes).
       # NOTE: imperative for now because ACK/Crossplane lack DeliverySource/
       # DeliveryDestination/Delivery CRDs. Tracking issue to move this into the
       # RGD/composition (option 2) or declarative CRs (option 3).
@@ -335,6 +336,10 @@ tasks:
       AWS_ACCOUNT_ID:
         sh: aws sts get-caller-identity --query Account --output text
       CAP: '{{.CAP | default "kro"}}'
+    env:
+      # Settable as a task var (task enable-capability-logs CAP_LOGS_WAIT=30) or as an env var;
+      # an env var already set in the caller wins (go-task does not override it).
+      CAP_LOGS_WAIT: '{{.CAP_LOGS_WAIT}}'
     cmds:
       - |
         REGION="{{.AWS_REGION}}"; ACCT="{{.AWS_ACCOUNT_ID}}"; CAP="{{.CAP}}"
@@ -347,9 +352,44 @@ tasks:
         # the delivery service write to any EKS capability log group in this region.
         POLICY='{"Version":"2012-10-17","Statement":[{"Sid":"EKSCapabilityVendedLogsDelivery","Effect":"Allow","Principal":{"Service":"delivery.logs.amazonaws.com"},"Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:'"$REGION"':'"$ACCT"':log-group:/aws/eks/*/capability/*:*","Condition":{"StringEquals":{"aws:SourceAccount":"'"$ACCT"'"}}}]}'
         aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
-        for C in $(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text); do
-          CAP_ARN=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.arn' --output text 2>/dev/null || echo "")
+        WAIT_MAX="${CAP_LOGS_WAIT:-600}"
+        case "$WAIT_MAX" in ''|*[!0-9]*|0?*|???????*) echo "  CAP_LOGS_WAIT='$WAIT_MAX' is not a number of seconds — using 600"; WAIT_MAX=600 ;; esac
+        ERRF=$(mktemp); trap 'rm -f "$ERRF"' EXIT
+        SKIPPED=""
+        CLUSTERS=$(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text 2>"$ERRF") \
+          || { echo "  WARN: list-clusters failed: $(head -c 300 "$ERRF")"; SKIPPED=" (all: list-clusters failed)"; CLUSTERS=""; }
+        for C in $CLUSTERS; do
+          # A capability still CREATING/UPDATING rejects put-delivery-source with a
+          # ConflictException, which aborted the install when spokes were just created.
+          # Wait while CREATING/UPDATING (up to CAP_LOGS_WAIT seconds per cluster, default
+          # 600), then deliver for ACTIVE or DEGRADED and skip any other state.
+          WAITED=0
+          while :; do
+            RC=0
+            OUT=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.[arn,status]' --output text 2>"$ERRF") || RC=$?
+            CAP_ARN=$(echo "$OUT" | awk '{print $1}'); CAP_STATUS=$(echo "$OUT" | awk '{print $2}')
+            case "$CAP_STATUS" in CREATING|UPDATING) ;; *) break ;; esac
+            [ "$WAITED" -ge "$WAIT_MAX" ] && break
+            NAP=$((WAIT_MAX - WAITED)); [ "$NAP" -gt 15 ] && NAP=15; [ "$NAP" -gt 0 ] || break
+            sleep "$NAP"; WAITED=$((WAITED + NAP))
+          done
+          if [ "$RC" -ne 0 ]; then
+            # Only ResourceNotFound means "no capability"; anything else (expired
+            # credentials, AccessDenied, throttling) is reported, not hidden.
+            if grep -q ResourceNotFoundException "$ERRF"; then
+              # A cluster still being created has no capability yet: that is a skip, not "absent".
+              CL_STATUS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>"$ERRF") \
+                || CL_STATUS="UNKNOWN ($(head -c 200 "$ERRF"))"
+              if [ "$CL_STATUS" = "ACTIVE" ]; then echo "  $C: no '$CAP' capability — skipping"
+              else echo "  $C: cluster is $CL_STATUS, no '$CAP' capability yet — skipping"; SKIPPED="$SKIPPED $C"; fi
+            else echo "  WARN $C: describe-capability failed (rc=$RC): $(head -c 300 "$ERRF") — skipping, re-run task enable-capability-logs"; SKIPPED="$SKIPPED $C"; fi
+            continue
+          fi
           if [ -z "$CAP_ARN" ] || [ "$CAP_ARN" = "None" ]; then echo "  $C: no '$CAP' capability — skipping"; continue; fi
+          case "$CAP_STATUS" in
+            ACTIVE|DEGRADED) ;;
+            *) echo "  $C: '$CAP' capability is $CAP_STATUS after ${WAITED}s — skipping (re-run task enable-capability-logs later)"; SKIPPED="$SKIPPED $C"; continue ;;
+          esac
           LG="/aws/eks/$C/capability/$CAP"; LG_ARN="arn:aws:logs:$REGION:$ACCT:log-group:$LG"
           aws logs create-log-group --log-group-name "$LG" --region "$REGION" 2>/dev/null || true
           aws logs put-retention-policy --log-group-name "$LG" --retention-in-days 30 --region "$REGION" >/dev/null 2>&1 || true
@@ -382,7 +422,11 @@ tasks:
             echo "  $C: $CAP log delivery already present -> $LG"
           fi
         done
-        echo "✓ $CAP capability logs enabled for {{.RESOURCE_PREFIX}}-* clusters (CloudWatch Vended Logs; billable)"
+        if [ -n "$SKIPPED" ]; then
+          echo "⚠ $CAP capability logs NOT enabled for:$SKIPPED (see above); re-run task enable-capability-logs"
+        else
+          echo "✓ $CAP capability logs enabled for {{.RESOURCE_PREFIX}}-* clusters (CloudWatch Vended Logs; billable)"
+        fi
 
   kubeconfig:
     desc: Grant IDE access and write kubeconfig contexts for the hub and all spoke clusters

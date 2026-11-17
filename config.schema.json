@@ -247,6 +247,23 @@
           "type": "string",
           "default": "default",
           "description": "AWS CLI profile name (local dev only)"
+        },
+        "installRoleArn": {
+          "type": "string",
+          "default": "",
+          "pattern": "^(arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+)?$",
+          "description": "EC2 hosts only. When set (and aws.profile is unset or default), the install runs as this role, assumed from the instance role through a generated `install` profile, so the instance role needs no IAM write. Teardown on the host (PLATFORM_SKIP_INSTALL_ROLE=true) stays on the instance role. Not a security boundary: whoever can use the instance role can assume this role. The ACK controllers in the kind bootstrap cluster keep the instance role (kind-kro-ack credentials:refresh), so this key alone does not take IAM write away from the instance role."
+        },
+        "installRoleSessionName": {
+          "type": "string",
+          "default": "platform-install",
+          "pattern": "^[A-Za-z0-9_+=,.@-]{2,64}$",
+          "description": "Session name of the generated `install` profile (aws.installRoleArn), as seen in CloudTrail. Default platform-install; an invalid value falls back to it."
+        },
+        "ideRoleArn": {
+          "type": "string",
+          "default": "",
+          "description": "ARN of the instance role of the host. With aws.installRoleArn, hub:seed also gives this role the cluster-admin access entry (the caller is then the install role)."
         }
       }
     },
@@ -264,7 +281,13 @@
       "type": "string",
       "enum": ["inline", "external"],
       "default": "inline",
-      "description": "Who runs the install steps that create IAM roles or the EKS capability log delivery from the install host with the AWS CLI. inline (default): task install does. external: a separate privileged runner does (task privileged:pre before task install, task privileged:post after, task privileged:destroy after task destroy). task install then only verifies, read-only, the cluster-mgmt roles, the Ray roles and (kind-kro-ack) the <hub>-crossplane-provider role, with their scoped policies (a bring-your-own hub.iam.* role: existence only). Any other value is refused by the root entry points and the role steps (see the docs for provider-level entry points). The host still creates the pod identity associations (eks:CreatePodIdentityAssociation, iam:PassRole on those roles) and the other AWS resources of the install; the kind bootstrap cluster's ACK/Crossplane controllers still use the host credentials. See docs/install/privileged-steps.md."
+      "description": "Who runs the install steps that create IAM roles or the EKS capability log delivery from the install host with the AWS CLI. inline (default): task install does. external: a separate privileged runner does (task privileged:pre before task install, task privileged:post after, task privileged:destroy after task destroy). task install then only verifies, read-only, the cluster-mgmt roles, the Ray roles and (kind-kro-ack) the <hub>-crossplane-provider role, with their scoped policies (a bring-your-own hub.iam.* role: existence only). Any other value is refused by the root entry points and the role steps (see the docs for provider-level entry points). The host still creates the pod identity associations (eks:CreatePodIdentityAssociation, iam:PassRole on those roles) and the other AWS resources of the install; the kind bootstrap cluster's ACK/Crossplane controllers still use the host credentials. See docs/install/privileged-steps.md. With clusterProvider kind-kro-ack, task destroy then only tears down Kubernetes and leaves the AWS deletes (EKS cluster, capabilities, secrets, the leftover and extended sweeps) to a stack sweep: without one they remain. The other providers have no Kubernetes-only destroy: their task destroy still makes its AWS deletes, with the credentials of the host."
+    },
+    "gitlabInit": {
+      "type": "string",
+      "enum": ["local", "remote"],
+      "default": "local",
+      "description": "Where gitlab:init-ec2 runs relative to the install. local (default): in the background of the same host (pid file). remote: on another host (the IDE, with the install in CodeBuild, task workshop:install:remote): the install waits for the real GitLab PAT (glpat-) in <hub>/secrets.git_token. kind-kro-ack only."
     },
     "certificateArn": {
       "type": "string",
