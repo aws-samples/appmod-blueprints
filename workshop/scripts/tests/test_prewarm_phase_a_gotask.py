@@ -8,9 +8,10 @@ any HTTP call. Phase A therefore never scaffolded; its output went to /dev/null,
 exited 0 and Phase B did the work. The other prewarm tests render the cmd and run it with
 bash, which is why they never saw it: the Phase A tests here run the real `task` binary.
 
-Also covered (bash harness, like the other prewarm tests): prewarm-rust-cicd says loudly
-when it falls back for a failed Phase A, and does not scaffold a second time while
-Phase A is still running.
+Also covered: prewarm-rust-cicd says loudly when it falls back for a failed Phase A, and
+does not scaffold a second time while Phase A is still running. Every test here runs the
+rendered cmd through `task` with the real Taskfile's `set:` line (errexit, nounset,
+pipefail), so unbound variables and pipefail effects show up as they do on an install.
 
 Run:  python -m pytest workshop/scripts/tests/test_prewarm_phase_a_gotask.py -q
 """
@@ -21,9 +22,11 @@ import subprocess
 import pytest
 
 yaml = pytest.importorskip("yaml")
-from test_prewarm_rust_waits import REPO, VARS, fakes, lines, render, run  # noqa: E402
+from test_prewarm_rust_waits import REPO, TASKFILE, VARS, fakes, lines, render  # noqa: E402
 
 BSAUTH = os.path.join(REPO, "scripts", "validation", "backstage-auth.sh")
+# The real Taskfile's shell options: go-task applies them to every cmd.
+TASK_SET = yaml.safe_load(open(TASKFILE))["set"]
 
 
 def task_bin():
@@ -83,13 +86,26 @@ def run_phase_a(tmp_path, **files):
         cmd = render("prewarm-rust-cicd-phase-a", plat)
     finally:
         VARS.pop("PHASE_A_SCAFFOLD_LOG", None)
+    r = task_run(tmp_path, b, cmd)
+    return r, int((tmp_path / "clock").read_text()), log
+
+
+def task_run(tmp_path, b, cmd):
+    """Run a rendered cmd through the real `task` binary, with the real `set:` line."""
     d = tmp_path / "tf"
     d.mkdir()
-    (d / "Taskfile.yaml").write_text(yaml.safe_dump({"version": "3", "tasks": {"a": {"cmds": [cmd]}}}))
+    (d / "Taskfile.yaml").write_text(yaml.safe_dump(
+        {"version": "3", "set": TASK_SET, "tasks": {"a": {"cmds": [cmd]}}}))
     env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", FAKE_T=str(tmp_path), HOME=str(tmp_path))
-    r = subprocess.run([task_bin(), "-s", "-d", str(d), "a"], env=env,
-                       capture_output=True, text=True, timeout=120, cwd=str(tmp_path))
-    return r, int((tmp_path / "clock").read_text()), log
+    return subprocess.run([task_bin(), "-s", "-d", str(d), "a"], env=env,
+                          capture_output=True, text=True, timeout=120, cwd=str(tmp_path))
+
+
+def run_b(tmp_path, **at):
+    """prewarm-rust-cicd (Phase B) through `task`, with the shared fakes."""
+    b, plat = fakes(tmp_path, **at)
+    r = task_run(tmp_path, b, render("prewarm-rust-cicd", plat))
+    return r, int((tmp_path / "clock").read_text())
 
 
 def test_phase_a_scaffolds_under_go_task(tmp_path):
@@ -155,7 +171,7 @@ def test_phase_b_fallback_is_loud(tmp_path, monkeypatch):
     rc.write_text("201\n")                                  # go-task exit code of a failed cmd
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rc))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "pa.pid"))
-    r, _ = run(tmp_path, "prewarm-rust-cicd")
+    r, _ = run_b(tmp_path)
     assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=201" in r.stdout, r.stdout
     assert len(lines(tmp_path, "scaffold.calls")) == 1
 
@@ -165,7 +181,7 @@ def test_phase_b_no_second_scaffold_while_phase_a_runs(tmp_path, monkeypatch, ph
     pid.write_text(str(phase_a_pid))                          # a live Phase A, no rc yet
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "pa.rc"))
-    r, _ = run(tmp_path, "prewarm-rust-cicd")
+    r, _ = run_b(tmp_path)
     assert "Phase A still running" in r.stdout, r.stdout
     assert lines(tmp_path, "scaffold.calls") == []
     assert "nothing will create the pipeline" not in r.stdout
@@ -176,7 +192,7 @@ def test_phase_b_no_second_scaffold_while_phase_a_runs(tmp_path, monkeypatch, ph
 def test_phase_b_standalone_no_fallback_message(tmp_path, monkeypatch):
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "absent.rc"))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
-    r, _ = run(tmp_path, "prewarm-rust-cicd")
+    r, _ = run_b(tmp_path)
     assert "PREWARM FALLBACK" not in r.stdout
     assert len(lines(tmp_path, "scaffold.calls")) == 1
 
@@ -205,9 +221,7 @@ def run_b_with_late_phase_a(tmp_path, monkeypatch, pa_pid, ends_at, rc, scaffold
             'case "$*" in *api/v4/projects/*)\n'
             f'  if [ -s "{rcf}" ]; then echo 200; else echo 404; fi; exit 0;; esac\n'
             'echo 401\n')
-    env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", FAKE_T=str(tmp_path), HOME=str(tmp_path))
-    r = subprocess.run(["bash", "-c", render("prewarm-rust-cicd", plat)], env=env,
-                       capture_output=True, text=True, timeout=60, cwd=str(tmp_path))
+    r = task_run(tmp_path, b, render("prewarm-rust-cicd", plat))
     return r, int((tmp_path / "clock").read_text())
 
 
@@ -250,7 +264,7 @@ def test_phase_b_no_fallback_message_for_ok_rc_or_standalone(tmp_path, monkeypat
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(f))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
     monkeypatch.setitem(VARS, "INSTALL_START", install_start)
-    r, _ = run(tmp_path, "prewarm-rust-cicd")
+    r, _ = run_b(tmp_path)
     assert "PREWARM FALLBACK" not in r.stdout, r.stdout
     assert len(lines(tmp_path, "scaffold.calls")) == 1
 
@@ -281,7 +295,7 @@ def test_phase_b_wait_for_phase_a_capped_without_deadline(tmp_path, monkeypatch,
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "pa.rc"))
     monkeypatch.setitem(VARS, "INSTALL_START", "")
-    r, clock = run(tmp_path, "prewarm-rust-cicd")
+    r, clock = run_b(tmp_path)
     assert "waiting up to 900s for it to finish" in r.stdout, r.stdout
     assert "still running after 900s" in r.stdout, r.stdout
     assert lines(tmp_path, "scaffold.calls") == []
@@ -296,6 +310,6 @@ def test_phase_b_ignores_stale_pid_of_another_process(tmp_path, monkeypatch):
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(pid))
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(tmp_path / "pa.rc"))
     monkeypatch.setitem(VARS, "INSTALL_START", "")
-    r, clock = run(tmp_path, "prewarm-rust-cicd")
+    r, clock = run_b(tmp_path)
     assert "Phase A still running" not in r.stdout, r.stdout
     assert len(lines(tmp_path, "scaffold.calls")) == 1
