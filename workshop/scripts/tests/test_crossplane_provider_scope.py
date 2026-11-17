@@ -741,8 +741,8 @@ def test_amp_access_entry_is_limited_to_this_account_and_region(tmp_path):
 
 
 def test_amp_cannot_associate_any_access_policy(tmp_path):
-    # AMP's scraper relies on in-cluster RBAC, not on an EKS access policy: no association at all,
-    # so neither the scraper role nor any other entry can be given cluster admin through this role.
+    # No access-policy association is granted, so neither the scraper role nor any other entry can
+    # be given cluster admin through this role. (Whether AMP needs one is not proven.)
     doc = amp_inline_doc(tmp_path)
     for name in (SCRAPER_NAME, "WSParticipantRole", "peeks-hub-CrossplaneAMPProviderRole", "Admin"):
         e = entry("peeks-hub", name)

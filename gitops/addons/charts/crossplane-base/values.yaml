@@ -110,7 +110,7 @@ providers:
     # this one), on any cluster of this account and region: the hub name is set by the consumer
     # (hub.clusterName) and need not share a prefix with the spokes. The no-path ARN spelling is
     # kept as well in case EKS normalises the principal. Only Describe/Delete of those entries
-    # follow (DeleteScraper removes its entry); no access policy can be associated.
+    # follow, for the scraper delete path (not proven to be called); no access policy can be associated.
     # Rendered with tpl: {{ }} below is resolved by the chart, not by Helm values.
     inlineStatements:
       - Effect: Allow
