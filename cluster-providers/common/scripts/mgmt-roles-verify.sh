@@ -19,7 +19,9 @@ expected_policies() {
   case $1 in
     ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
     eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
-    iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
+    # iam: no AWS managed policy; the customer-managed <prefix>-cluster-mgmt-iam-scoped
+    # (checked by name below) replaces IAMFullAccess.
+    iam) echo "";;
     ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
     s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
     dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
@@ -56,6 +58,15 @@ for svc in $SERVICES; do
       *) MISSING="$MISSING policy:$ROLE:${arn##*/}" ;;
     esac
   done
+  # cluster-mgmt-iam carries the customer-managed scoped policy (common/iam/managed-policy.sh),
+  # not IAMFullAccess.
+  if [ "$svc" = iam ]; then
+    SCOPED="${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
+    # managed-policy.sh names a replacement <base>-<8 hex digits> after a document change.
+    if ! echo "$ATTACHED" | tr '\t' '\n' | grep -Eq ":policy/${SCOPED}(-[0-9a-f]{8})?\$"; then
+      MISSING="$MISSING policy:$ROLE:$SCOPED"
+    fi
+  fi
 done
 # Inline policies apply puts on the eks and rds roles.
 for pair in eks:eks-access-management rds:rds-kms; do

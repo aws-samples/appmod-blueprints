@@ -75,12 +75,15 @@ identityCenter: {{instanceArn: "", region: us-west-2}}
 def _expected_policies(text):
     """{service: [policy arns]} from a get_policies()/expected_policies() case block."""
     out = {}
-    for svc, arns in re.findall(r"^\s+([a-z0-9]+)\) echo \"([^\"]+)\";;", text, re.M):
+    for svc, arns in re.findall(r"^\s+([a-z0-9]+)\) echo \"([^\"]*)\";;", text, re.M):
         out[svc] = arns.split()
     return out
 
 
 ALL_POLICIES = sorted({a for v in _expected_policies(open(VERIFY_SH).read()).values() for a in v})
+# cluster-mgmt-iam has the customer-managed scoped policy instead of IAMFullAccess
+SCOPED_IAM = "arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped"
+ALL_POLICIES.append(SCOPED_IAM)
 
 
 @pytest.fixture
@@ -90,6 +93,10 @@ def repo(tmp_path):
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
     shutil.copytree(os.path.join(REPO, "cluster-providers"), r / "cluster-providers")
+    # managed-policy.sh has its own tests (test_install_no_admin_managed_policies.py); here the
+    # fake aws cannot answer its get-policy-version, so it is replaced by a logging stub.
+    stub = r / "cluster-providers" / "common" / "iam" / "managed-policy.sh"
+    stub.write_text('#!/bin/sh\necho "managed-policy.sh $*" >> "$FAKE_AWS_LOG"\n')
     (r / "scripts").mkdir()
     shutil.copy(os.path.join(REPO, "scripts", "install-timing.sh"), r / "scripts" / "install-timing.sh")
     shutil.copytree(os.path.join(REPO, "gitops", "addons", "registry"), r / "gitops" / "addons" / "registry")
@@ -131,6 +138,26 @@ def test_external_mode_only_reads_iam(tmp_path, repo, provider):
     assert not (_verbs(calls, "iam") & IAM_WRITES), calls
     gets = [c for c in calls if c[:2] == ["iam", "get-role"]]
     assert len(gets) == len(SERVICES)
+
+
+@pytest.mark.parametrize("attached,ok", [
+    ("arn:aws:iam::aws:policy/IAMFullAccess", False),  # old admin-like policy is not enough
+    ("arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped", True),
+    ("arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped-52e27e9d", True),  # after a document change
+    ("arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped-other", False),
+])
+def test_verify_wants_the_scoped_iam_policy(tmp_path, attached, ok):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "aws").write_text(FAKE_AWS)
+    (bindir / "aws").chmod(0o755)
+    others = [a for a in ALL_POLICIES if a != SCOPED_IAM]
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(tmp_path / "l"),
+               FAKE_ROLES="present", FAKE_ALL_POLICIES=" ".join(others + [attached]), RESOURCE_PREFIX="acme")
+    res = subprocess.run(["sh", VERIFY_SH], env=env, capture_output=True, text=True, timeout=60)
+    assert (res.returncode == 0) is ok, res.stdout + res.stderr
+    if not ok:
+        assert "policy:acme-cluster-mgmt-iam:acme-cluster-mgmt-iam-scoped" in res.stderr
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
