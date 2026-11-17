@@ -272,6 +272,21 @@ ALL_PROVIDERS = ["kind-kro-ack", "kind-crossplane", "terraform"]
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("session_name,want", [
+    ("peeks-install", "peeks-install"),        # what the workshop's create-config.sh writes
+    (None, "platform-install"),                # neutral default for any other consumer
+    ("bad name\nrole_arn = x", "platform-install"),  # never written into the file as is
+])
+def test_install_profile_session_name_comes_from_config(tmp_path, repo, provider, session_name, want):
+    res, _ = _run(tmp_path, repo, provider, [f"{provider}:hub:create-mgmt-roles"],
+                  install_role=ROLE, mode="external", session_name=session_name)
+    assert res.returncode == 0, res.stdout + res.stderr
+    cfg = (repo / "private" / "aws-config").read_text()
+    assert f"role_session_name = {want}\n" in cfg, cfg
+    assert cfg.count("role_arn = ") == 1
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
 @pytest.mark.parametrize("value,skipped", [("true", True), ("", False), ("false", False)])
 def test_skip_install_role_variable(tmp_path, repo, provider, value, skipped):
     res, log = _run(tmp_path, repo, provider, [f"{provider}:hub:create-mgmt-roles"], install_role=ROLE,
@@ -284,9 +299,11 @@ def test_skip_install_role_variable(tmp_path, repo, provider, value, skipped):
 def test_no_consumer_name_left_in_the_providers():
     for p in ALL_PROVIDERS:
         text = open(os.path.join(REPO, "cluster-providers", p, "Taskfile.yaml")).read()
-        assert "PEEKS_AWS_IDE_ONLY" not in text, p
+        assert "PEEKS_AWS_IDE_ONLY" not in text and "peeks-install" not in text, p
 
 
-def test_workshop_sets_the_skip_variable():
+def test_workshop_sets_its_session_name_and_skip_variable():
+    cc = open(os.path.join(REPO, "workshop", "create-config.sh")).read()
+    assert "installRoleSessionName: \"peeks-install\"" in cc
     ws = open(os.path.join(REPO, "workshop", "Taskfile.yaml")).read()
     assert "export PLATFORM_SKIP_INSTALL_ROLE=true" in ws

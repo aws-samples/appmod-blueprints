@@ -50,7 +50,14 @@ vars:
         printf '[default]\ncredential_source = Ec2InstanceMetadata\n' > "{{.ROOT_DIR}}/private/aws-config"
         IR=$(yq -r '.aws.installRoleArn // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
         if [ -n "$IR" ] && [ "$IR" != "null" ] && [ "${PLATFORM_SKIP_INSTALL_ROLE:-}" != true ]; then
-          printf '[profile install]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = peeks-install\n' "$IR" >> "{{.ROOT_DIR}}/private/aws-config"
+          # Session name: aws.installRoleSessionName (default platform-install). Only the IAM
+          # session-name charset is written into the file; anything else falls back to the default.
+          SN=$(yq -r '.aws.installRoleSessionName // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
+          if ! printf '%s' "$SN" | grep -Eqx '[A-Za-z0-9_+=,.@-]{2,64}'; then
+            [ -z "$SN" ] || [ "$SN" = null ] || echo "aws.installRoleSessionName is not a valid session name: using platform-install" >&2
+            SN=platform-install
+          fi
+          printf '[profile install]\nrole_arn = %s\ncredential_source = Ec2InstanceMetadata\nrole_session_name = %s\n' "$IR" "$SN" >> "{{.ROOT_DIR}}/private/aws-config"
         fi
         echo "{{.ROOT_DIR}}/private/aws-config"
       else
