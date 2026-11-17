@@ -33,7 +33,8 @@ functions:
 # DenyAttachAwsManagedPolicyOutsideAllowlist): provider-aws-iam, which makes these
 # attachments, is denied any other AWS managed policy. A test keeps the two in step.
 # inlineStatements: optional IAM statements for an inline policy on the provider role (a
-# RolePolicy), for what no allowlisted AWS managed policy gives. Keep them read-only.
+# RolePolicy), for what no allowlisted AWS managed policy gives. Keep them narrowly scoped, with
+# no IAM write and no cluster-admin action (amp creates its scraper's EKS access entry, see below).
 # iam and eks default to createIdentity: false: a provider cannot create the credentials it
 # runs with, so their role comes from outside this addon's GitOps sync. kind-kro-ack: the
 # cluster provider's <cluster>-crossplane-provider role. kind-crossplane: the bootstrap render
@@ -105,12 +106,16 @@ providers:
     # .../cluster/<name>". CloudTrail shows the call made as this role (invokedBy
     # aps.amazonaws.com) with principalArn
     # role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_<id>.
-    # The grant is limited by eks:principalArn to AMP's scraper service-linked role (the
-    # AWSServiceRoleFor name prefix is reserved for service-linked roles, and only AMP can use
-    # this one), on any cluster of this account and region: the hub name is set by the consumer
-    # (hub.clusterName) and need not share a prefix with the spokes. The no-path ARN spelling is
-    # kept as well in case EKS normalises the principal. Only Describe/Delete of those entries
-    # follow, for the scraper delete path (not proven to be called); no access policy can be associated.
+    # The grant is limited by eks:principalArn to that exact service-linked-role shape: the
+    # /aws-service-role/scraper.aps.amazonaws.com/ path and a role name starting with
+    # AWSServiceRoleFor (reserved for service-linked roles), with no further "/" (StringLike's *
+    # also matches "/", so the StringNotLike stops a deeper path from posing as the name). It
+    # applies to any cluster of this account and region: the hub name is set by the consumer
+    # (hub.clusterName) and need not share a prefix with the spokes. Only Describe/Delete of those
+    # entries follow, for the scraper delete path (not proven to be called). No access policy can
+    # be associated. Not bounded: the Kubernetes groups/username of the entry (what AMP sends is
+    # not known); in-cluster RBAC decides what those grant.
+    # An empty aws.accountId or aws.region renders ARNs that match nothing (fails closed).
     # Rendered with tpl: {{ }} below is resolved by the chart, not by Helm values.
     inlineStatements:
       - Effect: Allow
@@ -118,9 +123,9 @@ providers:
         Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:cluster/*'
         Condition:
           StringLike:
-            eks:principalArn:
-              - 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*'
-              - 'arn:aws:iam::{{ .Values.aws.accountId }}:role/AWSServiceRoleForAmazonPrometheusScraper_*'
+            eks:principalArn: 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*'
+          StringNotLike:
+            eks:principalArn: 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*/*'
       - Effect: Allow
         Action:
           - eks:DescribeAccessEntry

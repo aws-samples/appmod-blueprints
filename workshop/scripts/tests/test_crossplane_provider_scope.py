@@ -696,7 +696,7 @@ def entry(cluster, principal_name, acct=ACCT):
     return f"arn:aws:eks:us-west-2:{acct}:access-entry/{cluster}/role/{acct}/{principal_name}/uuid-1"
 
 
-@pytest.mark.parametrize("principal", [SCRAPER_SLR, SCRAPER_SLR_NOPATH])
+@pytest.mark.parametrize("principal", [SCRAPER_SLR])
 @pytest.mark.parametrize("cluster", ["peeks-hub", "peeks-spoke-dev", "my-hub", "team-a-prod"])
 def test_amp_can_create_access_entry_for_its_scraper_role_on_any_cluster_here(tmp_path, principal, cluster):
     # The hub name comes from the consumer's hub.clusterName and need not share the spokes' prefix.
@@ -726,6 +726,11 @@ def test_amp_allows_the_principal_amp_actually_sends(tmp_path, cluster):
     f"arn:aws:iam::{ACCT}:role/aws-service-role/other.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_1",
     "arn:aws:iam::222222222222:role/AWSServiceRoleForAmazonPrometheusScraper_1",
     f"arn:aws:iam::{ACCT}:user/AWSServiceRoleForAmazonPrometheusScraper_1",
+    # Customer roles whose PATH imitates the scraper role (IAM StringLike * also matches "/").
+    f"arn:aws:iam::{ACCT}:role/AWSServiceRoleForAmazonPrometheusScraper_x/Evil",
+    f"arn:aws:iam::{ACCT}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_x/Evil",
+    # The no-path spelling is not what AMP sends (CloudTrail) and is not granted.
+    SCRAPER_SLR_NOPATH,
 ])
 def test_amp_cannot_create_access_entry_for_any_other_principal(tmp_path, principal):
     doc = amp_inline_doc(tmp_path)
@@ -741,8 +746,9 @@ def test_amp_access_entry_is_limited_to_this_account_and_region(tmp_path):
 
 
 def test_amp_cannot_associate_any_access_policy(tmp_path):
-    # No access-policy association is granted, so neither the scraper role nor any other entry can
-    # be given cluster admin through this role. (Whether AMP needs one is not proven.)
+    # No access-policy association is granted, so no entry can be given an EKS access policy
+    # (cluster admin included) through this role. Whether AMP needs one is not proven. The
+    # entry's Kubernetes groups are not bounded (in-cluster RBAC decides what they grant).
     doc = amp_inline_doc(tmp_path)
     for name in (SCRAPER_NAME, "WSParticipantRole", "peeks-hub-CrossplaneAMPProviderRole", "Admin"):
         e = entry("peeks-hub", name)
