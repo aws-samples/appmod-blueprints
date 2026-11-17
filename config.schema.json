@@ -196,6 +196,33 @@
               }
             }
           }
+        },
+        "iam": {
+          "type": "object",
+          "description": "Optional (kind-kro-ack): pre-created IAM roles. A set ARN is used as is: task install does not create the role, change its trust, or put/attach any policy on it.",
+          "additionalProperties": false,
+          "properties": {
+            "crossplaneProviderRoleArn": {
+              "type": "string",
+              "default": "",
+              "description": "Role for the Crossplane provider-aws-iam/eks pod identities on the hub (trust pods.eks.amazonaws.com). Empty = create <hub>-crossplane-provider. Applies when the pod identity associations are created (fresh hub, or reinstall after destroy); existing associations are not repointed."
+            },
+            "clusterMgmtRoleArns": {
+              "type": "object",
+              "description": "Per-service cluster-mgmt roles assumed by ACK. Each ARN must name <resourcePrefix>-cluster-mgmt-<service> in aws.accountId.",
+              "additionalProperties": false,
+              "properties": {
+                "ec2": {"type": "string"},
+                "eks": {"type": "string"},
+                "iam": {"type": "string"},
+                "ecr": {"type": "string"},
+                "s3": {"type": "string"},
+                "dynamodb": {"type": "string"},
+                "secretsmanager": {"type": "string"},
+                "rds": {"type": "string"}
+              }
+            }
+          }
         }
       }
     },
@@ -232,6 +259,12 @@
       "type": "boolean",
       "default": false,
       "description": "When true, platform ingress serves plain HTTP (no cert) — the consumer terminates TLS upstream (e.g. CloudFront). When false (default), the ALB serves HTTPS and uses an ACM cert (auto-discovered by host, or certificateArn if set)."
+    },
+    "privilegedSteps": {
+      "type": "string",
+      "enum": ["inline", "external"],
+      "default": "inline",
+      "description": "Who runs the install steps that create IAM roles or the EKS capability log delivery from the install host with the AWS CLI. inline (default): task install does. external: a separate privileged runner does (task privileged:pre before task install, task privileged:post after, task privileged:destroy after task destroy). task install then only verifies, read-only, the cluster-mgmt roles, the Ray roles and (kind-kro-ack) the <hub>-crossplane-provider role, with their scoped policies (a bring-your-own hub.iam.* role: existence only). Any other value is refused by the root entry points and the role steps (see the docs for provider-level entry points). The host still creates the pod identity associations (eks:CreatePodIdentityAssociation, iam:PassRole on those roles) and the other AWS resources of the install; the kind bootstrap cluster's ACK/Crossplane controllers still use the host credentials. See docs/install/privileged-steps.md."
     },
     "certificateArn": {
       "type": "string",

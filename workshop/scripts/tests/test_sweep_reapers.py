@@ -354,6 +354,23 @@ def test_iam_never_deletes_cloudformation_stack_roles():
     assert sorted(iam.deleted) == ["peeks-hub-argo-rollouts", "peeks-spoke-dev-ack-capability-role"]
 
 
+def test_iam_names_a_role_it_could_not_delete():
+    # review #1296: an AccessDenied (e.g. a runner without IAM deletes) used to be swallowed.
+    class _DenyIam(_FakeIam):
+        def delete_role(self, RoleName):
+            if RoleName == "peeks-cluster-mgmt-iam":
+                raise FakeClientError("AccessDenied", "not authorized")
+            super().delete_role(RoleName)
+
+    iam = _DenyIam(["peeks-cluster-mgmt-iam", "peeks-hub-argo-rollouts"])
+    ctx = _ctx(iam=iam, prefix="peeks", spokes=[])
+    iam_reaper.reap(ctx)
+    out = _joined(ctx)
+    assert iam.deleted == ["peeks-hub-argo-rollouts"]
+    assert "Deleted 1 IAM roles" in out
+    assert "1 role(s) not deleted: peeks-cluster-mgmt-iam (AccessDenied)" in out
+
+
 # ── RDS (DevLake Aurora) ──────────────────────────────────────────────────────
 
 class _FakeRds:

@@ -6,6 +6,7 @@ includes:
   ray:
     taskfile: ../common/Taskfile.ray.yaml
     vars:
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
       AWS_REGION: '{{.AWS_REGION}}'
       AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
@@ -52,6 +53,19 @@ vars:
         echo "${AWS_CONFIG_FILE:-$HOME/.aws/config}"
       fi
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
+  # Fixed least-privilege policy documents, created as customer-managed <prefix>-*-scoped
+  # policies (common/iam/managed-policy.sh) on the roles this provider creates (Crossplane
+  # bootstrap role, cluster-mgmt-iam). No AWS-managed admin-like policy
+  # (AdministratorAccess / PowerUserAccess / IAMFullAccess) is attached by `task install`.
+  IAM_POLICY_DIR: "{{.ROOT_DIR}}/cluster-providers/common/iam"
+  # Bring-your-own Crossplane bootstrap role (hub.iam.crossplaneProviderRoleArn). Empty =
+  # create <hub>-crossplane-provider (default). Set = use that role as is: no create, no policy.
+  CROSSPLANE_PROVIDER_ROLE_ARN:
+    sh: yq '.hub.iam.crossplaneProviderRoleArn // ""' {{.CONFIG_FILE}}
+  # Services with a bring-your-own cluster-mgmt role (hub.iam.clusterMgmtRoleArns.<svc>),
+  # space-separated: the external verify only checks that those roles exist.
+  BYO_MGMT_SERVICES:
+    sh: yq '(.hub.iam.clusterMgmtRoleArns // {}) | to_entries | .[] | select(.value != null and .value != "") | .key' {{.CONFIG_FILE}} | tr '\n' ' '
   # Uniform start/done timing markers (stdout + /tmp/install-timing.log); never fails.
   MARK: 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh"'
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
@@ -300,6 +314,8 @@ tasks:
       # bootstrap can't self-heal an already-running hub. crossplane-base only declares the
       # downstream provider PIAs (createIdentity:false for iam/eks) — nothing else seeds the first
       # credential, so without this the whole crossplane chain stays credential-less.
+      - '{{.MARK}} step hub hub:crossplane-provider-role'
+      - task: hub:crossplane-provider-role
       - '{{.MARK}} step hub hub:bootstrap-crossplane-identity'
       - task: hub:bootstrap-crossplane-identity
       # Enable spokes EARLY (kro-ack-specific optimization): KRO-provisioned spokes are
@@ -1796,6 +1812,71 @@ tasks:
         fi
       - rm -f {{.ROOT_DIR}}/private/hub-kubeconfig
 
+  hub:crossplane-provider-role:
+    desc: "IAM role <hub>-crossplane-provider for the hub Crossplane provider-aws-iam/eks (verify-only when privilegedSteps=external)"
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
+    vars:
+      MODE:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
+    cmds:
+      - task: 'hub:crossplane-provider-role:{{if eq .MODE "external"}}verify{{else}}apply{{end}}'
+
+  hub:crossplane-provider-role:verify:
+    internal: true
+    cmds:
+      - |
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          # The consumer's role: its permissions are not checked here, only that it exists.
+          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-check.sh' "${BYO_ARN##*/}"
+        else
+          RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' MGMT_SERVICES='' SCOPED_ROLES='{{.HUB_CLUSTER_NAME}}-crossplane-provider' \
+            sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+        fi
+
+  # Only IAM, no hub: privileged:pre runs it before the hub exists. Not gated on the pod
+  # identity associations (hub:bootstrap-crossplane-identity is), so it runs every install.
+  hub:crossplane-provider-role:apply:
+    internal: true
+    cmds:
+      - |
+        ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          echo "  hub.iam.crossplaneProviderRoleArn is set: that role and its permissions are the consumer's, not scoped here"
+          # Existing pod identity associations are not repointed to the BYO role, so a default
+          # role left by an earlier install is still the one the providers use.
+          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            printf '{{.C_INFO}}  ⚠ %s still exists and existing pod identity associations may still use it with its current policies; recreate them (task destroy, or delete the crossplane-system PIAs) to switch to the bring-your-own role{{.C_RESET}}\n' "$ROLE_NAME"
+          fi
+          exit 0
+        fi
+        TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
+        aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
+          aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
+            --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
+        # Scoped customer-managed policy <hub>-crossplane-provider-scoped (IAM roles/policies/
+        # OIDC + EKS), not AdministratorAccess: the installing principal never attaches an
+        # admin-like AWS managed policy, so a consumer can deny that on its own role
+        # (iam:PolicyARN condition). Managed, not inline: a consumer may allow
+        # iam:PutRolePolicy only on a few named roles.
+        sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+          "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json"
+        # Older installs attached AdministratorAccess. Detach it when present (best-effort:
+        # the installing principal may lack iam:DetachRolePolicy). A failed read is not
+        # "nothing attached": warn, since AdministratorAccess may still be there.
+        ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" \
+          --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null) \
+          || { ATTACHED=""; printf '{{.C_INFO}}  ⚠ could not list the policies attached to %s: AdministratorAccess, if attached, is left attached{{.C_RESET}}\n' "$ROLE_NAME"; }
+        case "$ATTACHED" in *policy/AdministratorAccess*)
+          aws iam detach-role-policy --role-name "$ROLE_NAME" \
+            --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 \
+            || printf '{{.C_INFO}}  ⚠ could not detach AdministratorAccess from %s (left attached){{.C_RESET}}\n' "$ROLE_NAME" ;;
+        esac
+        echo "  ✓ IAM role $ROLE_NAME ready"
+
   hub:bootstrap-crossplane-identity:
     desc: Seed hub Crossplane provider creds (provider-aws-iam/eks pod identities) so crossplane-base can provision
     internal: true
@@ -1819,13 +1900,27 @@ tasks:
       - printf '{{.C_STEP}}▸ Bootstrapping Crossplane provider pod identities (iam/eks)...{{.C_RESET}}\n'
       - |
         ROLE_NAME="{{.HUB_CLUSTER_NAME}}-crossplane-provider"
-        TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
-        aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1 || \
-          aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST" \
-            --description "Bootstrap creds for crossplane provider-aws-iam/eks" >/dev/null
-        aws iam attach-role-policy --role-name "$ROLE_NAME" \
-          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null 2>&1 || true
-        ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE_NAME"
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          # Consumer-supplied role (e.g. created by CloudFormation): use it as is. The
+          # consumer owns its trust (pods.eks.amazonaws.com) and its permissions.
+          # It only takes effect when the PIAs below are created (fresh hub, or reinstall
+          # after destroy): this task is skipped while both PIAs exist, and an existing PIA
+          # is never repointed.
+          case "$BYO_ARN" in
+            arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/*) ;;
+            *) printf '{{.C_ERR}}ERROR: hub.iam.crossplaneProviderRoleArn=%s is not an IAM role ARN in account {{.AWS_ACCOUNT_ID}} (expected arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/<name>).{{.C_RESET}}\n' "$BYO_ARN"; exit 1 ;;
+          esac
+          if ! ERR=$(aws iam get-role --role-name "${BYO_ARN##*/}" 2>&1 >/dev/null); then
+            printf '{{.C_ERR}}ERROR: hub.iam.crossplaneProviderRoleArn=%s does not exist or is not readable: %s{{.C_RESET}}\n' "$BYO_ARN" "$ERR"; exit 1
+          fi
+          ROLE_ARN="$BYO_ARN"
+          echo "  using pre-created role $ROLE_ARN (hub.iam.crossplaneProviderRoleArn)"
+        else
+          # The role and its scoped policy come from hub:crossplane-provider-role,
+          # which runs before this task and is not gated on the PIAs.
+          ROLE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/$ROLE_NAME"
+        fi
         for SA in provider-aws-iam provider-aws-eks; do
           EXISTS=$(aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} \
             --query "associations[?serviceAccount=='$SA'] | [0].associationId" --output text 2>/dev/null)
@@ -3013,6 +3108,9 @@ tasks:
             { echo "iam-guard(6b)" >> "$FAILED"; } 2>/dev/null || true
           fi
           ROLES=""
+          # Roles the consumer brought (hub.iam.*): never ours to delete, even though the
+          # cluster-mgmt ones must be named <prefix>-cluster-mgmt-<svc> and so match the sweep.
+          BYO_ROLES=$(yq '[.hub.iam.crossplaneProviderRoleArn, (.hub.iam.clusterMgmtRoleArns // {})[]] | .[] | select(. != null and . != "")' "{{.CONFIG_FILE}}" 2>/dev/null | sed 's|.*/||' || true)
           if [ "$ROLE_SWEEP" = true ] && [ -n "$PREFIX" ]; then
             ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, '${PREFIX}-')].RoleName" \
                 --output text 2>/dev/null) \
@@ -3021,18 +3119,33 @@ tasks:
           printf '%s\n' "$ROLES" | tr '\t' '\n' | while read ROLE; do
             [ -z "$ROLE" ] && continue
             echo "$ROLE" | grep -qE "$DENY_RE" && { echo "  skip role $ROLE (CFN — not swept)"; continue; }
+            printf '%s\n' "$BYO_ROLES" | grep -qxF "$ROLE" && { echo "  skip role $ROLE (bring-your-own, hub.iam.*)"; continue; }
             printf '%s\n' "$PROTECTED" | grep -qxF "$ROLE" && { echo "  skip role $ROLE (still used by a live EKS cluster)"; continue; }
             # The stack's own roles are named <stack-name>-<LogicalId>-<random>. The self-paced
             # stack is "<prefix>-workshop" (no "-team-stack-"), so match the stack-name prefix too:
             # deleting them breaks the stack's custom-resource Lambdas during delete-stack.
             case "$ROLE" in "${PREFIX}-workshop-"*) echo "  skip role $ROLE (CloudFormation stack role — not swept)"; continue ;; esac
+            # The scoped customer-managed policy `task install` created for this role
+            # (<role>-scoped, see common/iam/managed-policy.sh): detach, delete its
+            # non-default versions, delete it. A no-op for roles that have none.
+            sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" delete "{{.AWS_ACCOUNT_ID}}" "$PREFIX" "$ROLE" >/dev/null \
+              || { echo "  ⚠ could not delete the scoped managed policy of $ROLE (6b)"; { echo "iam-scoped-policy(6b)" >> "$FAILED"; } 2>/dev/null || true; }
             for P in $(aws iam list-attached-role-policies --role-name "$ROLE" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
               aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$P" 2>/dev/null || true
             done
             for IP in $(aws iam list-role-policies --role-name "$ROLE" --query 'PolicyNames[]' --output text 2>/dev/null); do
               aws iam delete-role-policy --role-name "$ROLE" --policy-name "$IP" 2>/dev/null || true
             done
-            echo "  deleting IAM role $ROLE"; aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+            echo "  deleting IAM role $ROLE"
+            # Not silent: under privilegedSteps=external the host may not delete IAM roles;
+            # name what is left and record it so the final check does not print ✓.
+            if ! ERR=$(aws iam delete-role --role-name "$ROLE" 2>&1); then
+              case "$ERR" in
+                *NoSuchEntity*) ;;
+                *) echo "  ⚠ IAM role $ROLE not deleted ($(awserr "$ERR"))"
+                   { echo "iam-delete-role(6b)" >> "$FAILED"; } 2>/dev/null || true ;;
+              esac
+            fi
           done
           # 6b2. Shared fixed-name roles (outside ${PREFIX}-) that hub:destroy-addons step 0
           #      retained instead of letting the hub's controller delete them: delete each
@@ -3293,7 +3406,7 @@ tasks:
           if [ -s "$FAILED" ]; then
             printf '{{.C_ERR}}✗ Destroy incomplete: these sweep steps could not read AWS (no credentials, a failed list or read call, or EKS unreadable in an enabled region) or could not delete what they found: %s{{.C_RESET}}\n' \
               "$(sort -u "$FAILED" | tr '\n' ' ')"
-            printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Fix the credentials or permissions (aws sts get-caller-identity, AWS_PROFILE / AWS_DEFAULT_PROFILE) and re-run task destroy. If this host may not delete IAM roles (privilegedSteps: external), task privileged:destroy on the privileged runner deletes the roles privileged:pre created.{{.C_RESET}}\n'
             exit 1
           fi
           printf '{{.C_OK}}✓ Destroy complete.{{.C_RESET}}\n'
@@ -4195,8 +4308,87 @@ tasks:
           printf '{{.C_INFO}}  PENDING: AMP ACTIVE=%s, AMG ACTIVE=%s. Once both are ACTIVE run: task observability-seed (or re-run task install).{{.C_RESET}}\n' "$AMP_OK" "$AMG_OK"
         fi
 
+  # ── privilegedSteps: external (root Taskfile privileged:*) ──────────────────
+  # Every IAM role this provider creates from the host with the AWS CLI during install.
+  # privileged:pre creates them (inline config, before the hub exists); task install in
+  # external mode only verifies them, read-only, before kind. The pod identity
+  # associations stay on the host; the hub's ack-assume-role policy is privileged:post.
+  privileged:pre:
+    desc: "Create every IAM role install creates from the host (privilegedSteps runner, before task install)"
+    cmds:
+      - task: hub:create-mgmt-roles
+      - task: hub:crossplane-provider-role
+      - task: ray:roles
+
+  privileged:verify:
+    desc: "Read-only check that every role privileged:pre creates exists, with its policies (no IAM write)"
+    cmds:
+      - |
+        # A bring-your-own crossplane role (hub.iam.crossplaneProviderRoleArn) replaces
+        # <hub>-crossplane-provider, which privileged:pre then does not create: check that the
+        # BYO role exists. The default role must carry its scoped policy.
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          SCOPED=""; set -- "${BYO_ARN##*/}"
+        else
+          SCOPED='{{.HUB_CLUSTER_NAME}}-crossplane-provider'; set --
+        fi
+        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' BYO_SERVICES='{{.BYO_MGMT_SERVICES}}' SCOPED_ROLES="$SCOPED" \
+          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh' \
+          "$@" '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
+
+  # After task destroy: the roles privileged:pre created (with their scoped policies) and the
+  # capability-log deliveries privileged:post created (task destroy's own deletes of these
+  # need IAM/Logs writes the host may not have in external mode). Refuses while the hub
+  # cluster exists. Bring-your-own roles (hub.iam.*) are never deleted.
+  privileged:destroy:
+    desc: "Delete the roles privileged:pre created and the capability-log deliveries (runner, after task destroy)"
+    cmds:
+      # Both run even if one fails (deliveries first, they need no role), then the task fails.
+      - |
+        RC=0
+        python3 '{{.ROOT_DIR}}/scripts/sweep-log-deliveries.py' '{{.RESOURCE_PREFIX}}' '{{.AWS_REGION}}' '{{.HUB_CLUSTER_NAME}}' --strict || RC=1
+        if BYO_ROLES=$(yq '[.hub.iam.crossplaneProviderRoleArn, (.hub.iam.clusterMgmtRoleArns // {})[]] | .[] | select(. != null and . != "")' "{{.CONFIG_FILE}}" | sed 's|.*/||'); then
+          set --
+          for ROLE in {{range $s := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds"}}'{{$.RESOURCE_PREFIX}}-cluster-mgmt-{{$s}}' {{end}} \
+              '{{.HUB_CLUSTER_NAME}}-crossplane-provider' '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'; do
+            if printf '%s\n' "$BYO_ROLES" | grep -qxF "$ROLE"; then
+              echo "  skip role $ROLE (bring-your-own, hub.iam.*)"
+            else
+              set -- "$@" "$ROLE"
+            fi
+          done
+          HUB_CLUSTER='{{.HUB_CLUSTER_NAME}}' AWS_REGION='{{.AWS_REGION}}' \
+            SCOPED_POLICY_ACCOUNT='{{.AWS_ACCOUNT_ID}}' RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' \
+            sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-delete.sh' "$@" || RC=1
+        else
+          echo "✗ cannot read hub.iam.* from {{.CONFIG_FILE}}: no IAM role deleted (a bring-your-own role could not be told apart)" >&2
+          RC=1
+        fi
+        exit $RC
+
   hub:create-mgmt-roles:
-    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
+    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
+    vars:
+      # privilegedSteps (config.yaml): "inline" (default) creates the roles here, as
+      # before. "external" means a separate, more privileged runner (e.g. a CodeBuild
+      # project) already created them (`task privileged:pre`), so this host only
+      # verifies them read-only and needs no IAM write on <prefix>-cluster-mgmt-*.
+      MGMT_ROLES_MODE:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
+    cmds:
+      - task: 'hub:create-mgmt-roles:{{if eq .MGMT_ROLES_MODE "external"}}verify{{else}}apply{{end}}'
+
+  hub:create-mgmt-roles:verify:
+    desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
+    cmds:
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' BYO_SERVICES='{{.BYO_MGMT_SERVICES}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+
+  hub:create-mgmt-roles:apply:
+    internal: true
     vars:
       ACK_CAPABILITY_ROLE:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-ack-capability-role"
@@ -4231,7 +4423,11 @@ tasks:
           case $1 in
             ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
             eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
-            iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
+            # iam: no AWS managed policy. It gets the customer-managed
+            # <prefix>-cluster-mgmt-iam-scoped (cluster-mgmt-iam-policy.json: IAM roles/
+            # policies/OIDC only) below instead of IAMFullAccess, so `task install` never
+            # attaches an admin-like AWS managed policy.
+            iam) echo "";;
             ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
             s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
             dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
@@ -4239,9 +4435,31 @@ tasks:
             rds) echo "arn:aws:iam::aws:policy/AmazonRDSFullAccess arn:aws:iam::aws:policy/SecretsManagerReadWrite";;
           esac
         }
+        # Bring-your-own roles: hub.iam.clusterMgmtRoleArns.<service> = an existing role the
+        # consumer created (e.g. in CloudFormation). Such a role is used as is: no create, no
+        # trust update, no policy. Its name must still be <prefix>-cluster-mgmt-<service>,
+        # because the IAMRoleSelectors and the ack-assume-role grant derive it from the prefix.
+        byo_arn() { yq ".hub.iam.clusterMgmtRoleArns.$1 // \"\"" "{{.CONFIG_FILE}}" 2>/dev/null || true; }
+        BYO_SERVICES=""
+        for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
+          ARN=$(byo_arn "$service")
+          [ -n "$ARN" ] || continue
+          if [ "$ARN" != "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}" ]; then
+            printf '{{.C_ERR}}ERROR: hub.iam.clusterMgmtRoleArns.%s=%s must be arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-%s (the name is derived from resourcePrefix elsewhere).{{.C_RESET}}\n' "$service" "$ARN" "$service"
+            exit 1
+          fi
+          if ! ERR=$(aws iam get-role --role-name "{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}" 2>&1 >/dev/null); then
+            printf '{{.C_ERR}}ERROR: hub.iam.clusterMgmtRoleArns.%s=%s does not exist or is not readable: %s{{.C_RESET}}\n' "$service" "$ARN" "$ERR"
+            exit 1
+          fi
+          BYO_SERVICES="$BYO_SERVICES $service"
+          echo "  using pre-created role $ARN (hub.iam.clusterMgmtRoleArns.$service)"
+        done
+        is_byo() { case " $BYO_SERVICES " in *" $1 "*) return 0;; esac; return 1; }
         # Create all 7 roles in parallel — each is independent
         _PIDS=""
         for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
+          is_byo "$service" && continue
           (
             ROLE_NAME="{{.RESOURCE_PREFIX}}-cluster-mgmt-${service}"
             if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
@@ -4258,6 +4476,26 @@ tasks:
         done
         # Wait for all role creations to complete
         for _pid in $_PIDS; do wait "$_pid" || true; done
+        # cluster-mgmt-iam: scoped customer-managed policy <prefix>-cluster-mgmt-iam-scoped
+        # instead of IAMFullAccess (done here, not in the parallel subshells above, so a
+        # failure stops the install instead of being lost). managed-policy.sh creates or
+        # replaces it on drift (no CreatePolicyVersion, no window without it) and attaches it.
+        IAM_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-iam"
+        if ! is_byo iam; then
+          sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+            "$IAM_ROLE" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
+          # Older installs attached IAMFullAccess. Detach it when present (best-effort).
+          # This task has no status gate, so this runs on every `task install`. A failed read
+          # is not "nothing attached": warn, since IAMFullAccess may still be there.
+          ATTACHED=$(aws iam list-attached-role-policies --role-name "$IAM_ROLE" \
+            --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null) \
+            || { ATTACHED=""; printf '{{.C_INFO}}  ⚠ could not list the policies attached to %s: IAMFullAccess, if attached, is left attached{{.C_RESET}}\n' "$IAM_ROLE"; }
+          case "$ATTACHED" in *policy/IAMFullAccess*)
+            aws iam detach-role-policy --role-name "$IAM_ROLE" \
+              --policy-arn arn:aws:iam::aws:policy/IAMFullAccess >/dev/null 2>&1 \
+              || printf '{{.C_INFO}}  ⚠ could not detach IAMFullAccess from %s (left attached){{.C_RESET}}\n' "$IAM_ROLE" ;;
+          esac
+        fi
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
         EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
         # PassRole: scoped by the service the role is passed TO, not by role name.
@@ -4272,7 +4510,7 @@ tasks:
         #   ec2.amazonaws.com              node role (EKS Auto Mode computeConfig.nodeRoleArn)
         #   capabilities.eks.amazonaws.com argocd/ack/kro capability roles
         #   pods.eks.amazonaws.com         pod identity roles (was the only entry here)
-        aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{
+        is_byo eks || aws iam put-role-policy --role-name "$EKS_ROLE" --policy-name eks-access-management --policy-document '{
           "Version": "2012-10-17",
           "Statement": [
             {"Effect": "Allow", "Action": ["eks:*"], "Resource": "*"},
@@ -4282,7 +4520,7 @@ tasks:
           ]
         }'
         RDS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-rds"
-        aws iam put-role-policy --role-name "$RDS_ROLE" --policy-name rds-kms --policy-document '{
+        is_byo rds || aws iam put-role-policy --role-name "$RDS_ROLE" --policy-name rds-kms --policy-document '{
           "Version": "2012-10-17",
           "Statement": [{
             "Effect": "Allow",
@@ -4290,19 +4528,28 @@ tasks:
             "Resource": "*"
           }]
         }'
-        # Allow ACK capability role to assume cluster-mgmt roles
-        # Best-effort: the ACK capability role only exists after the hub EKS cluster
-        # is created. When this task runs before hub:claim (new ordering for PR #861),
-        # the role doesn't exist yet — skip gracefully. hub:seed re-runs this task
-        # once the hub is up, which will apply the policy correctly.
-        aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
-          "Version": "2012-10-17",
-          "Statement": [{
-            "Effect": "Allow",
-            "Action": ["sts:AssumeRole", "sts:TagSession"],
-            "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
-          }]
-        }' 2>/dev/null || echo "  (ACK capability role not yet available — will be applied in hub:seed)"
+        # Allow ACK capability role to assume cluster-mgmt roles. The capability exists only
+        # once the hub does: when this task runs before hub:claim (ordering of PR #861) or
+        # in task privileged:pre, the put is skipped; hub:seed (inline) or task
+        # privileged:post (privilegedSteps=external) applies it once the hub is up. Once the
+        # capability exists, a failed put fails the task (it no longer prints success).
+        if CAP_ERR=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack \
+            --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>&1 >/dev/null); then
+          aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": ["sts:AssumeRole", "sts:TagSession"],
+              "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
+            }]
+          }'
+        else
+          case "$CAP_ERR" in
+            *ResourceNotFoundException*)
+              echo "  (hub ACK capability not created yet: ack-assume-role is applied once the hub is up, by hub:seed or task privileged:post)" ;;
+            *) printf '{{.C_ERR}}✗ cannot read the hub ACK capability: %s{{.C_RESET}}\n' "$CAP_ERR"; exit 1 ;;
+          esac
+        fi
         # [#1033 Deliverable #9] The hub self-manage grant (eks:Describe/manage on the
         # hub's OWN cluster + pod-identity ARNs) is NO LONGER applied imperatively here.
         # This capability role is a kro/ACK-managed IAM Role, so ACK reconciles it back to
@@ -4549,9 +4796,10 @@ tasks:
               else
                 printf '{{.C_INFO}}  %s: role %s exists{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
               fi
-              # 2. AdministratorAccess (attach is idempotent)
-              aws iam attach-role-policy --role-name "$ROLE_NAME" \
-                --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null
+              # 2. Scoped customer-managed policy, not AdministratorAccess (idempotent;
+              #    managed-policy.sh, see hub:bootstrap-crossplane-identity)
+              sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+                "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" >/dev/null
               # 3. Pod Identity association on the spoke (idempotent)
               EXISTING=$(aws eks list-pod-identity-associations --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
                 --namespace crossplane-system --service-account "$SA" \
