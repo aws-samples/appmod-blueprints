@@ -251,7 +251,7 @@
         "installRoleArn": {
           "type": "string",
           "default": "",
-          "description": "EC2 hosts only. When set (and aws.profile is unset or default), the install runs as this role, assumed from the instance role through a generated `install` profile, so the instance role needs no IAM write. Teardown on the host (PEEKS_AWS_IDE_ONLY=true) stays on the instance role. Not a security boundary: whoever can use the instance role can assume this role. The ACK controllers in the kind bootstrap cluster keep the instance role (kind-kro-ack credentials:refresh), so this key alone does not take IAM write away from the instance role."
+          "description": "EC2 hosts only. When set (and aws.profile is unset or default), the install runs as this role, assumed from the instance role through a generated `install` profile, so the instance role needs no IAM write. Teardown on the host (PLATFORM_SKIP_INSTALL_ROLE=true) stays on the instance role. Not a security boundary: whoever can use the instance role can assume this role. The ACK controllers in the kind bootstrap cluster keep the instance role (kind-kro-ack credentials:refresh), so this key alone does not take IAM write away from the instance role."
         },
         "ideRoleArn": {
           "type": "string",

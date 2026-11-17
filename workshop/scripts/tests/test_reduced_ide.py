@@ -4,7 +4,7 @@ Two config.yaml keys, on top of `privilegedSteps: external` (see test_privileged
 
 * `aws.installRoleArn`: on an EC2 host the install runs as this role (an `install` profile
   that assumes it from the instance role), so the instance role needs no IAM write. Teardown
-  on the host (PEEKS_AWS_IDE_ONLY=true) stays on the instance role.
+  on the host (PLATFORM_SKIP_INSTALL_ROLE=true) stays on the instance role.
 * `privilegedSteps: external` on `destroy`: Kubernetes-only teardown, the direct AWS deletes
   are left to the stack sweep.
 
@@ -65,10 +65,11 @@ def repo(tmp_path):
     return r
 
 
-def _config(provider, install_role=None, mode=None):
+def _config(provider, install_role=None, mode=None, session_name=None):
+    sn = f', installRoleSessionName: "{session_name}"' if session_name is not None else ""
     c = f"""clusterProvider: {provider}
 resourcePrefix: acme
-aws: {{region: us-west-2, accountId: "111122223333"{f', installRoleArn: "{install_role}", ideRoleArn: "{IDE_ROLE}"' if install_role else ''}}}
+aws: {{region: us-west-2, accountId: "111122223333"{f', installRoleArn: "{install_role}", ideRoleArn: "{IDE_ROLE}"' if install_role else ''}{sn}}}
 hub: {{clusterName: acme-hub}}
 repo: {{url: https://example.invalid/repo, revision: main, basepath: gitops/addons/}}
 identityCenter: {{instanceArn: "", region: us-west-2}}
@@ -76,8 +77,8 @@ identityCenter: {{instanceArn: "", region: us-west-2}}
     return c + (f"privilegedSteps: {mode}\n" if mode else "")
 
 
-def _run(tmp_path, repo, provider, args, install_role=None, mode=None, ide_only=False):
-    (repo / "config.local.yaml").write_text(_config(provider, install_role, mode))
+def _run(tmp_path, repo, provider, args, install_role=None, mode=None, ide_only=False, session_name=None, env_extra=None):
+    (repo / "config.local.yaml").write_text(_config(provider, install_role, mode, session_name))
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     for name, body in (("aws", FAKE_AWS), ("curl", FAKE_OK), ("kind", FAKE_FAIL)):
@@ -87,10 +88,11 @@ def _run(tmp_path, repo, provider, args, install_role=None, mode=None, ide_only=
     log.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FAKE_AWS_LOG=str(log),
                HOME=str(tmp_path), FAKE_ALL_POLICIES=" ".join(ALL_POLICIES), INSTALL_TIMING_LOG=str(tmp_path / "timing.log"))
-    for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG", "PEEKS_AWS_IDE_ONLY"):
+    for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG", "PLATFORM_SKIP_INSTALL_ROLE"):
         env.pop(k, None)
     if ide_only:
-        env["PEEKS_AWS_IDE_ONLY"] = "true"
+        env["PLATFORM_SKIP_INSTALL_ROLE"] = "true"
+    env.update(env_extra or {})
     res = subprocess.run([TASK, "-d", str(repo), *args], env=env, capture_output=True, text=True, timeout=180)
     return res, log.read_text()
 
@@ -128,7 +130,7 @@ def test_without_install_role_nothing_changes(tmp_path, repo, provider):
 def test_every_provider_resolves_the_profile_the_same_way(name):
     """go-task broadcasts each provider's env to its siblings: the three must agree."""
     text = open(os.path.join(REPO, "cluster-providers", name, "Taskfile.yaml")).read()
-    assert "aws.installRoleArn" in text and "PEEKS_AWS_IDE_ONLY" in text and "[profile install]" in text
+    assert "aws.installRoleArn" in text and "PLATFORM_SKIP_INSTALL_ROLE" in text and "[profile install]" in text
 
 
 def _echo_commands(repo):
@@ -181,9 +183,9 @@ def test_schema_install_role_is_not_claimed_for_kind_acks():
 
 def test_workshop_destroy_passes_ide_only_when_external():
     text = open(os.path.join(REPO, "workshop", "Taskfile.yaml")).read()
-    assert "export PEEKS_AWS_IDE_ONLY=true" in text
+    assert "export PLATFORM_SKIP_INSTALL_ROLE=true" in text
     assert re.search(r"privilegedSteps // \"inline\"' \{\{\.CONFIG_FILE\}\} 2>/dev/null \|\| true\)\" = external", text)
-    assert text.index("export PEEKS_AWS_IDE_ONLY=true") < text.index("task {{.PROVIDER}}:destroy HUB_DELETE_WAIT")
+    assert text.index("export PLATFORM_SKIP_INSTALL_ROLE=true") < text.index("task {{.PROVIDER}}:destroy HUB_DELETE_WAIT")
 
 
 def test_hub_seed_also_admits_the_ide_role():
@@ -234,7 +236,7 @@ def test_schema_scopes_the_kubernetes_only_destroy_to_kind_kro_ack():
 
 
 WS_DESTROY = yaml.safe_load(open(os.path.join(REPO, "workshop", "Taskfile.yaml")))["tasks"]["destroy"]["cmds"]
-PHASE3 = [c["cmd"] for c in WS_DESTROY if isinstance(c, dict) and "PEEKS_AWS_IDE_ONLY" in c.get("cmd", "")][0]
+PHASE3 = [c["cmd"] for c in WS_DESTROY if isinstance(c, dict) and "PLATFORM_SKIP_INSTALL_ROLE" in c.get("cmd", "")][0]
 
 
 @pytest.mark.parametrize("provider,mode,ide_only,notice", [
@@ -248,7 +250,7 @@ def test_workshop_destroy_says_when_external_is_not_kubernetes_only(tmp_path, pr
     cfg.write_text(f"clusterProvider: {provider}\n" + (f"privilegedSteps: {mode}\n" if mode else ""))
     (tmp_path / "bin").mkdir()
     for name, body in (("aws", "#!/bin/sh\nexit 254\n"),
-                       ("task", '#!/bin/sh\necho "task $* ide_only=${PEEKS_AWS_IDE_ONLY:-}" > "$OUT"\n')):
+                       ("task", '#!/bin/sh\necho "task $* ide_only=${PLATFORM_SKIP_INSTALL_ROLE:-}" > "$OUT"\n')):
         (tmp_path / "bin" / name).write_text(body)
         (tmp_path / "bin" / name).chmod(0o755)
     block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", PHASE3)
@@ -256,9 +258,35 @@ def test_workshop_destroy_says_when_external_is_not_kubernetes_only(tmp_path, pr
              .replace("{{.PLATFORM_DIR}}", str(tmp_path)).replace("{{.DESTROY_DEADLINE_FILE}}", str(tmp_path / "dl"))
              .replace('{{.HUB_DELETE_WAIT | default ""}}', "true"))
     block = re.sub(r"\{\{\.[A-Z_]+\}\}", "x", block)
-    env = {k: v for k, v in os.environ.items() if k != "PEEKS_AWS_IDE_ONLY"}
+    env = {k: v for k, v in os.environ.items() if k != "PLATFORM_SKIP_INSTALL_ROLE"}
     env.update(PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", OUT=str(tmp_path / "out"))
     r = subprocess.run(["bash", "-c", block], env=env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert ("only the kind-kro-ack destroy is Kubernetes-only" in r.stdout) is notice, r.stdout
     assert (tmp_path / "out").read_text().strip().endswith(f"ide_only={ide_only}")
+
+
+# ---------------------------------------------------------------- neutral provider inputs
+
+ALL_PROVIDERS = ["kind-kro-ack", "kind-crossplane", "terraform"]
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("value,skipped", [("true", True), ("", False), ("false", False)])
+def test_skip_install_role_variable(tmp_path, repo, provider, value, skipped):
+    res, log = _run(tmp_path, repo, provider, [f"{provider}:hub:create-mgmt-roles"], install_role=ROLE,
+                    mode="external", env_extra={"PLATFORM_SKIP_INSTALL_ROLE": value})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert ("[profile install]" in (repo / "private" / "aws-config").read_text()) is (not skipped)
+    assert ("PROFILE=install" in log) is (not skipped)
+
+
+def test_no_consumer_name_left_in_the_providers():
+    for p in ALL_PROVIDERS:
+        text = open(os.path.join(REPO, "cluster-providers", p, "Taskfile.yaml")).read()
+        assert "PEEKS_AWS_IDE_ONLY" not in text, p
+
+
+def test_workshop_sets_the_skip_variable():
+    ws = open(os.path.join(REPO, "workshop", "Taskfile.yaml")).read()
+    assert "export PLATFORM_SKIP_INSTALL_ROLE=true" in ws

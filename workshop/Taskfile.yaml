@@ -1252,7 +1252,7 @@ tasks:
           # have no Kubernetes-only destroy: they still make their AWS deletes, with this
           # host's credentials, and the operator is told so.
           if [ "$(yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}} 2>/dev/null || true)" = external ]; then
-            export PEEKS_AWS_IDE_ONLY=true
+            export PLATFORM_SKIP_INSTALL_ROLE=true
             if [ "{{.PROVIDER}}" != kind-kro-ack ]; then
               printf '{{.C_INFO}}  privilegedSteps=external: only the kind-kro-ack destroy is Kubernetes-only; the {{.PROVIDER}} destroy makes its AWS deletes with this host'"'"'s credentials.{{.C_RESET}}\n'
             fi
