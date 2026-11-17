@@ -24,11 +24,37 @@ W=0
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 echo "▸ Waiting for ${PREFIX}/install-config (published by the CodeBuild install), max ${MAX}s..."
+# A config published before the newest ${PREFIX}-install build started is an earlier build's:
+# keep waiting for the new build to publish its own. If the build list cannot be read, say so
+# and use the config (the wait's own cut-off still applies afterwards).
+newest_build_start() {
+  B=$(aws codebuild list-builds-for-project --project-name "${PREFIX}-install" --sort-order DESCENDING \
+        ${REGION:+--region "$REGION"} --query 'ids[0]' --output text 2>/dev/null) || return 1
+  case "$B" in ""|None) echo ""; return 0 ;; esac
+  T=$(aws codebuild batch-get-builds --ids "$B" ${REGION:+--region "$REGION"} --query 'builds[0].startTime' --output text 2>/dev/null) || return 1
+  to_epoch "$T"
+}
+to_epoch() {
+  case "$1" in ""|None) echo "" ;; *[!0-9.]*) date -d "$1" +%s 2>/dev/null || echo "" ;; *) echo "${1%%.*}" ;; esac
+}
+SAID=""
 while [ "$W" -lt "$MAX" ]; do
   if aws secretsmanager get-secret-value --secret-id "${PREFIX}/install-config" ${REGION:+--region "$REGION"} \
        --query SecretString --output text > "$TMP" 2>/dev/null && yq '.' "$TMP" >/dev/null 2>&1 \
        && [ -n "$(yq '.hub.clusterName // ""' "$TMP")" ]; then
-    break
+    if START=$(newest_build_start); then
+      PUB=$(to_epoch "$(aws secretsmanager describe-secret --secret-id "${PREFIX}/install-config" ${REGION:+--region "$REGION"} \
+              --query LastChangedDate --output text 2>/dev/null || true)")
+      if [ -n "$START" ] && [ -n "$PUB" ] && [ "$PUB" -lt "$START" ]; then
+        [ -n "$SAID" ] || echo "  ${PREFIX}/install-config is from an earlier build (published before the newest build started): waiting for the new one"
+        SAID=1
+      else
+        break
+      fi
+    else
+      echo "  ⚠ could not list the ${PREFIX}-install builds: using ${PREFIX}/install-config as published" >&2
+      break
+    fi
   fi
   sleep "${INSTALL_CONFIG_POLL:-10}"
   W=$((W + ${INSTALL_CONFIG_POLL:-10}))

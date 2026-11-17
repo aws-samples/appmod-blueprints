@@ -22,9 +22,9 @@
 #                            the secret is unreadable, the time this host wrote the config file
 #                            is used instead (with a warning); with no config file either, there
 #                            is no check. 0 disables it.
-# shortcut: if this host fetched an EARLIER build's config (fetched before the new build
-# published its own), that build's OK is accepted; fetch-install-config.sh would need to check the
-# publish against the newest build's start to close this.
+# fetch-install-config.sh only takes a config published after the newest <prefix>-install build
+# started. shortcut: if the host fetches before the new build is even started (or cannot list
+# the builds), an earlier build's config and then its OK are accepted.
 #
 # The build records its id in /<prefix>/install-build-id. A state written before that build
 # started, or before the cut-off, is ignored (an earlier build's OK or FAILED), and so is the

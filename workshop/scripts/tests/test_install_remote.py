@@ -795,3 +795,43 @@ def test_install_remote_wait_falls_back_to_the_config_file_time_when_the_secret_
     r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, CONFIG_FILE=str(cfg), FAKE_STATE="OK 2026-11-15T10:00:00Z",
                                                    FAKE_BUILD="IN_PROGRESS", FAKE_STATE_AT="2026-11-15T10:00:00+00:00"))
     assert r.returncode == 1 and "ignoring a state of an earlier build" in r.stdout
+
+
+
+FAKE_AWS_FETCH = r"""#!/bin/sh
+case "$1 $2" in
+  "secretsmanager get-secret-value") cat "$FAKE_CFG" ;;
+  "secretsmanager describe-secret") echo "$FAKE_PUB" ;;
+  "codebuild list-builds-for-project") [ "${FAKE_LIST_FAIL:-0}" = 1 ] && exit 254; echo "${FAKE_NEWEST:-None}" ;;
+  "codebuild batch-get-builds") echo "$FAKE_NEWEST_START" ;;
+esac
+exit 0
+"""
+
+
+@needs_tools
+@pytest.mark.parametrize("pub,newest,start,list_fail,rc,msg", [
+    # the published config is the previous build's: wait for the new one (here: timeout)
+    ("2026-11-15T10:00:00+00:00", "acme-install:2", "2026-11-15T12:00:00+00:00", False, 1, "from an earlier build"),
+    # published after the newest build started: taken
+    ("2026-11-15T12:05:00+00:00", "acme-install:2", "2026-11-15T12:00:00+00:00", False, 0, "wrote"),
+    # no build at all yet: taken (residual stated in install-remote-wait.sh)
+    ("2026-11-15T10:00:00+00:00", "None", "", False, 0, "wrote"),
+    # cannot list the builds: taken, with a warning
+    ("2026-11-15T10:00:00+00:00", "", "", True, 0, "could not list"),
+])
+def test_fetch_install_config_skips_an_earlier_builds_config(tmp_path, pub, newest, start, list_fail, rc, msg):
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "aws").write_text(FAKE_AWS_FETCH)
+    (tmp_path / "bin" / "aws").chmod(0o755)
+    src = tmp_path / "published.yaml"
+    src.write_text(CFG)
+    out = tmp_path / "c.yaml"
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", RESOURCE_PREFIX="acme", OUTPUT_FILE=str(out),
+               FAKE_CFG=str(src), FAKE_PUB=pub, FAKE_NEWEST=newest, FAKE_NEWEST_START=start,
+               FAKE_LIST_FAIL="1" if list_fail else "0", INSTALL_CONFIG_POLL="1", INSTALL_CONFIG_WAIT="2")
+    r = subprocess.run(["bash", os.path.join(REPO, "workshop", "fetch-install-config.sh")], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == rc, r.stdout + r.stderr
+    assert msg in r.stdout + r.stderr
+    assert out.exists() is (rc == 0)
