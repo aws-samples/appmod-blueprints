@@ -20,7 +20,8 @@ IAM_ROLE_CHECK_LIB=1 . "$HERE/iam-role-check.sh"
 
 if HUB_ERR=$(aws eks describe-cluster --name "$HUB_CLUSTER" --region "$AWS_REGION" \
     --query 'cluster.status' --output text 2>&1); then
-  echo "✗ the hub cluster $HUB_CLUSTER still exists ($HUB_ERR): run task destroy first." >&2
+  echo "✗ the hub cluster $HUB_CLUSTER still exists ($HUB_ERR): delete it first, with task destroy." >&2
+  echo "  On kind-kro-ack, task destroy under privilegedSteps: external does not delete the hub: run the stack sweep, or task destroy again with privilegedSteps: inline and credentials allowed to make its AWS deletes." >&2
   exit 1
 fi
 case "$HUB_ERR" in
