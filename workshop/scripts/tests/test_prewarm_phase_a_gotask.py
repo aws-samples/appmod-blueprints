@@ -300,7 +300,7 @@ def test_phase_b_phase_a_done_rc0_before_phase_b(tmp_path, monkeypatch, task_id,
     assert len(lines(tmp_path, "scaffold.calls")) == scaffolds, r.stdout
     assert "PREWARM FALLBACK" not in r.stdout
     if not scaffolds:
-        assert "already submitted the scaffold" in r.stdout, r.stdout
+        assert "may already have a scaffold in flight" in r.stdout, r.stdout
         assert "nothing will create the pipeline" not in r.stdout
         assert "waiting for CICDPipeline" in r.stdout, r.stdout
     assert r.returncode == 0, r.stderr
@@ -327,7 +327,7 @@ def test_phase_b_phase_a_task_then_nonzero_rc_no_pat(tmp_path, monkeypatch, last
     if scaffolds:
         assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=201" in r.stdout, r.stdout
     else:
-        assert "already submitted the scaffold" in r.stdout, r.stdout
+        assert "may already have a scaffold in flight" in r.stdout, r.stdout
         assert "waiting for CICDPipeline" in r.stdout, r.stdout
     assert r.returncode == 0, r.stderr
 
@@ -344,6 +344,30 @@ def test_phase_a_truncates_its_scaffold_log_at_start(tmp_path):
         VARS["ENABLED"] = VARS_ENABLED
     assert "disabled" in r.stdout, r.stdout
     assert log.read_text() == RUN
+
+
+@pytest.mark.parametrize("code,scaffolds", [("000", 0), ("502", 0), ("504", 0), ("500", 1)])
+def test_phase_b_waits_after_unanswered_phase_a_post(tmp_path, monkeypatch, code, scaffolds):
+    # Pre-review r2 point 2: Phase A does not retry a POST with no answer from Backstage
+    # (000, or 502/504 from the proxy) because the task may exist. Phase B must not send
+    # that second POST either. A POST Backstage refused (500) still gets the fallback.
+    r, _, log = run_phase_a(tmp_path, post_code=code)
+    assert r.returncode != 0 and "Task ID:" not in log.read_text(), r.stdout
+    b_dir = tmp_path / "b"
+    b_dir.mkdir()
+    rcf = b_dir / "pa.rc"
+    rcf.write_text("201\n")
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(b_dir / "absent.pid"))
+    monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(log))
+    r, _ = run_b(b_dir)
+    assert len(lines(b_dir, "scaffold.calls")) == scaffolds, r.stdout
+    if scaffolds:
+        assert "PREWARM FALLBACK" in r.stdout, r.stdout
+    else:
+        assert "its POST got no answer from Backstage" in r.stdout, r.stdout
+        assert "waiting for CICDPipeline" in r.stdout, r.stdout
+    assert r.returncode == 0, r.stderr
 
 
 def test_phase_b_ignores_stale_scaffold_log_phase_a_could_not_rewrite(tmp_path, monkeypatch):
