@@ -1824,7 +1824,7 @@ spec:
           # document equal to cluster-providers/common/iam/crossplane-provider-policy.json.
           name: "${schema.spec.name}-crossplane-provider-scoped"
           description: "Scoped policy for the Crossplane provider-aws-iam/eks role (kro-ack spoke)"
-          policyDocument: '{"Version":"2012-10-17","Statement":[{"Sid":"IamRolesPoliciesInstanceProfilesOidc","Effect":"Allow","Action":"iam:*","Resource":["arn:*:iam::*:role/*","arn:*:iam::*:policy/*","arn:*:iam::*:instance-profile/*","arn:*:iam::*:oidc-provider/*"]},{"Sid":"IamRead","Effect":"Allow","Action":["iam:Get*","iam:List*"],"Resource":"*"},{"Sid":"Eks","Effect":"Allow","Action":"eks:*","Resource":"*"},{"Sid":"Ec2Read","Effect":"Allow","Action":"ec2:Describe*","Resource":"*"},{"Sid":"CallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"}]}'
+          policyDocument: '{"Version":"2012-10-17","Statement":[{"Sid":"IamRolesPoliciesInstanceProfilesOidc","Effect":"Allow","Action":"iam:*","Resource":["arn:*:iam::*:role/*","arn:*:iam::*:policy/*","arn:*:iam::*:instance-profile/*","arn:*:iam::*:oidc-provider/*"]},{"Sid":"IamRead","Effect":"Allow","Action":["iam:Get*","iam:List*"],"Resource":"*"},{"Sid":"Eks","Effect":"Allow","Action":"eks:*","Resource":"*"},{"Sid":"Ec2Read","Effect":"Allow","Action":"ec2:Describe*","Resource":"*"},{"Sid":"CallerIdentity","Effect":"Allow","Action":"sts:GetCallerIdentity","Resource":"*"},{"Sid":"DenyAttachAwsManagedPolicyOutsideAllowlist","Effect":"Deny","Action":["iam:AttachRolePolicy","iam:AttachUserPolicy","iam:AttachGroupPolicy"],"Resource":"*","Condition":{"ArnLike":{"iam:PolicyARN":"arn:*:iam::aws:policy/*"},"ArnNotLike":{"iam:PolicyARN":["arn:*:iam::aws:policy/AWSGrafanaAccountAdministrator","arn:*:iam::aws:policy/AWSXrayReadOnlyAccess","arn:*:iam::aws:policy/AmazonDynamoDBFullAccess_v2","arn:*:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly","arn:*:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly","arn:*:iam::aws:policy/AmazonEC2FullAccess","arn:*:iam::aws:policy/AmazonEKSBlockStoragePolicy","arn:*:iam::aws:policy/AmazonEKSClusterPolicy","arn:*:iam::aws:policy/AmazonEKSComputePolicy","arn:*:iam::aws:policy/AmazonEKSLoadBalancingPolicy","arn:*:iam::aws:policy/AmazonEKSNetworkingPolicy","arn:*:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy","arn:*:iam::aws:policy/AmazonEKSWorkerNodePolicy","arn:*:iam::aws:policy/AmazonEKS_CNI_Policy","arn:*:iam::aws:policy/AmazonPrometheusFullAccess","arn:*:iam::aws:policy/AmazonPrometheusQueryAccess","arn:*:iam::aws:policy/AmazonRDSFullAccess","arn:*:iam::aws:policy/AmazonS3FullAccess","arn:*:iam::aws:policy/AmazonSSMManagedInstanceCore","arn:*:iam::aws:policy/SecretsManagerReadWrite","arn:*:iam::aws:policy/service-role/AmazonGrafanaCloudWatchAccess"]}}},{"Sid":"DenyChangeProviderScopedPolicies","Effect":"Deny","Action":["iam:CreatePolicyVersion","iam:SetDefaultPolicyVersion","iam:DeletePolicyVersion","iam:DeletePolicy"],"Resource":["arn:*:iam::*:policy/*crossplane-provider-scoped","arn:*:iam::*:policy/*crossplane-provider-scoped-*","arn:*:iam::*:policy/*ProviderRole-scoped","arn:*:iam::*:policy/*ProviderRole-scoped-*"]}]}'
 
     - id: crossplaneProviderRole
       includeWhen:
@@ -1852,8 +1852,9 @@ spec:
           # Scoped customer-managed policy crossplaneProviderPolicy above (same document as
           # cluster-providers/common/iam/crossplane-provider-policy.json), not
           # AdministratorAccess. Upgrade note: on the next RGD sync, with no `task install`
-          # re-run, ACK is expected to reconcile the Role to this spec: attach this managed
-          # policy and detach the older AdministratorAccess (not verified live).
+          # re-run, ACK reconciles the Role to this spec. kro resolves the Policy ARN first,
+          # and the ACK iam controller attaches the new policy before it detaches the older
+          # AdministratorAccess, so there is no gap (from the controller code; not verified live).
           policies:
             - ${crossplaneProviderPolicy.status.ackResourceMetadata.arn}
           assumeRolePolicyDocument: |

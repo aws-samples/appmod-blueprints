@@ -12,19 +12,21 @@ condition). That only works if the install never attaches them itself. The two p
 
 Customer-managed, not inline, and no CreatePolicyVersion: the consumer may grant
 CreatePolicy/AttachRolePolicy/DeletePolicy on <prefix>-* but neither iam:PutRolePolicy on these
-roles nor iam:CreatePolicyVersion. common/iam/managed-policy.sh creates, recreates on drift and
-attaches the policy.
+roles nor iam:CreatePolicyVersion. common/iam/managed-policy.sh creates the policy, replaces it on drift
+(new name attached first, then the old one removed) and attaches it.
 Plus the bring-your-own option (hub.iam.*): a set ARN is used as is, nothing is created.
 
 What these tests pin:
-1. static: no admin-like managed policy ARN outside comments/detach calls in the install path;
+1. static: no admin-like managed policy ARN outside comments/detach calls in the install path,
+   except KNOWN_ADMIN_EXCEPTIONS (the kind-crossplane hub provider-aws-iam/eks bootstrap);
 2. the two policy files are valid, grant no "*" action and no iam:* on "*"; the rg-eks
    crossplane-provider role attaches only the ACK Policy node with the same document and the
    <role>-scoped name, and that node stays spoke-only (gated on provider == "kro-ack", which
    hub:claim never sets);
 3. behaviour, against a stateful fake `aws` on PATH: managed-policy.sh alone (create, identical
-   = attach only, drift = detach/prune/delete/create/attach in that order, no inline
-   policy calls, fatal errors, convergence after a failure inside the recreate window, delete);
+   = attach only, drift = create under the second name and attach before the old policy is
+   detached/pruned/deleted, no inline policy calls, fatal errors, convergence after a failed
+   create/attach/delete, delete of both names);
    the REAL Taskfile blocks under go-task (default, legacy detach, re-run
    on the roles a failed run left, BYO, fatal policy errors, seed tasks of both providers);
    kind-kro-ack destroy step 6b deletes the scoped policies before their roles;
@@ -58,9 +60,12 @@ ADMIN_ARN = re.compile(r"arn:aws[\w-]*:iam::aws:policy/(AdministratorAccess|Powe
 # Files run (or rendered with the installing principal's creds) by `task install`.
 # Not here, on purpose: cluster-providers/terraform (iam.tf, not the install path of
 # kind-kro-ack/kind-crossplane) and scripts/create-cross-account-roles.sh (manual
-# multi-account helper run with the TARGET account's creds). In-cluster attachments made by
-# provider-aws-iam (crossplane-base, crossplane-pod-identity charts) are not the installing
-# principal's and are out of scope too.
+# multi-account helper run with the TARGET account's creds). Attachments that Crossplane's
+# provider-aws-iam makes in-cluster (crossplane-base, crossplane-pod-identity charts) are not
+# in these files and are out of scope here. On kind-crossplane that provider runs on the
+# installer's aws-credentials Secret, so crossplane-base still attaches AdministratorAccess to
+# <hub>-Crossplane{IAM,EKS}ProviderRole with the installer's credentials (see
+# kind-crossplane/Taskfile.yaml IAM_POLICY_DIR); scoping it is follow-up work.
 INSTALL_PATH = [
     "Taskfile.yaml",
     "workshop/Taskfile.yaml",
@@ -86,7 +91,11 @@ def test_no_admin_like_managed_policy_in_install_path(rel):
     if not os.path.exists(path):
         pytest.skip(f"{rel} absent")
     bad = []
+    excepted = 0
     for line in logical_lines(path):
+        if rel in KNOWN_ADMIN_EXCEPTIONS:
+            line, n = KNOWN_ADMIN_EXCEPTIONS[rel][0].subn("", line)
+            excepted += n
         if not ADMIN_ARN.search(line):
             continue
         s = line.strip()
@@ -94,6 +103,17 @@ def test_no_admin_like_managed_policy_in_install_path(rel):
             continue
         bad.append(s[:200])
     assert not bad, f"admin-like managed policy still attached in {rel}:\n" + "\n".join(bad)
+    if rel in KNOWN_ADMIN_EXCEPTIONS:
+        assert excepted == KNOWN_ADMIN_EXCEPTIONS[rel][1], (rel, excepted)
+
+
+# Known exception, kept visible: kind-crossplane creates its hub provider-aws-iam/eks roles from
+# kind with the installer's credentials and still attaches AdministratorAccess to them (the
+# crossplane:claims render and its mirror in destroy, 2 + 2). Scoping them is follow-up work.
+KNOWN_ADMIN_EXCEPTIONS = {
+    "cluster-providers/kind-crossplane/Taskfile.yaml": (
+        re.compile(r"--set 'providers\.(iam|eks)\.policyArns=\{arn:aws:iam::aws:policy/AdministratorAccess\}'"), 4),
+}
 
 
 def test_scan_catches_an_attach():
@@ -121,6 +141,8 @@ def test_policy_is_scoped(name):
     doc = load_policy(name)
     assert doc["Version"] == "2012-10-17"
     for st in doc["Statement"]:
+        if st["Effect"] == "Deny":  # can only narrow; pinned in test_crossplane_provider_scope.py
+            continue
         assert st["Effect"] == "Allow"
         actions, resources = as_list(st["Action"]), as_list(st["Resource"])
         assert "*" not in actions, st
@@ -253,6 +275,8 @@ elif op == "delete-role-policy":
 elif op == "list-role-policies":
     print("\t".join(inl.get(role, [])))
 elif op == "list-attached-role-policies":
+    if role not in roles:
+        err("NoSuchEntity")
     print("\t".join(legacy + att.get(role, [])))
 elif op == "attach-role-policy":
     arn = opt["policy-arn"]
@@ -352,7 +376,7 @@ def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
         },
     }
     if taskfile == KRO:  # kind-crossplane has no hub:bootstrap-crossplane-identity
-        scope = block("hub:scope-crossplane-provider-role", 0)
+        scope = block("hub:crossplane-provider-role:apply", 0)
         tf["tasks"]["scope"] = {"cmds": [scope]}
         # install order: scope (ungated) first, then bootstrap (PIAs)
         tf["tasks"]["bootstrap"] = {"cmds": [scope, block("hub:bootstrap-crossplane-identity", 1)]}
@@ -434,7 +458,7 @@ def logical_lines_of(text):
     return text.replace("\\\n", " ").splitlines()
 
 
-BLOCKS = [(KRO, "hub:scope-crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles:apply", 1),
+BLOCKS = [(KRO, "hub:crossplane-provider-role:apply", 0), (KRO, "hub:create-mgmt-roles:apply", 1),
           (KRO, "spokes:seed-provider-identity", 0),
           (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)]
 
@@ -503,21 +527,6 @@ def test_mp_identical_but_detached_is_reattached(tmp_path):
     assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
 
 
-def test_mp_drift_recreates_in_order_without_create_policy_version(tmp_path):
-    old = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
-    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [old, old, old]},
-               attached={"pfx-r": [arn("pfx-r-scoped")]})
-    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
-    assert r.returncode == 0, out
-    ops = [c.split()[2] for c in log if c.split()[2] in (
-        "detach-role-policy", "delete-policy-version", "delete-policy", "create-policy", "attach-role-policy")]
-    assert ops == ["detach-role-policy", "delete-policy-version", "delete-policy-version",
-                   "delete-policy", "create-policy", "attach-role-policy"], ops
-    s = state(tmp_path)
-    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
-    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
-    assert not calls_of(log, "create-policy-version")
-
 
 def test_mp_document_compare_ignores_key_order(tmp_path):
     reordered = json.loads(json.dumps(XP_DOC))
@@ -563,17 +572,6 @@ def test_mp_errors_are_fatal(tmp_path, fail):
     assert f"ERROR: aws iam {fail.split(':')[0]} failed" in out and "AccessDenied" in out, out
 
 
-def test_mp_delete_conflict_in_the_drift_path_keeps_the_old_policy_attached(tmp_path):
-    """The policy is also attached to another role, so DeletePolicy fails with DeleteConflict.
-    The role must not be left detached: every re-run would detach it again and fail again."""
-    old = {"Version": "2012-10-17", "Statement": []}
-    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": old},
-               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
-    assert r.returncode != 0 and "DeleteConflict" in out, out
-    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
-    assert state(tmp_path)["policies"]["pfx-r-scoped"]["docs"] == {"v1": old}
-
 
 def test_mp_never_touches_inline_policies(tmp_path):
     """No release ever wrote the inline policies the first revisions cleaned up, so ensure must
@@ -589,22 +587,167 @@ def test_mp_never_touches_inline_policies(tmp_path):
 
 def test_mp_missing_role_is_fatal(tmp_path):
     seed_state(tmp_path)
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
-    assert r.returncode != 0, out
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "role pfx-r does not exist" in out, out
+    assert not calls_of(log, "create-policy"), log  # no orphan policy for a missing role
+    assert state(tmp_path)["policies"] == {}
 
 
-def test_mp_failure_in_the_recreate_window_converges_on_rerun(tmp_path):
-    old = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
-    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": old},
+
+def sha8(doc):
+    import hashlib
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:8]
+
+
+ALT_POL = f"pfx-r-scoped-{sha8(XP_DOC)}"
+OLD_DOC = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]}
+
+
+def test_mp_drift_attaches_the_new_policy_before_removing_the_old(tmp_path):
+    """No window without a scoped policy: the new document is created under the second name and
+    attached, and only then is the old one detached and deleted. No CreatePolicyVersion."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [OLD_DOC, OLD_DOC, OLD_DOC]},
                attached={"pfx-r": [arn("pfx-r-scoped")]})
-    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail="create-policy:pfx-r-scoped")
-    assert r.returncode != 0, out
-    assert "pfx-r-scoped" not in state(tmp_path)["policies"]  # inside the window: no policy
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    ops = [c.split()[2] for c in log if c.split()[2] in (
+        "detach-role-policy", "delete-policy-version", "delete-policy", "create-policy", "attach-role-policy")]
+    assert ops == ["create-policy", "attach-role-policy", "detach-role-policy",
+                   "delete-policy-version", "delete-policy-version", "delete-policy"], ops
+    assert f"--policy-name {ALT_POL} " in calls_of(log, "create-policy")[0] + " ", log
+    assert ALT_POL in calls_of(log, "attach-role-policy")[0], log
+    s = state(tmp_path)
+    assert s["policies"] == {ALT_POL: {"default": "v1", "docs": {"v1": XP_DOC}}}
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)]
+    assert not calls_of(log, "create-policy-version")
+    assert len(ALT_POL) <= 128
+
+
+def test_mp_role_always_holds_a_scoped_policy_during_drift(tmp_path):
+    """Replay the call log against the attachments: after every call the role has one."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    held = {"pfx-r-scoped"}
+    for c in log:
+        op, last = c.split()[2], c.split()[-1].rsplit("/", 1)[-1]
+        if op == "attach-role-policy":
+            held.add(last)
+        elif op == "detach-role-policy":
+            held.discard(last)
+        assert held, (c, log)
+
+
+def test_mp_drift_alternates_back_to_the_base_name_and_converges(tmp_path):
+    """Second drift: the policy is under the second name, the base name is free, so the new
+    document goes back to the base name. A re-run with no change is attach-only."""
+    seed_state(tmp_path, roles=["pfx-r"], policies={f"pfx-r-scoped-{sha8(OLD_DOC)}": OLD_DOC},
+               attached={"pfx-r": [arn(f"pfx-r-scoped-{sha8(OLD_DOC)}")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert list(s["policies"]) == ["pfx-r-scoped"] and s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    n = len(log)
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    new = log[n:]
+    for verb in ("create-policy", "delete-policy", "detach-role-policy"):
+        assert not calls_of(new, verb), (verb, new)
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+
+
+def test_mp_failed_create_in_drift_keeps_the_old_policy_and_converges(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail=f"create-policy:{ALT_POL}")
+    assert r.returncode != 0 and "ERROR: aws iam create-policy failed" in out, out
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")] and s["policies"]["pfx-r-scoped"]["docs"] == {"v1": OLD_DOC}
+    assert not calls_of(log, "detach-role-policy") and not calls_of(log, "delete-policy"), log
     r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
     assert r.returncode == 0, out
     s = state(tmp_path)
-    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": XP_DOC}
-    assert s["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_failed_attach_in_drift_keeps_the_old_policy_and_converges(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail=f"attach-role-policy:{ALT_POL}")
+    assert r.returncode != 0, out
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn("pfx-r-scoped")]
+    n = len((tmp_path / "calls.log").read_text().splitlines())
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    assert not calls_of(log[n:], "create-policy"), log[n:]  # the unattached new one is reused
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_failed_delete_of_the_old_policy_keeps_it_attached_and_fails(tmp_path):
+    """The old policy is also attached to another role, so DeletePolicy fails (DeleteConflict).
+    The new policy stays attached, the old one is attached again so the next run sees it, and
+    the run fails. Once the other attachment is gone, the next run removes it."""
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")], "other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "DeleteConflict" in out and "could not remove the older scoped policy" in out, out
+    s = state(tmp_path)
+    assert sorted(s["attached"]["pfx-r"]) == sorted([arn(ALT_POL), arn("pfx-r-scoped")])
+    assert s["policies"]["pfx-r-scoped"]["docs"] == {"v1": OLD_DOC}
+    s["attached"]["other"] = []
+    (tmp_path / "state.json").write_text(json.dumps(s))
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_failed_delete_does_not_attach_an_old_policy_the_role_never_had(tmp_path):
+    """The old base-name policy exists but is attached only to another role: the failed delete
+    must not attach it to this role."""
+    seed_state(tmp_path, roles=["pfx-r", "other"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"other": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "DeleteConflict" in out, out
+    assert state(tmp_path)["attached"]["pfx-r"] == [arn(ALT_POL)]
+
+
+def test_mp_second_name_with_a_foreign_document_is_fatal(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC, ALT_POL: OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE)
+    assert r.returncode != 0 and "exists with another document" in out, out
+    assert not calls_of(log, "detach-role-policy") and not calls_of(log, "create-policy"), log
+
+
+def test_mp_denied_attached_read_warns_and_still_converges_by_name(tmp_path):
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": OLD_DOC},
+               attached={"pfx-r": [arn("pfx-r-scoped")]})
+    r, out, _ = mp(tmp_path, "ensure", ACCT, "pfx", "pfx-r", DOC_FILE, fail="list-attached-role-policies:pfx-r")
+    assert r.returncode == 0 and "could not list the policies attached to pfx-r" in out, out
+    s = state(tmp_path)
+    assert s["attached"]["pfx-r"] == [arn(ALT_POL)] and list(s["policies"]) == [ALT_POL]
+
+
+def test_mp_name_too_long_is_fatal_before_any_write(tmp_path):
+    role = "pfx-" + "r" * 120
+    seed_state(tmp_path, roles=[role])
+    r, out, log = mp(tmp_path, "ensure", ACCT, "pfx", role, DOC_FILE)
+    assert r.returncode != 0 and "longer than 128 characters" in out, out
+    assert log == [], log
+
+
+def test_mp_delete_removes_both_names(tmp_path):
+    other = f"pfx-r-scoped-{sha8(OLD_DOC)}"
+    seed_state(tmp_path, roles=["pfx-r"], policies={"pfx-r-scoped": [OLD_DOC, XP_DOC], other: OLD_DOC},
+               attached={"pfx-r": [arn(other)]})
+    r, out, log = mp(tmp_path, "delete", ACCT, "pfx", "pfx-r")
+    assert r.returncode == 0, out
+    s = state(tmp_path)
+    assert s["policies"] == {} and s["attached"]["pfx-r"] == []
 
 
 def test_mp_delete_detaches_prunes_versions_and_deletes(tmp_path):
@@ -667,14 +810,14 @@ def test_scope_task_is_not_gated_and_runs_before_bootstrap():
     of the policy document."""
     with open(KRO) as f:
         tasks = yaml.safe_load(f)["tasks"]
-    scope = tasks["hub:scope-crossplane-provider-role"]
+    scope = tasks["hub:crossplane-provider-role:apply"]
     assert "status" not in scope and "sources" not in scope and "generates" not in scope
     assert "managed-policy.sh" not in "".join(
         c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:bootstrap-crossplane-identity"]["cmds"])
     for name, t in tasks.items():
         order = [c["task"] for c in t.get("cmds", []) if isinstance(c, dict) and "task" in c]
         if "hub:bootstrap-crossplane-identity" in order:
-            assert order.index("hub:scope-crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
+            assert order.index("hub:crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
 
 
 @needs_task
@@ -698,7 +841,10 @@ def test_scope_applies_a_changed_policy_document_to_a_live_hub(tmp_path):
                attached={"hub-crossplane-provider": [arn(HUB_POL)]})
     r, out, _ = run(tmp_path, b, "scope")
     assert r.returncode == 0, out
-    assert state(tmp_path)["policies"][HUB_POL]["docs"] == {"v1": XP_DOC}
+    s = state(tmp_path)
+    new = f"{HUB_POL}-{sha8(XP_DOC)}"
+    assert s["policies"] == {new: {"default": "v1", "docs": {"v1": XP_DOC}}}, s["policies"]
+    assert s["attached"]["hub-crossplane-provider"] == [arn(new)]
 
 
 @needs_task
@@ -707,7 +853,24 @@ def test_scope_skips_a_bring_your_own_role(tmp_path):
     byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
     r, out, log = run(tmp_path, b, "scope", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}", existing="cfn-crossplane")
     assert r.returncode == 0, out
-    assert [c for c in log if " iam " in c] == [], log
+    # read-only: only the check for a default role left by an earlier install
+    assert [c.split()[2] for c in log if " iam " in c] == ["get-role"], log
+    assert "still exists" not in out, out
+
+
+@needs_task
+def test_scope_with_byo_warns_when_the_default_role_is_still_there(tmp_path):
+    """An existing hub upgraded with a BYO ARN: its PIAs still point at the default role, which
+    keeps its policies. The task does not touch it, but must say so."""
+    b = harness(tmp_path)
+    byo = f"arn:aws:iam::{ACCT}:role/cfn-crossplane"
+    r, out, log = run(tmp_path, b, "scope", f"CROSSPLANE_PROVIDER_ROLE_ARN={byo}",
+                      existing="cfn-crossplane hub-crossplane-provider",
+                      attached="arn:aws:iam::aws:policy/AdministratorAccess")
+    assert r.returncode == 0, out
+    assert "hub-crossplane-provider still exists" in out and "bring-your-own role" in out, out
+    for verb in ("create-policy", "attach-role-policy", "detach-role-policy", "create-role"):
+        assert not calls_of(log, verb), (verb, log)
 
 
 @needs_task
@@ -776,6 +939,23 @@ def test_mgmt_detaches_legacy_iam_full_access(tmp_path):
     assert r.returncode == 0, out
     det = [d for d in calls_of(log, "detach-role-policy") if "IAMFullAccess" in d]
     assert len(det) == 1 and "pfx-cluster-mgmt-iam" in det[0], log
+
+
+@needs_task
+@pytest.mark.parametrize("task,role,legacy", [
+    ("scope", "hub-crossplane-provider", "AdministratorAccess"),
+    ("mgmt", "pfx-cluster-mgmt-iam", "IAMFullAccess"),
+])
+def test_denied_attached_policy_read_warns_that_the_legacy_policy_may_stay(tmp_path, task, role, legacy):
+    """ListAttachedRolePolicies denied: the legacy policy may still be attached. That read
+    failing is not "nothing attached", so the run must say so instead of passing silently."""
+    b = harness(tmp_path)
+    r, out, log = run(tmp_path, b, task, existing=role,
+                      attached=f"arn:aws:iam::aws:policy/{legacy}",
+                      fail=f"list-attached-role-policies:{role}")
+    assert r.returncode == 0, out
+    assert f"could not list the policies attached to {role}: {legacy}, if attached, is left attached" in out, out
+    assert not [d for d in calls_of(log, "detach-role-policy") if legacy in d], log
 
 
 @needs_task
@@ -905,6 +1085,20 @@ def test_destroy_sweep_deletes_scoped_managed_policies(tmp_path):
 
 
 @needs_task
+def test_destroy_sweep_deletes_a_scoped_policy_under_the_second_name(tmp_path):
+    """After a drift the policy is <base>-<sha8>: 6b deletes it before the role too."""
+    b = harness(tmp_path)
+    alt = f"{MGMT_POL}-{sha8(MGMT_DOC)}"
+    seed_state(tmp_path, roles=["pfx-cluster-mgmt-iam"], policies={alt: MGMT_DOC},
+               attached={"pfx-cluster-mgmt-iam": [arn(alt)]})
+    r, out, log = run(tmp_path, b, "sweep", stub_python=True)
+    assert r.returncode == 0, out
+    assert state(tmp_path)["policies"] == {}
+    order = [c.split()[2] for c in log if f"policy/{alt}" in c or (" delete-role " in c + " ")]
+    assert order.index("delete-policy") < order.index("delete-role"), order
+
+
+@needs_task
 def test_destroy_sweep_records_a_failed_scoped_policy_delete(tmp_path):
     b = harness(tmp_path)
     seed_state(tmp_path, roles=["pfx-cluster-mgmt-iam"], policies={MGMT_POL: MGMT_DOC},
@@ -953,7 +1147,7 @@ def test_schema_hub_iam_rejects_unknown_keys():
 
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
 @pytest.mark.parametrize("taskfile,task,index", [
-    (KRO, "hub:scope-crossplane-provider-role", 0),
+    (KRO, "hub:crossplane-provider-role:apply", 0),
     (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles:apply", 1),
     (KRO, "spokes:seed-provider-identity", 0),
     (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)])
@@ -971,3 +1165,20 @@ def test_blocks_shellcheck(tmp_path, taskfile, task, index):
 def test_managed_policy_script_shellcheck():
     r = subprocess.run(["shellcheck", "-s", "sh", MP], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout
+
+
+def test_kro_ack_crossplane_provider_path_never_attaches_admin():
+    """Integration of the scoped policy (#1292) and the apply/verify split (#1296): no
+    attach-role-policy of AdministratorAccess is left in the kind-kro-ack Taskfile, and
+    hub:crossplane-provider-role:apply ensures the scoped policy instead."""
+    with open(KRO) as f:
+        text = f.read()
+    # Logical lines: a `\`-continued attach (`attach-role-policy ... \` then
+    # `--policy-arn .../AdministratorAccess`) is one command.
+    for line in logical_lines_of(text):
+        if "attach-role-policy" in line and "detach-role-policy" not in line:
+            assert "AdministratorAccess" not in line, line
+    with open(KRO) as f:
+        tasks = yaml.safe_load(f)["tasks"]
+    apply_cmds = "".join(c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:crossplane-provider-role:apply"]["cmds"])
+    assert "managed-policy.sh\" ensure" in apply_cmds
