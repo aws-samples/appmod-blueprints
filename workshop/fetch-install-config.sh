@@ -45,7 +45,10 @@ while [ "$W" -lt "$MAX" ]; do
     if START=$(newest_build_start); then
       PUB=$(to_epoch "$(aws secretsmanager describe-secret --secret-id "${PREFIX}/install-config" ${REGION:+--region "$REGION"} \
               --query LastChangedDate --output text 2>/dev/null || true)")
-      if [ -n "$START" ] && [ -n "$PUB" ] && [ "$PUB" -lt "$START" ]; then
+      if [ -n "$START" ] && [ -z "$PUB" ]; then
+        echo "  ⚠ could not read when ${PREFIX}/install-config was published: using it as published" >&2
+        break
+      elif [ -n "$START" ] && [ "$PUB" -lt "$START" ]; then
         [ -n "$SAID" ] || echo "  ${PREFIX}/install-config is from an earlier build (published before the newest build started): waiting for the new one"
         SAID=1
       else
