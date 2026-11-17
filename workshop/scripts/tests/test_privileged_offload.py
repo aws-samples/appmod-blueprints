@@ -80,7 +80,7 @@ def _expected_policies(text):
     return out
 
 
-ALL_POLICIES = sorted({a for v in _expected_policies(open(VERIFY_SH).read()).values() for a in v})
+ALL_POLICIES = sorted({a for v in _expected_policies(open(VERIFY_SH).read()).values() for a in v} | {"arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped"})
 
 
 @pytest.fixture
@@ -90,6 +90,10 @@ def repo(tmp_path):
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
     shutil.copytree(os.path.join(REPO, "cluster-providers"), r / "cluster-providers")
+    # managed-policy.sh has its own tests (test_install_no_admin_managed_policies.py); here the
+    # fake aws cannot answer its get-policy-version, so it is replaced by a logging stub.
+    stub = r / "cluster-providers" / "common" / "iam" / "managed-policy.sh"
+    stub.write_text('#!/bin/sh\necho "managed-policy.sh $*" >> "$FAKE_AWS_LOG"\n')
     (r / "scripts").mkdir()
     shutil.copy(os.path.join(REPO, "scripts", "install-timing.sh"), r / "scripts" / "install-timing.sh")
     shutil.copytree(os.path.join(REPO, "gitops", "addons", "registry"), r / "gitops" / "addons" / "registry")
@@ -233,7 +237,8 @@ def test_verify_lists_match_providers():
     verify = open(VERIFY_SH).read()
     want = _expected_policies(verify)
     want_inline = _inline_pairs_verify(verify)
-    assert sorted(want) == sorted(SERVICES)
+    # iam has no AWS managed policy: verify checks its scoped policy by name
+    assert sorted(want) == sorted(x for x in SERVICES if x != "iam")
     assert want_inline == [("eks", "eks-access-management"), ("rds", "rds-kms")]
     for provider in PROVIDERS:
         text = open(os.path.join(REPO, "cluster-providers", provider, "Taskfile.yaml")).read()

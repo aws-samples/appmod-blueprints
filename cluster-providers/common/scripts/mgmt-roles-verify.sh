@@ -19,7 +19,9 @@ expected_policies() {
   case $1 in
     ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
     eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
-    iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
+    # iam: no AWS managed policy; the customer-managed <prefix>-cluster-mgmt-iam-scoped
+    # (checked by name below) replaces IAMFullAccess.
+    iam) echo "";;
     ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
     s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
     dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
@@ -49,6 +51,10 @@ for svc in $SERVICES; do
       --query 'AttachedPolicies[].PolicyArn' --output text 2>&1); then
     add_error "$ROLE (attached policies)" "$ATTACHED"
     continue
+  fi
+  if [ "$svc" = iam ] && ! echo "$ATTACHED" | tr '\t' '\n' \
+      | grep -Eq "policy/${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped(-[0-9a-f]{8})?\$"; then
+    MISSING="$MISSING policy:$ROLE:${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
   fi
   for arn in $(expected_policies "$svc"); do
     case " $(echo "$ATTACHED" | tr '\t\n' '  ') " in
