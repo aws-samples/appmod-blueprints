@@ -1356,10 +1356,11 @@ tasks:
         printf '{{.C_STEP}}  ▸ scaffolding template:default/cicd-pipeline-gitops (appname=%s, log: %s)…{{.C_RESET}}\n' "$APP" "$SC_LOG"
         VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
         # Bounded retry, ONLY when the POST itself was refused (backstage_scaffolder prints
-        # "backstage_scaffolder: POST ... returned HTTP <code>" and exits 2: no task exists
-        # server-side, so a retry cannot double-scaffold). A task that was created and then
-        # failed or timed out is never re-submitted: publish:gitlab may already have created
-        # the repo, and Phase B's repo guard takes it from there.
+        # "backstage_scaffolder: POST ... returned HTTP <code>" and exits 2) with an error
+        # answer (4xx/5xx): no task exists server-side, so a retry cannot double-scaffold.
+        # A task that was created and then failed or timed out is never re-submitted:
+        # publish:gitlab may already have created the repo, and Phase B's repo guard takes
+        # it from there.
         SC_TRY=0
         while :; do
           SC_TRY=$((SC_TRY + 1))
@@ -1371,8 +1372,13 @@ tasks:
             printf '{{.C_OK}}  ✓ prewarm Phase A: scaffolder task completed (%s).{{.C_RESET}}\n' "$(grep -m1 '^Task ID:' "$SC_LOG" | tail -n1)"
             break
           fi
-          if [ "$SC_RC" -eq 2 ] && [ "$SC_TRY" -lt 3 ] && [ "$(left)" -gt $(( 60 + SCAFFOLD_RESERVE )) ]; then
-            printf '{{.C_INFO}}  ▸ prewarm Phase A: scaffold POST refused (%s) — retrying in 60s (%s/2)…{{.C_RESET}}\n' "$(grep '^backstage_scaffolder: POST ' "$SC_LOG" | tail -n1 | sed -n 's/.* returned \(HTTP [0-9]*\).*/\1/p')" "$SC_TRY"
+          # rc=2 with an error answer (4xx/5xx) is a refused POST. rc=2 with HTTP 000 means
+          # no answer (e.g. the POST's 60 s --max-time fired): Backstage may have created
+          # the task anyway, so that one is not retried.
+          SC_CODE=$(grep '^backstage_scaffolder: POST ' "$SC_LOG" | tail -n1 | sed -n 's/.* returned HTTP \([0-9]*\).*/\1/p')
+          case "$SC_CODE" in [45][0-9][0-9]) SC_REFUSED=yes ;; *) SC_REFUSED="" ;; esac
+          if [ "$SC_RC" -eq 2 ] && [ -n "$SC_REFUSED" ] && [ "$SC_TRY" -lt 3 ] && [ "$(left)" -gt $(( 60 + SCAFFOLD_RESERVE )) ]; then
+            printf '{{.C_INFO}}  ▸ prewarm Phase A: scaffold POST refused (HTTP %s) — retrying in 60s (%s/2)…{{.C_RESET}}\n' "$SC_CODE" "$SC_TRY"
             sleep 60; continue
           fi
           printf '{{.C_ERR}}  ✗ prewarm Phase A: scaffold failed (rc=%s, attempt %s) — Phase B fallback. Last lines of %s:{{.C_RESET}}\n' "$SC_RC" "$SC_TRY" "$SC_LOG"

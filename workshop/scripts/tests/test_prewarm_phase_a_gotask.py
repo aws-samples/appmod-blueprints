@@ -153,6 +153,17 @@ def test_phase_a_post_refused_retries_then_fails_visibly(tmp_path):
     assert "prewarm-rust-cicd-phase-a done" not in r.stdout
 
 
+def test_phase_a_post_without_answer_is_not_retried(tmp_path):
+    # Review (L1367): rc=2 also covers HTTP 000 (no answer, e.g. the POST's 60 s
+    # --max-time fired), where Backstage may already have created the task. A retry
+    # could submit a second scaffold, so only an error answer (4xx/5xx) is retried.
+    r, _, _ = run_phase_a(tmp_path, post_code="000")
+    assert len(lines(tmp_path, "post.calls")) == 1, r.stdout
+    assert "scaffold failed (rc=2" in r.stdout, r.stdout
+    assert "retrying in 60s" not in r.stdout
+    assert r.returncode != 0
+
+
 def test_phase_a_failed_task_is_not_resubmitted(tmp_path):
     # A created task that fails may already have published the repo: never POST again.
     r, _, _ = run_phase_a(tmp_path, task_status="failed")
