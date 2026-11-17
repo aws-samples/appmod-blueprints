@@ -1913,6 +1913,18 @@ tasks:
           PRESET_NAME=$(echo "$CONFIG_EXISTING" | jq -r --arg k "spoke_${SPOKE_ENV}_cluster_name" '(.metadata // "{}") | fromjson | (.[$k] // "")' 2>/dev/null || echo "")
           CLUSTER=$(bash "{{.ROOT_DIR}}/scripts/resolve-spoke-cluster.sh" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "$SPOKE_ENV" "$PRESET_NAME" || echo "")
           if [ -z "$CLUSTER" ]; then
+            # The resolver also prints nothing on an EKS API error. Clear this spoke's stored keys
+            # only when the cluster they point at is reported gone (ResourceNotFoundException).
+            STORED_ARN=$(echo "$CONFIG_EXISTING" | jq -r --arg k "spoke_${SPOKE_ENV}_cluster_arn" '(.metadata // "{}") | fromjson | (.[$k] // "")' 2>/dev/null || echo "")
+            if [ -n "$STORED_ARN" ] && [ "$STORED_ARN" != "None" ]; then
+              STORED_OUT=$(aws eks describe-cluster --name "${STORED_ARN##*/}" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>&1) || true
+              case "$STORED_OUT" in
+                *ResourceNotFoundException*) ;;
+                *)
+                  if [ "$SPOKE_ENV" = "dev" ]; then SPOKE_DEV_KEEP=1; else SPOKE_PROD_KEEP=1; fi
+                  echo "WARN: $SPOKE_ENV spoke not resolved, but its stored cluster ${STORED_ARN##*/} is not reported gone: stored scraper keys kept." ;;
+              esac
+            fi
             echo "WARN: No $SPOKE_ENV spoke found for prefix {{.RESOURCE_PREFIX}} in {{.AWS_REGION}}. Scraper skipped."
             continue
           fi
@@ -1931,9 +1943,10 @@ tasks:
           done
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
           SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null || echo "")
-          # Never store the text rendering of a null: leave this spoke's keys empty, and
-          # observability:converged re-seeds once the spoke is ACTIVE. (if/elif, not a nested
-          # `continue`: go-task's shell does not skip the rest of an outer `if` on it.)
+          # Never store the text rendering of a null ("None"): a spoke without a security group
+          # yet keeps its stored keys (none on a first install), and observability:converged
+          # re-seeds once the spoke is ACTIVE. (if/elif, not a nested `continue`: go-task's
+          # shell does not skip the rest of an outer `if` on it.)
           case "$SPOKE_SG" in None|null) SPOKE_SG="" ;; esac
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ] && [ -z "$SPOKE_SG" ]; then
             SPOKE_STATUS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "unknown")

@@ -217,3 +217,17 @@ def test_absent_spoke_still_clears_its_keys(tmp_path, provider):
     res, meta, _ = _run(tmp_path, provider, clusters, meta=dict(GOOD_DEV, aws_grafana_url="g"))
     assert res.returncode == 0, res.stdout + res.stderr
     assert meta["spoke_dev_cluster_arn"] == "" and meta["spoke_dev_security_group_id"] == "", meta
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_resolver_api_error_keeps_the_stored_keys(tmp_path, provider):
+    # Every status read of spoke-dev is throttled: the resolver prints nothing (its contract on an
+    # API error), and the stored cluster is not reported gone, so its keys must be kept.
+    clusters = _spokes(0, 0)
+    clusters[f"{PREFIX}-spoke-dev"]["fail"] = ["cluster.status"]
+    res, meta, _ = _run(tmp_path, provider, clusters, meta=dict(GOOD_DEV, aws_grafana_url="g"))
+    assert res.returncode == 0, res.stdout + res.stderr
+    for k, v in GOOD_DEV.items():
+        assert meta[k] == v, (k, meta)
+    assert meta["spoke_prod_security_group_id"] == f"sg-{PREFIX}-spoke-prod", meta
+    assert "stored scraper keys kept" in res.stdout, res.stdout
