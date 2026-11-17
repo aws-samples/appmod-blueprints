@@ -3443,7 +3443,8 @@ tasks:
       - cmd: |
           if [ "{{.AWS_DELETES}}" = external ]; then
             printf '{{.C_OK}}✓ Kubernetes teardown complete (privilegedSteps=external: the AWS deletes are left to the stack sweep).{{.C_RESET}}\n'
-            printf '{{.C_INFO}}  If no stack sweep runs after this, the EKS cluster {{.HUB_CLUSTER_NAME}}, its capabilities and secrets remain: delete them with a privileged role.{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  Skipped here, for a stack sweep or a privileged role to do: the EKS capabilities and the hub EKS cluster {{.HUB_CLUSTER_NAME}}, the {{.HUB_CLUSTER_NAME}}/config and /keycloak secrets, the leftover sweep (ALBs, hub and app leftovers, Ray resources, ACK IAM roles and policies, ECR repositories) and the extended sweep (CloudFront, IAM roles and policies, Secrets Manager, AMP workspaces and scrapers, the DevLake RDS, OIDC providers, log groups, spoke and hub VPCs, security groups).{{.C_RESET}}\n'
+            printf '{{.C_INFO}}  If no stack sweep runs after this, all of these remain.{{.C_RESET}}\n'
             exit 0
           fi
           if aws eks describe-cluster --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} >/dev/null 2>&1; then

@@ -19,6 +19,7 @@ import shutil
 import subprocess
 
 import pytest
+import yaml
 
 TASK = shutil.which("task")
 if not TASK:
@@ -189,3 +190,51 @@ def test_hub_seed_also_admits_the_ide_role():
     text = open(os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")).read()
     assert "aws.ideRoleArn" in text
     assert text.count('--principal-arn "$IDE_ROLE"') == 2
+
+
+# ---------------------------------------------------------------- privilegedSteps: destroy scope
+
+def test_destroy_external_lists_every_skipped_aws_step(tmp_path, repo):
+    _echo_commands(repo)
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:destroy", "--dry"], mode="external")
+    for what in ("EKS capabilities", "ALBs", "Ray resources", "ECR repositories", "CloudFront",
+                 "AMP workspaces", "OIDC providers", "log groups", "VPCs", "security groups"):
+        assert what in res.stderr, what
+
+
+def test_schema_scopes_the_kubernetes_only_destroy_to_kind_kro_ack():
+    import json
+    d = json.load(open(os.path.join(REPO, "config.schema.json")))["properties"]["privilegedSteps"]["description"]
+    assert "With clusterProvider kind-kro-ack, task destroy then only tears down Kubernetes" in d
+    assert "other providers have no Kubernetes-only destroy" in d
+
+
+WS_DESTROY = yaml.safe_load(open(os.path.join(REPO, "workshop", "Taskfile.yaml")))["tasks"]["destroy"]["cmds"]
+PHASE3 = [c["cmd"] for c in WS_DESTROY if isinstance(c, dict) and "PEEKS_AWS_IDE_ONLY" in c.get("cmd", "")][0]
+
+
+@pytest.mark.parametrize("provider,mode,ide_only,notice", [
+    ("kind-crossplane", "external", "true", True),
+    ("terraform", "external", "true", True),
+    ("kind-kro-ack", "external", "true", False),
+    ("kind-crossplane", None, "", False),
+])
+def test_workshop_destroy_says_when_external_is_not_kubernetes_only(tmp_path, provider, mode, ide_only, notice):
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text(f"clusterProvider: {provider}\n" + (f"privilegedSteps: {mode}\n" if mode else ""))
+    (tmp_path / "bin").mkdir()
+    for name, body in (("aws", "#!/bin/sh\nexit 254\n"),
+                       ("task", '#!/bin/sh\necho "task $* ide_only=${PEEKS_AWS_IDE_ONLY:-}" > "$OUT"\n')):
+        (tmp_path / "bin" / name).write_text(body)
+        (tmp_path / "bin" / name).chmod(0o755)
+    block = re.sub(r"\{\{\.C_[A-Z]+\}\}", "", PHASE3)
+    block = (block.replace("{{.CONFIG_FILE}}", str(cfg)).replace("{{.PROVIDER}}", provider)
+             .replace("{{.PLATFORM_DIR}}", str(tmp_path)).replace("{{.DESTROY_DEADLINE_FILE}}", str(tmp_path / "dl"))
+             .replace('{{.HUB_DELETE_WAIT | default ""}}', "true"))
+    block = re.sub(r"\{\{\.[A-Z_]+\}\}", "x", block)
+    env = {k: v for k, v in os.environ.items() if k != "PEEKS_AWS_IDE_ONLY"}
+    env.update(PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}", OUT=str(tmp_path / "out"))
+    r = subprocess.run(["bash", "-c", block], env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert ("only the kind-kro-ack destroy is Kubernetes-only" in r.stdout) is notice, r.stdout
+    assert (tmp_path / "out").read_text().strip().endswith(f"ide_only={ide_only}")

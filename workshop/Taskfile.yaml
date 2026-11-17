@@ -1234,10 +1234,15 @@ tasks:
           DL=$(cat "{{.DESTROY_DEADLINE_FILE}}" 2>/dev/null || echo 0)
           case "$DL" in ''|*[!0-9]*) DL=0 ;; esac
           # privilegedSteps=external: Kubernetes-only teardown on this host, on the host's own
-          # (instance) role. The provider skips its direct AWS deletes (the stack sweep does
-          # them) and the install role (aws.installRoleArn) is not used.
+          # (instance) role. kind-kro-ack skips its direct AWS deletes (the stack sweep does
+          # them) and the install role (aws.installRoleArn) is not used. The other providers
+          # have no Kubernetes-only destroy: they still make their AWS deletes, with this
+          # host's credentials, and the operator is told so.
           if [ "$(yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}} 2>/dev/null || true)" = external ]; then
             export PEEKS_AWS_IDE_ONLY=true
+            if [ "{{.PROVIDER}}" != kind-kro-ack ]; then
+              printf '{{.C_INFO}}  privilegedSteps=external: only the kind-kro-ack destroy is Kubernetes-only; the {{.PROVIDER}} destroy makes its AWS deletes with this host'"'"'s credentials.{{.C_RESET}}\n'
+            fi
           fi
           cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:destroy HUB_DELETE_WAIT="$WAIT" DESTROY_DEADLINE="$DL"
 

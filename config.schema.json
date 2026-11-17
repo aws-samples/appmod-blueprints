@@ -274,7 +274,7 @@
       "type": "string",
       "enum": ["inline", "external"],
       "default": "inline",
-      "description": "Who runs the install steps that call AWS write APIs directly (cluster-mgmt IAM roles, EKS capability log delivery). inline (default): task install does. external: a separate privileged runner does (task privileged:pre before task install, task privileged:post after); task install then only verifies the cluster-mgmt roles read-only. task destroy then only tears down Kubernetes and leaves the AWS deletes (EKS cluster, capabilities, secrets) to a stack sweep: without one they remain. Does not change what the kind bootstrap cluster's ACK/Crossplane controllers need."
+      "description": "Who runs the install steps that call AWS write APIs directly (cluster-mgmt IAM roles, EKS capability log delivery). inline (default): task install does. external: a separate privileged runner does (task privileged:pre before task install, task privileged:post after); task install then only verifies the cluster-mgmt roles read-only. With clusterProvider kind-kro-ack, task destroy then only tears down Kubernetes and leaves the AWS deletes (EKS cluster, capabilities, secrets, the leftover and extended sweeps) to a stack sweep: without one they remain. The other providers have no Kubernetes-only destroy: their task destroy still makes its AWS deletes, with the credentials of the host. Does not change what the kind bootstrap cluster's ACK/Crossplane controllers need."
     },
     "gitlabInit": {
       "type": "string",
