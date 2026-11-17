@@ -1618,19 +1618,22 @@ tasks:
             if [ -n "$DEADLINE" ] && [ "$(date +%s)" -ge "$DEADLINE" ]; then BUDGET_OK=""; fi
           fi
         fi
-        # Phase A ended with rc=0 after creating a scaffolder task (the "Task ID:" line in
-        # its scaffold log, which it empties when it starts): never submit a second task,
-        # whether it ended before Phase B started or during the wait above, even when
-        # nothing is visible yet (no glpat- PAT for the repo guard, Argo CD not synced).
-        # rc=0 alone is not enough: Phase A also exits 0 when it skips the scaffold. Only
-        # during an install: the rc file and log stay in /tmp, so a later standalone run
-        # must still be able to scaffold.
-        if [ -n "{{.INSTALL_START}}" ] && [ "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null)" = "0" ] \
+        # Phase A created a scaffolder task (the "Task ID:" line in its scaffold log, which
+        # it empties when it starts) and the task did not end failed or cancelled: it
+        # completed, or Phase A gave up polling (timeout) while the task may still run
+        # server-side. Never submit a second task, whether Phase A ended before Phase B
+        # started or during the wait above, even when nothing is visible yet (no glpat- PAT
+        # for the repo guard, Argo CD not synced). Phase A's rc alone is not enough: it
+        # exits 0 when it skips the scaffold, and non-zero when its poll times out. A task
+        # that ended failed or cancelled falls back to the scaffold below. Only during an
+        # install: the log stays in /tmp, so a later standalone run must still scaffold.
+        if [ -n "{{.INSTALL_START}}" ] \
            && grep -q '^Task ID:' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
            && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-          printf '{{.C_INFO}}  ↩ prewarm Phase A already submitted the scaffold (rc=0) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n'
+          printf '{{.C_INFO}}  ↩ prewarm Phase A already submitted the scaffold (task not failed, Phase A rc=%s) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n' "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || echo none)"
           REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
         fi
+           && ! grep -Eq 'status: (failed|cancelled)$' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           # Phase A is the primary path during an install. Reaching a fresh scaffold here
           # after it ran means it failed: say so loudly so the run is not read as clean.

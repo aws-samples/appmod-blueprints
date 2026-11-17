@@ -304,6 +304,32 @@ def test_phase_b_phase_a_done_rc0_before_phase_b(tmp_path, monkeypatch, task_id,
     assert r.returncode == 0, r.stderr
 
 
+@pytest.mark.parametrize("last_status,scaffolds", [
+    ("processing", 0),   # Phase A's poll timed out, the task may still run: wait for it
+    ("failed", 1),       # the task ended failed: Phase B falls back (loud)
+    ("cancelled", 1),
+])
+def test_phase_b_phase_a_task_then_nonzero_rc_no_pat(tmp_path, monkeypatch, last_status, scaffolds):
+    # Pre-review r1 point 2: Phase A created a task, then ended rc=201 (poll timed out or
+    # task failed), and there is no glpat- PAT for the repo guard. A task that may still
+    # run must not get a second POST; one that failed still gets the fallback.
+    rcf, sc = tmp_path / "pa.rc", tmp_path / "pa-scaffold.log"
+    rcf.write_text("201\n")
+    sc.write_text(f"Task ID: t1\n  [1] status: processing\n  [30] status: {last_status}\n")
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
+    monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(sc))
+    monkeypatch.setitem(VARS, "GIT_TOKEN", "")
+    r, _ = run_b(tmp_path)
+    assert len(lines(tmp_path, "scaffold.calls")) == scaffolds, r.stdout
+    if scaffolds:
+        assert "PREWARM FALLBACK: Phase A did not scaffold rust (rc=201" in r.stdout, r.stdout
+    else:
+        assert "already submitted the scaffold" in r.stdout, r.stdout
+        assert "waiting for CICDPipeline" in r.stdout, r.stdout
+    assert r.returncode == 0, r.stderr
+
+
 def test_phase_a_truncates_its_scaffold_log_at_start(tmp_path):
     # Phase B trusts the "Task ID:" line only if it comes from this Phase A run, so Phase
     # A must empty the log even when it exits before the scaffold (here: disabled).
