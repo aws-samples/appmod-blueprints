@@ -463,6 +463,20 @@ def test_empty_scraper_keys_from_a_partial_first_seed_are_missing(tmp_path, prov
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("bad", ["None", "null"])
+def test_none_security_group_from_a_creating_spoke_is_missing(tmp_path, provider, bad):
+    # A seed that read a spoke while it was still CREATING stored the AWS CLI's text rendering
+    # of a null clusterSecurityGroupId ("None"). The chart skips such a Scraper, so the key is
+    # as good as missing: the gate must fail once the spoke is ACTIVE, so install re-seeds.
+    meta = dict(SPOKE_KEYS, spoke_dev_security_group_id=bad)
+    st = _with_meta(meta, eks={f"{PREFIX}-spoke-dev": "ACTIVE", f"{PREFIX}-spoke-prod": "ACTIVE"})
+    res, _ = _run(tmp_path, provider, "observability:converged", st)
+    assert res.returncode != 0, res.stdout
+    assert "spoke_dev_security_group_id" in res.stdout, res.stdout
+    assert "spoke_dev_cluster_arn" not in res.stdout and "spoke_prod_" not in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
 def test_active_spokes_with_scraper_keys_are_converged(tmp_path, provider):
     st = _with_meta(SPOKE_KEYS, eks={f"{PREFIX}-spoke-dev": "ACTIVE", f"{PREFIX}-spoke-prod": "ACTIVE"})
     res, _ = _run(tmp_path, provider, "observability:converged", st)
