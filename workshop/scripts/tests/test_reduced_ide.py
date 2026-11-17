@@ -192,7 +192,31 @@ def test_hub_seed_also_admits_the_ide_role():
     assert text.count('--principal-arn "$IDE_ROLE"') == 2
 
 
-# ---------------------------------------------------------------- privilegedSteps: destroy scope
+# ---------------------------------------------------------------- privilegedSteps: enum and scope
+
+@pytest.mark.parametrize("args", [
+    ["kind-kro-ack:hub:create-mgmt-roles"], ["kind-crossplane:hub:create-mgmt-roles"],
+    ["kind-kro-ack:destroy"], ["install:complete"], ["install"],
+])
+def test_unknown_privileged_steps_value_is_refused_not_read_as_inline(tmp_path, repo, args):
+    provider = "kind-crossplane" if args[0].startswith("kind-crossplane") else "kind-kro-ack"
+    res, log = _run(tmp_path, repo, provider, args, mode="External")  # a typo of external
+    assert res.returncode != 0
+    assert "must be inline or external" in res.stderr, res.stderr[-600:]
+    assert not re.search(r"\biam (create|attach|put|update|delete)|eks delete|delete-secret", log), log
+
+
+def test_workshop_destroy_refuses_an_unknown_value_before_draining(tmp_path, repo):
+    res, log = _run(tmp_path, repo, "kind-kro-ack", ["-d", str(repo / "workshop"), "destroy"], mode="externl")
+    assert res.returncode != 0 and "must be inline or external" in res.stderr, res.stderr[-600:]
+    assert "delete" not in log, log
+
+
+@pytest.mark.parametrize("mode", ["inline", None])
+def test_known_values_pass_the_check(tmp_path, repo, mode):
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:hub:create-mgmt-roles"], mode=mode)
+    assert "must be inline or external" not in res.stderr
+
 
 def test_destroy_external_lists_every_skipped_aws_step(tmp_path, repo):
     _echo_commands(repo)

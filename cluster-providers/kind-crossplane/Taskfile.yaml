@@ -739,6 +739,9 @@ tasks:
 
   hub:create-mgmt-roles:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       # Same contract as kind-kro-ack: privilegedSteps=external -> read-only verify,
       # the roles were created by a separate privileged runner (`task privileged:pre`).

@@ -701,6 +701,9 @@ tasks:
 
   destroy:
     desc: "Full teardown: drain workloads from spokes → delete spokes → destroy hub platform"
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}

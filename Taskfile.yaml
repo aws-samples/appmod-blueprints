@@ -58,6 +58,9 @@ tasks:
 
   install:
     desc: Bootstrap the platform using the configured cluster provider
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
@@ -100,6 +103,9 @@ tasks:
   # install:hub + install:complete == install.
   install:hub:
     desc: "Install phase 1 (hub bootstrap, returns before the Keycloak-dependent finalize)"
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
@@ -114,6 +120,9 @@ tasks:
 
   install:complete:
     desc: "Install phase 2 (Keycloak-dependent finalize, observability converge, capability logs)"
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       PROVIDER:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}

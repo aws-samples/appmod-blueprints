@@ -2683,6 +2683,9 @@ tasks:
 
   destroy:
     desc: Full teardown — delete KRO instances, wait for ACK to clean up AWS resources, delete Kind
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       CLEANUP_KIND: '{{.CLEANUP_KIND | default "false"}}'
       # HUB_DELETE_WAIT=false: submit the hub's capability and cluster deletes but do not
@@ -4429,6 +4432,9 @@ tasks:
 
   hub:create-mgmt-roles:
     desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
       # privilegedSteps (config.yaml): "inline" (default) creates the roles here, as
       # before. "external" means a separate, more privileged runner (e.g. a CodeBuild
