@@ -153,11 +153,13 @@ def test_phase_a_post_refused_retries_then_fails_visibly(tmp_path):
     assert "prewarm-rust-cicd-phase-a done" not in r.stdout
 
 
-def test_phase_a_post_without_answer_is_not_retried(tmp_path):
+@pytest.mark.parametrize("code", ["000", "502", "504"])
+def test_phase_a_post_without_answer_is_not_retried(tmp_path, code):
     # Review (L1367): rc=2 also covers HTTP 000 (no answer, e.g. the POST's 60 s
-    # --max-time fired), where Backstage may already have created the task. A retry
-    # could submit a second scaffold, so only an error answer (4xx/5xx) is retried.
-    r, _, _ = run_phase_a(tmp_path, post_code="000")
+    # --max-time fired), where Backstage may already have created the task. 502/504 come
+    # from CloudFront or the load balancer, so the same holds. A retry could submit a
+    # second scaffold: only an error answer from Backstage is retried.
+    r, _, _ = run_phase_a(tmp_path, post_code=code)
     assert len(lines(tmp_path, "post.calls")) == 1, r.stdout
     assert "scaffold failed (rc=2" in r.stdout, r.stdout
     assert "retrying in 60s" not in r.stdout

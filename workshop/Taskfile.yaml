@@ -1357,10 +1357,11 @@ tasks:
         VALUES="{\"appname\":\"${APP}\",\"aws_region\":\"{{.AWS_REGION}}\",\"dockerfile_path\":\".\",\"deployment_path\":\"./deployment\"}"
         # Bounded retry, ONLY when the POST itself was refused (backstage_scaffolder prints
         # "backstage_scaffolder: POST ... returned HTTP <code>" and exits 2) with an error
-        # answer (4xx/5xx): no task exists server-side, so a retry cannot double-scaffold.
-        # A task that was created and then failed or timed out is never re-submitted:
-        # publish:gitlab may already have created the repo, and Phase B's repo guard takes
-        # it from there.
+        # answer from Backstage (4xx/5xx except the proxy's 502/504): no task exists
+        # server-side, so a retry cannot double-scaffold. A task that was created and then
+        # failed or timed out is never re-submitted here. Phase B does not re-submit one
+        # that timed out either; it falls back only when the task ended failed or cancelled
+        # (see its "Task ID:" check).
         SC_TRY=0
         while :; do
           SC_TRY=$((SC_TRY + 1))
@@ -1376,7 +1377,9 @@ tasks:
           # no answer (e.g. the POST's 60 s --max-time fired): Backstage may have created
           # the task anyway, so that one is not retried.
           SC_CODE=$(grep '^backstage_scaffolder: POST ' "$SC_LOG" | tail -n1 | sed -n 's/.* returned HTTP \([0-9]*\).*/\1/p')
-          case "$SC_CODE" in [45][0-9][0-9]) SC_REFUSED=yes ;; *) SC_REFUSED="" ;; esac
+          # 502/504 come from CloudFront or the load balancer, not Backstage: like 000, the
+          # task may exist behind them.
+          case "$SC_CODE" in 502|504) SC_REFUSED="" ;; [45][0-9][0-9]) SC_REFUSED=yes ;; *) SC_REFUSED="" ;; esac
           if [ "$SC_RC" -eq 2 ] && [ -n "$SC_REFUSED" ] && [ "$SC_TRY" -lt 3 ] && [ "$(left)" -gt $(( 60 + SCAFFOLD_RESERVE )) ]; then
             printf '{{.C_INFO}}  ▸ prewarm Phase A: scaffold POST refused (HTTP %s) — retrying in 60s (%s/2)…{{.C_RESET}}\n' "$SC_CODE" "$SC_TRY"
             sleep 60; continue
