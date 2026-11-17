@@ -13,6 +13,7 @@ The real go-task runs on a copy of the Taskfiles with a fake `aws` / `curl` / `k
 
 Run:  python -m pytest workshop/scripts/tests/test_reduced_ide.py -q
 """
+import json
 import os
 import re
 import shutil
@@ -66,7 +67,8 @@ def repo(tmp_path):
 
 
 def _config(provider, install_role=None, mode=None, session_name=None):
-    sn = f', installRoleSessionName: "{session_name}"' if session_name is not None else ""
+    # json.dumps: a YAML double-quoted scalar with JSON escapes, so "\n" stays a real newline
+    sn = f', installRoleSessionName: {json.dumps(session_name)}' if session_name is not None else ""
     c = f"""clusterProvider: {provider}
 resourcePrefix: acme
 aws: {{region: us-west-2, accountId: "111122223333"{f', installRoleArn: "{install_role}", ideRoleArn: "{IDE_ROLE}"' if install_role else ''}{sn}}}
@@ -276,6 +278,10 @@ ALL_PROVIDERS = ["kind-kro-ack", "kind-crossplane", "terraform"]
     ("peeks-install", "peeks-install"),        # what the workshop's create-config.sh writes
     (None, "platform-install"),                # neutral default for any other consumer
     ("bad name\nrole_arn = x", "platform-install"),  # never written into the file as is
+    ("ok\ncredential_process = /bin/false", "platform-install"),  # one valid line is not enough
+    ("a", "platform-install"),                 # shorter than the IAM minimum (2)
+    ("x" * 65, "platform-install"),            # longer than the IAM maximum (64)
+    ("x" * 64, "x" * 64),
 ])
 def test_install_profile_session_name_comes_from_config(tmp_path, repo, provider, session_name, want):
     res, _ = _run(tmp_path, repo, provider, [f"{provider}:hub:create-mgmt-roles"],
@@ -284,6 +290,7 @@ def test_install_profile_session_name_comes_from_config(tmp_path, repo, provider
     cfg = (repo / "private" / "aws-config").read_text()
     assert f"role_session_name = {want}\n" in cfg, cfg
     assert cfg.count("role_arn = ") == 1
+    assert "credential_process" not in cfg and "/bin/false" not in cfg
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -307,3 +314,23 @@ def test_workshop_sets_its_session_name_and_skip_variable():
     assert "installRoleSessionName: \"peeks-install\"" in cc
     ws = open(os.path.join(REPO, "workshop", "Taskfile.yaml")).read()
     assert "export PLATFORM_SKIP_INSTALL_ROLE=true" in ws
+
+
+
+@pytest.mark.parametrize("session_name,want", [
+    ("peeks-install", "peeks-install"),
+    ("ok\ncredential_process = /bin/false", "platform-install"),
+])
+def test_terraform_provider_writes_the_same_install_profile(tmp_path, repo, session_name, want):
+    """terraform has its own copy of the profile code: run it (its vars resolve before any cmd)."""
+    _run(tmp_path, repo, "terraform", ["terraform:validate"], install_role=ROLE, mode="external",
+         session_name=session_name)
+    cfg = (repo / "private" / "aws-config").read_text()
+    assert f"role_session_name = {want}\n" in cfg and "credential_process" not in cfg, cfg
+
+
+@pytest.mark.parametrize("value,skipped", [("true", True), ("", False)])
+def test_terraform_provider_honours_the_skip_variable(tmp_path, repo, value, skipped):
+    _run(tmp_path, repo, "terraform", ["terraform:validate"], install_role=ROLE, mode="external",
+         env_extra={"PLATFORM_SKIP_INSTALL_ROLE": value})
+    assert ("[profile install]" in (repo / "private" / "aws-config").read_text()) is (not skipped)

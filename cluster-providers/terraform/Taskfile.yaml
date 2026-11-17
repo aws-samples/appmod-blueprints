@@ -53,7 +53,12 @@ vars:
           # Session name: aws.installRoleSessionName (default platform-install). Only the IAM
           # session-name charset is written into the file; anything else falls back to the default.
           SN=$(yq -r '.aws.installRoleSessionName // ""' {{.CONFIG_FILE}} 2>/dev/null || true)
-          if ! printf '%s' "$SN" | grep -Eqx '[A-Za-z0-9_+=,.@-]{2,64}'; then
+          # A case on the whole value (not grep, which matches line by line): any character
+          # outside the charset, a newline included, makes it invalid.
+          SN_OK=true
+          case "$SN" in ""|null|*[!A-Za-z0-9_+=,.@-]*) SN_OK=false ;; esac
+          if [ "$SN_OK" = true ] && { [ "${#SN}" -lt 2 ] || [ "${#SN}" -gt 64 ]; }; then SN_OK=false; fi
+          if [ "$SN_OK" != true ]; then
             [ -z "$SN" ] || [ "$SN" = null ] || echo "aws.installRoleSessionName is not a valid session name: using platform-install" >&2
             SN=platform-install
           fi
