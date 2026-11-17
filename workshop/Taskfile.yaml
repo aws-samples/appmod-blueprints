@@ -1226,7 +1226,11 @@ tasks:
         set +e
         # Phase B (prewarm-rust-cicd) reads this log's "Task ID:" line to learn that THIS
         # Phase A run created a scaffolder task, so empty it before any early exit.
-        SC_LOG="{{.PHASE_A_SCAFFOLD_LOG}}"; : > "$SC_LOG"
+        SC_LOG="{{.PHASE_A_SCAFFOLD_LOG}}"
+        if ! : > "$SC_LOG"; then
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: cannot empty %s (owned by another user?) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$SC_LOG"
+          exit 1
+        fi
         APP="{{.APP_NAME}}"; NS="{{.APP_NS}}"; PREFIX="{{.RESOURCE_PREFIX}}"
         ECR_REPO="${PREFIX}/${APP}"
 
@@ -1629,11 +1633,11 @@ tasks:
         # install: the log stays in /tmp, so a later standalone run must still scaffold.
         if [ -n "{{.INSTALL_START}}" ] \
            && grep -q '^Task ID:' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
+           && ! grep -Eq 'status: (failed|cancelled)$' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
            && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
           printf '{{.C_INFO}}  ↩ prewarm Phase A already submitted the scaffold (task not failed, Phase A rc=%s) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n' "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || echo none)"
           REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
         fi
-           && ! grep -Eq 'status: (failed|cancelled)$' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           # Phase A is the primary path during an install. Reaching a fresh scaffold here
           # after it ran means it failed: say so loudly so the run is not read as clean.

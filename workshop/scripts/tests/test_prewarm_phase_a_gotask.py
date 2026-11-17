@@ -344,6 +344,17 @@ def test_phase_a_truncates_its_scaffold_log_at_start(tmp_path):
     assert log.read_text() == ""
 
 
+def test_phase_a_fails_when_it_cannot_empty_its_scaffold_log(tmp_path):
+    # Pre-review r1 (suspected): a stale log Phase A cannot empty (another user's file
+    # in /tmp) would keep an old "Task ID:" line that stops Phase B's fallback. Phase A
+    # must fail visibly instead. A directory stands in for the unwritable file.
+    (tmp_path / "scaffold.log").mkdir()
+    r, _, _ = run_phase_a(tmp_path)
+    assert "cannot empty" in r.stdout, r.stdout
+    assert lines(tmp_path, "post.calls") == []
+    assert r.returncode != 0
+
+
 # ── nits S1 / S4 ─────────────────────────────────────────────────────────────────────
 @pytest.mark.parametrize("rc,install_start", [("0", "1000000"), ("201", "")])
 def test_phase_b_no_fallback_message_for_ok_rc_or_standalone(tmp_path, monkeypatch, rc, install_start):
