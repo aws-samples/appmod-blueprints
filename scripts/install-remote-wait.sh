@@ -18,8 +18,13 @@
 #                            from published it (fetch-install-config.sh), before its install
 #                            step. A state written earlier, and a build that ended earlier, belong
 #                            to an earlier build and are ignored; every state of the current build
-#                            that matters (FAILED of a step after the publish, OK) is later. An
-#                            empty default (secret unreadable) disables the check; 0 also does.
+#                            that matters (FAILED of a step after the publish, OK) is later. If
+#                            the secret is unreadable, the time this host wrote the config file
+#                            is used instead (with a warning); with no config file either, there
+#                            is no check. 0 disables it.
+# shortcut: if this host fetched an EARLIER build's config (fetched before the new build
+# published its own), that build's OK is accepted; fetch-install-config.sh would need to check the
+# publish against the newest build's start to close this.
 #
 # The build records its id in /<prefix>/install-build-id. A state written before that build
 # started, or before the cut-off, is ignored (an earlier build's OK or FAILED), and so is the
