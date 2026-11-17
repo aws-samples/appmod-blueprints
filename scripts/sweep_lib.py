@@ -1104,9 +1104,10 @@ def select_log_deliveries(logs, gone):
     return ids, srcs, dsts
 
 
-def sweep_log_deliveries(logs, gone, dry_run=False):
+def sweep_log_deliveries(logs, gone, dry_run=False, failures=None):
     """Delete what select_log_deliveries selects: deliveries, then sources, then
-    destinations. Not found counts as done (a re-run).
+    destinations. Not found counts as done (a re-run). Each delete that failed is
+    appended to `failures` when given.
     Returns (deliveries, sources, destinations, n deleted)."""
     ids, srcs, dsts = select_log_deliveries(logs, gone)
     verb = 'would delete' if dry_run else 'delete'
@@ -1126,6 +1127,8 @@ def sweep_log_deliveries(logs, gone, dry_run=False):
                 log(f'    {what} already gone')
                 return
             log(f'    ⚠ {what} not deleted ({err_code(e)})')
+            if failures is not None:
+                failures.append(what)
     for i in ids:
         one(lambda i=i: logs.delete_delivery(id=i), f'delivery {i}')
     for s in srcs:
@@ -1616,11 +1619,13 @@ def parse_common(argv, usage):
     """Tiny argv parser shared by the CLIs: positionals + --dry-run, --inventory,
     --assume-deleted NAME (repeatable, --dry-run only)."""
     pos, opts = [], {'dry_run': False, 'inventory': '', 'assume_deleted': [], 'no_wait': False, 'domain': '',
-                     'keep_data': False}
+                     'keep_data': False, 'strict': False}
     it = iter(argv)
     for a in it:
         if a == '--dry-run':
             opts['dry_run'] = True
+        elif a == '--strict':
+            opts['strict'] = True
         elif a == '--no-wait':
             opts['no_wait'] = True
         elif a == '--keep-data':

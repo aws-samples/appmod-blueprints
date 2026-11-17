@@ -6,6 +6,7 @@ includes:
   ray:
     taskfile: ../common/Taskfile.ray.yaml
     vars:
+      CONFIG_FILE: '{{.CONFIG_FILE}}'
       AWS_REGION: '{{.AWS_REGION}}'
       AWS_ACCOUNT_ID: '{{.AWS_ACCOUNT_ID}}'
       HUB_CLUSTER_NAME: '{{.HUB_CLUSTER_NAME}}'
@@ -761,11 +762,61 @@ tasks:
       - task: hub:seed-secret
       - task: hub:apply-root-appset
 
+  # ── privilegedSteps: external (root Taskfile privileged:*) ──────────────────
+  # Every IAM role this provider creates from the host with the AWS CLI during install
+  # (see kind-kro-ack for the same contract).
+  privileged:pre:
+    desc: "Create every IAM role install creates from the host (privilegedSteps runner, before task install)"
+    cmds:
+      - task: hub:create-mgmt-roles
+      - task: ray:roles
+
+  privileged:verify:
+    desc: "Read-only check that every role privileged:pre creates exists (no IAM write)"
+    cmds:
+      - >-
+        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' LEGACY_DETACH=manual sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+        '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
+
+  privileged:destroy:
+    desc: "Delete the roles privileged:pre created and the capability-log deliveries (runner, after task destroy)"
+    cmds:
+      # Both run even if one fails (deliveries first, they need no role), then the task fails.
+      - |
+        RC=0
+        python3 '{{.ROOT_DIR}}/scripts/sweep-log-deliveries.py' '{{.RESOURCE_PREFIX}}' '{{.AWS_REGION}}' '{{.HUB_CLUSTER_NAME}}' --strict || RC=1
+        HUB_CLUSTER='{{.HUB_CLUSTER_NAME}}' AWS_REGION='{{.AWS_REGION}}' \
+          SCOPED_POLICY_ACCOUNT='{{.AWS_ACCOUNT_ID}}' RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' \
+          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-delete.sh' \
+          {{range $s := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds"}}'{{$.RESOURCE_PREFIX}}-cluster-mgmt-{{$s}}' {{end}} \
+          '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role' || RC=1
+        exit $RC
+
   hub:create-mgmt-roles:
-    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq)
+    desc: Create cluster-mgmt IAM roles assumed by ACK controllers (single-account prereq; verify-only when privilegedSteps=external)
+    preconditions:
+      - sh: 'case "$(yq ''.privilegedSteps // "inline"'' {{.CONFIG_FILE}})" in inline|external) exit 0 ;; esac; exit 1'
+        msg: "privilegedSteps in {{.CONFIG_FILE}} must be inline or external (an unknown value is refused, not read as inline)."
     vars:
+      # Same contract as kind-kro-ack: privilegedSteps=external -> read-only verify,
+      # the roles were created by a separate privileged runner (`task privileged:pre`).
+      MGMT_ROLES_MODE:
+        sh: yq '.privilegedSteps // "inline"' {{.CONFIG_FILE}}
+    cmds:
+      - task: 'hub:create-mgmt-roles:{{if eq .MGMT_ROLES_MODE "external"}}verify{{else}}apply{{end}}'
+
+  hub:create-mgmt-roles:verify:
+    desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
+    cmds:
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' LEGACY_DETACH=manual sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+
+  hub:create-mgmt-roles:apply:
+    internal: true
+    vars:
+      # Empty lookup (no hub yet: privileged:pre) -> the name the ack-capability-role claim
+      # gives it (claims/ack-capability-role.yaml external-name), never an empty role/.
       ACK_CAPABILITY_ROLE:
-        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' || echo "{{.HUB_CLUSTER_NAME}}-ArgoCDCapabilityRole"
+        sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>/dev/null | sed 's|.*/||' | grep -v '^$' || echo "{{.HUB_CLUSTER_NAME}}-ACKCapabilityRole"
     cmds:
       - printf '{{.C_STEP}}▸ Creating cluster-mgmt IAM roles for ACK...{{.C_RESET}}\n'
       - |
@@ -841,15 +892,28 @@ tasks:
             "Resource": "*"
           }]
         }'
-        # Allow ACK capability role to assume cluster-mgmt roles
-        aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
-          "Version": "2012-10-17",
-          "Statement": [{
-            "Effect": "Allow",
-            "Action": ["sts:AssumeRole", "sts:TagSession"],
-            "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
-          }]
-        }'
+        # Allow ACK capability role to assume cluster-mgmt roles. The capability exists only
+        # once the hub does. Before it (task privileged:pre, the privilegedSteps=external
+        # runner) the put is skipped and task privileged:post applies it. Once the
+        # capability exists, a failed put fails the task. Inline, hub:seed runs this after
+        # the capabilities are Ready.
+        if CAP_ERR=$(aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name ack \
+            --region {{.AWS_REGION}} --query 'capability.roleArn' --output text 2>&1 >/dev/null); then
+          aws iam put-role-policy --role-name "{{.ACK_CAPABILITY_ROLE}}" --policy-name ack-assume-role --policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": ["sts:AssumeRole", "sts:TagSession"],
+              "Resource": "arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RESOURCE_PREFIX}}-cluster-mgmt-*"
+            }]
+          }'
+        else
+          case "$CAP_ERR" in
+            *ResourceNotFoundException*)
+              echo "  (hub ACK capability not created yet: ack-assume-role is applied once the hub exists, by task privileged:post)" ;;
+            *) printf '{{.C_ERR}}✗ cannot read the hub ACK capability: %s{{.C_RESET}}\n' "$CAP_ERR"; exit 1 ;;
+          esac
+        fi
       - printf '{{.C_OK}}✓ cluster-mgmt roles ready.{{.C_RESET}}\n'
 
   hub:install-eso:
@@ -1947,6 +2011,10 @@ tasks:
         SPOKE_PROD_SG=""
         SPOKE_DEV_NAME=""
         SPOKE_PROD_NAME=""
+        # A spoke that exists but whose inputs could not be read this run (still CREATING after
+        # the wait, or an API error) keeps the keys already stored; only an absent spoke clears them.
+        SPOKE_DEV_KEEP=""
+        SPOKE_PROD_KEEP=""
         # Spoke cluster names are NOT assumed to be <prefix>-spoke-dev/-prod (the workshop's
         # naming only): scripts/resolve-spoke-cluster.sh finds the spoke from an operator-set
         # spoke_<env>_cluster_name, else the workshop name, else the tags kro stamps on every
@@ -1955,17 +2023,55 @@ tasks:
           PRESET_NAME=$(echo "$CONFIG_EXISTING" | jq -r --arg k "spoke_${SPOKE_ENV}_cluster_name" '(.metadata // "{}") | fromjson | (.[$k] // "")' 2>/dev/null || echo "")
           CLUSTER=$(bash "{{.ROOT_DIR}}/scripts/resolve-spoke-cluster.sh" "{{.RESOURCE_PREFIX}}" "{{.AWS_REGION}}" "$SPOKE_ENV" "$PRESET_NAME" || echo "")
           if [ -z "$CLUSTER" ]; then
+            # The resolver also prints nothing on an EKS API error. Clear this spoke's stored keys
+            # only when the cluster they point at is reported gone (ResourceNotFoundException).
+            STORED_ARN=$(echo "$CONFIG_EXISTING" | jq -r --arg k "spoke_${SPOKE_ENV}_cluster_arn" '(.metadata // "{}") | fromjson | (.[$k] // "")' 2>/dev/null || echo "")
+            if [ -n "$STORED_ARN" ] && [ "$STORED_ARN" != "None" ]; then
+              STORED_OUT=$(aws eks describe-cluster --name "${STORED_ARN##*/}" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>&1) || true
+              case "$STORED_OUT" in
+                *ResourceNotFoundException*) ;;
+                *)
+                  if [ "$SPOKE_ENV" = "dev" ]; then SPOKE_DEV_KEEP=1; else SPOKE_PROD_KEEP=1; fi
+                  echo "WARN: $SPOKE_ENV spoke not resolved, but its stored cluster ${STORED_ARN##*/} is not reported gone: stored scraper keys kept." ;;
+              esac
+            fi
             echo "WARN: No $SPOKE_ENV spoke found for prefix {{.RESOURCE_PREFIX}} in {{.AWS_REGION}}. Scraper skipped."
             continue
           fi
+          # A spoke that is still CREATING already has an ARN and subnets but no cluster security
+          # group: describe-cluster --output text prints "None" for it, and the observability-aws
+          # chart skips a spoke Scraper whose security group is "None". Wait (bounded, default
+          # 60 x 20s) for the spoke to leave CREATING. An API error is not CREATING: no wait.
+          WAIT_TRIES="${SPOKE_SCRAPER_WAIT_TRIES:-60}"
+          case "$WAIT_TRIES" in ''|*[!0-9]*) WAIT_TRIES=60 ;; esac
+          W=0
+          while [ "$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "")" = "CREATING" ] \
+                && [ "$W" -lt "$WAIT_TRIES" ]; do
+            if [ "$W" -eq 0 ]; then echo "Spoke $CLUSTER is CREATING: waiting for it before reading its scraper inputs..."; fi
+            W=$((W + 1))
+            sleep 20
+          done
           SPOKE_ARN=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.arn' --output text 2>/dev/null || echo "")
-          if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
+          SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text 2>/dev/null || echo "")
+          # Never store the text rendering of a null ("None"): a spoke without a security group
+          # yet keeps its stored keys (none on a first install), and observability:converged
+          # re-seeds once the spoke is ACTIVE. (if/elif, not a nested `continue`: go-task's
+          # shell does not skip the rest of an outer `if` on it.)
+          case "$SPOKE_SG" in None|null) SPOKE_SG="" ;; esac
+          if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ] && [ -z "$SPOKE_SG" ]; then
+            SPOKE_STATUS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "unknown")
+            if [ "$SPOKE_STATUS" = "CREATING" ]; then
+              echo "WARN: Spoke $CLUSTER is still CREATING after the wait (no cluster security group yet). Scraper inputs not updated; re-run task install once it is ACTIVE."
+            else
+              echo "WARN: Could not read the cluster security group of spoke $CLUSTER (status $SPOKE_STATUS). Scraper inputs not updated; stored values kept."
+            fi
+            if [ "$SPOKE_ENV" = "dev" ]; then SPOKE_DEV_KEEP=1; else SPOKE_PROD_KEEP=1; fi
+          elif [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
             SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_ALL_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' '\n' | awk '!seen[$0]++' | head -2 | paste -sd ',' -)
             if [ -z "$SPOKE_PRIVATE_SUBNETS" ]; then
               SPOKE_PRIVATE_SUBNETS=$(echo "$SPOKE_ALL_SUBNETS" | tr '\t' '\n' | head -2 | paste -sd ',' -)
             fi
-            SPOKE_SG=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
             echo "Spoke $CLUSTER: arn=$SPOKE_ARN subnets=$SPOKE_PRIVATE_SUBNETS sg=$SPOKE_SG"
             # Record the name only when there is something new to remember: on a first run
             # (no PRESET_NAME yet), only when it is not the workshop convention name, which
@@ -1991,7 +2097,9 @@ tasks:
               SPOKE_PROD_NAME="$RECORD_NAME"
             fi
           else
-            echo "WARN: Cluster $CLUSTER not found in {{.AWS_REGION}}. Scraper skipped."
+            # The resolver found $CLUSTER, so an unreadable ARN is an API error, not an absent spoke.
+            echo "WARN: Could not read the ARN of spoke $CLUSTER in {{.AWS_REGION}}. Scraper inputs not updated; stored values kept."
+            if [ "$SPOKE_ENV" = "dev" ]; then SPOKE_DEV_KEEP=1; else SPOKE_PROD_KEEP=1; fi
           fi
         done
         if [ -n "$SPOKE_DEV_ARN" ] || [ -n "$SPOKE_PROD_ARN" ]; then
@@ -2004,7 +2112,11 @@ tasks:
             --arg spsg "$SPOKE_PROD_SG" \
             --arg sdn "$SPOKE_DEV_NAME" \
             --arg spn "$SPOKE_PROD_NAME" \
-            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg, spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg}
+            --arg sdk "$SPOKE_DEV_KEEP" \
+            --arg spk "$SPOKE_PROD_KEEP" \
+            '.metadata = (.metadata | fromjson | .
+              + (if $sdk == "" then {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg} else {} end)
+              + (if $spk == "" then {spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg} else {} end)
               + (if $sdn != "" then {spoke_dev_cluster_name: $sdn} else {} end)
               + (if $spn != "" then {spoke_prod_cluster_name: $spn} else {} end) | tojson)')
           aws secretsmanager put-secret-value \
@@ -2145,7 +2257,8 @@ tasks:
         # checks above pass, install would keep skipping the seed. Report it only on a
         # positive answer: the spoke cluster is ACTIVE and its keys are empty. A spoke that
         # does not exist, or an EKS API error, is skipped: an error must never trigger a
-        # re-seed (each re-seed mints a new AMG service account).
+        # re-seed (each re-seed mints a new AMG service account). A stored "None"/"null"
+        # (an older seed read a spoke that was still CREATING) counts as empty.
         SPOKE_MISSING=""
         for SPOKE_ENV in dev prod; do
           # Same discovery as seed-observability (operator-set name, workshop name, then the
@@ -2159,7 +2272,7 @@ tasks:
             SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_cluster_name"
           fi
           for k in cluster_arn private_subnet_ids security_group_id; do
-            if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") != ""' >/dev/null 2>&1; then
+            if ! printf '%s' "$C" | jq -e --arg k "spoke_${SPOKE_ENV}_$k" '(.metadata // "{}") | fromjson | (.[$k] // "") as $v | ($v != "" and $v != "None" and $v != "null")' >/dev/null 2>&1; then
               SPOKE_MISSING="$SPOKE_MISSING spoke_${SPOKE_ENV}_$k"
             fi
           done
