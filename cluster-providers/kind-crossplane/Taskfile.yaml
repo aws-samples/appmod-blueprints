@@ -41,6 +41,12 @@ env:
 vars:
   CONFIG_FILE: "{{.ROOT_DIR}}/config.local.yaml"
   GITOPS_ROOT: "{{.ROOT_DIR}}/gitops"
+  # Fixed least-privilege policy documents (shared with kind-kro-ack). The installing
+  # principal attaches no admin-like AWS managed policy itself. In-cluster, crossplane-base
+  # still renders without createIdentity=false on this provider, so Crossplane (running on
+  # the installer's aws-credentials Secret) attaches AdministratorAccess to
+  # <hub>-Crossplane{IAM,EKS}ProviderRole.
+  IAM_POLICY_DIR: "{{.ROOT_DIR}}/cluster-providers/common/iam"
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
   AWS_PROFILE:
     # MUST never evaluate to an empty string. yq's `//` falls back only on null or
@@ -641,6 +647,37 @@ tasks:
             fi
           fi
         ignore_error: true
+      # Re-run on an existing kind cluster: the older chart named the hub iam/eks attachments
+      # <name>-provider-admin-attachment. The render below names them after the policy, so both
+      # sets would own the same AWS attachment and deleting an old one would detach the policy
+      # until the new one next polls. Orphan the old MRs first (Crossplane then leaves the AWS
+      # attachment in place), delete them, and let the new MRs adopt it. No-op when absent.
+      - cmd: |
+          for P in iam eks; do
+            MR="$P-provider-admin-attachment"
+            FOUND=$(kubectl get rolepolicyattachments.iam.aws.upbound.io "$MR" --ignore-not-found -o name)
+            [ -n "$FOUND" ] || continue
+            kubectl patch rolepolicyattachments.iam.aws.upbound.io "$MR" --type merge \
+              -p '{"spec":{"deletionPolicy":"Orphan"}}'
+            N=0
+            until [ "$(kubectl get rolepolicyattachments.iam.aws.upbound.io "$MR" -o jsonpath='{.spec.deletionPolicy}')" = "Orphan" ]; do
+              N=$((N+1))
+              if [ "$N" -gt 30 ]; then
+                echo "✗ $MR did not take deletionPolicy Orphan; not deleting it." >&2
+                exit 1
+              fi
+              sleep 1
+            done
+            kubectl delete rolepolicyattachments.iam.aws.upbound.io "$MR" --wait=true --timeout=120s
+          done
+      # The hub's provider-aws-iam/eks identity (role + Pod Identity association), created
+      # from kind under the installer's aws-credentials. The chart defaults iam/eks to
+      # createIdentity: false (the GitOps registry path), so it is enabled here explicitly.
+      # Exception to "no admin-like managed policy from the installer": these two roles
+      # keep AdministratorAccess as before (shortcut: scope them to the customer-managed
+      # crossplane-provider-policy.json document, which also needs crossplane-pod-identity's
+      # spoke iam/eks identities moved off AdministratorAccess). Keep the flags in step with
+      # the destroy render below (test_crossplane_provider_scope.py).
       - helm template crossplane-base {{.GITOPS_ROOT}}/addons/charts/crossplane-base
           --set providerConfig.enabled=false
           --set aws.region={{.AWS_REGION}}
@@ -648,6 +685,10 @@ tasks:
           --set aws.accountId={{.AWS_ACCOUNT_ID}}
           --set providers.iam.version=v2.7.0
           --set providers.eks.version=v2.7.0
+          --set providers.iam.createIdentity=true
+          --set providers.eks.createIdentity=true
+          --set 'providers.iam.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}'
+          --set 'providers.eks.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}'
           | kubectl apply -f -
       - helm template crossplane-pod-identity {{.GITOPS_ROOT}}/addons/charts/crossplane-pod-identity
           --set aws.region={{.AWS_REGION}}
@@ -798,7 +839,8 @@ tasks:
           case $1 in
             ec2) echo "arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/AmazonVPCFullAccess";;
             eks) echo "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEKSServicePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly";;
-            iam) echo "arn:aws:iam::aws:policy/IAMFullAccess";;
+            # iam: customer-managed <prefix>-cluster-mgmt-iam-scoped below instead of IAMFullAccess.
+            iam) echo "";;
             ecr) echo "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess";;
             s3) echo "arn:aws:iam::aws:policy/AmazonS3FullAccess";;
             dynamodb) echo "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess";;
@@ -818,6 +860,10 @@ tasks:
           done
           echo "  ✓ $ROLE_NAME"
         done
+        # cluster-mgmt-iam: scoped customer-managed policy instead of IAMFullAccess
+        # (common/iam/managed-policy.sh: create, or replace on drift, and attach).
+        sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+          "{{.RESOURCE_PREFIX}}-cluster-mgmt-iam" "{{.IAM_POLICY_DIR}}/cluster-mgmt-iam-policy.json"
         # Inline policies for EKS role: AccessEntry, PodIdentity, PassRole
         EKS_ROLE="{{.RESOURCE_PREFIX}}-cluster-mgmt-eks"
         # PassRole: scoped by the service the role is passed TO, not by role name.
@@ -2419,7 +2465,19 @@ tasks:
             --set providers.iam.version=v2.7.0 \
             --set providers.eks.version=v2.7.0 \
             --set providers.ec2.version=v2.7.0 \
+            --set providers.iam.createIdentity=true \
+            --set providers.eks.createIdentity=true \
+            --set 'providers.iam.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}' \
+            --set 'providers.eks.policyArns={arn:aws:iam::aws:policy/AdministratorAccess}' \
             | kubectl delete --ignore-not-found --wait=false -f - 2>/dev/null || true
+          # Attachment names from older chart versions (<name>-provider-admin-attachment): the
+          # render above no longer produces them, and a role delete fails (DeleteConflict) while
+          # a policy is still attached.
+          for P in iam eks ec2; do
+            kubectl delete rolepolicyattachments.iam.aws.upbound.io "$P-provider-admin-attachment" \
+              --ignore-not-found --wait=false 2>/dev/null || true
+          done
+          kubectl wait --for=delete rolepolicyattachments.iam.aws.upbound.io --all --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete podidentityassociations.eks.aws.upbound.io --all --timeout=120s 2>/dev/null || true
           kubectl -n crossplane-system wait --for=delete roles.iam.aws.upbound.io -l platform.gitops.io/role --timeout=120s 2>/dev/null || true
         ignore_error: true
@@ -2754,9 +2812,19 @@ tasks:
               else
                 printf '{{.C_INFO}}  %s: role %s exists{{.C_RESET}}\n' "$SPOKE" "$ROLE_NAME"
               fi
-              # 2. AdministratorAccess (attach is idempotent)
-              aws iam attach-role-policy --role-name "$ROLE_NAME" \
-                --policy-arn arn:aws:iam::aws:policy/AdministratorAccess >/dev/null
+              # 2. Scoped customer-managed policy, not AdministratorAccess (idempotent;
+              #    common/iam/managed-policy.sh).
+              #    Not the effective permission on its own: the hub's crossplane-pod-identity
+              #    addon (provider NotIn [kro-ack]) adopts these same <spoke>-Crossplane{IAM,EKS}ProviderRole
+              #    roles and attaches AdministratorAccess through an in-cluster Crossplane
+              #    RolePolicyAttachment. The spoke iam/eks providers therefore hold
+              #    AdministratorAccess minus what this document explicitly denies (an
+              #    explicit Deny beats an Allow): attaching an AWS managed policy outside
+              #    the allowlist, and changing the provider scoped policies.
+              #    That attachment is made by provider-aws-iam, not the installing principal;
+              #    scoping it is follow-up work.
+              sh "{{.IAM_POLICY_DIR}}/managed-policy.sh" ensure "{{.AWS_ACCOUNT_ID}}" "{{.RESOURCE_PREFIX}}" \
+                "$ROLE_NAME" "{{.IAM_POLICY_DIR}}/crossplane-provider-policy.json" >/dev/null
               # 3. Pod Identity association on the spoke (idempotent)
               EXISTING=$(aws eks list-pod-identity-associations --cluster-name "$SPOKE" --region {{.AWS_REGION}} \
                 --namespace crossplane-system --service-account "$SA" \
