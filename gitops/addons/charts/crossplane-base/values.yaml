@@ -111,11 +111,20 @@ providers:
     # AWSServiceRoleFor (reserved for service-linked roles), with no further "/" (StringLike's *
     # also matches "/", so the StringNotLike stops a deeper path from posing as the name). It
     # applies to any cluster of this account and region: the hub name is set by the consumer
-    # (hub.clusterName) and need not share a prefix with the spokes. Only Describe/Delete of those
-    # entries follow, for the scraper delete path (not proven to be called). No access policy can
-    # be associated. Not bounded: the Kubernetes groups/username of the entry (what AMP sends is
-    # not known); in-cluster RBAC decides what those grant.
-    # An empty aws.accountId or aws.region renders ARNs that match nothing (fails closed).
+    # (hub.clusterName) and need not share a prefix with the spokes. CreateAccessEntry is further
+    # bounded by Null on eks:kubernetesGroups and eks:username: the live calls send neither, so the
+    # role may only create an entry with no custom groups and no username (eks:accessEntryType is
+    # left unbounded; the live calls send no type either, but it is not pinned here).
+    # CreateScraper then needs eks:AssociateAccessPolicy (observed live after the create succeeded):
+    # it attaches AmazonPrometheusScraperPolicy at cluster scope to the scraper's own entry. That
+    # one association is allowed, bounded to that policy (eks:policyArn), that scope
+    # (eks:accessScope cluster) and the scraper entries only; no other policy or scope can be
+    # associated, and no other principal's entry can be touched. Describe/Delete of those entries
+    # follow, for the scraper delete path.
+    # Condition keys verified against the EKS service authorization reference (eks:principalArn,
+    # eks:kubernetesGroups, eks:username on access-entry requests; eks:policyArn, eks:accessScope
+    # on associate requests). An empty aws.accountId or aws.region renders ARNs that match nothing
+    # (fails closed).
     # Rendered with tpl: {{ }} below is resolved by the chart, not by Helm values.
     inlineStatements:
       - Effect: Allow
@@ -126,6 +135,16 @@ providers:
             eks:principalArn: 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*'
           StringNotLike:
             eks:principalArn: 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*/*'
+          "Null":
+            eks:kubernetesGroups: "true"
+            eks:username: "true"
+      - Effect: Allow
+        Action: eks:AssociateAccessPolicy
+        Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:access-entry/*/role/{{ .Values.aws.accountId }}/AWSServiceRoleForAmazonPrometheusScraper_*/*'
+        Condition:
+          StringEquals:
+            eks:policyArn: 'arn:aws:eks::aws:cluster-access-policy/AmazonPrometheusScraperPolicy'
+            eks:accessScope: 'cluster'
       - Effect: Allow
         Action:
           - eks:DescribeAccessEntry
