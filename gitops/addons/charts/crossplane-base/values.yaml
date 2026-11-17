@@ -33,7 +33,10 @@ functions:
 # DenyAttachAwsManagedPolicyOutsideAllowlist): provider-aws-iam, which makes these
 # attachments, is denied any other AWS managed policy. A test keeps the two in step.
 # inlineStatements: optional IAM statements for an inline policy on the provider role (a
-# RolePolicy), for what no allowlisted AWS managed policy gives. Keep them read-only.
+# RolePolicy), for what no allowlisted AWS managed policy gives. Keep them narrowly scoped, with
+# no IAM write beyond a service's own service-linked role (grafana, see below) and no EKS
+# access-policy association beyond AmazonPrometheusScraperPolicy on the scraper's own access
+# entry (amp, see below).
 # iam and eks default to createIdentity: false: a provider cannot create the credentials it
 # runs with, so their role comes from outside this addon's GitOps sync. kind-kro-ack: the
 # cluster provider's <cluster>-crossplane-provider role. kind-crossplane: the bootstrap render
@@ -96,9 +99,61 @@ providers:
     version: ""
     serviceAccount: provider-aws-amp
     roleName: CrossplaneAMPProviderRole
+    # With createIdentity: false (a role supplied from outside this chart), that role also
+    # needs the scraper access-entry actions of inlineStatements below, or CreateScraper fails.
     createIdentity: true
     policyArns:
       - arn:aws:iam::aws:policy/AmazonPrometheusFullAccess
+    # AMP CreateScraper creates an EKS access entry for the scraper with the CALLER's rights.
+    # AmazonPrometheusFullAccess has no eks:CreateAccessEntry, so every Scraper (hub and spokes)
+    # fails with 403 "not authorized to perform: eks:CreateAccessEntry on resource:
+    # .../cluster/<name>". CloudTrail shows the call made as this role (invokedBy
+    # aps.amazonaws.com) with principalArn
+    # role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_<id>.
+    # The grant is limited by eks:principalArn to that exact service-linked-role shape: the
+    # /aws-service-role/scraper.aps.amazonaws.com/ path and a role name starting with
+    # AWSServiceRoleFor (reserved for service-linked roles), with no further "/" (StringLike's *
+    # also matches "/", so the StringNotLike stops a deeper path from posing as the name). It
+    # applies to any cluster of this account and region: the hub name is set by the consumer
+    # (hub.clusterName) and need not share a prefix with the spokes. CreateAccessEntry is further
+    # bounded by Null on eks:kubernetesGroups and eks:username: the live calls send neither, so the
+    # role may only create an entry with no custom groups and no username (eks:accessEntryType is
+    # left unbounded; the live calls send no type either, but it is not pinned here).
+    # CreateScraper then needs eks:AssociateAccessPolicy (observed live after the create succeeded):
+    # it attaches AmazonPrometheusScraperPolicy at cluster scope to the scraper's own entry. That
+    # one association is allowed, bounded to that policy (eks:policyArn), that scope
+    # (eks:accessScope cluster) and the scraper entries only; no other policy or scope can be
+    # associated, and no other principal's entry can be touched. Describe/Delete of those entries
+    # follow, for the scraper delete path.
+    # Condition keys verified against the EKS service authorization reference (eks:principalArn,
+    # eks:kubernetesGroups, eks:username on access-entry requests; eks:policyArn, eks:accessScope
+    # on associate requests). An empty aws.accountId or aws.region renders ARNs that match nothing
+    # (fails closed).
+    # Rendered with tpl: {{ }} below is resolved by the chart, not by Helm values.
+    inlineStatements:
+      - Effect: Allow
+        Action: eks:CreateAccessEntry
+        Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:cluster/*'
+        Condition:
+          StringLike:
+            eks:principalArn: 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*'
+          StringNotLike:
+            eks:principalArn: 'arn:aws:iam::{{ .Values.aws.accountId }}:role/aws-service-role/scraper.aps.amazonaws.com/AWSServiceRoleForAmazonPrometheusScraper_*/*'
+          "Null":
+            eks:kubernetesGroups: "true"
+            eks:username: "true"
+      - Effect: Allow
+        Action: eks:AssociateAccessPolicy
+        Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:access-entry/*/role/{{ .Values.aws.accountId }}/AWSServiceRoleForAmazonPrometheusScraper_*/*'
+        Condition:
+          StringEquals:
+            eks:policyArn: 'arn:aws:eks::aws:cluster-access-policy/AmazonPrometheusScraperPolicy'
+            eks:accessScope: 'cluster'
+      - Effect: Allow
+        Action:
+          - eks:DescribeAccessEntry
+          - eks:DeleteAccessEntry
+        Resource: 'arn:aws:eks:{{ .Values.aws.region }}:{{ .Values.aws.accountId }}:access-entry/*/role/{{ .Values.aws.accountId }}/AWSServiceRoleForAmazonPrometheusScraper_*/*'
   grafana:
     version: ""
     serviceAccount: provider-aws-grafana
