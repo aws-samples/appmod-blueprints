@@ -253,11 +253,56 @@ def test_phase_b_no_scaffold_when_late_phase_a_succeeds(tmp_path, monkeypatch, p
 
 
 def test_phase_b_phase_a_ok_but_nothing_visible_yet_does_not_rescaffold(tmp_path, monkeypatch, phase_a_pid):
-    # rc=0 means Phase A's task completed: never submit a second one, wait instead.
+    # rc=0 after Phase A created a task (its scaffold log has the "Task ID:" line):
+    # never submit a second one, wait instead.
+    sc = tmp_path / "pa-scaffold.log"
+    sc.write_text("Task ID: t1\n")
+    monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(sc))
     r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=0, scaffolded=False)
     assert lines(tmp_path, "scaffold.calls") == []
     assert "nothing will create the pipeline" not in r.stdout
     assert "waiting for CICDPipeline" in r.stdout, r.stdout
+
+
+# ── Phase A already ended with rc=0 when Phase B starts (review L1602) ──────────────
+@pytest.mark.parametrize("task_id,install_start,scaffolds", [
+    (True, "1000000", 0),     # Phase A submitted a task this install: never POST again
+    (False, "1000000", 1),    # rc=0 from a Phase A skip (no task created): Phase B scaffolds
+    (True, "", 1),            # standalone re-run: the /tmp files are from an old install
+])
+def test_phase_b_phase_a_done_rc0_before_phase_b(tmp_path, monkeypatch, task_id, install_start, scaffolds):
+    # Before: the rc=0 rule only ran inside the "Phase A still running" branch, so a
+    # Phase A that finished before Phase B (no glpat- PAT for the repo guard, pipeline not
+    # synced yet) got a second POST.
+    rcf, sc = tmp_path / "pa.rc", tmp_path / "pa-scaffold.log"
+    rcf.write_text("0\n")
+    sc.write_text("Task ID: t1\n" if task_id else "")
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
+    monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(sc))
+    monkeypatch.setitem(VARS, "INSTALL_START", install_start)
+    r, _ = run_b(tmp_path)
+    assert len(lines(tmp_path, "scaffold.calls")) == scaffolds, r.stdout
+    assert "PREWARM FALLBACK" not in r.stdout
+    if not scaffolds:
+        assert "already submitted the scaffold" in r.stdout, r.stdout
+        assert "nothing will create the pipeline" not in r.stdout
+        assert "waiting for CICDPipeline" in r.stdout, r.stdout
+    assert r.returncode == 0, r.stderr
+
+
+def test_phase_a_truncates_its_scaffold_log_at_start(tmp_path):
+    # Phase B trusts the "Task ID:" line only if it comes from this Phase A run, so Phase
+    # A must empty the log even when it exits before the scaffold (here: disabled).
+    VARS_ENABLED = VARS["ENABLED"]
+    VARS["ENABLED"] = "false"
+    try:
+        (tmp_path / "scaffold.log").write_text("Task ID: old\n")
+        r, _, log = run_phase_a(tmp_path)
+    finally:
+        VARS["ENABLED"] = VARS_ENABLED
+    assert "disabled" in r.stdout, r.stdout
+    assert log.read_text() == ""
 
 
 # ── nits S1 / S4 ─────────────────────────────────────────────────────────────────────

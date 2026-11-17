@@ -1224,6 +1224,9 @@ tasks:
     cmds:
       - |
         set +e
+        # Phase B (prewarm-rust-cicd) reads this log's "Task ID:" line to learn that THIS
+        # Phase A run created a scaffolder task, so empty it before any early exit.
+        SC_LOG="{{.PHASE_A_SCAFFOLD_LOG}}"; : > "$SC_LOG"
         APP="{{.APP_NAME}}"; NS="{{.APP_NS}}"; PREFIX="{{.RESOURCE_PREFIX}}"
         ECR_REPO="${PREFIX}/${APP}"
 
@@ -1319,7 +1322,6 @@ tasks:
         # output in a log so a failure is diagnosable.
         bs() { _bs_t=$1; shift; BACKSTAGE_URL="$BACKSTAGE_URL" USER1_PASSWORD="$USER1_PASSWORD" timeout "$_bs_t" bash -c '. "$1" >/dev/null 2>&1; set +e; shift; "$@"' _ "$BSAUTH" "$@"; }
         left() { if [ -n "$DEADLINE" ]; then echo $(( DEADLINE - $(date +%s) )); else echo 999999; fi; }
-        SC_LOG="{{.PHASE_A_SCAFFOLD_LOG}}"; : > "$SC_LOG"
 
         # ── Readiness gate: Phase A can run before Backstage serves the template (slow
         #    first hub sync, Backstage restart). Wait, bounded by the budget minus the
@@ -1604,13 +1606,21 @@ tasks:
                 "https://{{.GIT_DOMAIN}}/api/v4/projects/{{.GIT_USERNAME}}%2F${APP}-cicd" 2>/dev/null || echo "000")
               [ "$RC" = "200" ] && REPO_EXISTS=yes
             fi
-            # Phase A reported success but nothing is visible yet: it created a task, so
-            # wait for the pipeline rather than risk a second publish:gitlab.
-            if [ "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null)" = "0" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-              REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
-            fi
             if [ -n "$DEADLINE" ] && [ "$(date +%s)" -ge "$DEADLINE" ]; then BUDGET_OK=""; fi
           fi
+        fi
+        # Phase A ended with rc=0 after creating a scaffolder task (the "Task ID:" line in
+        # its scaffold log, which it empties when it starts): never submit a second task,
+        # whether it ended before Phase B started or during the wait above, even when
+        # nothing is visible yet (no glpat- PAT for the repo guard, Argo CD not synced).
+        # rc=0 alone is not enough: Phase A also exits 0 when it skips the scaffold. Only
+        # during an install: the rc file and log stay in /tmp, so a later standalone run
+        # must still be able to scaffold.
+        if [ -n "{{.INSTALL_START}}" ] && [ "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null)" = "0" ] \
+           && grep -q '^Task ID:' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
+           && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
+          printf '{{.C_INFO}}  ↩ prewarm Phase A already submitted the scaffold (rc=0) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n'
+          REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
         fi
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           # Phase A is the primary path during an install. Reaching a fresh scaffold here
