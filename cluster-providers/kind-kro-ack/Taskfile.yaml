@@ -3863,6 +3863,10 @@ tasks:
         SPOKE_PROD_SG=""
         SPOKE_DEV_NAME=""
         SPOKE_PROD_NAME=""
+        # A spoke that exists but whose inputs could not be read this run (still CREATING after
+        # the wait, or an API error) keeps the keys already stored; only an absent spoke clears them.
+        SPOKE_DEV_KEEP=""
+        SPOKE_PROD_KEEP=""
         # Spoke cluster names are NOT assumed to be <prefix>-spoke-dev/-prod (the workshop's
         # naming only): scripts/resolve-spoke-cluster.sh finds the spoke from an operator-set
         # spoke_<env>_cluster_name, else the workshop name, else the tags kro stamps on every
@@ -3894,7 +3898,13 @@ tasks:
           # `continue`: go-task's shell does not skip the rest of an outer `if` on it.)
           case "$SPOKE_SG" in None|null) SPOKE_SG="" ;; esac
           if [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ] && [ -z "$SPOKE_SG" ]; then
-            echo "WARN: Spoke $CLUSTER has no cluster security group yet (still CREATING?). Scraper skipped; re-run task install once it is ACTIVE."
+            SPOKE_STATUS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.status' --output text 2>/dev/null || echo "unknown")
+            if [ "$SPOKE_STATUS" = "CREATING" ]; then
+              echo "WARN: Spoke $CLUSTER is still CREATING after the wait (no cluster security group yet). Scraper inputs not updated; re-run task install once it is ACTIVE."
+            else
+              echo "WARN: Could not read the cluster security group of spoke $CLUSTER (status $SPOKE_STATUS). Scraper inputs not updated; stored values kept."
+            fi
+            if [ "$SPOKE_ENV" = "dev" ]; then SPOKE_DEV_KEEP=1; else SPOKE_PROD_KEEP=1; fi
           elif [ -n "$SPOKE_ARN" ] && [ "$SPOKE_ARN" != "None" ]; then
             SPOKE_ALL_SUBNETS=$(aws eks describe-cluster --name "$CLUSTER" --region {{.AWS_REGION}} --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text)
             SPOKE_PRIVATE_SUBNETS=$(aws ec2 describe-subnets --subnet-ids $SPOKE_ALL_SUBNETS --region {{.AWS_REGION}} --query 'Subnets[?MapPublicIpOnLaunch==`false`].SubnetId' --output text | tr '\t' '\n' | awk '!seen[$0]++' | head -2 | paste -sd ',' -)
@@ -3926,7 +3936,9 @@ tasks:
               SPOKE_PROD_NAME="$RECORD_NAME"
             fi
           else
-            echo "WARN: Cluster $CLUSTER not found in {{.AWS_REGION}}. Scraper skipped."
+            # The resolver found $CLUSTER, so an unreadable ARN is an API error, not an absent spoke.
+            echo "WARN: Could not read the ARN of spoke $CLUSTER in {{.AWS_REGION}}. Scraper inputs not updated; stored values kept."
+            if [ "$SPOKE_ENV" = "dev" ]; then SPOKE_DEV_KEEP=1; else SPOKE_PROD_KEEP=1; fi
           fi
         done
         if [ -n "$SPOKE_DEV_ARN" ] || [ -n "$SPOKE_PROD_ARN" ]; then
@@ -3939,7 +3951,11 @@ tasks:
             --arg spsg "$SPOKE_PROD_SG" \
             --arg sdn "$SPOKE_DEV_NAME" \
             --arg spn "$SPOKE_PROD_NAME" \
-            '.metadata = (.metadata | fromjson | . + {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg, spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg}
+            --arg sdk "$SPOKE_DEV_KEEP" \
+            --arg spk "$SPOKE_PROD_KEEP" \
+            '.metadata = (.metadata | fromjson | .
+              + (if $sdk == "" then {spoke_dev_cluster_arn: $sda, spoke_dev_private_subnet_ids: $sds, spoke_dev_security_group_id: $sdsg} else {} end)
+              + (if $spk == "" then {spoke_prod_cluster_arn: $spa, spoke_prod_private_subnet_ids: $sps, spoke_prod_security_group_id: $spsg} else {} end)
               + (if $sdn != "" then {spoke_dev_cluster_name: $sdn} else {} end)
               + (if $spn != "" then {spoke_prod_cluster_name: $spn} else {} end) | tojson)')
           aws secretsmanager put-secret-value \

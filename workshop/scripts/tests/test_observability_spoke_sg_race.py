@@ -56,6 +56,9 @@ if svc == "eks" and op == "describe-cluster":
     c = cl.get(name)
     if c is None:
         sys.stderr.write("ResourceNotFoundException\n"); sys.exit(254)
+    if q in c.get("fail", []):
+        sys.stderr.write("An error occurred (ThrottlingException) when calling the DescribeCluster operation\n")
+        sys.exit(254)
     if q == "cluster.status":
         print("CREATING" if creating(c) else "ACTIVE")
         c["polls"] = c.get("polls", 0) + 1
@@ -147,7 +150,7 @@ def test_spoke_still_creating_after_the_wait_never_stores_none(tmp_path, provide
     res, meta, calls = _run(tmp_path, provider, _spokes(-1, 0), env_extra={"SPOKE_SCRAPER_WAIT_TRIES": "2"})
     assert res.returncode == 0, res.stdout + res.stderr
     assert "None" not in json.dumps(meta), meta
-    assert meta["spoke_dev_security_group_id"] == "" and meta["spoke_dev_cluster_arn"] == "", meta
+    assert meta.get("spoke_dev_security_group_id", "") == "" and meta.get("spoke_dev_cluster_arn", "") == "", meta
     assert meta["spoke_prod_security_group_id"] == f"sg-{PREFIX}-spoke-prod", meta
     assert "no cluster security group yet" in res.stdout and f"{PREFIX}-spoke-dev" in res.stdout, res.stdout
     assert len([c for c in calls if c[0] == "sleep"]) == 2, calls
@@ -174,3 +177,43 @@ def test_both_spokes_still_creating_write_nothing(tmp_path, provider):
     res, meta, _ = _run(tmp_path, provider, _spokes(-1, -1), env_extra={"SPOKE_SCRAPER_WAIT_TRIES": "1"})
     assert res.returncode == 0, res.stdout + res.stderr
     assert meta is None, meta
+
+
+GOOD_DEV = {"spoke_dev_cluster_arn": "arn:aws:eks:us-west-2:111122223333:cluster/acme-spoke-dev",
+            "spoke_dev_private_subnet_ids": "subnet-old-1,subnet-old-2",
+            "spoke_dev_security_group_id": "sg-old-dev"}
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("query", ["cluster.resourcesVpcConfig.clusterSecurityGroupId", "cluster.arn"])
+def test_read_error_on_an_active_spoke_keeps_its_stored_keys(tmp_path, provider, query):
+    # spoke-dev is ACTIVE and already wired; one describe-cluster read fails (throttle). Its
+    # stored keys must be kept, not replaced by "", while spoke-prod is still updated.
+    clusters = _spokes(0, 0)
+    clusters[f"{PREFIX}-spoke-dev"]["fail"] = [query]
+    res, meta, _ = _run(tmp_path, provider, clusters, meta=dict(GOOD_DEV, aws_grafana_url="g"))
+    assert res.returncode == 0, res.stdout + res.stderr
+    for k, v in GOOD_DEV.items():
+        assert meta[k] == v, (k, meta)
+    assert meta["spoke_prod_security_group_id"] == f"sg-{PREFIX}-spoke-prod", meta
+    assert "stored values kept" in res.stdout, res.stdout
+    assert "still CREATING" not in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_spoke_still_creating_keeps_stored_keys_and_says_creating(tmp_path, provider):
+    res, meta, _ = _run(tmp_path, provider, _spokes(-1, 0), meta=dict(GOOD_DEV, aws_grafana_url="g"),
+                        env_extra={"SPOKE_SCRAPER_WAIT_TRIES": "1"})
+    assert res.returncode == 0, res.stdout + res.stderr
+    for k, v in GOOD_DEV.items():
+        assert meta[k] == v, (k, meta)
+    assert "still CREATING after the wait" in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_absent_spoke_still_clears_its_keys(tmp_path, provider):
+    # Unchanged behaviour: the resolver finds no dev spoke (deleted), so its old keys are cleared.
+    clusters = {f"{PREFIX}-spoke-prod": {"creating_polls": 0}}
+    res, meta, _ = _run(tmp_path, provider, clusters, meta=dict(GOOD_DEV, aws_grafana_url="g"))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert meta["spoke_dev_cluster_arn"] == "" and meta["spoke_dev_security_group_id"] == "", meta
