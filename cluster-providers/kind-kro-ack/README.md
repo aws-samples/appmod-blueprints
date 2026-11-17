@@ -249,7 +249,9 @@ only for the two hub roles. `hub:create-mgmt-roles` runs on every `task install`
 associations, skipped for a bring-your-own role): it creates `<hub>-crossplane-provider` if
 absent, attaches the scoped policy and detaches `AdministratorAccess` (best effort). A live hub
 is therefore scoped on its next `task install`, and a later change of the policy document
-reaches it too. `hub:bootstrap-crossplane-identity` only creates the PIAs and stays skipped while
+reaches it too. With `privilegedSteps: external`, `task install` only verifies these roles (it
+fails when the scoped policy is missing and warns when a legacy policy is still attached); the
+hub is scoped on the runner's next `task privileged:pre`. `hub:bootstrap-crossplane-identity` only creates the PIAs and stays skipped while
 both exist. The kind-crossplane provider and
 `spokes:seed-provider-identity` create the scoped policy but do not detach the legacy policy
 (`AdministratorAccess`, or `IAMFullAccess` on the kind-crossplane `<prefix>-cluster-mgmt-iam`).

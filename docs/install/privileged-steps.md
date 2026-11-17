@@ -26,8 +26,11 @@ a config that says `external`.
 | After `task destroy` | `task privileged:destroy` | Deletes the capability-log deliveries of the removed clusters, then the roles `privileged:pre` created, by exact name. Refuses to delete roles while the hub cluster exists. Fails, naming what it could not delete, when any delete fails. |
 
 On the install host, `task install` (and `task install:hub`) first checks, read-only, that
-every role `privileged:pre` creates exists. A missing role stops the install before kind
-starts and names the role. An AWS read error (expired credentials, access denied) is
+every role `privileged:pre` creates exists, with the policies it attaches (the scoped
+policies included). A bring-your-own role (`hub.iam.*`, `kind-kro-ack`) is only checked to
+exist. A missing role or scoped policy stops the install before kind starts and names it. A
+policy left by an older install (`AdministratorAccess`, `IAMFullAccess`) is reported as a
+warning; `privileged:pre` detaches it. An AWS read error (expired credentials, access denied) is
 reported as such, not as a missing role. `task install:external` (root; `install:codebuild`
 is an alias) runs `task install` and requires `external`. The workshop's
 `task install:codebuild` writes `privilegedSteps: external` into `config.local.yaml`; later
@@ -40,16 +43,25 @@ The runner's role must allow, on the role names above (`<prefix>-cluster-mgmt-*`
 
 - `privileged:pre`: `iam:GetRole`, `iam:CreateRole`, `iam:UpdateAssumeRolePolicy`,
   `iam:AttachRolePolicy` (the managed policies each role gets, see `get_policies()` in the
-  provider's `hub:create-mgmt-roles:apply`; on `kind-kro-ack`, `<hub>-crossplane-provider`
-  gets `arn:aws:iam::aws:policy/AdministratorAccess`, see `hub:crossplane-provider-role:apply`),
-  `iam:PutRolePolicy`; `eks:DescribeCapability` on the hub (read; it may not exist yet).
+  provider's `hub:create-mgmt-roles:apply`), `iam:DetachRolePolicy` (the policies older
+  installs attached: `IAMFullAccess` on `<prefix>-cluster-mgmt-iam`, `AdministratorAccess`
+  on `<hub>-crossplane-provider`), `iam:ListAttachedRolePolicies`, `iam:PutRolePolicy`;
+  `eks:DescribeCapability` on the hub (read; it may not exist yet).
+  `<prefix>-cluster-mgmt-iam` and, on `kind-kro-ack`, `<hub>-crossplane-provider` get a
+  scoped customer-managed policy (`<role>-scoped`, or `<role>-scoped-<8 hex>` after a change
+  of the document; see `cluster-providers/common/iam/managed-policy.sh`). For it the runner
+  also needs, on `arn:aws:iam::<account>:policy/<prefix>-*`: `iam:GetPolicy`,
+  `iam:GetPolicyVersion`, `iam:ListPolicyVersions`, `iam:CreatePolicy`,
+  `iam:DeletePolicyVersion`, `iam:DeletePolicy`.
 - `privileged:post`: the same, plus `iam:PutRolePolicy` on the hub's ACK capability role, and
   what `task enable-capability-logs` calls (`eks:DescribeCapability`, `eks:ListClusters`, the
   CloudWatch Logs delivery and resource-policy actions).
 - `privileged:destroy`: `eks:DescribeCluster`, `eks:ListClusters`, `iam:GetRole`,
   `iam:ListAttachedRolePolicies`, `iam:DetachRolePolicy`, `iam:ListRolePolicies`,
-  `iam:DeleteRolePolicy`, `iam:DeleteRole`, and the CloudWatch Logs `Describe*`/`Delete*`
-  delivery actions. It needs `python3` with `boto3`.
+  `iam:DeleteRolePolicy`, `iam:DeleteRole`, the scoped-policy actions above (it deletes the
+  scoped policies of the roles it deletes), and the CloudWatch Logs `Describe*`/`Delete*`
+  delivery actions. It needs `python3` with `boto3`. Bring-your-own roles (`hub.iam.*`,
+  `kind-kro-ack`) are not deleted.
 
 A runner role scoped to `<prefix>-cluster-mgmt-*` only is not enough since the
 crossplane-provider and Ray roles moved to `privileged:pre`.
@@ -62,7 +74,8 @@ above from the host. The host still needs:
 - Read access to those roles: `iam:GetRole`, `iam:ListAttachedRolePolicies`,
   `iam:GetRolePolicy`.
 - `eks:CreatePodIdentityAssociation` and `iam:PassRole` on the roles it associates: the
-  `<hub>-crossplane-provider` role (`kind-kro-ack`) and the two Ray roles.
+  `<hub>-crossplane-provider` role, or the bring-your-own `hub.iam.crossplaneProviderRoleArn`
+  role (`kind-kro-ack`, with `iam:GetRole` on it), and the two Ray roles.
 - What the kind bootstrap cluster's ACK and Crossplane controllers do with the host's
   credentials: they create the hub (VPC, EKS cluster, its IAM roles, capabilities). This
   mode does not change that.
