@@ -69,9 +69,10 @@ def repo(tmp_path):
 def _config(provider, install_role=None, mode=None, session_name=None):
     # json.dumps: a YAML double-quoted scalar with JSON escapes, so "\n" stays a real newline
     sn = f', installRoleSessionName: {json.dumps(session_name)}' if session_name is not None else ""
+    ir = f', installRoleArn: {json.dumps(install_role)}, ideRoleArn: "{IDE_ROLE}"' if install_role else ""
     c = f"""clusterProvider: {provider}
 resourcePrefix: acme
-aws: {{region: us-west-2, accountId: "111122223333"{f', installRoleArn: "{install_role}", ideRoleArn: "{IDE_ROLE}"' if install_role else ''}{sn}}}
+aws: {{region: us-west-2, accountId: "111122223333"{ir}{sn}}}
 hub: {{clusterName: acme-hub}}
 repo: {{url: https://example.invalid/repo, revision: main, basepath: gitops/addons/}}
 identityCenter: {{instanceArn: "", region: us-west-2}}
@@ -334,3 +335,30 @@ def test_terraform_provider_honours_the_skip_variable(tmp_path, repo, value, ski
     _run(tmp_path, repo, "terraform", ["terraform:validate"], install_role=ROLE, mode="external",
          env_extra={"PLATFORM_SKIP_INSTALL_ROLE": value})
     assert ("[profile install]" in (repo / "private" / "aws-config").read_text()) is (not skipped)
+
+
+
+@pytest.mark.parametrize("provider", ALL_PROVIDERS)
+@pytest.mark.parametrize("arn,used", [
+    (ROLE, True),
+    (ROLE + "\ncredential_process = /bin/false", False),   # a second line never reaches the file
+    ("not-an-arn", False),
+    ("arn:aws:iam::111122223333:user/someone", False),       # a role ARN only
+])
+def test_install_role_arn_is_validated_before_it_is_written(tmp_path, repo, provider, arn, used):
+    task = "terraform:validate" if provider == "terraform" else f"{provider}:hub:create-mgmt-roles"
+    res, log = _run(tmp_path, repo, provider, [task], install_role=arn, mode="external")
+    cfg = (repo / "private" / "aws-config").read_text()
+    assert "credential_process" not in cfg and "/bin/false" not in cfg, cfg
+    assert ("[profile install]" in cfg) is used, cfg
+    if used:
+        assert f"role_arn = {ROLE}\n" in cfg
+    else:
+        assert "not a role ARN: ignored" in res.stderr and "PROFILE=install" not in log
+
+
+@pytest.mark.parametrize("session_name,want", [("x" * 65, "platform-install"), ("x" * 64, "x" * 64)])
+def test_terraform_session_name_length(tmp_path, repo, session_name, want):
+    _run(tmp_path, repo, "terraform", ["terraform:validate"], install_role=ROLE, mode="external",
+         session_name=session_name)
+    assert f"role_session_name = {want}\n" in (repo / "private" / "aws-config").read_text()
