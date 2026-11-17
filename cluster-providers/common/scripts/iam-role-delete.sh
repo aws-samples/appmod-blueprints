@@ -3,7 +3,11 @@
 # Used by `task privileged:destroy`, the privilegedSteps runner's teardown of the roles
 # privileged:pre created. Never a pattern: only the role names given as arguments.
 #
-#   HUB_CLUSTER=<hub> AWS_REGION=<region> sh iam-role-delete.sh ROLE...
+#   HUB_CLUSTER=<hub> AWS_REGION=<region> [SCOPED_POLICY_ACCOUNT=<account-id> RESOURCE_PREFIX=<prefix>] \
+#     sh iam-role-delete.sh ROLE...
+#
+# With SCOPED_POLICY_ACCOUNT set, each role's scoped customer-managed policy
+# (common/iam/managed-policy.sh delete) is deleted too.
 #
 # Refuses while the hub EKS cluster still exists (its ACK capability and Crossplane
 # providers still use these roles), and when that cannot be read. A role that is already
@@ -34,6 +38,13 @@ for ROLE in "$@"; do
     present) ;;
     *) fail "$ROLE" "${STATE#error: }"; continue ;;
   esac
+  # The scoped customer-managed policy install created for this role (managed-policy.sh):
+  # detached and deleted, not left behind. A no-op for a role that has none.
+  if [ -n "${SCOPED_POLICY_ACCOUNT:-}" ]; then
+    if ! E=$(sh "$HERE/../iam/managed-policy.sh" delete "$SCOPED_POLICY_ACCOUNT" "${RESOURCE_PREFIX:?RESOURCE_PREFIX is required with SCOPED_POLICY_ACCOUNT}" "$ROLE" 2>&1 >/dev/null); then
+      fail "$ROLE (scoped policy)" "$E"; continue
+    fi
+  fi
   if ! OUT=$(aws iam list-attached-role-policies --role-name "$ROLE" \
       --query 'AttachedPolicies[].PolicyArn' --output text 2>&1); then
     fail "$ROLE" "$OUT"; continue

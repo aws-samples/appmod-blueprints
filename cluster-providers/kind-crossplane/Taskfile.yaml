@@ -786,6 +786,7 @@ tasks:
         RC=0
         python3 '{{.ROOT_DIR}}/scripts/sweep-log-deliveries.py' '{{.RESOURCE_PREFIX}}' '{{.AWS_REGION}}' '{{.HUB_CLUSTER_NAME}}' --strict || RC=1
         HUB_CLUSTER='{{.HUB_CLUSTER_NAME}}' AWS_REGION='{{.AWS_REGION}}' \
+          SCOPED_POLICY_ACCOUNT='{{.AWS_ACCOUNT_ID}}' RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' \
           sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-delete.sh' \
           {{range $s := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds"}}'{{$.RESOURCE_PREFIX}}-cluster-mgmt-{{$s}}' {{end}} \
           '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role' || RC=1

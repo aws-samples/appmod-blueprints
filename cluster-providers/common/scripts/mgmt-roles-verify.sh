@@ -10,10 +10,32 @@
 # Keep SERVICES / expected_policies in sync with get_policies() in
 # cluster-providers/kind-{kro-ack,crossplane}/Taskfile.yaml (hub:create-mgmt-roles:apply);
 # workshop/scripts/tests/test_privileged_offload.py enforces it.
+#
+# Optional environment:
+#   BYO_SERVICES   services whose cluster-mgmt role the consumer brings
+#                  (hub.iam.clusterMgmtRoleArns): checked to exist only, since the inline
+#                  path attaches nothing to them either.
+#   SCOPED_ROLES   roles that must also carry their scoped customer-managed policy
+#                  (common/iam/managed-policy.sh), e.g. <hub>-crossplane-provider.
+#   MGMT_SERVICES  the cluster-mgmt services to check (default: all; empty: none).
 set -eu
 
 : "${RESOURCE_PREFIX:?RESOURCE_PREFIX is required}"
-SERVICES="ec2 eks iam ecr s3 dynamodb secretsmanager rds"
+SERVICES="${MGMT_SERVICES-ec2 eks iam ecr s3 dynamodb secretsmanager rds}"
+BYO_SERVICES="${BYO_SERVICES:-}"
+is_byo() { case " $BYO_SERVICES " in *" $1 "*) return 0 ;; esac; return 1; }
+
+# Same naming rule as policy_name() in common/iam/managed-policy.sh: "<role>-scoped", with
+# "<prefix>-" in front when the role name does not start with it.
+scoped_name() {
+  case "$1" in
+    "$RESOURCE_PREFIX"-*) echo "$1-scoped" ;;
+    *) echo "$RESOURCE_PREFIX-$1-scoped" ;;
+  esac
+}
+# has_scoped <attached arns> <base>: managed-policy.sh names a replacement <base>-<8 hex
+# digits> after a document change.
+has_scoped() { echo "$1" | tr '\t' '\n' | grep -Eq ":policy/$2(-[0-9a-f]{8})?\$"; }
 
 expected_policies() {
   case $1 in
@@ -37,6 +59,7 @@ IAM_ROLE_CHECK_LIB=1 . "$HERE/iam-role-check.sh"
 
 MISSING=""
 ERRORS=""
+WARNINGS=""
 add_error() { ERRORS="${ERRORS}    - $1: $(printf '%s' "$2" | tr '\n' ' ')
 "; }
 for svc in $SERVICES; do
@@ -47,6 +70,8 @@ for svc in $SERVICES; do
     missing) MISSING="$MISSING role:$ROLE"; continue ;;
     *) add_error "$ROLE" "${STATE#error: }"; continue ;;
   esac
+  # A bring-your-own role is used as is (no policy) by the inline path too.
+  is_byo "$svc" && continue
   if ! ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE" \
       --query 'AttachedPolicies[].PolicyArn' --output text 2>&1); then
     add_error "$ROLE (attached policies)" "$ATTACHED"
@@ -62,14 +87,16 @@ for svc in $SERVICES; do
   # not IAMFullAccess.
   if [ "$svc" = iam ]; then
     SCOPED="${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
-    # managed-policy.sh names a replacement <base>-<8 hex digits> after a document change.
-    if ! echo "$ATTACHED" | tr '\t' '\n' | grep -Eq ":policy/${SCOPED}(-[0-9a-f]{8})?\$"; then
-      MISSING="$MISSING policy:$ROLE:$SCOPED"
-    fi
+    has_scoped "$ATTACHED" "$SCOPED" || MISSING="$MISSING policy:$ROLE:$SCOPED"
+    case "$ATTACHED" in *policy/IAMFullAccess*)
+      WARNINGS="$WARNINGS $ROLE:IAMFullAccess" ;;
+    esac
   fi
 done
 # Inline policies apply puts on the eks and rds roles.
 for pair in eks:eks-access-management rds:rds-kms; do
+  case " $SERVICES " in *" ${pair%%:*} "*) ;; *) continue ;; esac
+  is_byo "${pair%%:*}" && continue
   ROLE="${RESOURCE_PREFIX}-cluster-mgmt-${pair%%:*}"
   case "$MISSING$ERRORS" in *"role:$ROLE"*|*"- $ROLE:"*|*"- $ROLE ("*) continue ;; esac
   if ! ERR=$(aws iam get-role-policy --role-name "$ROLE" --policy-name "${pair#*:}" 2>&1 >/dev/null); then
@@ -90,6 +117,33 @@ for ROLE in "$@"; do
   esac
 done
 
+# Roles with a scoped customer-managed policy (privileged:pre attaches it and detaches
+# AdministratorAccess). A missing scoped policy means privileged:pre did not run from this
+# revision.
+for ROLE in ${SCOPED_ROLES:-}; do
+  STATE=$(iam_role_state "$ROLE")
+  case "$STATE" in
+    present) ;;
+    missing) MISSING="$MISSING role:$ROLE"; continue ;;
+    *) add_error "$ROLE" "${STATE#error: }"; continue ;;
+  esac
+  if ! ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE" \
+      --query 'AttachedPolicies[].PolicyArn' --output text 2>&1); then
+    add_error "$ROLE (attached policies)" "$ATTACHED"
+    continue
+  fi
+  SCOPED=$(scoped_name "$ROLE")
+  has_scoped "$ATTACHED" "$SCOPED" || MISSING="$MISSING policy:$ROLE:$SCOPED"
+  case "$ATTACHED" in *policy/AdministratorAccess*)
+    WARNINGS="$WARNINGS $ROLE:AdministratorAccess" ;;
+  esac
+done
+
+# Not a failure: verify checks that the required policies are there, and only the runner
+# (task privileged:pre) detaches the ones older installs attached.
+for w in $WARNINGS; do
+  echo "  ⚠ ${w%%:*} still has ${w#*:} attached (from an older install); re-run task privileged:pre on the runner to detach it" >&2
+done
 if [ -n "$ERRORS" ]; then
   echo "✗ could not read the IAM roles (an AWS error, not a missing role):" >&2
   printf '%s' "$ERRORS" >&2
@@ -101,4 +155,4 @@ if [ -n "$MISSING" ]; then
   echo "  not create them in external mode." >&2
 fi
 [ -z "$ERRORS$MISSING" ] || exit 1
-echo "✓ cluster-mgmt IAM roles present (verified read-only, privilegedSteps=external)."
+echo "✓ IAM roles and policies present (verified read-only, privilegedSteps=external)."

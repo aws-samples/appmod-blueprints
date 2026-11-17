@@ -40,6 +40,8 @@ case "$1 $2" in
   "sts get-caller-identity")
     case "$*" in *Account*) echo 111122223333 ;; *) echo "arn:aws:sts::111122223333:assumed-role/Runner/s" ;; esac ;;
   "iam get-role"|"iam get-role-policy")
+    for r in ${FAKE_ABSENT_ROLES:-}; do case " $* " in *" $r "*)
+      echo "An error occurred (NoSuchEntity) when calling the GetRole operation: not found" >&2; exit 254 ;; esac; done
     case "${FAKE_ROLES:-present}" in
       present) echo ok ;;
       expired) echo "An error occurred (ExpiredToken) when calling the GetRole operation: The security token included in the request is expired" >&2; exit 254 ;;
@@ -61,11 +63,12 @@ esac
 FAKE_FAIL = "#!/usr/bin/env bash\necho \"$(basename \"$0\") $*\" >> \"$FAKE_AWS_LOG\"\nexit 7\n"
 
 
-def _config(provider, mode=None):
+def _config(provider, mode=None, hub_iam=None):
+    iam = f", iam: {hub_iam}" if hub_iam else ""
     c = f"""clusterProvider: {provider}
 resourcePrefix: acme
 aws: {{region: us-west-2, accountId: "111122223333"}}
-hub: {{clusterName: acme-hub}}
+hub: {{clusterName: acme-hub{iam}}}
 repo: {{url: https://example.invalid/repo, revision: main, basepath: gitops/addons/}}
 identityCenter: {{instanceArn: "", region: us-west-2}}
 """
@@ -84,6 +87,9 @@ ALL_POLICIES = sorted({a for v in _expected_policies(open(VERIFY_SH).read()).val
 # cluster-mgmt-iam has the customer-managed scoped policy instead of IAMFullAccess
 SCOPED_IAM = "arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped"
 ALL_POLICIES.append(SCOPED_IAM)
+# <hub>-crossplane-provider has its own scoped policy (kind-kro-ack)
+SCOPED_XP = "arn:aws:iam::111122223333:policy/acme-hub-crossplane-provider-scoped"
+ALL_POLICIES.append(SCOPED_XP)
 
 
 @pytest.fixture
@@ -105,8 +111,9 @@ def repo(tmp_path):
     return r
 
 
-def _run(tmp_path, repo, provider, args, mode=None, roles="present", cwd=None, env_extra=None, fakes=()):
-    (repo / "config.local.yaml").write_text(_config(provider, mode))
+def _run(tmp_path, repo, provider, args, mode=None, roles="present", cwd=None, env_extra=None, fakes=(),
+         hub_iam=None):
+    (repo / "config.local.yaml").write_text(_config(provider, mode, hub_iam))
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     for name, body in (("aws", FAKE_AWS), ("curl", FAKE_FAIL), ("kind", FAKE_FAIL)) + tuple(fakes):
@@ -554,3 +561,98 @@ def test_workshop_install_codebuild_names_supported_providers(tmp_path, repo):
     res, calls = _run(tmp_path, repo, "terraform", ["install:codebuild"], cwd=repo / "workshop")
     assert res.returncode != 0 and "kind-kro-ack and kind-crossplane providers only" in res.stderr
     assert not (_verbs(calls, "iam") & IAM_WRITES)
+
+# Bring-your-own roles (hub.iam.*, kind-kro-ack) in the runner flow.
+BYO_XP = '{crossplaneProviderRoleArn: "arn:aws:iam::111122223333:role/byo-xp"}'
+
+
+def test_external_verify_with_byo_crossplane_role(tmp_path, repo):
+    """privileged:pre does not create <hub>-crossplane-provider for a BYO role, so the
+    host's verify must check the BYO role instead."""
+    env = {"FAKE_ABSENT_ROLES": "acme-hub-crossplane-provider"}
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:privileged:verify"], mode="external",
+                      env_extra=env, hub_iam=BYO_XP)
+    assert res.returncode == 0, res.stdout + res.stderr
+    roles = [c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "get-role"]]
+    assert "byo-xp" in roles and "acme-hub-crossplane-provider" not in roles
+    # control: without the BYO key the missing default role fails
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:privileged:verify"], mode="external", env_extra=env)
+    assert res.returncode != 0 and "role:acme-hub-crossplane-provider" in res.stderr
+
+
+def test_external_crossplane_role_verify_with_byo_checks_it_exists(tmp_path, repo):
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:hub:crossplane-provider-role"], mode="external",
+                  env_extra={"FAKE_ABSENT_ROLES": "byo-xp"}, hub_iam=BYO_XP)
+    assert res.returncode != 0 and "byo-xp" in res.stderr
+
+
+@pytest.mark.parametrize("task", ["kind-kro-ack:privileged:verify", "kind-kro-ack:hub:crossplane-provider-role"])
+def test_external_verify_wants_the_crossplane_scoped_policy(tmp_path, repo, task):
+    """A hub whose runner did not run privileged:pre from this revision (no scoped policy on
+    <hub>-crossplane-provider) is refused; a leftover AdministratorAccess is reported."""
+    no_scoped = " ".join(a for a in ALL_POLICIES if a != SCOPED_XP)
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", [task], mode="external",
+                  env_extra={"FAKE_ALL_POLICIES": no_scoped})
+    assert res.returncode != 0
+    assert "policy:acme-hub-crossplane-provider:acme-hub-crossplane-provider-scoped" in res.stderr
+    admin = " ".join(ALL_POLICIES + ["arn:aws:iam::aws:policy/AdministratorAccess"])
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", [task], mode="external", env_extra={"FAKE_ALL_POLICIES": admin})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "acme-hub-crossplane-provider still has AdministratorAccess" in res.stderr
+
+
+def test_external_verify_warns_on_leftover_iam_full_access(tmp_path, repo):
+    pols = " ".join(ALL_POLICIES + ["arn:aws:iam::aws:policy/IAMFullAccess"])
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:hub:create-mgmt-roles"], mode="external",
+                  env_extra={"FAKE_ALL_POLICIES": pols})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "acme-cluster-mgmt-iam still has IAMFullAccess" in res.stderr
+
+
+def test_external_verify_byo_cluster_mgmt_role_existence_only(tmp_path, repo):
+    """A BYO cluster-mgmt role gets no policy from the inline path, so external verify
+    only checks that it exists."""
+    byo = '{clusterMgmtRoleArns: {iam: "arn:aws:iam::111122223333:role/acme-cluster-mgmt-iam"}}'
+    no_scoped = " ".join(a for a in ALL_POLICIES if a != SCOPED_IAM)
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:hub:create-mgmt-roles"], mode="external",
+                      env_extra={"FAKE_ALL_POLICIES": no_scoped}, hub_iam=byo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert any(c[:2] == ["iam", "get-role"] and "acme-cluster-mgmt-iam" in c for c in calls)
+    # control: without the BYO key the missing scoped policy fails
+    res, _ = _run(tmp_path, repo, "kind-kro-ack", ["kind-kro-ack:hub:create-mgmt-roles"], mode="external",
+                  env_extra={"FAKE_ALL_POLICIES": no_scoped})
+    assert res.returncode != 0 and "acme-cluster-mgmt-iam-scoped" in res.stderr
+
+
+def test_privileged_destroy_keeps_byo_roles(tmp_path, repo):
+    byo = ('{crossplaneProviderRoleArn: "arn:aws:iam::111122223333:role/acme-hub-crossplane-provider", '
+           'clusterMgmtRoleArns: {iam: "arn:aws:iam::111122223333:role/acme-cluster-mgmt-iam"}}')
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:destroy"], fakes=(("python3", FAKE_PY),),
+                      hub_iam=byo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    deleted = {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "delete-role"]}
+    assert deleted == PRE_ROLES["kind-kro-ack"] - {"acme-hub-crossplane-provider", "acme-cluster-mgmt-iam"}
+    assert "skip role acme-cluster-mgmt-iam (bring-your-own" in res.stdout
+    touched = {c[3] for c in calls if c[:1] == ["managed-policy.sh"]}
+    assert "acme-cluster-mgmt-iam" not in touched and "acme-hub-crossplane-provider" not in touched
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_privileged_destroy_deletes_scoped_policies(tmp_path, repo, provider):
+    res, calls = _run(tmp_path, repo, provider, ["privileged:destroy"], fakes=(("python3", FAKE_PY),))
+    assert res.returncode == 0, res.stdout + res.stderr
+    deletes = {c[4] for c in calls if c[:2] == ["managed-policy.sh", "delete"]}
+    assert deletes == PRE_ROLES[provider]
+    assert all(c[2:4] == ["111122223333", "acme"] for c in calls if c[:2] == ["managed-policy.sh", "delete"])
+
+
+def test_privileged_destroy_scoped_policy_failure_keeps_the_role(tmp_path, repo):
+    """A failed scoped-policy delete is reported and that role is not deleted (deleting it
+    would leave its policy behind with nothing pointing at it)."""
+    fail_stub = '#!/bin/sh\necho "managed-policy.sh $*" >> "$FAKE_AWS_LOG"\n[ "$4" = acme-cluster-mgmt-iam ] && { echo boom >&2; exit 1; }\nexit 0\n'
+    (repo / "cluster-providers" / "common" / "iam" / "managed-policy.sh").write_text(fail_stub)
+    res, calls = _run(tmp_path, repo, "kind-kro-ack", ["privileged:destroy"], fakes=(("python3", FAKE_PY),))
+    assert res.returncode != 0
+    assert "acme-cluster-mgmt-iam (scoped policy)" in res.stderr
+    deleted = {c[c.index("--role-name") + 1] for c in calls if c[:2] == ["iam", "delete-role"]}
+    assert "acme-cluster-mgmt-iam" not in deleted and "acme-cluster-mgmt-ec2" in deleted

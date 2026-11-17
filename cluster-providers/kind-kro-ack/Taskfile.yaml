@@ -62,6 +62,10 @@ vars:
   # create <hub>-crossplane-provider (default). Set = use that role as is: no create, no policy.
   CROSSPLANE_PROVIDER_ROLE_ARN:
     sh: yq '.hub.iam.crossplaneProviderRoleArn // ""' {{.CONFIG_FILE}}
+  # Services with a bring-your-own cluster-mgmt role (hub.iam.clusterMgmtRoleArns.<svc>),
+  # space-separated: the external verify only checks that those roles exist.
+  BYO_MGMT_SERVICES:
+    sh: yq '(.hub.iam.clusterMgmtRoleArns // {}) | to_entries | .[] | select(.value != null and .value != "") | .key' {{.CONFIG_FILE}} | tr '\n' ' '
   # Uniform start/done timing markers (stdout + /tmp/install-timing.log); never fails.
   MARK: 'sh "{{.ROOT_DIR}}/scripts/install-timing.sh"'
   REQUIRED_CLIS: [kind, kubectl, helm, yq, aws]
@@ -1823,10 +1827,13 @@ tasks:
     internal: true
     cmds:
       - |
-        if [ -n "{{.CROSSPLANE_PROVIDER_ROLE_ARN}}" ]; then
-          echo "  hub.iam.crossplaneProviderRoleArn is set: the bring-your-own role is the consumer's, not checked here"
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          # The consumer's role: its permissions are not checked here, only that it exists.
+          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-check.sh' "${BYO_ARN##*/}"
         else
-          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-check.sh' '{{.HUB_CLUSTER_NAME}}-crossplane-provider'
+          RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' MGMT_SERVICES='' SCOPED_ROLES='{{.HUB_CLUSTER_NAME}}-crossplane-provider' \
+            sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
         fi
 
   # Only IAM, no hub: privileged:pre runs it before the hub exists. Not gated on the pod
@@ -4316,13 +4323,24 @@ tasks:
   privileged:verify:
     desc: "Read-only check that every role privileged:pre creates exists (no IAM write)"
     cmds:
-      - >-
-        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
-        '{{.HUB_CLUSTER_NAME}}-crossplane-provider' '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
+      - |
+        # A bring-your-own crossplane role (hub.iam.crossplaneProviderRoleArn) replaces
+        # <hub>-crossplane-provider, which privileged:pre then does not create: check that the
+        # BYO role exists. The default role must carry its scoped policy.
+        BYO_ARN="{{.CROSSPLANE_PROVIDER_ROLE_ARN}}"
+        if [ -n "$BYO_ARN" ]; then
+          SCOPED=""; set -- "${BYO_ARN##*/}"
+        else
+          SCOPED='{{.HUB_CLUSTER_NAME}}-crossplane-provider'; set --
+        fi
+        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' BYO_SERVICES='{{.BYO_MGMT_SERVICES}}' SCOPED_ROLES="$SCOPED" \
+          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh' \
+          "$@" '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
 
-  # After task destroy: the roles privileged:pre created and the capability-log deliveries
-  # privileged:post created (task destroy's own deletes of these need IAM/Logs writes the
-  # host may not have in external mode). Refuses while the hub cluster exists.
+  # After task destroy: the roles privileged:pre created (with their scoped policies) and the
+  # capability-log deliveries privileged:post created (task destroy's own deletes of these
+  # need IAM/Logs writes the host may not have in external mode). Refuses while the hub
+  # cluster exists. Bring-your-own roles (hub.iam.*) are never deleted.
   privileged:destroy:
     desc: "Delete the roles privileged:pre created and the capability-log deliveries (runner, after task destroy)"
     cmds:
@@ -4330,10 +4348,23 @@ tasks:
       - |
         RC=0
         python3 '{{.ROOT_DIR}}/scripts/sweep-log-deliveries.py' '{{.RESOURCE_PREFIX}}' '{{.AWS_REGION}}' '{{.HUB_CLUSTER_NAME}}' --strict || RC=1
-        HUB_CLUSTER='{{.HUB_CLUSTER_NAME}}' AWS_REGION='{{.AWS_REGION}}' \
-          sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-delete.sh' \
-          {{range $s := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds"}}'{{$.RESOURCE_PREFIX}}-cluster-mgmt-{{$s}}' {{end}} \
-          '{{.HUB_CLUSTER_NAME}}-crossplane-provider' '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role' || RC=1
+        if BYO_ROLES=$(yq '[.hub.iam.crossplaneProviderRoleArn, (.hub.iam.clusterMgmtRoleArns // {})[]] | .[] | select(. != null and . != "")' "{{.CONFIG_FILE}}" | sed 's|.*/||'); then
+          set --
+          for ROLE in {{range $s := list "ec2" "eks" "iam" "ecr" "s3" "dynamodb" "secretsmanager" "rds"}}'{{$.RESOURCE_PREFIX}}-cluster-mgmt-{{$s}}' {{end}} \
+              '{{.HUB_CLUSTER_NAME}}-crossplane-provider' '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'; do
+            if printf '%s\n' "$BYO_ROLES" | grep -qxF "$ROLE"; then
+              echo "  skip role $ROLE (bring-your-own, hub.iam.*)"
+            else
+              set -- "$@" "$ROLE"
+            fi
+          done
+          HUB_CLUSTER='{{.HUB_CLUSTER_NAME}}' AWS_REGION='{{.AWS_REGION}}' \
+            SCOPED_POLICY_ACCOUNT='{{.AWS_ACCOUNT_ID}}' RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' \
+            sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/iam-role-delete.sh' "$@" || RC=1
+        else
+          echo "✗ cannot read hub.iam.* from {{.CONFIG_FILE}}: no IAM role deleted (a bring-your-own role could not be told apart)" >&2
+          RC=1
+        fi
         exit $RC
 
   hub:create-mgmt-roles:
@@ -4354,7 +4385,7 @@ tasks:
   hub:create-mgmt-roles:verify:
     desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
     cmds:
-      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' BYO_SERVICES='{{.BYO_MGMT_SERVICES}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
 
   hub:create-mgmt-roles:apply:
     internal: true

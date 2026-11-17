@@ -1169,13 +1169,16 @@ def test_managed_policy_script_shellcheck():
 
 def test_kro_ack_crossplane_provider_path_never_attaches_admin():
     """Integration of the scoped policy (#1292) and the apply/verify split (#1296): no
-    attach-role-policy of AdministratorAccess is left in the kind-kro-ack Taskfile."""
+    attach-role-policy of AdministratorAccess is left in the kind-kro-ack Taskfile, and
+    hub:crossplane-provider-role:apply ensures the scoped policy instead."""
     with open(KRO) as f:
         text = f.read()
-    for line in text.splitlines():
+    # Logical lines: a `\`-continued attach (`attach-role-policy ... \` then
+    # `--policy-arn .../AdministratorAccess`) is one command.
+    for line in logical_lines_of(text):
         if "attach-role-policy" in line and "detach-role-policy" not in line:
             assert "AdministratorAccess" not in line, line
     with open(KRO) as f:
         tasks = yaml.safe_load(f)["tasks"]
     apply_cmds = "".join(c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:crossplane-provider-role:apply"]["cmds"])
-    assert "managed-policy.sh" in apply_cmds and "attach-role-policy --role-name \"$ROLE_NAME\" \\\n          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess" not in apply_cmds
+    assert "managed-policy.sh\" ensure" in apply_cmds
