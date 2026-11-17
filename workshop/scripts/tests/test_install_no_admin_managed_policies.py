@@ -1152,8 +1152,9 @@ def test_schema_hub_iam_rejects_unknown_keys():
     (KRO, "spokes:seed-provider-identity", 0),
     (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)])
 def test_blocks_shellcheck(tmp_path, taskfile, task, index):
-    # go-task templates are not shell; replace them with a plain word first.
-    body = re.sub(r"\{\{[^}]*\}\}", "X", block(task, index, taskfile))
+    # go-task templates are not shell; replace them with a variable first (a literal word
+    # would trip SC2157 on `[ -z "{{.VAR}}" ]` guards).
+    body = re.sub(r"\{\{[^}]*\}\}", "${X}", block(task, index, taskfile))
     p = tmp_path / "b.sh"
     p.write_text("#!/bin/bash\n" + body)
     r = subprocess.run(["shellcheck", "-S", "error", str(p)], capture_output=True, text=True)

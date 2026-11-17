@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 
+from .constants import privilege_prefix
 from .evidence import private_umask
 from .resilience import retry_nav
 
@@ -28,7 +29,7 @@ _CHROMIUM_YUM_DEPS = [
 
 def _install_system_deps():
     print("Installing Chromium system dependencies via yum...", file=sys.stderr)
-    subprocess.run(["sudo", "yum", "install", "-y"] + _CHROMIUM_YUM_DEPS, capture_output=True)
+    subprocess.run(privilege_prefix() + ["yum", "install", "-y"] + _CHROMIUM_YUM_DEPS, capture_output=True)
 
 
 def ensure_playwright_browsers():

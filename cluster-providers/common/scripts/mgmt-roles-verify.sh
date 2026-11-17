@@ -62,6 +62,15 @@ for svc in $SERVICES; do
       *) MISSING="$MISSING policy:$ROLE:${arn##*/}" ;;
     esac
   done
+  # cluster-mgmt-iam carries the customer-managed scoped policy (common/iam/managed-policy.sh),
+  # not IAMFullAccess.
+  if [ "$svc" = iam ]; then
+    SCOPED="${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
+    case " $(echo "$ATTACHED" | tr '\t\n' '  ') " in
+      *":policy/$SCOPED "*) ;;
+      *) MISSING="$MISSING policy:$ROLE:$SCOPED" ;;
+    esac
+  fi
 done
 # Inline policies apply puts on the eks and rds roles.
 for pair in eks:eks-access-management rds:rds-kms; do

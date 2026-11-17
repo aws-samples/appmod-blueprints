@@ -226,6 +226,16 @@ def test_named_profile_is_used_even_on_ec2(tmp_path):
     assert "api/token" not in calls(tmp_path)
 
 
+def test_install_profile_never_reads_imds_credentials(tmp_path):
+    """Remote install (CodeBuild): aws.profile is the named profile `install`. Even if an IMDS
+    answers (another account's role on a shared fleet), its credentials are never fetched."""
+    b = harness(tmp_path, "install")
+    r, out = run(tmp_path, b, "under-test-refresh", profiles=f"default:{OTHER} install:{WANT}", imds=OTHER)
+    assert r.returncode == 0, out
+    assert secret_key(tmp_path) == f"AKI-{WANT}-install"
+    assert "security-credentials" not in calls(tmp_path) and "api/token" not in calls(tmp_path)
+
+
 def test_named_profile_on_other_account_fails(tmp_path):
     b = harness(tmp_path, "dev")
     r, out = run(tmp_path, b, "under-test-refresh", profiles=f"dev:{OTHER}")

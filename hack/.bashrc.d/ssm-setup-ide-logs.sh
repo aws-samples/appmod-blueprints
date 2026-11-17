@@ -83,6 +83,11 @@ argocd-refresh-token() {
     if [[ "${IDC_CONFIGURE_SKIP:-false}" == "true" ]] && [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
         echo "IDC_CONFIGURE_SKIP=true: IDC-Keycloak federation not reconfigured, IAM Identity Center not touched." >&2
         echo "To get a token, set USER1_PASSWORD to user1's password in the Keycloak that Identity Center federates to, and rerun argocd-refresh-token." >&2
+    # Remote install: the CodeBuild install configured Identity Center (this IDE role has no
+    # sso/identitystore right). Never retry the configuration from here.
+    elif [[ "${IDC_CONFIGURE_REMOTE:-false}" == "true" ]] && [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
+        echo "IDC_CONFIGURE_REMOTE=true: Identity Center is configured by the CodeBuild install, not from this IDE." >&2
+        echo "Check SSM /${RESOURCE_PREFIX:-peeks}/idc-status (SUCCESS or FAILED) and the CodeBuild log /aws/codebuild/${RESOURCE_PREFIX:-peeks}-install; set USER1_PASSWORD to user1's password and rerun argocd-refresh-token." >&2
     # If token retrieval failed, try configuring IDC-Keycloak federation first
     elif [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
         echo "Token retrieval failed. Checking IDC-Keycloak federation..." >&2

@@ -30,7 +30,7 @@ The workshop install runs `ray:setup` and `ray:prestage-models` for you. The pro
 
 A RayService reads its model from `/mnt/models/models/<modelName>`, where `/mnt/models` is the root of the bucket `<resource_prefix>-ray-models-<aws_account_id>` and `<modelName>` is the template's **Model** value (`tinyllama`, `gpt2`, `mistral-7b`). Each model must therefore sit under `models/<modelName>/` in that bucket.
 
-1. Create the bucket, the S3 CSI driver addon, the IAM roles and the pod identity associations (it also builds the vLLM image in the background, which needs Docker):
+1. Create the bucket, the IAM roles and the pod identity associations, then the S3 CSI driver addon, in that order so the driver pods start with credentials (it also builds the vLLM image in the background, which needs Docker):
 
    ```bash
    # kind-kro-ack or kind-crossplane provider, from the repository root
@@ -209,8 +209,8 @@ spec:
 # Check S3 CSI driver Pod Identity
 kubectl get podidentityassociation -A | grep s3-csi
 
-# Restart S3 CSI controller
-kubectl rollout restart deployment s3-csi-controller -n kube-system
+# Restart the S3 CSI node driver (DaemonSet) so it picks up the association
+kubectl rollout restart daemonset/s3-csi-node -n kube-system
 
 # Verify model files in pod
 kubectl exec -n ray-system <pod-name> -c ray-head -- ls -lh /mnt/models/models/
