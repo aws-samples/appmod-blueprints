@@ -1334,10 +1334,15 @@ tasks:
           BS_E=$(( $(date +%s) - BS_S ))
           # A backend whose startup failed (MigrationLocked) never recovers on its own:
           # stop at once instead of waiting out BS_T (same check as prewarm-rust-cicd).
-          if $KUBE -n backstage logs deploy/backstage --tail=2000 2>/dev/null | grep -Eq 'MigrationLocked|Backend startup failed'; then
-            printf '{{.C_ERR}}  ✗ prewarm Phase A: Backstage backend failed to start (MigrationLocked / Backend startup failed in its log; catalog HTTP %s) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$CAT_CODE"
-            rm -f "$KC"; exit 1
-          fi
+          # Read the log into a variable and match it without a pipe: the file's `set:`
+          # keeps pipefail on, and `kubectl logs | grep -q` on a log over 64 KB makes
+          # kubectl die of SIGPIPE when grep matches early, so the `if` would be false.
+          BS_LOG=$($KUBE -n backstage logs deploy/backstage --tail=2000 2>/dev/null || true)
+          case "$BS_LOG" in
+            *MigrationLocked*|*"Backend startup failed"*)
+              printf '{{.C_ERR}}  ✗ prewarm Phase A: Backstage backend failed to start (MigrationLocked / Backend startup failed in its log; catalog HTTP %s) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$CAT_CODE"
+              rm -f "$KC"; exit 1 ;;
+          esac
           if [ "$BS_E" -ge "$BS_T" ]; then
             printf '{{.C_ERR}}  ✗ prewarm Phase A: template:default/cicd-pipeline-gitops not served by Backstage after %ss (authenticated read: HTTP %s) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$BS_E" "$CAT_CODE"
             rm -f "$KC"; exit 1

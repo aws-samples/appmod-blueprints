@@ -75,6 +75,12 @@ exit 0
 
 def run_phase_a(tmp_path, **files):
     b, plat = fakes(tmp_path)
+    # Like the real kubectl, the fake must die when grep closes the pipe early (SIGPIPE),
+    # not swallow it with `exit 0`.
+    k = (b / "kubectl").read_text()
+    k2 = k.replace('cat "$FAKE_T/backstage.log" 2>/dev/null; exit 0', 'exec cat "$FAKE_T/backstage.log" 2>/dev/null')
+    assert k2 != k
+    (b / "kubectl").write_text(k2)
     shutil.copy(BSAUTH, plat / "scripts" / "validation" / "backstage-auth.sh")   # the REAL helper
     (b / "curl").write_text(FAKE_CURL)
     os.chmod(b / "curl", 0o755)
@@ -271,6 +277,20 @@ def test_phase_b_no_fallback_message_for_ok_rc_or_standalone(tmp_path, monkeypat
 
 def test_phase_a_backend_failed_exits_at_once(tmp_path):
     (tmp_path / "backstage.log").write_text("Backend startup failed\nMigrationLocked: Migration table is already locked\n")
+    r, clock, _ = run_phase_a(tmp_path, bs_up_at=10_000)
+    assert "Backstage backend failed to start" in r.stdout, r.stdout
+    assert lines(tmp_path, "post.calls") == []
+    assert r.returncode != 0
+    assert clock == 0, clock
+
+
+def test_phase_a_backend_failed_seen_in_large_log(tmp_path):
+    # Review (L1337): under pipefail, `kubectl logs | grep -Eq` on a log over 64 KB made
+    # kubectl die of SIGPIPE once grep matched early, so the `if` was false and Phase A
+    # waited out its full 600 s Backstage wait.
+    (tmp_path / "backstage.log").write_text(
+        "Backend startup failed\nMigrationLocked: Migration table is already locked\n"
+        + ("x" * 120 + "\n") * 2000)
     r, clock, _ = run_phase_a(tmp_path, bs_up_at=10_000)
     assert "Backstage backend failed to start" in r.stdout, r.stdout
     assert lines(tmp_path, "post.calls") == []
