@@ -52,10 +52,6 @@ for svc in $SERVICES; do
     add_error "$ROLE (attached policies)" "$ATTACHED"
     continue
   fi
-  if [ "$svc" = iam ] && ! echo "$ATTACHED" | tr '\t' '\n' \
-      | grep -Eq "policy/${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped(-[0-9a-f]{8})?\$"; then
-    MISSING="$MISSING policy:$ROLE:${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
-  fi
   for arn in $(expected_policies "$svc"); do
     case " $(echo "$ATTACHED" | tr '\t\n' '  ') " in
       *" $arn "*) ;;

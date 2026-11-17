@@ -80,7 +80,10 @@ def _expected_policies(text):
     return out
 
 
-ALL_POLICIES = sorted({a for v in _expected_policies(open(VERIFY_SH).read()).values() for a in v} | {"arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped"})
+ALL_POLICIES = sorted({a for v in _expected_policies(open(VERIFY_SH).read()).values() for a in v})
+# cluster-mgmt-iam has the customer-managed scoped policy instead of IAMFullAccess
+SCOPED_IAM = "arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped"
+ALL_POLICIES.append(SCOPED_IAM)
 
 
 @pytest.fixture
@@ -255,8 +258,7 @@ def test_verify_lists_match_providers():
     verify = open(VERIFY_SH).read()
     want = _expected_policies(verify)
     want_inline = _inline_pairs_verify(verify)
-    # iam has no AWS managed policy: verify checks its scoped policy by name
-    assert sorted(want) == sorted(x for x in SERVICES if x != "iam")
+    assert sorted(want) == sorted(SERVICES)
     assert want_inline == [("eks", "eks-access-management"), ("rds", "rds-kms")]
     for provider in PROVIDERS:
         text = open(os.path.join(REPO, "cluster-providers", provider, "Taskfile.yaml")).read()

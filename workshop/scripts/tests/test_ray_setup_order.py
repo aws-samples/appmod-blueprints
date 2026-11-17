@@ -47,10 +47,12 @@ def _run(tmp_path, **extra_env):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
     calls = tmp_path / "calls"
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("{}\n")  # privilegedSteps unset = inline
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", CALLS=str(calls), **extra_env)
     r = subprocess.run(
         ["task", "-t", RAY, "setup", "AWS_REGION=us-west-2", "AWS_ACCOUNT_ID=111111111111",
-         "HUB_CLUSTER_NAME=hub", "RESOURCE_PREFIX=peeks", f"ROOT_DIR={REPO}"],
+         "HUB_CLUSTER_NAME=hub", "RESOURCE_PREFIX=peeks", f"ROOT_DIR={REPO}", f"CONFIG_FILE={cfg}"],
         env=env, capture_output=True, text=True, cwd=tmp_path)
     return r, calls.read_text().splitlines() if calls.exists() else []
 
