@@ -62,10 +62,10 @@ for svc in $SERVICES; do
   # not IAMFullAccess.
   if [ "$svc" = iam ]; then
     SCOPED="${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
-    case " $(echo "$ATTACHED" | tr '\t\n' '  ') " in
-      *":policy/$SCOPED "*) ;;
-      *) MISSING="$MISSING policy:$ROLE:$SCOPED" ;;
-    esac
+    # managed-policy.sh names a replacement <base>-<8 hex digits> after a document change.
+    if ! echo "$ATTACHED" | tr '\t' '\n' | grep -Eq ":policy/${SCOPED}(-[0-9a-f]{8})?\$"; then
+      MISSING="$MISSING policy:$ROLE:$SCOPED"
+    fi
   fi
 done
 # Inline policies apply puts on the eks and rds roles.

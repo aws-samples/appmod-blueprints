@@ -143,6 +143,8 @@ def test_external_mode_only_reads_iam(tmp_path, repo, provider):
 @pytest.mark.parametrize("attached,ok", [
     ("arn:aws:iam::aws:policy/IAMFullAccess", False),  # old admin-like policy is not enough
     ("arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped", True),
+    ("arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped-52e27e9d", True),  # after a document change
+    ("arn:aws:iam::111122223333:policy/acme-cluster-mgmt-iam-scoped-other", False),
 ])
 def test_verify_wants_the_scoped_iam_policy(tmp_path, attached, ok):
     bindir = tmp_path / "bin"
