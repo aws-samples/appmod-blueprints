@@ -4321,7 +4321,7 @@ tasks:
       - task: ray:roles
 
   privileged:verify:
-    desc: "Read-only check that every role privileged:pre creates exists (no IAM write)"
+    desc: "Read-only check that every role privileged:pre creates exists, with its policies (no IAM write)"
     cmds:
       - |
         # A bring-your-own crossplane role (hub.iam.crossplaneProviderRoleArn) replaces

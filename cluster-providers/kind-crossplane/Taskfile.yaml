@@ -775,7 +775,7 @@ tasks:
     desc: "Read-only check that every role privileged:pre creates exists (no IAM write)"
     cmds:
       - >-
-        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+        RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' LEGACY_DETACH=manual sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
         '{{.RESOURCE_PREFIX}}-model-prestage-role' '{{.RESOURCE_PREFIX}}-ray-worker-role'
 
   privileged:destroy:
@@ -808,7 +808,7 @@ tasks:
   hub:create-mgmt-roles:verify:
     desc: Read-only check that the cluster-mgmt IAM roles exist with their policies (no IAM write)
     cmds:
-      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
+      - RESOURCE_PREFIX='{{.RESOURCE_PREFIX}}' LEGACY_DETACH=manual sh '{{.ROOT_DIR}}/cluster-providers/common/scripts/mgmt-roles-verify.sh'
 
   hub:create-mgmt-roles:apply:
     internal: true

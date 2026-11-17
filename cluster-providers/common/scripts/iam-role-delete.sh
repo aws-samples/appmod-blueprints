@@ -31,20 +31,23 @@ esac
 FAILED=""
 fail() { FAILED="${FAILED}    - $1: $(printf '%s' "$2" | tr '\n' ' ')
 "; }
+# The scoped customer-managed policy install created for a role (managed-policy.sh):
+# detached and deleted, not left behind. A no-op for a role that has none; also run when
+# the role is already gone (managed-policy.sh delete treats a missing role as success).
+delete_scoped() {
+  [ -n "${SCOPED_POLICY_ACCOUNT:-}" ] || return 0
+  if ! E=$(sh "$HERE/../iam/managed-policy.sh" delete "$SCOPED_POLICY_ACCOUNT" "${RESOURCE_PREFIX:?RESOURCE_PREFIX is required with SCOPED_POLICY_ACCOUNT}" "$1" 2>&1 >/dev/null); then
+    fail "$1 (scoped policy)" "$E"; return 1
+  fi
+}
 for ROLE in "$@"; do
   STATE=$(iam_role_state "$ROLE")
   case "$STATE" in
-    missing) echo "  $ROLE already gone"; continue ;;
+    missing) echo "  $ROLE already gone"; delete_scoped "$ROLE" || true; continue ;;
     present) ;;
     *) fail "$ROLE" "${STATE#error: }"; continue ;;
   esac
-  # The scoped customer-managed policy install created for this role (managed-policy.sh):
-  # detached and deleted, not left behind. A no-op for a role that has none.
-  if [ -n "${SCOPED_POLICY_ACCOUNT:-}" ]; then
-    if ! E=$(sh "$HERE/../iam/managed-policy.sh" delete "$SCOPED_POLICY_ACCOUNT" "${RESOURCE_PREFIX:?RESOURCE_PREFIX is required with SCOPED_POLICY_ACCOUNT}" "$ROLE" 2>&1 >/dev/null); then
-      fail "$ROLE (scoped policy)" "$E"; continue
-    fi
-  fi
+  delete_scoped "$ROLE" || continue
   if ! OUT=$(aws iam list-attached-role-policies --role-name "$ROLE" \
       --query 'AttachedPolicies[].PolicyArn' --output text 2>&1); then
     fail "$ROLE" "$OUT"; continue

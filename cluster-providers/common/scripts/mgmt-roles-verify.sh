@@ -18,6 +18,8 @@
 #   SCOPED_ROLES   roles that must also carry their scoped customer-managed policy
 #                  (common/iam/managed-policy.sh), e.g. <hub>-crossplane-provider.
 #   MGMT_SERVICES  the cluster-mgmt services to check (default: all; empty: none).
+#   LEGACY_DETACH  "runner" (default): privileged:pre detaches the policies older installs
+#                  attached; "manual": the provider does not (kind-crossplane).
 set -eu
 
 : "${RESOURCE_PREFIX:?RESOURCE_PREFIX is required}"
@@ -142,7 +144,11 @@ done
 # Not a failure: verify checks that the required policies are there, and only the runner
 # (task privileged:pre) detaches the ones older installs attached.
 for w in $WARNINGS; do
-  echo "  ⚠ ${w%%:*} still has ${w#*:} attached (from an older install); re-run task privileged:pre on the runner to detach it" >&2
+  if [ "${LEGACY_DETACH:-runner}" = manual ]; then
+    echo "  ⚠ ${w%%:*} still has ${w#*:} attached (from an older install); this provider does not detach it, detach it manually" >&2
+  else
+    echo "  ⚠ ${w%%:*} still has ${w#*:} attached (from an older install); re-run task privileged:pre on the runner to detach it" >&2
+  fi
 done
 if [ -n "$ERRORS" ]; then
   echo "✗ could not read the IAM roles (an AWS error, not a missing role):" >&2
