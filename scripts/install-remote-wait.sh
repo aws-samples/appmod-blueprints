@@ -55,6 +55,13 @@ epoch() {
 if [ -z "$NOT_BEFORE" ] && [ -z "${INSTALL_REMOTE_NOT_BEFORE+set}" ]; then
   NOT_BEFORE=$(epoch "$(aws secretsmanager describe-secret --secret-id "$PREFIX/install-config" \
     --query LastChangedDate --output text 2>/dev/null || true)")
+  # Unreadable (expired credentials, access denied): never silently drop the check. Fall back
+  # to when this host wrote its copy of the config (fetch-install-config.sh), just after the
+  # publish, and say so.
+  if [ -z "$NOT_BEFORE" ] && [ -f "$CFG" ]; then
+    NOT_BEFORE=$(stat -c %Y "$CFG" 2>/dev/null || true)
+    echo "install-remote-wait: could not read when $PREFIX/install-config was published; using the time $CFG was written (${NOT_BEFORE:-unknown}) as the cut-off" >&2
+  fi
 fi
 if [ "${1:-}" = --print-not-before ]; then echo "$NOT_BEFORE"; exit 0; fi
 

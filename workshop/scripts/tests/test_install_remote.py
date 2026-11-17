@@ -778,3 +778,20 @@ def test_ide_reports_both_build_statuses(tmp_path, idc, extras, ok):
     assert ("from an earlier run" in r.stdout) is ("2026-11-15" in idc + extras), r.stdout
     assert ("IDE install complete" in r.stdout) is ok, r.stdout
     assert ("did not succeed" in r.stdout) is (not ok), r.stdout
+
+
+
+@needs_tools
+def test_install_remote_wait_falls_back_to_the_config_file_time_when_the_secret_is_unreadable(tmp_path):
+    # describe-secret fails (ExpiredToken): the cut-off must not silently disappear
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text("resourcePrefix: acme\n")
+    stamp = int(_epoch("2026-11-15T12:00:00+00:00"))
+    os.utime(cfg, (stamp, stamp))
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, CONFIG_FILE=str(cfg)), "--print-not-before")
+    assert (r.returncode, r.stdout.strip()) == (0, str(stamp))
+    assert "could not read when acme/install-config was published" in r.stderr
+    # and an earlier build's OK is then still ignored
+    r = _sh("scripts/install-remote-wait.sh", _env(tmp_path, CONFIG_FILE=str(cfg), FAKE_STATE="OK 2026-11-15T10:00:00Z",
+                                                   FAKE_BUILD="IN_PROGRESS", FAKE_STATE_AT="2026-11-15T10:00:00+00:00"))
+    assert r.returncode == 1 and "ignoring a state of an earlier build" in r.stdout
