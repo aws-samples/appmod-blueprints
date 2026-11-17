@@ -40,12 +40,25 @@ def by_kind(docs, kind):
     return [d for d in docs if d.get("kind") == kind]
 
 
+def api_group(d):
+    """The API group of a rendered object: the part of apiVersion before the "/"."""
+    return d.get("apiVersion", "").split("/")[0]
+
+
+def is_ack(d):
+    return api_group(d).endswith(".services.k8s.aws")
+
+
+def is_upbound(d):
+    return api_group(d).endswith(".upbound.io")
+
+
 def ack_kind(docs, kind):
-    return [d for d in by_kind(docs, kind) if "services.k8s.aws" in d["apiVersion"]]
+    return [d for d in by_kind(docs, kind) if is_ack(d)]
 
 
 def upbound(docs):
-    return [d for d in docs if "upbound.io" in d.get("apiVersion", "")]
+    return [d for d in docs if is_upbound(d)]
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +78,7 @@ def test_ack_backend_renders_no_crossplane_object(ack):
 def test_default_backend_still_crossplane_for_kind_crossplane_and_byoc(crossplane):
     kinds = sorted(d["kind"] for d in upbound(crossplane))
     assert kinds == ["PodIdentityAssociation", "Role"]
-    assert not [d for d in crossplane if "services.k8s.aws" in d.get("apiVersion", "")]
+    assert not [d for d in crossplane if is_ack(d)]
 
 
 def test_ack_role_name_namespace_wave_and_selector_scope(ack):

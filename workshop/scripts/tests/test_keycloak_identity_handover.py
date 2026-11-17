@@ -79,7 +79,8 @@ def test_upgraded_hub_orphans_then_deletes_the_crossplane_pair(tmp_path):
     assert all('"deletionPolicy":"Orphan"' in log[i] for i in patches)
     assert not (st / XROLE.replace("/", "_")).exists() and not (st / XPIA.replace("/", "_")).exists()
     # the ACK pair is never touched
-    assert not [ln for ln in log if ("patch" in ln or "delete" in ln) and "services.k8s.aws" in ln]
+    assert not [ln for ln in log if ln.split()[1] in ("patch", "delete")
+                and any(t.split("/")[0].endswith(".services.k8s.aws") for t in ln.split()[2:])]
 
 
 def test_fresh_or_already_handed_over_hub_is_a_no_op(tmp_path):
