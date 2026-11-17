@@ -27,6 +27,8 @@ from test_prewarm_rust_waits import REPO, TASKFILE, VARS, fakes, lines, render  
 BSAUTH = os.path.join(REPO, "scripts", "validation", "backstage-auth.sh")
 # The real Taskfile's shell options: go-task applies them to every cmd.
 TASK_SET = yaml.safe_load(open(TASKFILE))["set"]
+# First line Phase A writes to its scaffold log during the install VARS describe.
+RUN = f"run: {VARS['INSTALL_START']}\n"
 
 
 def task_bin():
@@ -269,7 +271,7 @@ def test_phase_b_phase_a_ok_but_nothing_visible_yet_does_not_rescaffold(tmp_path
     # rc=0 after Phase A created a task (its scaffold log has the "Task ID:" line):
     # never submit a second one, wait instead.
     sc = tmp_path / "pa-scaffold.log"
-    sc.write_text("Task ID: t1\n")
+    sc.write_text(RUN + "Task ID: t1\n")
     monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(sc))
     r, clock = run_b_with_late_phase_a(tmp_path, monkeypatch, phase_a_pid, ends_at=300, rc=0, scaffolded=False)
     assert lines(tmp_path, "scaffold.calls") == []
@@ -289,7 +291,7 @@ def test_phase_b_phase_a_done_rc0_before_phase_b(tmp_path, monkeypatch, task_id,
     # synced yet) got a second POST.
     rcf, sc = tmp_path / "pa.rc", tmp_path / "pa-scaffold.log"
     rcf.write_text("0\n")
-    sc.write_text("Task ID: t1\n" if task_id else "")
+    sc.write_text(RUN + ("Task ID: t1\n" if task_id else ""))
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
     monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(sc))
@@ -315,7 +317,7 @@ def test_phase_b_phase_a_task_then_nonzero_rc_no_pat(tmp_path, monkeypatch, last
     # run must not get a second POST; one that failed still gets the fallback.
     rcf, sc = tmp_path / "pa.rc", tmp_path / "pa-scaffold.log"
     rcf.write_text("201\n")
-    sc.write_text(f"Task ID: t1\n  [1] status: processing\n  [30] status: {last_status}\n")
+    sc.write_text(RUN + f"Task ID: t1\n  [1] status: processing\n  [30] status: {last_status}\n")
     monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
     monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(tmp_path / "absent.pid"))
     monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(sc))
@@ -341,7 +343,30 @@ def test_phase_a_truncates_its_scaffold_log_at_start(tmp_path):
     finally:
         VARS["ENABLED"] = VARS_ENABLED
     assert "disabled" in r.stdout, r.stdout
-    assert log.read_text() == ""
+    assert log.read_text() == RUN
+
+
+def test_phase_b_ignores_stale_scaffold_log_phase_a_could_not_rewrite(tmp_path, monkeypatch):
+    # Pre-review r2 point 1: Phase A cannot rewrite a stale log (read-only file) and
+    # exits 1. Phase B must not trust that log's old "Task ID:" line: it falls back.
+    if os.geteuid() == 0:
+        pytest.skip("root can write a read-only file")
+    log = tmp_path / "scaffold.log"
+    log.write_text("run: 999\nTask ID: old\n  [30] status: processing\n")
+    log.chmod(0o444)
+    r, _, _ = run_phase_a(tmp_path)
+    assert "cannot rewrite" in r.stdout, r.stdout
+    assert r.returncode != 0
+    b_dir = tmp_path / "b"
+    b_dir.mkdir()
+    rcf = b_dir / "pa.rc"
+    rcf.write_text("201\n")
+    monkeypatch.setitem(VARS, "PHASE_A_RC_FILE", str(rcf))
+    monkeypatch.setitem(VARS, "PHASE_A_PID_FILE", str(b_dir / "absent.pid"))
+    monkeypatch.setitem(VARS, "PHASE_A_SCAFFOLD_LOG", str(log))
+    r, _ = run_b(b_dir)
+    assert len(lines(b_dir, "scaffold.calls")) == 1, r.stdout
+    assert "PREWARM FALLBACK" in r.stdout, r.stdout
 
 
 def test_phase_a_fails_when_it_cannot_empty_its_scaffold_log(tmp_path):
@@ -350,7 +375,7 @@ def test_phase_a_fails_when_it_cannot_empty_its_scaffold_log(tmp_path):
     # must fail visibly instead. A directory stands in for the unwritable file.
     (tmp_path / "scaffold.log").mkdir()
     r, _, _ = run_phase_a(tmp_path)
-    assert "cannot empty" in r.stdout, r.stdout
+    assert "cannot rewrite" in r.stdout, r.stdout
     assert lines(tmp_path, "post.calls") == []
     assert r.returncode != 0
 

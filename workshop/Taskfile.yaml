@@ -1224,11 +1224,13 @@ tasks:
     cmds:
       - |
         set +e
-        # Phase B (prewarm-rust-cicd) reads this log's "Task ID:" line to learn that THIS
-        # Phase A run created a scaffolder task, so empty it before any early exit.
+        # Phase B (prewarm-rust-cicd) reads this log to learn that THIS Phase A run created
+        # a scaffolder task. Start it before any early exit with a "run:" line holding this
+        # install's INSTALL_START: Phase B trusts the log only when that line matches, so a
+        # stale log (one Phase A could not rewrite) is ignored and Phase B falls back.
         SC_LOG="{{.PHASE_A_SCAFFOLD_LOG}}"
-        if ! : > "$SC_LOG"; then
-          printf '{{.C_ERR}}  ✗ prewarm Phase A: cannot empty %s (owned by another user?) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$SC_LOG"
+        if ! printf 'run: %s\n' "{{.INSTALL_START}}" > "$SC_LOG"; then
+          printf '{{.C_ERR}}  ✗ prewarm Phase A: cannot rewrite %s (owned by another user?) — not scaffolded (Phase B fallback).{{.C_RESET}}\n' "$SC_LOG"
           exit 1
         fi
         APP="{{.APP_NAME}}"; NS="{{.APP_NS}}"; PREFIX="{{.RESOURCE_PREFIX}}"
@@ -1630,8 +1632,11 @@ tasks:
         # for the repo guard, Argo CD not synced). Phase A's rc alone is not enough: it
         # exits 0 when it skips the scaffold, and non-zero when its poll times out. A task
         # that ended failed or cancelled falls back to the scaffold below. Only during an
-        # install: the log stays in /tmp, so a later standalone run must still scaffold.
+        # install, and only for the log Phase A wrote in THIS install (its first line is
+        # "run: <INSTALL_START>"): the log stays in /tmp, so a later standalone run, or a
+        # stale log Phase A could not rewrite, must not stop the scaffold.
         if [ -n "{{.INSTALL_START}}" ] \
+           && [ "$(head -n1 "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null)" = "run: {{.INSTALL_START}}" ] \
            && grep -q '^Task ID:' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
            && ! grep -Eq 'status: (failed|cancelled)$' "{{.PHASE_A_SCAFFOLD_LOG}}" 2>/dev/null \
            && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
