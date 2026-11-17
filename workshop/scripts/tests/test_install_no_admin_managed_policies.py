@@ -371,12 +371,12 @@ def harness(tmp_path, config="", real_byo_var=False, taskfile=KRO):
             **{c: "" for c in ("C_INFO", "C_OK", "C_STEP", "C_ERR", "C_WARN", "C_RESET")},
         },
         "tasks": {
-            "mgmt": {"cmds": [block("hub:create-mgmt-roles", 1, taskfile)]},
+            "mgmt": {"cmds": [block("hub:create-mgmt-roles:apply", 1, taskfile)]},
             "seed": {"cmds": [block("spokes:seed-provider-identity", 0, taskfile)]},
         },
     }
     if taskfile == KRO:  # kind-crossplane has no hub:bootstrap-crossplane-identity
-        scope = block("hub:scope-crossplane-provider-role", 0)
+        scope = block("hub:crossplane-provider-role:apply", 0)
         tf["tasks"]["scope"] = {"cmds": [scope]}
         # install order: scope (ungated) first, then bootstrap (PIAs)
         tf["tasks"]["bootstrap"] = {"cmds": [scope, block("hub:bootstrap-crossplane-identity", 1)]}
@@ -458,9 +458,9 @@ def logical_lines_of(text):
     return text.replace("\\\n", " ").splitlines()
 
 
-BLOCKS = [(KRO, "hub:scope-crossplane-provider-role", 0), (KRO, "hub:create-mgmt-roles", 1),
+BLOCKS = [(KRO, "hub:crossplane-provider-role:apply", 0), (KRO, "hub:create-mgmt-roles:apply", 1),
           (KRO, "spokes:seed-provider-identity", 0),
-          (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)]
+          (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)]
 
 
 # managed-policy.sh on its own (same fake aws, no go-task)
@@ -810,14 +810,14 @@ def test_scope_task_is_not_gated_and_runs_before_bootstrap():
     of the policy document."""
     with open(KRO) as f:
         tasks = yaml.safe_load(f)["tasks"]
-    scope = tasks["hub:scope-crossplane-provider-role"]
+    scope = tasks["hub:crossplane-provider-role:apply"]
     assert "status" not in scope and "sources" not in scope and "generates" not in scope
     assert "managed-policy.sh" not in "".join(
         c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:bootstrap-crossplane-identity"]["cmds"])
     for name, t in tasks.items():
         order = [c["task"] for c in t.get("cmds", []) if isinstance(c, dict) and "task" in c]
         if "hub:bootstrap-crossplane-identity" in order:
-            assert order.index("hub:scope-crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
+            assert order.index("hub:crossplane-provider-role") < order.index("hub:bootstrap-crossplane-identity"), name
 
 
 @needs_task
@@ -1147,13 +1147,14 @@ def test_schema_hub_iam_rejects_unknown_keys():
 
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck not on PATH")
 @pytest.mark.parametrize("taskfile,task,index", [
-    (KRO, "hub:scope-crossplane-provider-role", 0),
-    (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles", 1),
+    (KRO, "hub:crossplane-provider-role:apply", 0),
+    (KRO, "hub:bootstrap-crossplane-identity", 1), (KRO, "hub:create-mgmt-roles:apply", 1),
     (KRO, "spokes:seed-provider-identity", 0),
-    (XP, "hub:create-mgmt-roles", 1), (XP, "spokes:seed-provider-identity", 0)])
+    (XP, "hub:create-mgmt-roles:apply", 1), (XP, "spokes:seed-provider-identity", 0)])
 def test_blocks_shellcheck(tmp_path, taskfile, task, index):
-    # go-task templates are not shell; replace them with a plain word first.
-    body = re.sub(r"\{\{[^}]*\}\}", "X", block(task, index, taskfile))
+    # go-task templates are not shell; replace them with a variable first (a literal word
+    # would trip SC2157 on `[ -z "{{.VAR}}" ]` guards).
+    body = re.sub(r"\{\{[^}]*\}\}", "${X}", block(task, index, taskfile))
     p = tmp_path / "b.sh"
     p.write_text("#!/bin/bash\n" + body)
     r = subprocess.run(["shellcheck", "-S", "error", str(p)], capture_output=True, text=True)
@@ -1164,3 +1165,17 @@ def test_blocks_shellcheck(tmp_path, taskfile, task, index):
 def test_managed_policy_script_shellcheck():
     r = subprocess.run(["shellcheck", "-s", "sh", MP], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout
+
+
+def test_kro_ack_crossplane_provider_path_never_attaches_admin():
+    """Integration of the scoped policy (#1292) and the apply/verify split (#1296): no
+    attach-role-policy of AdministratorAccess is left in the kind-kro-ack Taskfile."""
+    with open(KRO) as f:
+        text = f.read()
+    for line in text.splitlines():
+        if "attach-role-policy" in line and "detach-role-policy" not in line:
+            assert "AdministratorAccess" not in line, line
+    with open(KRO) as f:
+        tasks = yaml.safe_load(f)["tasks"]
+    apply_cmds = "".join(c if isinstance(c, str) else c.get("cmd", "") for c in tasks["hub:crossplane-provider-role:apply"]["cmds"])
+    assert "managed-policy.sh" in apply_cmds and "attach-role-policy --role-name \"$ROLE_NAME\" \\\n          --policy-arn arn:aws:iam::aws:policy/AdministratorAccess" not in apply_cmds
