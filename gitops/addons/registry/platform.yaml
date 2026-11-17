@@ -54,7 +54,6 @@ crossplane-base:
         operator: In
         values: ['true']
   valuesObject:
-    resourcePrefix: '{{.metadata.annotations.resource_prefix}}'
     aws:
       region: '{{.metadata.annotations.aws_region}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
