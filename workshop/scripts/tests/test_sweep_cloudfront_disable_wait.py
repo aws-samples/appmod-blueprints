@@ -150,16 +150,17 @@ class CloudfrontDisableWaitTest(unittest.TestCase):
         cf = FakeCf(clock, enabled=False, deploy_after=0, deployed_at_start=True)
         cf.list_vpc_origins = lambda: {"VpcOriginList": {"Items": [
             {"Id": "vo-a", "Name": "peeks-hub-a"}, {"Id": "vo-b", "Name": "peeks-hub-b"}]}}
-        done = []
+        tried, done = [], []
 
         def delete_vo(Id, IfMatch):
-            if Id == "vo-a":
+            tried.append(Id)
+            if len(tried) == 1:  # whichever origin comes first fails, whatever the set order
                 raise _Err("CannotDeleteEntityWhileInUse")
             done.append(Id)
         cf.delete_vpc_origin = delete_vo
-        # set iteration order is arbitrary: run twice-insensitive by asserting vo-b is always deleted
         _run_with(cf, clock, "reap")
-        self.assertEqual(done, ["vo-b"])
+        self.assertEqual(sorted(tried), ["vo-a", "vo-b"])
+        self.assertEqual(len(done), 1)
 
     def test_distribution_already_gone_counts_as_done(self):
         clock = {"t": 0.0}
