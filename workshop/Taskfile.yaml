@@ -2673,13 +2673,14 @@ tasks:
         if [ "{{.IDC_CONFIGURE_REMOTE | default "false"}}" = "true" ]; then set_var IDC_CONFIGURE_REMOTE "true"; fi
         # AMG not there yet: poll for it for up to 1 h in the background and rewrite GRAFANA_URL
         # then. Started after the last set_var above, so its sed -i never races this task's.
-        # Detached (double fork + setsid, fds closed) like spoke-apps-bg, so it outlives the
-        # install without holding the SSM tee / cfn-signal.
+        # Detached (double fork, fds closed) so it outlives the install without holding the
+        # SSM tee / cfn-signal. SIGHUP is ignored in the outer sh BEFORE the fork, so the job
+        # also survives the terminal that ran `task setup-env` closing, with no window (a
+        # setsid exec'd in the child leaves one between the fork and the setsid() call).
         if [ "$GRAFANA_PENDING" = true ]; then
-          S=""; command -v setsid >/dev/null 2>&1 && S=setsid
-          S="$S" RESOLVE_GRAFANA="$RESOLVE_GRAFANA" PLATFORM_FILE="$PLATFORM_FILE" \
-            sh -c '( exec $S sh "$RESOLVE_GRAFANA" "$PLATFORM_FILE" "{{.AWS_REGION}}" "{{.RESOURCE_PREFIX}}" 360 10 ) >> /tmp/grafana-url-resolve.log 2>&1 < /dev/null &'
-          printf '{{.C_INFO}}  AMG not created yet: GRAFANA_URL is the AMG console for now, corrected in the background once AMG exists (log: /tmp/grafana-url-resolve.log).{{.C_RESET}}\n'
+          RESOLVE_GRAFANA="$RESOLVE_GRAFANA" PLATFORM_FILE="$PLATFORM_FILE" \
+            sh -c 'trap "" HUP; ( exec sh "$RESOLVE_GRAFANA" "$PLATFORM_FILE" "{{.AWS_REGION}}" "{{.RESOURCE_PREFIX}}" 360 10 ) >> /tmp/grafana-url-resolve.log 2>&1 < /dev/null &'
+          printf '{{.C_INFO}}  AMG endpoint not found yet: GRAFANA_URL is the AMG console for now, corrected in the background once AMG exists (log: /tmp/grafana-url-resolve.log).{{.C_RESET}}\n'
         fi
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         source "$PLATFORM_FILE" 2>/dev/null || true

@@ -40,6 +40,9 @@ CONSOLE_URL = ('export GRAFANA_URL="https://us-west-2.console.aws.amazon.com/gra
                '?region=us-west-2#/workspaces"')
 FAKE_AWS = """echo "aws $*" >> "$FAKE_LOG"
 if [ "$1" = grafana ] && [ -n "${FAKE_AWS_ERROR:-}" ]; then echo "$FAKE_AWS_ERROR" >&2; exit 254; fi
+if [ "$1 $2" = "grafana describe-workspace" ] && [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then
+  echo "$FAKE_DESCRIBE_ERROR" >&2; exit 254
+fi
 case "$1 $2" in
   "grafana list-workspaces")
     n=$(( $(cat "$FAKE_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_COUNT"
@@ -213,6 +216,15 @@ def test_resolver_reports_aws_errors_instead_of_hiding_them(tmp_path):
     assert platform_sh.read_text() == CONSOLE_URL + "\n"
 
 
+def test_resolver_reports_describe_workspace_errors(tmp_path):
+    err = "An error occurred (AccessDeniedException) when calling the DescribeWorkspace operation"
+    res, log, platform_sh = _resolve(tmp_path, amg_after=1, tries=2, content=CONSOLE_URL + "\n",
+                                     FAKE_DESCRIBE_ERROR=err)
+    assert res.returncode == 1
+    assert _polls(log) == 2 and res.stderr.count("AccessDeniedException") == 2, res.stderr
+    assert platform_sh.read_text() == CONSOLE_URL + "\n"
+
+
 # ---------------------------------------------------------------- under go-task
 @pytest.mark.skipif(not (TASK and shutil.which("yq") and shutil.which("jq")),
                     reason="needs go-task, yq and jq on PATH")
@@ -241,8 +253,8 @@ def test_background_poll_survives_go_task(tmp_path):
                     reason="needs go-task, yq, jq and util-linux script on PATH")
 def test_background_poll_survives_the_terminal_closing(tmp_path):
     # `task setup-env` run by hand in an IDE terminal: the terminal (here a pty from `script`)
-    # closes when task exits and sends SIGHUP to its session. The poll must be in its own
-    # session (setsid) to keep running.
+    # closes when task exits and sends SIGHUP to its foreground process group, which the
+    # background poll is part of. The poll must ignore SIGHUP to keep running.
     ws = tmp_path / "workshop"
     (ws / "scripts").mkdir(parents=True)
     shutil.copy(TASKFILE, ws / "Taskfile.yaml")
