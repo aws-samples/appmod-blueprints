@@ -50,6 +50,12 @@ case "$1 $2" in
     echo '{"user_password":"not-a-real-password","keycloak_admin_password":"not-a-real-admin"}' ;;
   *) echo "unexpected aws call: $*" >&2; exit 1 ;;
 esac"""
+# Returns at once, except after setup-env's own 18 polls (the background poll) when
+# FAKE_BG_SLEEP is set: a slow background poll shows that setup-env does not wait for it.
+FAKE_SLEEP = """echo "sleep $*" >> "$FAKE_LOG"
+if [ -n "${FAKE_BG_SLEEP:-}" ] && [ "$(cat "$FAKE_COUNT" 2>/dev/null || echo 0)" -gt 18 ]; then
+  /bin/sleep "$FAKE_BG_SLEEP"
+fi"""
 SETUP_ENV_VARS = {"C_OK": "", "C_INFO": "", "C_RESET": "", "CF_DOMAIN": CF, "GIT_DOMAIN_VAR": "",
                   "ARGOCD_URL": "https://argocd-0123abcd.example.com",
                   "USER_PASSWORD": "not-a-real-password", "KC_ADMIN_PASSWORD": "not-a-real-admin",
@@ -66,7 +72,7 @@ def _env(tmp_path, amg_after, **extra):
     bindir, home = tmp_path / "bin", tmp_path / "home"
     bindir.mkdir(exist_ok=True)
     (home / ".bashrc.d").mkdir(parents=True, exist_ok=True)
-    for name, body in (("aws", FAKE_AWS), ("sleep", 'echo "sleep $*" >> "$FAKE_LOG"')):
+    for name, body in (("aws", FAKE_AWS), ("sleep", FAKE_SLEEP)):
         (bindir / name).write_text("#!/usr/bin/env bash\n" + body + "\n")
         (bindir / name).chmod(0o755)
     log = tmp_path / "calls.log"
@@ -205,10 +211,16 @@ def test_background_poll_survives_go_task(tmp_path):
     shutil.copy(TASKFILE, ws / "Taskfile.yaml")
     shutil.copy(RESOLVER, ws / "scripts" / "resolve-grafana-url.sh")
     (tmp_path / "config.local.yaml").write_text(CONFIG)
-    env, log, platform_sh = _env(tmp_path, amg_after=25)
+    env, log, platform_sh = _env(tmp_path, amg_after=25, FAKE_BG_SLEEP="1")
+    t0 = time.time()
     res = subprocess.run([TASK, "-d", str(ws), "setup-env"], env=env, capture_output=True,
                          text=True, timeout=120)
+    took = time.time() - t0
     assert res.returncode == 0, res.stdout + res.stderr
     assert "corrected in the background" in res.stdout, res.stdout + res.stderr
+    # go-task returned (and closed its stdout/stderr) while the background poll still had about
+    # 6 s of sleeps to go: the poll is detached and holds none of the caller's fds
+    assert took < 5, took
+    assert _grafana_lines(platform_sh) == [CONSOLE_URL]
     assert _wait_for(lambda: _grafana_lines(platform_sh) == [AMG_URL]), (
         _grafana_lines(platform_sh), res.stdout, res.stderr)
