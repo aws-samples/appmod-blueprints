@@ -190,6 +190,36 @@ class CloudfrontDisableWaitTest(unittest.TestCase):
         self.assertEqual(out_cf.delete_calls, 1, msg=out)
         self.assertTrue(out_cf.deleted and out_cf.vo_deleted, msg=out)
 
+    def test_gone_during_wait_is_not_logged_as_a_timeout(self):
+        # Disabled, then deleted by someone else while we wait: the wait ends at once
+        # and the log must not claim a 1200 s timeout.
+        clock = {"t": 0.0}
+        cf = FakeCf(clock, enabled=True, deploy_after=600)
+
+        def gone(Id):
+            raise _Err("NoSuchDistribution")
+        cf.get_distribution = gone
+        ok, logs = _disable_and_delete(cf, clock)
+        self.assertTrue(ok, msg=logs)
+        self.assertFalse(any("not Deployed after" in m for m in logs), msg=logs)
+        self.assertLess(clock["t"], 60, msg=logs)
+
+
+def _disable_and_delete(cf, clock):
+    """Call disable_and_delete directly on the virtual clock; return (result, log lines)."""
+    from sweep import resilience
+    from sweep.reapers import cloudfront
+    real = resilience.poll_until
+
+    def virtual_poll(pred, *, attempts, delay, backoff=1.0, sleep=None):
+        return real(pred, attempts=attempts, delay=delay, backoff=backoff,
+                    sleep=lambda s: clock.__setitem__("t", clock["t"] + s))
+
+    logs = []
+    with mock.patch.object(cloudfront, "poll_until", virtual_poll):
+        ok = cloudfront.disable_and_delete(cf, DIST, logs.append)
+    return ok, logs
+
 
 def clock_of(cf):
     return cf.clock["t"]

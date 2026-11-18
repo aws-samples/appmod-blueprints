@@ -31,12 +31,16 @@ def disable_and_delete(cf, dist_id, log, tag=""):
     (Enabled=False can still be InProgress). Never raises: returns True when the
     distribution is gone, so the caller always goes on to the VPC-origin delete.
     """
+    # Set by deployed() when waiting cannot help: the distribution is gone.
+    stop = {}
+
     def deployed():
         try:
             return cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed"
         except Exception as e:  # throttling etc.: keep polling, do not end the wait early
             if _error_code(e) == "NoSuchDistribution":
-                raise
+                stop["error"] = e
+                raise  # poll_until turns a raising predicate into an immediate False
             return False
 
     try:
@@ -48,6 +52,8 @@ def disable_and_delete(cf, dist_id, log, tag=""):
             log(f"  {tag}Disabling CF distribution {dist_id}...")
         log(f"  {tag}Waiting for CF distribution {dist_id} to be Deployed...")
         if not poll_until(deployed, attempts=DEPLOYED_ATTEMPTS, delay=DEPLOYED_DELAY):
+            if "error" in stop:
+                raise stop["error"]  # gone -> True below, not a timeout
             log(f"  {tag}CF distribution {dist_id} not Deployed after "
                 f"{DEPLOYED_ATTEMPTS * DEPLOYED_DELAY}s; trying the delete anyway")
         for attempt in range(1, DELETE_TRIES + 1):
