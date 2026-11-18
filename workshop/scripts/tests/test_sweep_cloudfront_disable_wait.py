@@ -205,6 +205,40 @@ class CloudfrontDisableWaitTest(unittest.TestCase):
         self.assertLess(clock["t"], 60, msg=logs)
 
 
+class CloudfrontAccessDeniedTest(unittest.TestCase):
+    """A role without cloudfront:GetDistribution must not poll the full ~20 min budget."""
+
+    def _denied(self, code):
+        clock = {"t": 0.0}
+        cf = FakeCf(clock, enabled=True, deploy_after=600)
+
+        def denied(Id):
+            raise _Err(code)
+        cf.get_distribution = denied
+        ok, logs = _disable_and_delete(cf, clock)
+        self.assertFalse(ok, msg=logs)
+        self.assertLess(clock["t"], 60, msg=logs)
+        self.assertTrue(any(code in m and "not deleted" in m for m in logs), msg=logs)
+        self.assertFalse(any("not Deployed after" in m for m in logs), msg=logs)
+
+    def test_access_denied_stops_the_wait(self):
+        self._denied("AccessDenied")
+
+    def test_access_denied_exception_stops_the_wait(self):
+        self._denied("AccessDeniedException")
+
+    def test_access_denied_in_reap_still_attempts_the_vpc_origin(self):
+        clock = {"t": 0.0}
+        cf = FakeCf(clock, enabled=True, deploy_after=600)
+
+        def denied(Id):
+            raise _Err("AccessDenied")
+        cf.get_distribution = denied
+        out_cf, out = _run_with(cf, clock, "reap")
+        self.assertIn("CannotDeleteEntityWhileInUse", out)  # VPC origin delete attempted
+        self.assertLess(clock["t"], 60, msg=out)
+
+
 def _disable_and_delete(cf, clock):
     """Call disable_and_delete directly on the virtual clock; return (result, log lines)."""
     from sweep import resilience

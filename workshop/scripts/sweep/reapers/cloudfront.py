@@ -7,7 +7,7 @@ distribution must be disabled then deleted before the VPC Origin can be removed.
 
 import time
 
-from ..resilience import poll_until
+from ..resilience import is_access_denied, poll_until
 
 
 # A CloudFront disable takes ~5-15 min to reach Deployed; the delete is refused
@@ -31,14 +31,15 @@ def disable_and_delete(cf, dist_id, log, tag=""):
     (Enabled=False can still be InProgress). Never raises: returns True when the
     distribution is gone, so the caller always goes on to the VPC-origin delete.
     """
-    # Set by deployed() when waiting cannot help: the distribution is gone.
+    # Set by deployed() when waiting cannot help: the distribution is gone, or the
+    # role may not read its status (AccessDenied would otherwise poll ~20 min).
     stop = {}
 
     def deployed():
         try:
             return cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed"
         except Exception as e:  # throttling etc.: keep polling, do not end the wait early
-            if _error_code(e) == "NoSuchDistribution":
+            if _error_code(e) == "NoSuchDistribution" or is_access_denied(e):
                 stop["error"] = e
                 raise  # poll_until turns a raising predicate into an immediate False
             return False
@@ -53,7 +54,7 @@ def disable_and_delete(cf, dist_id, log, tag=""):
         log(f"  {tag}Waiting for CF distribution {dist_id} to be Deployed...")
         if not poll_until(deployed, attempts=DEPLOYED_ATTEMPTS, delay=DEPLOYED_DELAY):
             if "error" in stop:
-                raise stop["error"]  # gone -> True below, not a timeout
+                raise stop["error"]  # gone -> True below; AccessDenied -> logged, False
             log(f"  {tag}CF distribution {dist_id} not Deployed after "
                 f"{DEPLOYED_ATTEMPTS * DEPLOYED_DELAY}s; trying the delete anyway")
         for attempt in range(1, DELETE_TRIES + 1):
