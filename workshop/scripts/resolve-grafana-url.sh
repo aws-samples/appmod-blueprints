@@ -18,11 +18,13 @@ i=0
 while [ "$i" -lt "$TRIES" ]; do
   i=$((i + 1))
   EP=""
+  # No 2>/dev/null: an absent workspace is "None" with exit 0, so stderr only carries real
+  # errors (expired credentials, AccessDenied), which belong in the install output / the log.
   WS_ID=$(aws grafana list-workspaces --region "$REGION" \
-    --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
+    --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text || echo "")
   if [ -n "$WS_ID" ] && [ "$WS_ID" != "None" ]; then
     EP=$(aws grafana describe-workspace --workspace-id "$WS_ID" --region "$REGION" \
-      --query 'workspace.endpoint' --output text 2>/dev/null || echo "")
+      --query 'workspace.endpoint' --output text || echo "")
   fi
   # A hostname only: the value goes into a sed replacement and an exported shell string.
   case "$EP" in ""|None|*[!A-Za-z0-9.-]*) EP="" ;; esac

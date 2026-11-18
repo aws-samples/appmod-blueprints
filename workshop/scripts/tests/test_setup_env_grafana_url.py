@@ -39,6 +39,7 @@ AMG_URL = f'export GRAFANA_URL="https://{AMG_HOST}"'
 CONSOLE_URL = ('export GRAFANA_URL="https://us-west-2.console.aws.amazon.com/grafana/home'
                '?region=us-west-2#/workspaces"')
 FAKE_AWS = """echo "aws $*" >> "$FAKE_LOG"
+if [ "$1" = grafana ] && [ -n "${FAKE_AWS_ERROR:-}" ]; then echo "$FAKE_AWS_ERROR" >&2; exit 254; fi
 case "$1 $2" in
   "grafana list-workspaces")
     n=$(( $(cat "$FAKE_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_COUNT"
@@ -202,6 +203,16 @@ def test_resolver_rejects_an_endpoint_that_is_not_a_hostname(tmp_path):
     assert platform_sh.read_text() == CONSOLE_URL + "\n"
 
 
+def test_resolver_reports_aws_errors_instead_of_hiding_them(tmp_path):
+    # expired credentials must not look like "AMG not created yet" in the log
+    err = "An error occurred (ExpiredTokenException) when calling the ListWorkspaces operation"
+    res, _, platform_sh = _resolve(tmp_path, amg_after=1, tries=2, content=CONSOLE_URL + "\n",
+                                   FAKE_AWS_ERROR=err)
+    assert res.returncode == 1
+    assert res.stderr.count("ExpiredTokenException") == 2, res.stderr
+    assert platform_sh.read_text() == CONSOLE_URL + "\n"
+
+
 # ---------------------------------------------------------------- under go-task
 @pytest.mark.skipif(not (TASK and shutil.which("yq") and shutil.which("jq")),
                     reason="needs go-task, yq and jq on PATH")
@@ -224,3 +235,32 @@ def test_background_poll_survives_go_task(tmp_path):
     assert _grafana_lines(platform_sh) == [CONSOLE_URL]
     assert _wait_for(lambda: _grafana_lines(platform_sh) == [AMG_URL]), (
         _grafana_lines(platform_sh), res.stdout, res.stderr)
+
+
+@pytest.mark.skipif(not (TASK and shutil.which("yq") and shutil.which("jq") and shutil.which("script")),
+                    reason="needs go-task, yq, jq and util-linux script on PATH")
+def test_background_poll_survives_the_terminal_closing(tmp_path):
+    # `task setup-env` run by hand in an IDE terminal: the terminal (here a pty from `script`)
+    # closes when task exits and sends SIGHUP to its session. The poll must be in its own
+    # session (setsid) to keep running.
+    ws = tmp_path / "workshop"
+    (ws / "scripts").mkdir(parents=True)
+    shutil.copy(TASKFILE, ws / "Taskfile.yaml")
+    shutil.copy(RESOLVER, ws / "scripts" / "resolve-grafana-url.sh")
+    (tmp_path / "config.local.yaml").write_text(CONFIG)
+    env, log, platform_sh = _env(tmp_path, amg_after=25, FAKE_BG_SLEEP="1")
+    out = tmp_path / "terminal.out"
+    # stdin stays open (an idle terminal) until task has exited: with stdin at EOF, `script`
+    # tears the pty down while task is still running, which is not what a user does.
+    with open(out, "w") as fh:
+        p = subprocess.Popen(["script", "-qec", f"{TASK} -d {ws} setup-env", "/dev/null"],
+                             env=env, stdin=subprocess.PIPE, stdout=fh, stderr=subprocess.STDOUT)
+        try:
+            rc = p.wait(timeout=120)
+        finally:
+            p.stdin.close()
+    assert rc == 0, out.read_text()
+    assert "corrected in the background" in out.read_text(), out.read_text()
+    assert _wait_for(lambda: _grafana_lines(platform_sh) == [AMG_URL]), (
+        _grafana_lines(platform_sh), _polls(log))
+    assert _polls(log) == 25
