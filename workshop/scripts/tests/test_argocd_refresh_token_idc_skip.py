@@ -64,7 +64,8 @@ SETUP_ENV_VARS = {"C_OK": "", "C_RESET": "", "CF_DOMAIN": "d111111abcdef8.cloudf
                   "GIT_DOMAIN_VAR": "", "ARGOCD_URL": "https://argocd-0123abcd.example.com",
                   "USER_PASSWORD": "not-a-real-password", "KC_ADMIN_PASSWORD": "not-a-real-admin",
                   "AWS_REGION": "us-west-2", "AWS_ACCOUNT_ID": "111122223333",
-                  "RESOURCE_PREFIX": "acme", "HUB_CLUSTER_NAME": "acme-hub"}
+                  "RESOURCE_PREFIX": "acme", "HUB_CLUSTER_NAME": "acme-hub",
+                  "ROOT_DIR": os.path.join(REPO, "workshop")}
 CONFIG = """aws: {region: us-west-2, accountId: "111122223333"}
 hub: {clusterName: acme-hub}
 domain: d111111abcdef8.cloudfront.net
