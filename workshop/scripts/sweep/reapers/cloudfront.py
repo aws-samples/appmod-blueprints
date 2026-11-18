@@ -7,7 +7,76 @@ distribution must be disabled then deleted before the VPC Origin can be removed.
 
 import time
 
-from ..resilience import poll_until
+from ..resilience import is_access_denied, poll_until
+
+
+# A CloudFront disable takes ~5-15 min to reach Deployed; the delete is refused
+# (DistributionNotDisabled) until then. 80 x 15 s = 20 min.
+DEPLOYED_ATTEMPTS = 80
+DEPLOYED_DELAY = 15
+# After a DistributionNotDisabled refusal, wait only briefly (2 min) before the retry:
+# the 20 min budget above is spent once per distribution, worst case ~24 min.
+RETRY_ATTEMPTS = 8
+DELETE_TRIES = 3
+
+
+def _error_code(exc):
+    return getattr(exc, "response", {}).get("Error", {}).get("Code", "")
+
+
+def disable_and_delete(cf, dist_id, log, tag=""):
+    """Disable `dist_id` if needed, wait until it is Deployed, then delete it.
+
+    The wait runs whether the distribution was just disabled or already was
+    (Enabled=False can still be InProgress). Never raises: returns True when the
+    distribution is gone, so the caller always goes on to the VPC-origin delete.
+    """
+    # Set by deployed() when waiting cannot help: the distribution is gone, or the
+    # role may not read its status (AccessDenied would otherwise poll ~20 min).
+    stop = {}
+
+    def deployed():
+        try:
+            return cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed"
+        except Exception as e:  # throttling etc.: keep polling, do not end the wait early
+            if _error_code(e) == "NoSuchDistribution" or is_access_denied(e):
+                stop["error"] = e
+                raise  # poll_until turns a raising predicate into an immediate False
+            return False
+
+    try:
+        resp = cf.get_distribution_config(Id=dist_id)
+        etag, cfg = resp["ETag"], resp["DistributionConfig"]
+        if cfg.get("Enabled", True):
+            cfg["Enabled"] = False
+            cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
+            log(f"  {tag}Disabling CF distribution {dist_id}...")
+        log(f"  {tag}Waiting for CF distribution {dist_id} to be Deployed...")
+        if not poll_until(deployed, attempts=DEPLOYED_ATTEMPTS, delay=DEPLOYED_DELAY):
+            if "error" in stop:
+                raise stop["error"]  # gone -> True below; AccessDenied -> logged, False
+            log(f"  {tag}CF distribution {dist_id} not Deployed after "
+                f"{DEPLOYED_ATTEMPTS * DEPLOYED_DELAY}s; trying the delete anyway")
+        for attempt in range(1, DELETE_TRIES + 1):
+            try:
+                etag2 = cf.get_distribution(Id=dist_id)["ETag"]
+                cf.delete_distribution(Id=dist_id, IfMatch=etag2)
+                log(f"  {tag}Deleted CF distribution {dist_id}")
+                return True
+            except Exception as e:
+                code = _error_code(e)
+                if code == "NoSuchDistribution":
+                    return True
+                if code == "DistributionNotDisabled" and attempt < DELETE_TRIES:
+                    log(f"  {tag}CF distribution {dist_id} not disabled yet; waiting and retrying")
+                    poll_until(deployed, attempts=RETRY_ATTEMPTS, delay=DEPLOYED_DELAY)
+                    continue
+                raise
+    except Exception as e:
+        if _error_code(e) == "NoSuchDistribution":
+            return True
+        log(f"  {tag}CF distribution {dist_id} not deleted: {e}")
+    return False
 
 
 def reap(ctx):
@@ -27,28 +96,19 @@ def reap(ctx):
                     dist_ids.add(d["Id"])
 
         for dist_id in dist_ids:
-            resp = cf.get_distribution_config(Id=dist_id)
-            etag, cfg = resp["ETag"], resp["DistributionConfig"]
-            if cfg.get("Enabled", True):
-                cfg["Enabled"] = False
-                cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
-                log(f"  Disabling CF distribution {dist_id} (waiting for Deployed)...")
-                poll_until(
-                    lambda dist_id=dist_id: cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed",
-                    attempts=20, delay=15,
-                )
-            etag2 = cf.get_distribution(Id=dist_id)["ETag"]
-            cf.delete_distribution(Id=dist_id, IfMatch=etag2)
-            log(f"  Deleted CF distribution {dist_id}")
+            disable_and_delete(cf, dist_id, log)
 
         # Small delay so ENIs detach before VPC Origin deletion
         if dist_ids:
             time.sleep(5)
 
         for vo_id in vo_ids:
-            etag = cf.get_vpc_origin(Id=vo_id)["ETag"]
-            cf.delete_vpc_origin(Id=vo_id, IfMatch=etag)
-            log(f"  Deleted CF VPC origin {vo_id}")
+            try:
+                etag = cf.get_vpc_origin(Id=vo_id)["ETag"]
+                cf.delete_vpc_origin(Id=vo_id, IfMatch=etag)
+                log(f"  Deleted CF VPC origin {vo_id}")
+            except Exception as e:
+                log(f"  CF VPC origin {vo_id} not deleted: {e}")
 
         if not dist_ids and not vo_ids:
             log("No CloudFront distributions/VPC origins to delete")

@@ -8,6 +8,7 @@ import time
 
 from ..resilience import poll_until
 from . import amp as amp_reaper
+from . import cloudfront
 from . import elb
 from . import grafana as grafana_reaper
 from . import rds as rds_reaper
@@ -98,19 +99,7 @@ def run(ctx):
                     if o.get("VpcOriginConfig", {}).get("VpcOriginId", "") in vo_ids:
                         dist_ids.add(d["Id"])
             for dist_id in dist_ids:
-                resp = cf.get_distribution_config(Id=dist_id)
-                etag, cfg = resp["ETag"], resp["DistributionConfig"]
-                if cfg.get("Enabled", True):
-                    cfg["Enabled"] = False
-                    cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
-                    log(f"  [re-sweep] Disabling recreated CF distribution {dist_id}...")
-                    poll_until(
-                        lambda dist_id=dist_id: cf.get_distribution(Id=dist_id)["Distribution"]["Status"] == "Deployed",
-                        attempts=30, delay=15,
-                    )
-                etag2 = cf.get_distribution(Id=dist_id)["ETag"]
-                cf.delete_distribution(Id=dist_id, IfMatch=etag2)
-                log(f"  [re-sweep] Deleted recreated CF distribution {dist_id}")
+                cloudfront.disable_and_delete(cf, dist_id, log, tag="[re-sweep] ")
             if dist_ids:
                 time.sleep(5)
             for vo_id in vo_ids:
