@@ -301,6 +301,8 @@ printf 'aws:\n'                                        >> "$OUTPUT_FILE"
 printf '  region: "%s"\n'       "$REGION"              >> "$OUTPUT_FILE"
 printf '  accountId: "%s"\n'    "$ACCOUNT_ID"          >> "$OUTPUT_FILE"
 printf '  profile: "default"\n'                        >> "$OUTPUT_FILE"
+# Session name of the install role profile (used when aws.installRoleArn is set later).
+printf '  installRoleSessionName: "peeks-install"\n'  >> "$OUTPUT_FILE"
 # The hostname was reserved above, so it is known here and written as a plain static
 # value. insecure=true means the ALB serves HTTP with CloudFront terminating TLS; it also
 # makes the platform create the ALB as `internal` with the predictable name

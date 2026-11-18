@@ -5,6 +5,8 @@ browser automation, SCIM export) and the CLI entrypoint, so they live in one
 place instead of being duplicated per module.
 """
 
+import os
+
 STORAGE_STATE_FILE = "/tmp/aws_console_state.json"
 AWS_METADATA_FILE = "/tmp/aws-id.xml"
 KEYCLOAK_SAML_FILE = "/tmp/keycloak-saml.xml"
@@ -16,3 +18,8 @@ ERROR_SCREENSHOT = "/tmp/idc-error.png"
 
 # Keycloak realm that fronts AWS IAM Identity Center federation.
 KEYCLOAK_REALM = "platform"
+
+
+def privilege_prefix():
+    """Command prefix for a package install: root (a CodeBuild container) has no sudo."""
+    return [] if os.geteuid() == 0 else ["sudo"]

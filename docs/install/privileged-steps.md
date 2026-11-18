@@ -23,7 +23,7 @@ a config that says `external`.
 |---|---|---|
 | Before `task install` | `task privileged:pre` | Creates the IAM roles the host would create: the `<prefix>-cluster-mgmt-<service>` roles, the Ray `<prefix>-model-prestage-role` and `<prefix>-ray-worker-role`, and on `kind-kro-ack` the `<hub>-crossplane-provider` role. Needs no hub. |
 | After `task install` | `task privileged:post` | Applies the cluster-mgmt roles again (the hub's ACK capability role exists now, and gets the `ack-assume-role` policy) and enables the EKS capability log delivery. |
-| After `task destroy` | `task privileged:destroy` | Deletes the capability-log deliveries of the removed clusters, then the roles `privileged:pre` created, by exact name. Refuses to delete roles while the hub cluster exists. Fails, naming what it could not delete, when any delete fails. |
+| After the hub EKS cluster is deleted | `task privileged:destroy` | Deletes the capability-log deliveries of the removed clusters, then the roles `privileged:pre` created, by exact name. Refuses to delete roles while the hub cluster exists. Fails, naming what it could not delete, when any delete fails. On `kind-crossplane`, `task destroy` deletes the hub. On `kind-kro-ack`, `task destroy` under `external` does not (see Teardown below): the hub is deleted by a stack sweep, or by `task destroy` run again with `privilegedSteps: inline` and credentials allowed to make its AWS deletes, before this step. |
 
 On the install host, `task install` (and `task install:hub`) first checks, read-only, that
 every role `privileged:pre` creates exists, with the policies it attaches (the scoped
@@ -86,11 +86,18 @@ above from the host. The host still needs:
   mode does not change that.
 - The other AWS calls of the install that are not IAM role or capability-log writes, for
   example Secrets Manager seeding, the Ray S3 bucket, ECR repositories and the S3 CSI addon.
-- Teardown: `task destroy` still deletes the platform's remaining `<prefix>-*` IAM roles and
-  policies from the host. If the host may not delete them, the `kind-kro-ack` destroy names
-  each role it could not delete and does not report success (the `kind-crossplane` destroy
-  still ignores these errors). Delete them with the runner (`task privileged:destroy` for
-  the roles above) or a stack-level sweep.
+- Teardown, `kind-kro-ack`: under `external`, `task destroy` only tears down Kubernetes. It
+  makes no AWS delete: the EKS capabilities, the hub EKS cluster, the `<hub>/config` and
+  `<hub>/keycloak` secrets, the leftover sweep (ACK IAM roles and policies included) and the
+  extended sweep (IAM roles and policies, VPCs, ...) are left to a stack sweep that runs
+  after it with its own role (the destroy prints this list). Without one they remain:
+  run `task destroy` again with `privilegedSteps: inline` and credentials allowed to make
+  those deletes.
+  Then `task privileged:destroy` deletes the roles above.
+- Teardown, `kind-crossplane`: `task destroy` still makes its AWS deletes from the host,
+  including the platform's remaining `<prefix>-*` IAM roles and policies, and ignores the
+  errors of those deletes. Delete what it could not with the runner
+  (`task privileged:destroy` for the roles above) or a stack-level sweep.
 
 Not covered: `spokes:seed-provider-identity` (both providers), a manual task, still creates
 its roles from wherever it runs. The Ray roles are created and verified in external mode

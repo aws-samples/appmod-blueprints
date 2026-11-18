@@ -83,6 +83,11 @@ argocd-refresh-token() {
     if [[ "${IDC_CONFIGURE_SKIP:-false}" == "true" ]] && [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
         echo "IDC_CONFIGURE_SKIP=true: IDC-Keycloak federation not reconfigured, IAM Identity Center not touched." >&2
         echo "To get a token, set USER1_PASSWORD to user1's password in the Keycloak that Identity Center federates to, and rerun argocd-refresh-token." >&2
+    # Remote install: the CodeBuild install configured Identity Center (this IDE role has no
+    # sso/identitystore right). Never retry the configuration from here.
+    elif [[ "${IDC_CONFIGURE_REMOTE:-false}" == "true" ]] && [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
+        echo "IDC_CONFIGURE_REMOTE=true: Identity Center is configured by the CodeBuild install, not from this IDE." >&2
+        echo "Check SSM /${RESOURCE_PREFIX:-peeks}/idc-status (SUCCESS or FAILED) and the CodeBuild log /aws/codebuild/${RESOURCE_PREFIX:-peeks}-install; set USER1_PASSWORD to user1's password and rerun argocd-refresh-token." >&2
     # If token retrieval failed, try configuring IDC-Keycloak federation first
     elif [[ -z "$token" || "$token" == "Failed to retrieve token" ]]; then
         echo "Token retrieval failed. Checking IDC-Keycloak federation..." >&2
@@ -102,11 +107,11 @@ argocd-refresh-token() {
 
         if [[ -n "$idc_instance_id" && -n "$domain_name" && "$domain_name" != "None" && -n "$keycloak_admin_password" ]]; then
             echo "Running IDC-Keycloak federation setup..." >&2
-            python3 "$script_dir/configure_identity_center.py" \
+            # The password goes through the environment, not the command line (visible in ps).
+            KC_ADMIN_PASSWORD="$keycloak_admin_password" python3 "$script_dir/configure_identity_center.py" \
                 --region "${AWS_REGION:-${AWS_DEFAULT_REGION:-$(aws configure get region 2>/dev/null || echo us-west-2)}}" \
                 --instance-id "$idc_instance_id" \
-                --keycloak-dns "$domain_name" \
-                --keycloak-admin-password="$keycloak_admin_password" 2>&1 | tail -5 >&2
+                --keycloak-dns "$domain_name" 2>&1 | tail -5 >&2
 
             echo "Retrying token retrieval..." >&2
             token=$(python3 "$script_dir/argocd_token_automation.py" \

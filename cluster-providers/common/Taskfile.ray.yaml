@@ -11,7 +11,7 @@ vars:
   RAY_ROLE_WORKER: "{{.RESOURCE_PREFIX}}-ray-worker-role"
 tasks:
   setup:
-    desc: "Set up Ray ML infrastructure: S3 bucket, ECR repo, vLLM image, S3 CSI driver, IAM + Pod Identity"
+    desc: "Set up Ray ML infrastructure: S3 bucket, ECR repo, vLLM image, IAM roles, Pod Identity associations, then the S3 CSI driver addon"
     vars:
       RAY_ECR_REPO: "{{.RESOURCE_PREFIX}}-ray-vllm-custom"
       DOCKERFILE_PATH: "{{.ROOT_DIR}}/cluster-providers/common/Dockerfile.ray-vllm"
@@ -51,21 +51,23 @@ tasks:
             echo "  ✓ Build started (PID $!, log: /tmp/ray-build.log)"
             echo "  Run 'task ray:wait-image' to wait for completion."
           fi
-      # 4. S3 CSI driver addon
-      - cmd: |
-          if aws eks describe-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} >/dev/null 2>&1; then
-            echo "  ✓ S3 CSI driver addon installed"
-          else
-            aws eks create-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} --output text >/dev/null
-            aws eks wait addon-active --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} 2>/dev/null || true
-            echo "  ✓ S3 CSI driver addon installed"
-          fi
-      # 5. IAM roles (verify-only when privilegedSteps=external: privileged:pre made them)
+      # 4. IAM roles (verify-only when privilegedSteps=external: privileged:pre made them),
+      #    before the Pod Identity associations and the S3 CSI addon
       - task: roles
-      # 6. Pod Identity associations
+      # 5. Pod Identity associations, THEN the S3 CSI driver addon. EKS Pod Identity injects
+      #    credentials into a pod at admission, so driver pods that start before the
+      #    kube-system/s3-csi-driver-sa association exists run without credentials and every
+      #    Mountpoint pod they spawn fails with "Failed to create S3 client".
+      #    If the addon is already installed and the association was only created now, restart
+      #    the node driver DaemonSet. Name from the upstream chart (awslabs/mountpoint-s3-csi-driver
+      #    charts/.../templates/node.yaml, also used by the EKS addon): DaemonSet s3-csi-node in
+      #    kube-system (app=s3-csi-node is a POD label, not a DaemonSet label). A hub that already
+      #    ran the old order has its association, so nothing is restarted: run
+      #    kubectl -n kube-system rollout restart daemonset/s3-csi-node once.
       - cmd: |
           PRESTAGE_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RAY_ROLE_PRESTAGE}}"
           WORKER_ARN="arn:aws:iam::{{.AWS_ACCOUNT_ID}}:role/{{.RAY_ROLE_WORKER}}"
+          CSI_PIA_NEW=false
           for SA_INFO in "ray-system|model-prestage-sa|$PRESTAGE_ARN" "ray-system|ray-worker-sa|$WORKER_ARN" "kube-system|s3-csi-driver-sa|$WORKER_ARN"; do
             NS="${SA_INFO%%|*}"; REST="${SA_INFO#*|}"; SA="${REST%%|*}"; ARN="${REST#*|}"
             if aws eks list-pod-identity-associations --cluster-name {{.HUB_CLUSTER_NAME}} --namespace "$NS" --service-account "$SA" --region {{.AWS_REGION}} --query 'associations[0].associationId' --output text 2>/dev/null | grep -q "^a-"; then
@@ -73,8 +75,29 @@ tasks:
             else
               aws eks create-pod-identity-association --cluster-name {{.HUB_CLUSTER_NAME}} --namespace "$NS" --service-account "$SA" --role-arn "$ARN" --region {{.AWS_REGION}} --output text >/dev/null 2>&1
               echo "  ✓ PIA $SA in $NS created"
+              if [ "$SA" = "s3-csi-driver-sa" ]; then CSI_PIA_NEW=true; fi
             fi
           done
+          if aws eks describe-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} >/dev/null 2>&1; then
+            echo "  ✓ S3 CSI driver addon installed"
+            if [ "$CSI_PIA_NEW" = "true" ]; then
+              echo "  ▸ s3-csi-driver-sa association is new: restarting the S3 CSI node driver so it gets credentials"
+              # Own kubeconfig: private/hub-kubeconfig is deleted at the end of every task that
+              # creates it and ray:setup does not create it.
+              KC=$(mktemp)
+              if aws eks update-kubeconfig --name {{.HUB_CLUSTER_NAME}} --region {{.AWS_REGION}} --kubeconfig "$KC" >/dev/null 2>&1 \
+                 && KUBECONFIG="$KC" kubectl -n kube-system rollout restart daemonset/s3-csi-node; then
+                :
+              else
+                echo "  ⚠ could not restart the S3 CSI node driver; run: kubectl -n kube-system rollout restart daemonset/s3-csi-node"
+              fi
+              rm -f "$KC"
+            fi
+          else
+            aws eks create-addon --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} --output text >/dev/null
+            aws eks wait addon-active --cluster-name {{.HUB_CLUSTER_NAME}} --addon-name aws-mountpoint-s3-csi-driver --region {{.AWS_REGION}} 2>/dev/null || true
+            echo "  ✓ S3 CSI driver addon installed"
+          fi
       - echo "✓ Ray ML infrastructure ready (bucket={{.RAY_BUCKET}}, image={{.RAY_ECR_REPO}}:latest)"
 
   # IAM roles of the model prestage job and the Ray workers (S3 access to RAY_BUCKET only).
@@ -194,6 +217,9 @@ tasks:
           done
           echo "⚠ Timeout waiting for image after 30min (check /tmp/ray-build.log)."
           echo "  The background build may still be running — re-run 'task ray:wait-image' to keep waiting."
+          # RAY_WAIT_STRICT=1 (install:remote-extras, in the CodeBuild install): the build ends right
+          # after this and kills the background push, so a missing vLLM image must be a visible failure.
+          [ "${RAY_WAIT_STRICT:-0}" = "1" ] && { echo "✗ vLLM image not in ECR (strict)."; exit 1; }
           exit 0
 
   wait-neuron-image:
