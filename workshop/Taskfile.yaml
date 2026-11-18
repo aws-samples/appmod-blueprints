@@ -2630,25 +2630,16 @@ tasks:
         set_var INGRESS_DOMAIN "${CF}"
         set_var AWS_REGION "{{.AWS_REGION}}"
         set_var AWS_ACCOUNT_ID "{{.AWS_ACCOUNT_ID}}"
-        PREFIX="{{.RESOURCE_PREFIX}}"
-        AMG_ENDPOINT=""
-        # AMG is provisioned asynchronously by Crossplane and may not be ACTIVE yet when
-        # setup-env runs. Retry briefly so GRAFANA_URL resolves to the real AMG endpoint
-        # instead of a non-existent CloudFront /grafana path — there is NO in-cluster
-        # Grafana behind the ALB; Grafana is Amazon Managed Grafana (AMG).
-        for _ in $(seq 1 18); do
-          AMG_WS_ID=$(aws grafana list-workspaces --region "{{.AWS_REGION}}" \
-            --query "workspaces[?name=='${PREFIX}-observability'].id | [0]" --output text 2>/dev/null || echo "")
-          if [ -n "$AMG_WS_ID" ] && [ "$AMG_WS_ID" != "None" ]; then
-            AMG_ENDPOINT=$(aws grafana describe-workspace --workspace-id "$AMG_WS_ID" \
-              --region "{{.AWS_REGION}}" --query 'workspace.endpoint' --output text 2>/dev/null || echo "")
-          fi
-          [ -n "$AMG_ENDPOINT" ] && [ "$AMG_ENDPOINT" != "None" ] && break
-          sleep 10
-        done
-        if [ -n "$AMG_ENDPOINT" ] && [ "$AMG_ENDPOINT" != "None" ]; then
-          set_var GRAFANA_URL "https://${AMG_ENDPOINT}"
-        else
+        # GRAFANA_URL is the Amazon Managed Grafana (AMG) endpoint: there is NO in-cluster
+        # Grafana behind the ALB. The hub (Crossplane) creates AMG at a time that varies: on
+        # some installs only minutes after this task, so a fixed wait here can always run out
+        # (v0.5.0-rc2: the 180 s wait ended 71 s before AMG existed). Wait 180 s as before; if
+        # AMG is still missing, write the console fallback now and keep polling in the
+        # background (below), which rewrites GRAFANA_URL once AMG exists.
+        RESOLVE_GRAFANA="{{.ROOT_DIR}}/scripts/resolve-grafana-url.sh"
+        GRAFANA_PENDING=false
+        if ! sh "$RESOLVE_GRAFANA" "$PLATFORM_FILE" "{{.AWS_REGION}}" "{{.RESOURCE_PREFIX}}" 18 10; then
+          GRAFANA_PENDING=true
           # Never fall back to ${CF}/grafana — that path does not exist (404). Point at the
           # AMG console workspace listing so the link is always valid (SAML login via Keycloak).
           set_var GRAFANA_URL "https://{{.AWS_REGION}}.console.aws.amazon.com/grafana/home?region={{.AWS_REGION}}#/workspaces"
@@ -2680,6 +2671,19 @@ tasks:
         # configured by the CodeBuild install and this IDE role holds no sso/identitystore right, so
         # the same fallback must not run from here.
         if [ "{{.IDC_CONFIGURE_REMOTE | default "false"}}" = "true" ]; then set_var IDC_CONFIGURE_REMOTE "true"; fi
+        # AMG not there yet: poll for it for up to 1 h in the background and rewrite GRAFANA_URL
+        # then. Started after the last set_var above, so its sed -i never races this task's.
+        # Detached (double fork, fds closed) so it outlives the install without holding the
+        # SSM tee / cfn-signal. SIGHUP is ignored in the outer sh BEFORE the fork, so the job
+        # survives the terminal that ran `task setup-env` closing, with no window. setsid then
+        # moves it out of the caller's process group, so Ctrl-C on the install or an SSM
+        # cancel/timeout (which kills the command's process group) does not kill it either.
+        if [ "$GRAFANA_PENDING" = true ]; then
+          S=""; command -v setsid >/dev/null 2>&1 && S=setsid
+          S="$S" RESOLVE_GRAFANA="$RESOLVE_GRAFANA" PLATFORM_FILE="$PLATFORM_FILE" \
+            sh -c 'trap "" HUP; ( exec $S sh "$RESOLVE_GRAFANA" "$PLATFORM_FILE" "{{.AWS_REGION}}" "{{.RESOURCE_PREFIX}}" 360 10 ) >> /tmp/grafana-url-resolve.log 2>&1 < /dev/null &'
+          printf '{{.C_INFO}}  AMG endpoint not found yet: GRAFANA_URL is the AMG console for now, corrected in the background once AMG exists (log: /tmp/grafana-url-resolve.log).{{.C_RESET}}\n'
+        fi
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
         source "$PLATFORM_FILE" 2>/dev/null || true
 
