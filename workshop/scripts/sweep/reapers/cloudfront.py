@@ -66,6 +66,8 @@ def disable_and_delete(cf, dist_id, log, tag=""):
                     continue
                 raise
     except Exception as e:
+        if _error_code(e) == "NoSuchDistribution":
+            return True
         log(f"  {tag}CF distribution {dist_id} not deleted: {e}")
     return False
 

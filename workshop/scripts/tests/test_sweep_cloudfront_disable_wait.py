@@ -145,6 +145,34 @@ class CloudfrontDisableWaitTest(unittest.TestCase):
         self.assertIn("CannotDeleteEntityWhileInUse", out)  # VPC origin delete was still attempted
         self.assertLessEqual(clock_of(cf), 1200 + 2 * 8 * 15 + 60)  # bounded: ~24 min
 
+    def test_first_vpc_origin_failure_does_not_skip_the_next(self):
+        clock = {"t": 0.0}
+        cf = FakeCf(clock, enabled=False, deploy_after=0, deployed_at_start=True)
+        cf.list_vpc_origins = lambda: {"VpcOriginList": {"Items": [
+            {"Id": "vo-a", "Name": "peeks-hub-a"}, {"Id": "vo-b", "Name": "peeks-hub-b"}]}}
+        done = []
+
+        def delete_vo(Id, IfMatch):
+            if Id == "vo-a":
+                raise _Err("CannotDeleteEntityWhileInUse")
+            done.append(Id)
+        cf.delete_vpc_origin = delete_vo
+        # set iteration order is arbitrary: run twice-insensitive by asserting vo-b is always deleted
+        _run_with(cf, clock, "reap")
+        self.assertEqual(done, ["vo-b"])
+
+    def test_distribution_already_gone_counts_as_done(self):
+        clock = {"t": 0.0}
+        cf = FakeCf(clock, enabled=False, deploy_after=0, deployed_at_start=True)
+
+        def gone(Id):
+            raise _Err("NoSuchDistribution")
+        cf.get_distribution_config = gone
+        from sweep.reapers import cloudfront
+        logs = []
+        self.assertTrue(cloudfront.disable_and_delete(cf, DIST, logs.append))
+        self.assertEqual(logs, [])
+
     def test_throttled_poll_does_not_end_the_wait(self):
         clock = {"t": 0.0}
         cf = FakeCf(clock, enabled=True, deploy_after=600)
