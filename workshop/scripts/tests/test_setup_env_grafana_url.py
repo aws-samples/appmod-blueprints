@@ -19,6 +19,7 @@ Run:  python -m pytest workshop/scripts/tests/test_setup_env_grafana_url.py -q
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 
@@ -273,6 +274,31 @@ def test_background_poll_survives_the_terminal_closing(tmp_path):
             p.stdin.close()
     assert rc == 0, out.read_text()
     assert "corrected in the background" in out.read_text(), out.read_text()
+    assert _wait_for(lambda: _grafana_lines(platform_sh) == [AMG_URL]), (
+        _grafana_lines(platform_sh), _polls(log))
+    assert _polls(log) == 25
+
+
+@pytest.mark.skipif(not (TASK and shutil.which("yq") and shutil.which("jq")),
+                    reason="needs go-task, yq and jq on PATH")
+def test_background_poll_survives_the_install_process_group_being_killed(tmp_path):
+    # SSM Run Command kills the command's whole process group on cancel or timeout, and Ctrl-C
+    # in a terminal signals the foreground group: setup-env returns, the install goes on, and
+    # the group is killed. The poll must be in its own process group (setsid) to survive.
+    ws = tmp_path / "workshop"
+    (ws / "scripts").mkdir(parents=True)
+    shutil.copy(TASKFILE, ws / "Taskfile.yaml")
+    shutil.copy(RESOLVER, ws / "scripts" / "resolve-grafana-url.sh")
+    (tmp_path / "config.local.yaml").write_text(CONFIG)
+    env, log, platform_sh = _env(tmp_path, amg_after=25, FAKE_BG_SLEEP="1")
+    p = subprocess.Popen(["sh", "-c", f"{TASK} -d {ws} setup-env; /bin/sleep 30"], env=env,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    try:
+        assert _wait_for(lambda: _polls(log) >= 19), _polls(log)  # the background poll runs
+    finally:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait(timeout=30)
     assert _wait_for(lambda: _grafana_lines(platform_sh) == [AMG_URL]), (
         _grafana_lines(platform_sh), _polls(log))
     assert _polls(log) == 25

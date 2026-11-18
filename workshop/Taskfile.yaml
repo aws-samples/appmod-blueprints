@@ -2675,11 +2675,13 @@ tasks:
         # then. Started after the last set_var above, so its sed -i never races this task's.
         # Detached (double fork, fds closed) so it outlives the install without holding the
         # SSM tee / cfn-signal. SIGHUP is ignored in the outer sh BEFORE the fork, so the job
-        # also survives the terminal that ran `task setup-env` closing, with no window (a
-        # setsid exec'd in the child leaves one between the fork and the setsid() call).
+        # survives the terminal that ran `task setup-env` closing, with no window. setsid then
+        # moves it out of the caller's process group, so Ctrl-C on the install or an SSM
+        # cancel/timeout (which kills the command's process group) does not kill it either.
         if [ "$GRAFANA_PENDING" = true ]; then
-          RESOLVE_GRAFANA="$RESOLVE_GRAFANA" PLATFORM_FILE="$PLATFORM_FILE" \
-            sh -c 'trap "" HUP; ( exec sh "$RESOLVE_GRAFANA" "$PLATFORM_FILE" "{{.AWS_REGION}}" "{{.RESOURCE_PREFIX}}" 360 10 ) >> /tmp/grafana-url-resolve.log 2>&1 < /dev/null &'
+          S=""; command -v setsid >/dev/null 2>&1 && S=setsid
+          S="$S" RESOLVE_GRAFANA="$RESOLVE_GRAFANA" PLATFORM_FILE="$PLATFORM_FILE" \
+            sh -c 'trap "" HUP; ( exec $S sh "$RESOLVE_GRAFANA" "$PLATFORM_FILE" "{{.AWS_REGION}}" "{{.RESOURCE_PREFIX}}" 360 10 ) >> /tmp/grafana-url-resolve.log 2>&1 < /dev/null &'
           printf '{{.C_INFO}}  AMG endpoint not found yet: GRAFANA_URL is the AMG console for now, corrected in the background once AMG exists (log: /tmp/grafana-url-resolve.log).{{.C_RESET}}\n'
         fi
         printf '{{.C_OK}}✓ Platform env vars written to %s{{.C_RESET}}\n' "$PLATFORM_FILE"
