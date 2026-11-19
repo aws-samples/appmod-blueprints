@@ -1,7 +1,7 @@
 # Design: Record DORA deployments from Argo Rollouts via SQS
 
 Status: Proposed
-Scope: `cicd-pipeline` RGD, `appmod-service` RGD, `argo-rollouts` addon, `crossplane-pod-identity` (argo-rollouts identity)
+Scope: `cicd-pipeline` RGD, `devlake` chart (SQS queues, eventually), `appmod-service` RGD, `argo-rollouts` addon, `crossplane-pod-identity` (argo-rollouts identity)
 
 ## Problem
 
@@ -113,7 +113,7 @@ The `service.awssqs` notifier is set per cluster in the registry's `valuesObject
           region: '{{.metadata.annotations.aws_region}}'
 ```
 
-`aws_region` is the spoke's region, and the queue lives in the hub's region. This works while hub and spokes share a region (see open questions).
+`aws_region` is the spoke's region. The queues live in the DevLake RDS region on the hub (section 4), so this only works while hub and spokes share a region (see open questions).
 
 No environment overlays are needed: the hub sets the environment from the queue.
 
@@ -141,7 +141,24 @@ annotations:
 
 Apps with no CICDPipeline (and so no queue) will record `NotificationFailed` events. If that's too noisy, add a `dora.enabled: boolean | default=true` schema field and use it to choose between annotated and unannotated variants.
 
-### 4. Hub: `cicd-pipeline` RGD
+### 4. Hub: SQS queues (target: `devlake` chart)
+
+The queues will eventually live in the DevLake chart (`gitops/addons/charts/devlake`), not in `cicd-pipeline`. They use the **same region as the DevLake RDS**: `.Values.clusterRegion`, which the registry sets from the hub's `aws_region` (`registry/platform.yaml`) and `templates/rds-ack.yaml` already uses. That region is the source of truth for:
+
+- the hub EventSource's `sqs.*.region`;
+- the spoke `service.awssqs` region (section 1);
+- the `<region>` in the spoke IAM statement (section 2).
+
+The spoke side can't read the DevLake chart's values. While hub and spokes share a region, the spoke's own `aws_region` gives the same value. If they ever differ, the spokes need the hub's region passed in explicitly (see open questions).
+
+**Conflict to resolve before moving the queues:** the DevLake chart is installed once per hub and doesn't know which apps exist, so it can't create the per-app queues described here. Moving the queues into the chart means one of:
+
+- **Shared queues, one per environment** (for example `<prefix>-dora-<spoke cluster>`). This keeps the rule that the environment comes from the queue. But a single consumer must then route each event to the right app's DevLake webhook connection, and those credentials (`devlake-webhook-secret` / `devlake-webhook-id`) live in each `team-<app>` namespace. The per-pipeline Sensors can't share one SQS consumer.
+- **The chart owns the shared pieces, `cicd-pipeline` keeps the per-app queues.** The chart would hold the SQS IAM statement, region and defaults, while each pipeline still creates its own queues in the chart's region. This keeps the per-pipeline Sensor and secrets unchanged.
+
+Until that's decided, the table below has `cicd-pipeline` creating the queues, with the region set to the DevLake chart's `clusterRegion` (on the hub that's the same value as `schema.spec.aws.region`).
+
+### 5. Hub: `cicd-pipeline` RGD
 
 #### Add
 
@@ -252,7 +269,7 @@ Run these on a dev spoke with one app.
 
 ## Migration
 
-1. **Phase 1:** ship changes 1–4 with `dryRun=true`. Compare the logged payloads with the records the old path sends for one app across a dev push, a prod promotion, an abort, and a rollback.
+1. **Phase 1:** ship changes 1–5 with `dryRun=true`. Compare the logged payloads with the records the old path sends for one app across a dev push, a prod promotion, an abort, and a rollback.
 2. **Phase 2:** in one PR, set `dryRun=false` and delete the items under "Remove". Running both paths live would double-count deployment frequency.
 3. **Tests and docs:**
    - Replace `workshop/scripts/tests/test_dora_prod_skip_placeholder.py` with a test of the Sensor image-filter regex: own repo + SHA matches; `httpd:alpine`, another repo, or a non-SHA tag doesn't.
@@ -262,7 +279,8 @@ Run these on a dev spoke with one app.
 ## Open questions
 
 - Prod `argo-rollouts` IAM role: enable it in the prod `pod-identities` overlay (fast) or self-provision it (matches the prod convention)?
-- Spoke and hub in different regions or accounts? The design assumes the same account and region. A different region needs the hub's region in `service.awssqs`: add a hub-region annotation to the spoke cluster secrets instead of using `aws_region`. Cross-account also needs an SQS queue policy that allows the spoke roles, plus `account` in `service.awssqs`.
+- Spoke and hub in different regions or accounts? The design assumes the same account and region. A different region needs the DevLake RDS region (the hub's `aws_region`, as passed to the DevLake chart's `clusterRegion`) in `service.awssqs`: add a hub-region annotation to the spoke cluster secrets instead of using `aws_region`.
+- Queue ownership: when the queues move into the DevLake chart, use shared per-environment queues with a central router, or keep per-app queues in `cicd-pipeline` in the chart's region? See section 4. Cross-account also needs an SQS queue policy that allows the spoke roles, plus `account` in `service.awssqs`.
 - Add a DLQ? Probably not: the EventSource deletes each message once it's handed to the event bus, so failures show up as failed workflows, not redeliveries.
 
 ## Related fixes (independent of this design)
