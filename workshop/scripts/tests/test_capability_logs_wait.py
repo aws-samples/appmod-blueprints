@@ -24,7 +24,10 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")
 # with a ConflictException (exit 254) when the capability's last status was not
 # ACTIVE/DEGRADED. spoke-late: cluster CREATING on the 1st look, ACTIVE after, capability
 # not found twice, then CREATING, then ACTIVE. spoke-new/new2: cluster CREATING forever,
-# never a capability. spoke-clerr: no capability and describe-cluster fails.
+# never a capability. spoke-clerr: no capability and describe-cluster fails. spoke-late2:
+# like spoke-late but its cluster is already ACTIVE by the time its turn comes (the first
+# describe-cluster, before any wait, saw CREATING). spoke-nocap: cluster CREATING then ACTIVE,
+# a capability that is never created.
 FAKE_AWS = r"""#!/usr/bin/env bash
 echo "$*" >> "$FAKE_AWS_LOG"
 val() { prev=""; for a in "$@"; do [ "$prev" = "$KEY" ] && { echo "$a"; return; }; prev="$a"; done; }
@@ -37,7 +40,8 @@ case "$1 $2" in
     C=$(KEY=--cluster-name val "$@")
     N=$(grep -c "describe-capability --cluster-name $C " "$FAKE_AWS_LOG")
     case "$C" in
-      acme-spoke-none|acme-spoke-new|acme-spoke-new2|acme-spoke-clerr) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
+      acme-spoke-none|acme-spoke-new|acme-spoke-new2|acme-spoke-clerr|acme-spoke-nocap) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
+      acme-spoke-late2) if [ "$N" -le 2 ]; then echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254; fi; S=ACTIVE ;;
       acme-spoke-late)
         if [ "$N" -le 2 ]; then echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254; fi
         if [ "$N" -eq 3 ]; then S=CREATING; else S=ACTIVE; fi ;;
@@ -55,7 +59,8 @@ case "$1 $2" in
     N=$(grep -c "describe-cluster --name $C " "$FAKE_AWS_LOG")
     case "$C" in
       acme-spoke-new|acme-spoke-new2|acme-spoke-err) echo CREATING ;;
-      acme-spoke-late) if [ "$N" -le 1 ]; then echo CREATING; else echo ACTIVE; fi ;;
+      acme-spoke-late|acme-spoke-late2) if [ "$N" -le 1 ]; then echo CREATING; else echo ACTIVE; fi ;;
+      acme-spoke-nocap) if [ "$N" -le 2 ]; then echo CREATING; else echo ACTIVE; fi ;;
       acme-spoke-clerr) echo "An error occurred (AccessDeniedException) when calling the DescribeCluster operation" >&2; exit 254 ;;
       *) echo ACTIVE ;;
     esac ;;
@@ -260,3 +265,25 @@ def test_other_describe_capability_errors_are_not_waited_for(tmp_path):
     assert res.returncode == 0, out
     assert "WARN acme-spoke-err: describe-capability failed (rc=254)" in out, out
     assert _sleeps(tmp_path) == [], _sleeps(tmp_path)
+
+
+def test_spoke_creating_at_start_but_active_at_its_turn_is_still_waited_for(tmp_path):
+    # Two spokes created 30 s apart: while the first one is waited for, the second turns ACTIVE
+    # (still without its capability). It must not be skipped as "no capability".
+    res, out, sources = _run(tmp_path, "300", "acme-hub acme-spoke-late acme-spoke-late2")
+    assert res.returncode == 0, out
+    assert _delivered(sources, "acme-spoke-late"), out
+    assert _delivered(sources, "acme-spoke-late2"), out
+    assert "acme-spoke-late2: no 'kro' capability — skipping" not in out, out
+    assert "✓ kro capability logs enabled for acme-* clusters" in out, out
+
+
+def test_active_cluster_that_never_gets_a_capability_waits_only_the_grace(tmp_path):
+    # A spoke created without kro: CREATING, then ACTIVE for good. 1 wait while CREATING, then
+    # 180 s of grace (12 x 15 s) once ACTIVE, far below the 600 s budget; reported, not fatal.
+    res, out, sources = _run(tmp_path, "600", "acme-spoke-nocap")
+    assert res.returncode == 0, out
+    assert "acme-spoke-nocap: cluster is ACTIVE, no 'kro' capability yet after 195s" in out, out
+    assert "⚠ kro capability logs NOT enabled for: acme-spoke-nocap " in out, out
+    assert sum(int(l.split()[1]) for l in _sleeps(tmp_path)) == 195, _sleeps(tmp_path)
+    assert sources == [], sources

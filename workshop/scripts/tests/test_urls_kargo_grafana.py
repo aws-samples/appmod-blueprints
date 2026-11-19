@@ -19,7 +19,8 @@ if not TASK or not shutil.which("yq"):
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 # FAKE_AMG: ok = workspace exists, none = list-workspaces returns None, denied = every
-# `aws grafana` call fails (expired token), badep = endpoint with shell characters.
+# `aws grafana` call fails (expired token), dwdenied = only describe-workspace fails,
+# badep = endpoint with shell characters.
 FAKE_AWS = r"""#!/usr/bin/env bash
 echo "$*" >> "$FAKE_AWS_LOG"
 case "$1 $2" in
@@ -31,6 +32,7 @@ case "$1 $2" in
       *) echo g-0123456789 ;;
     esac ;;
   "grafana describe-workspace")
+    if [ "$FAKE_AMG" = dwdenied ]; then echo "An error occurred (AccessDeniedException) when calling the DescribeWorkspace operation" >&2; exit 254; fi
     if [ "$FAKE_AMG" = badep ]; then echo "g-1.example.com';touch $FAKE_PWN;'"; else echo g-0123456789.grafana-workspace.us-west-2.amazonaws.com; fi ;;
   *) echo ok ;;
 esac
@@ -80,7 +82,7 @@ def test_kargo_path_and_amg_endpoint(tmp_path, provider):
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
-@pytest.mark.parametrize("amg", ["none", "denied", "badep"])
+@pytest.mark.parametrize("amg", ["none", "denied", "dwdenied", "badep"])
 def test_no_amg_prints_a_clear_fallback_not_a_404_path(tmp_path, provider, amg):
     res, out = _run(tmp_path, provider, amg)
     assert res.returncode == 0, out

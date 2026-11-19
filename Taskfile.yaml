@@ -360,8 +360,20 @@ tasks:
         # CAP_LOGS_WAIT is ONE budget for the whole run (all clusters): the clusters create in
         # parallel, so time spent waiting on one is time the next one has already progressed.
         TOTAL=0
+        # Once a cluster that was being created is ACTIVE, its capability follows within about
+        # a minute when the provider creates one. Wait at most this long (inside the budget)
+        # for a capability that never comes (a spoke created without kro).
+        ACTIVE_GRACE=180
         CLUSTERS=$(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text 2>"$ERRF") \
           || { echo "  WARN: list-clusters failed: $(head -c 300 "$ERRF")"; SKIPPED=" (all: list-clusters failed)"; CLUSTERS=""; }
+        # Clusters that are CREATING now. Recorded before the first wait: the loop is sequential,
+        # so a spoke that is CREATING at the start can be ACTIVE (and still without its
+        # capability) by the time its own turn comes, and must still be waited for.
+        CREATING_NOW=""
+        for C in $CLUSTERS; do
+          CS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null) || CS=""
+          if [ "$CS" = "CREATING" ]; then CREATING_NOW="$CREATING_NOW $C "; fi
+        done
         for C in $CLUSTERS; do
           # A capability still CREATING/UPDATING rejects put-delivery-source with a
           # ConflictException, which aborted the install when spokes were just created.
@@ -372,9 +384,11 @@ tasks:
           # also after the cluster turns ACTIVE. All waits share the CAP_LOGS_WAIT budget
           # (TOTAL, default 600 s). A cluster that is already ACTIVE with no capability is
           # skipped at once (shortcut: it may never get one, e.g. a cluster without kro;
-          # the narrow window between a cluster turning ACTIVE and its capability being
-          # created is only covered when the cluster was seen CREATING first).
-          WAITED=0; PENDING=""; CL_STATUS=""
+          # the window between a cluster turning ACTIVE and its capability being created is
+          # only covered for a cluster that was CREATING when the task started). A cluster
+          # that was CREATING and turns ACTIVE gets ACTIVE_GRACE seconds for its capability.
+          WAITED=0; PENDING=""; CL_STATUS=""; GRACE=0
+          case "$CREATING_NOW" in *" $C "*) PENDING=1 ;; esac
           while :; do
             RC=0
             OUT=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.[arn,status]' --output text 2>"$ERRF") || RC=$?
@@ -388,13 +402,14 @@ tasks:
                 || CL_STATUS="UNKNOWN ($(head -c 200 "$ERRC"))"
               case "$CL_STATUS" in
                 CREATING) PENDING=1 ;;
-                ACTIVE) if [ -z "$PENDING" ]; then break; fi ;;
+                ACTIVE) if [ -z "$PENDING" ] || [ "$GRACE" -ge "$ACTIVE_GRACE" ]; then break; fi ;;
                 *) break ;;
               esac
             fi
             if [ "$TOTAL" -ge "$WAIT_MAX" ]; then break; fi
             NAP=$((WAIT_MAX - TOTAL)); if [ "$NAP" -gt 15 ]; then NAP=15; fi
             sleep "$NAP"; WAITED=$((WAITED + NAP)); TOTAL=$((TOTAL + NAP))
+            if [ "$CL_STATUS" = "ACTIVE" ]; then GRACE=$((GRACE + NAP)); fi
           done
           if [ "$RC" -ne 0 ]; then
             # Only ResourceNotFound means "no capability"; anything else (expired
