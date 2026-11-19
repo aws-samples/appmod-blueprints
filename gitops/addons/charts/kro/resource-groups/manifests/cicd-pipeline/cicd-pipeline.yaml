@@ -486,9 +486,11 @@ spec:
              app.kubernetes.io/managed-by: kro
           annotations:
              argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-             # Implicit dependency on IAM role through template reference
-             eks.amazonaws.com/role-arn: ${iamrole.status.ackResourceMetadata.arn}
-             # Reference to Pod Identity Association for tracking
+             # Pods get credentials through EKS Pod Identity only. No eks.amazonaws.com/role-arn
+             # annotation: the role trusts only pods.eks.amazonaws.com, so IRSA can never assume
+             # it, and the annotation made pods created before the association was usable take
+             # the IRSA path and fail with AccessDenied on AssumeRoleWithWebIdentity.
+             # This reference also makes kro create the SA after the association (and its role).
              eks.amazonaws.com/pod-identity-association: ${podidentityassoc.status.ackResourceMetadata.arn}
              # Additional metadata for CI/CD operations
              cicd.kro.run/application: ${schema.spec.application.name}
