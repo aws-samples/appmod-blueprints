@@ -3549,14 +3549,32 @@ tasks:
           fi
       ARGOCD_URL:
         sh: aws eks describe-capability --cluster-name {{.HUB_CLUSTER_NAME}} --capability-name argocd --query 'capability.configuration.argoCd.serverUrl' --output text --region {{.AWS_REGION}} 2>/dev/null || echo ""
+      # Grafana is the Amazon Managed Grafana (AMG) workspace <prefix>-observability, which has
+      # its own endpoint; there is no Grafana behind the platform ingress (<ingress>/grafana is
+      # a 404 unless the in-cluster grafana addon is enabled). Same lookup as the workshop
+      # setup-env task (workshop/scripts/resolve-grafana-url.sh). Empty when AMG does not exist
+      # yet or cannot be read: the print below says so instead of printing a path that 404s.
+      GRAFANA_URL:
+        sh: |
+          WS=$(aws grafana list-workspaces --region {{.AWS_REGION}} --query "workspaces[?name=='{{.RESOURCE_PREFIX}}-observability'].id | [0]" --output text 2>/dev/null) || WS=""
+          case "$WS" in ""|None) exit 0 ;; esac
+          EP=$(aws grafana describe-workspace --workspace-id "$WS" --region {{.AWS_REGION}} --query 'workspace.endpoint' --output text 2>/dev/null) || EP=""
+          # A hostname only (it is echoed into a printf below).
+          case "$EP" in ""|None|*[!A-Za-z0-9.-]*) exit 0 ;; esac
+          echo "https://$EP"
     cmds:
       - |
         printf '{{.C_OK}}Platform URLs{{.C_RESET}}\n'
         printf '  Backstage:  https://{{.INGRESS_DOMAIN}}/backstage\n'
         printf '  Keycloak:   https://{{.INGRESS_DOMAIN}}/keycloak\n'
         printf '  Argo WF:    https://{{.INGRESS_DOMAIN}}/argo-workflows\n'
-        printf '  Kargo:      https://{{.INGRESS_DOMAIN}}/\n'
-        printf '  Grafana:    https://{{.INGRESS_DOMAIN}}/grafana\n'
+        # Kargo is served under /kargo on the platform ingress ("/" is the Langfuse catch-all).
+        printf '  Kargo:      https://{{.INGRESS_DOMAIN}}/kargo\n'
+        if [ -n "{{.GRAFANA_URL}}" ]; then
+          printf '  Grafana:    {{.GRAFANA_URL}}\n'
+        else
+          printf '  Grafana:    (Amazon Managed Grafana {{.RESOURCE_PREFIX}}-observability not found or not readable; re-run task urls once it exists)\n'
+        fi
         printf '  ArgoCD:     {{.ARGOCD_URL}}\n'
         printf '\n'
         printf '{{.C_INFO}}Credentials{{.C_RESET}}\n'
