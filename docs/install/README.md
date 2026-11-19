@@ -126,12 +126,18 @@ repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost) are u
 ## Honest status of the direct path
 
 - **Hub: works today.** A direct `kind-kro-ack` `task install` brings up a working hub.
-- **Agentic platform (OAP): wired, not yet self-standing on the direct path.** When the
+- **Agentic platform (OAP): wired on the direct path, stood up from the OAP entrypoint.** When the
   `agenticRepo` block is set, its coordinates are mirrored into the hub cluster-secret annotations
   (`addons_repo_url` / `addons_repo_revision`) that the agent-platform appsets consume — but no
-  appmod Taskfile yet applies OAP's `agent-platform-app.yaml`, so the direct `task install` does
-  **not** stand the agentic platform up on its own today. Tracked in
-  [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157) and
+  appmod Taskfile applies OAP's `agent-platform-app.yaml`, so a direct appmod `task install` does
+  **not** stand the agentic platform up on its own. The supported way to bring it up today is the
+  **OAP entrypoint**: from a clone of [`awslabs/open-agentic-platform`](https://github.com/awslabs/open-agentic-platform),
+  set `agenticRepo` + this platform's coordinates in `config.local.yaml` and run `task install`
+  (or `task agentic:install` against an existing hub) — it drives this repo for the hub and then
+  applies the OAP agent-platform app. That path was validated on v0.5.0: a custom-domain hub plus an
+  agentic spoke, all ArgoCD Applications Healthy. The earlier gap on the appmod side,
+  [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157), is **closed**; the
+  entrypoint split is tracked in
   [open-agentic-platform#98](https://github.com/awslabs/open-agentic-platform/issues/98).
 - **Spokes (same‑ or cross‑account):** declared once, by their entry in the fleet repo's
   `kro-clusters/values.yaml`; the `kro-clusters` chart renders each spoke's ACK IAMRoleSelectors from
