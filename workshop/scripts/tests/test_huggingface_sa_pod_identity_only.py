@@ -60,4 +60,5 @@ def test_service_account_still_waits_for_the_association(resources):
     # kro orders resources by template references: the SA must still be created after
     # the association (and therefore after the role it references).
     annotations = resources["serviceAccount"]["metadata"].get("annotations") or {}
-    assert any("podIdentity." in str(v) for v in annotations.values())
+    assert annotations.get("eks.amazonaws.com/pod-identity-association") == (
+        "${podIdentity.status.ackResourceMetadata.arn}")
