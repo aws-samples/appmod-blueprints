@@ -36,6 +36,17 @@ Argo Rollouts (deploy success/failure)  ┘        (calculates + stores)
 - DevLake computes and stores the four metrics.
 - Grafana renders DORA Overview + per-metric detail dashboards.
 
+## How DevLake decides a deployment failed
+
+Change failure rate and recovery time come from **incidents**, not from the rollout's outcome:
+
+- An incident is a GitLab issue recorded in DevLake as `INCIDENT`. The pipeline's incident workflow records every issue on the app's repo this way.
+- DevLake links each incident to the most recent **successful `PRODUCTION`** deployment that finished before the incident was created. That deployment counts as a change failure. Deployments recorded as `DEVELOPMENT` never take part.
+- **Change failure rate** = production deployments followed by an incident ÷ all production deployments. An aborted or degraded rollout on its own doesn't change it.
+- **Recovery time** (failed deployment recovery time) = from the linked deployment's finish to the incident's resolution, which is when the issue is closed.
+
+So to move these metrics: deploy to production, open an issue after the deploy, then close it once service is restored. If change failure rate stays flat, check that a production deployment finished before the issue was created, and that the incident workflow ran for the issue.
+
 ## Zero-overhead, self-service measurement
 
 The key design choice: **measurement is wired in when a team onboards via Backstage.** Creating the CI/CD pipeline also deploys the DORA tracking workflows and the GitLab webhook event managers. Teams get measured simply by using the platform — no extra tooling or process. This is what makes DORA sustainable rather than a one-off audit.
