@@ -2082,7 +2082,9 @@ spec:
                   PAYLOAD=$(printf '%s' "$BODY" | jq '
                   {
                     id: (.repository.name + "-" + (.object_attributes.id | tostring)),
-                    pullRequestKey: (.object_attributes.id | tostring),
+                    # The MR number shown in GitLab (!<iid>), not GitLab's global MR id. The record id
+                    # above keeps the global id, so existing rows are updated, not duplicated.
+                    pullRequestKey: .object_attributes.iid,
                     displayTitle: .object_attributes.title,
                     description: .object_attributes.description,
                     status: (if .object_attributes.state == "opened" then "OPEN" elif .object_attributes.state == "merged" then "MERGED" else "CLOSED" end),
@@ -2105,7 +2107,7 @@ spec:
                     baseRef: .object_attributes.target_branch,
                     headRef: .object_attributes.source_branch,
                     repoId: .project.id,
-                    headRepoId: .repository.name
+                    headRepoId: (.project.id | tostring)
                   }')
                   echo "====Transformed Payload===="
                   echo "$PAYLOAD" | jq '.'
@@ -2979,10 +2981,6 @@ spec:
                      type: string
                      value:
                        - 'main'
-                   - path: body.object_attributes.target_branch
-                     type: bool
-                     value:
-                       - 'false'
              - name: gitlab-webhook
                eventSourceName: ${eventsource.metadata.name}
                eventName: gitlab-webhook
