@@ -81,7 +81,8 @@ tasks:
       # Activate EKS Capability (kro) controller log delivery for all provisioned
       # clusters. Idempotent; skips clusters whose kro capability is not yet
       # ACTIVE or DEGRADED after waiting up to CAP_LOGS_WAIT s in total (default 600) while
-      # CREATING/UPDATING or not created yet on a cluster still being created, and
+      # CREATING/UPDATING, or not created yet on a cluster still being created (kind-kro-ack and
+      # kind-crossplane only), and
       # lists them in a final ⚠ line (re-run `task enable-capability-logs` after enabling more spokes).
       # NOTE: imperative for now because ACK/Crossplane lack DeliverySource/
       # DeliveryDestination/Delivery CRDs. Tracking issue to move this into the
@@ -366,12 +367,14 @@ tasks:
         # two minutes when the provider creates one (live: 55 s and 114 s). Wait at most this
         # long (inside the budget) for a capability that never comes (a spoke created without kro).
         ACTIVE_GRACE=180
-        # Only kind-kro-ack creates a kro capability on every spoke (its RGD always does).
-        # shortcut: kind-crossplane spokes have no kro capability by default (PlatformCluster
-        # spec.capabilities.kro.enabled is false), so they are never waited for; read that
-        # claim field instead if that changes.
+        # kind-kro-ack (its RGD always creates a kro capability) and kind-crossplane (the workshop
+        # declares kro and ack on every spoke) create a capability on a spoke after the cluster is
+        # ACTIVE. Other providers (byoc, terraform) are not waited for: skipped at once, as before.
+        # shortcut: a kind-crossplane spoke declared without kro costs its CREATING time plus
+        # ACTIVE_GRACE (bounded by CAP_LOGS_WAIT); read the claim's spec.capabilities.kro.enabled
+        # if that matters.
         EXPECT_CAP=false
-        if [ "{{.PROVIDER}}" = kind-kro-ack ]; then EXPECT_CAP=true; fi
+        case "{{.PROVIDER}}" in kind-kro-ack|kind-crossplane) EXPECT_CAP=true ;; esac
         CLUSTERS=$(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text 2>"$ERRF") \
           || { echo "  WARN: list-clusters failed: $(head -c 300 "$ERRF")"; SKIPPED=" (all: list-clusters failed)"; CLUSTERS=""; }
         # Clusters that are CREATING now. Recorded before the first wait: the loop is sequential,

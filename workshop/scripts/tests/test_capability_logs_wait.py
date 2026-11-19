@@ -99,7 +99,7 @@ def _run(tmp_path, wait, clusters=ALL, task_args=(), stale="", provider="kind-kr
     (r / "workshop").mkdir()
     shutil.copy(os.path.join(REPO, "workshop", "Taskfile.yaml"), r / "workshop" / "Taskfile.yaml")
     (r / "config.local.yaml").write_text(
-        f"clusterProvider: {provider}\nresourcePrefix: acme\naws: {{region: us-west-2}}\n")
+        (f"clusterProvider: {provider}\n" if provider else "") + "resourcePrefix: acme\naws: {region: us-west-2}\n")
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in (("aws", FAKE_AWS), ("sleep", "#!/bin/sh\necho \"sleep $*\" >> \"$FAKE_AWS_LOG\"\n")):
@@ -319,10 +319,25 @@ def test_throttled_prepass_still_waits_for_the_spoke(tmp_path):
     assert "✓ kro capability logs enabled for acme-* clusters" in out, out
 
 
-def test_kind_crossplane_creating_spoke_is_not_waited_for(tmp_path):
-    # kind-crossplane spokes have no kro capability by default: skipped at once, as before.
-    res, out, sources = _run(tmp_path, "600", "acme-spoke-new", provider="kind-crossplane")
+@pytest.mark.parametrize("provider", ["kind-crossplane", "kind-kro-ack"])
+def test_providers_that_create_spoke_capabilities_wait_for_them(tmp_path, provider):
+    # The workshop declares kro and ack on every kind-crossplane spoke, like the kind-kro-ack RGD.
+    res, out, sources = _run(tmp_path, "120", "acme-hub acme-spoke-late", provider=provider)
+    assert res.returncode == 0, out
+    assert _delivered(sources, "acme-spoke-late"), out
+
+
+@pytest.mark.parametrize("provider", ["byoc", "terraform"])
+def test_other_providers_do_not_wait_for_a_missing_capability(tmp_path, provider):
+    res, out, sources = _run(tmp_path, "600", "acme-spoke-new", provider=provider)
     assert res.returncode == 0, out
     assert "acme-spoke-new: cluster is CREATING, no 'kro' capability yet after 0s" in out, out
     assert "⚠ kro capability logs NOT enabled for: acme-spoke-new " in out, out
     assert _sleeps(tmp_path) == [], _sleeps(tmp_path)
+
+
+def test_unset_cluster_provider_defaults_to_kind_kro_ack(tmp_path):
+    # Same default as the root install task: no clusterProvider key means kind-kro-ack.
+    res, out, sources = _run(tmp_path, "120", "acme-hub acme-spoke-late", provider=None)
+    assert res.returncode == 0, out
+    assert _delivered(sources, "acme-spoke-late"), out
