@@ -134,8 +134,8 @@ repo and cross‑account spokes. Day‑2 operations (delete a spoke, cost) are u
   **OAP entrypoint**: from a clone of [`awslabs/open-agentic-platform`](https://github.com/awslabs/open-agentic-platform),
   set `agenticRepo` + this platform's coordinates in `config.local.yaml` and run `task install`
   (or `task agentic:install` against an existing hub) — it drives this repo for the hub and then
-  applies the OAP agent-platform app. That path was validated on v0.5.0: a custom-domain hub plus an
-  agentic spoke, all ArgoCD Applications Healthy. The earlier gap on the appmod side,
+  applies the OAP agent-platform app. That path was manually validated once on v0.5.0 (a
+  custom-domain hub plus an agentic spoke). The earlier gap on the appmod side,
   [#1157](https://github.com/aws-samples/appmod-blueprints/issues/1157), is **closed**; the
   entrypoint split is tracked in
   [open-agentic-platform#98](https://github.com/awslabs/open-agentic-platform/issues/98).
