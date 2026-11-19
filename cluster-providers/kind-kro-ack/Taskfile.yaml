@@ -1299,7 +1299,7 @@ tasks:
             TERMINAL=$(kubectl get roles.iam.aws.upbound.io \
               -n {{.HUB_CLUSTER_NAME}} \
               -o jsonpath='{range .items[*]}{.metadata.name} {range .status.conditions[*]}{.type}={.status} {end}{"\n"}{end}' \
-              2>/dev/null | grep "ACK.Terminal=True" | awk '{print $1}' || true)
+              2>/dev/null | grep "ACK.Terminal=True" | awk '{print $1}') || TERMINAL=""
             if [ -n "$TERMINAL" ]; then
               printf '{{.C_INFO}}  ♻ ACK.Terminal IAM roles detected — deleting for auto-recovery: %s{{.C_RESET}}\n' "$TERMINAL"
               for R in $TERMINAL; do
@@ -1893,7 +1893,7 @@ tasks:
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
         printf '{{.C_STEP}}▸ Forcing ESO refresh of cluster secret annotations...{{.C_RESET}}\n'
-        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1 || true)
+        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1) || ES=""
         if [ -n "$ES" ]; then
           KUBECONFIG=$KC kubectl -n argocd annotate "$ES" \
             force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
