@@ -40,9 +40,15 @@ import json, os, sys
 st = json.load(open(os.environ["FAKE_KUBECTL_STATE"]))
 a = sys.argv[1:]
 if a[:2] == ["get", "secrets"]:
+    if st.get("fail_secrets"):
+        sys.stderr.write("Unable to connect to the server: net/http: TLS handshake timeout\n")
+        sys.exit(1)
     print(json.dumps(st["secrets"])); sys.exit(0)
 if a[:1] == ["get"] and a[1].startswith("elasticipaddresses"):
     ns = a[a.index("-n") + 1]
+    if ns in st.get("fail_eips", []):
+        sys.stderr.write("error: the server was unable to return a response\n")
+        sys.exit(1)
     items = [{"status": {"publicIP": ip}} for ip in st.get("eips", {}).get(ns, [])]
     print(json.dumps({"items": items})); sys.exit(0)
 sys.stderr.write("unexpected kubectl %r\n" % a); sys.exit(2)
@@ -115,7 +121,7 @@ def _task_shell(provider):
     return "\n".join(shell), t
 
 
-def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS):
+def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "kubectl").write_text(FAKE_KUBECTL.replace("{python}", sys.executable))
@@ -123,7 +129,8 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS):
     (bindir / "aws").write_text(FAKE_AWS.replace("{python}", sys.executable))
     (bindir / "aws").chmod(0o755)
     ks = tmp_path / "kubectl.json"
-    ks.write_text(json.dumps({"secrets": secrets, "eips": eips}))
+    ks.write_text(json.dumps({"secrets": secrets, "eips": eips,
+                              "fail_secrets": fail_secrets, "fail_eips": fail_eips or []}))
     aws = tmp_path / "aws.json"
     aws.write_text(json.dumps({"secret": secret, "writes": []}))
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
@@ -131,9 +138,9 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS):
     return aws, env
 
 
-def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS):
+def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None):
     shell, _ = _task_shell(provider)
-    aws, env = _env(tmp_path, secret, secrets, eips)
+    aws, env = _env(tmp_path, secret, secrets, eips, fail_secrets, fail_eips)
     tf = tmp_path / "Taskfile.yml"
     tf.write_text(yaml.safe_dump({
         "version": "3", "set": ["errexit", "nounset", "pipefail"],
@@ -190,6 +197,25 @@ class TestFleetTask:
         res, st = _run(tmp_path, provider, None)
         assert res.returncode != 0
         assert st["writes"] == []
+
+    def test_kubectl_secrets_failure_keeps_stored_key(self, tmp_path, provider):
+        # A transient `kubectl get secrets` error must NOT be read as "zero spokes" and delete
+        # the stored union — fail closed: no write, non-zero exit, key preserved.
+        res, st = _run(tmp_path, provider,
+                       _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       fail_secrets=True)
+        assert res.returncode != 0
+        assert st["writes"] == []
+        assert _meta(st["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
+
+    def test_kubectl_eip_failure_keeps_stored_key(self, tmp_path, provider):
+        # A transient per-spoke EIP read error must not narrow/delete the union either.
+        res, st = _run(tmp_path, provider,
+                       _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       fail_eips=["acme-spoke-dev"])
+        assert res.returncode != 0
+        assert st["writes"] == []
+        assert _meta(st["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
 
     def test_calls_eso_refresh_last(self, provider):
         _, t = _task_shell(provider)

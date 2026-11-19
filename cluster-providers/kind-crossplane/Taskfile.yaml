@@ -1758,8 +1758,10 @@ tasks:
         # name — so this reads them locally: no AWS NAT lookup, no cross-cluster access, nothing in
         # git, no extra IAM.
         #
-        # WHEN: runs AFTER the spokes are provisioned (wired into `task install` after the spoke
-        # phase) and is re-runnable on its own. It REBUILDS the union from the live resources every
+        # WHEN: runs AFTER the spokes are provisioned. The base cluster-providers install is
+        # hub-only (spokes are a consumer concern), so this is intentionally NOT wired into the
+        # install DAG — the consumer runs it after declaring spokes, and it is re-runnable on its
+        # own. It REBUILDS the union from the live resources every
         # run, so a spoke added later is included on the next run and a removed spoke drops out (its
         # EIP CR and cluster secret are gone -> its IP is no longer in the union; an empty union
         # removes the key). The value is written to fleet_nat_egress_cidrs in <hub>/config
@@ -1771,23 +1773,38 @@ tasks:
         # spoke cluster secret (label argocd.argoproj.io/secret-type=cluster) that is NOT the
         # control-plane and carries an enabled OAP addon that makes the hub-bound calls — the agent
         # gateway (JWKS) or the OTel collector (telemetry), exactly the addons pitfall 1 names. The
-        # label keys are the addon registry's own enable_* selectors, so this tracks whatever the
-        # fleet enables without a bespoke marker; extend the OR below if more hub-calling OAP addons
-        # appear.
-        SECRETS_JSON=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null || echo '{"items":[]}')
+        # label keys are the addon registry's own enable_* selectors (the label value must be the
+        # string "true"); extend the OR below if more hub-calling OAP addons appear.
+        #
+        # A kubectl READ FAILURE must never masquerade as "zero spokes": that would let the empty
+        # union DELETE a stored fleet_nat_egress_cidrs on a transient apiserver/token/throttle error
+        # and silently drop every fleet spoke's NAT from the allowlist (breaking their SSO/OTel). So
+        # FAIL CLOSED — warn, keep the stored value, exit non-zero — on any non-zero kubectl rc.
+        # Only a SUCCESSFUL read that finds no OAP spoke (or no EIP) yields an empty union that
+        # legitimately clears the key.
+        if ! SECRETS_JSON=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null); then
+          printf '{{.C_ERR}}⚠ kubectl get secrets failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
+          exit 1
+        fi
         SPOKES=$(echo "$SECRETS_JSON" | jq -r '
           .items[]
           | select((.metadata.labels["fleet_member"] // "") != "control-plane")
           | select((.metadata.labels["enable_agent_gateway"] // "") == "true"
                 or (.metadata.labels["enable_otel_collector"] // "") == "true")
-          | (.metadata.annotations["aws_cluster_name"] // .metadata.name)' 2>/dev/null | sort -u)
-        FLEET=$(
-          for SPOKE in $SPOKES; do
-            [ -n "$SPOKE" ] || continue
-            kubectl get elasticipaddresses.ec2.services.k8s.aws -n "$SPOKE" -o json 2>/dev/null \
-              | jq -r '.items[]? | .status.publicIP // empty | select(. != "") | . + "/32"' 2>/dev/null || true
-          done | awk 'NF' | sort -u | paste -sd, -
-        )
+          | (.metadata.annotations["aws_cluster_name"] // .metadata.name)' | sort -u)
+        FLEET_ITEMS=""
+        for SPOKE in $SPOKES; do
+          [ -n "$SPOKE" ] || continue
+          if ! EIP_JSON=$(kubectl get elasticipaddresses.ec2.services.k8s.aws -n "$SPOKE" -o json 2>/dev/null); then
+            printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses failed for spoke %s — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n' "$SPOKE"
+            exit 1
+          fi
+          IPS=$(echo "$EIP_JSON" | jq -r '.items[]? | .status.publicIP // empty | select(. != "") | . + "/32"')
+          FLEET_ITEMS="$FLEET_ITEMS $IPS"
+        done
+        # Unquoted on purpose: word-split the accumulated IPs (no spaces in a CIDR) one per line,
+        # drop blanks, dedupe, sort, join with commas. Empty -> FLEET="".
+        FLEET=$(printf '%s\n' $FLEET_ITEMS | awk 'NF' | sort -u | paste -sd, -)
         echo "[seed-fleet-nat-egress] OAP spokes: $(echo $SPOKES | tr '\n' ' ')"
         echo "[seed-fleet-nat-egress] fleet_nat_egress_cidrs=${FLEET:-<none>}"
         CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
