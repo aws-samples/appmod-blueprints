@@ -58,8 +58,8 @@ The runner's role must allow, on the role names above (`<prefix>-cluster-mgmt-*`
   `iam:GetPolicyVersion`, `iam:ListPolicyVersions`, `iam:CreatePolicy`,
   `iam:DeletePolicyVersion`, `iam:DeletePolicy`.
 - `privileged:post`: the same, plus `iam:PutRolePolicy` on the hub's ACK capability role, and
-  what `task enable-capability-logs` calls (`eks:DescribeCapability`, `eks:ListClusters`, the
-  CloudWatch Logs delivery and resource-policy actions).
+  what `task enable-capability-logs` calls (`eks:DescribeCapability`, `eks:DescribeCluster`,
+  `eks:ListClusters`, the CloudWatch Logs delivery and resource-policy actions).
 - `privileged:destroy`: `eks:DescribeCluster`, `eks:ListClusters`, `iam:GetRole`,
   `iam:ListAttachedRolePolicies`, `iam:DetachRolePolicy`, `iam:ListRolePolicies`,
   `iam:DeleteRolePolicy`, `iam:DeleteRole`, the scoped-policy actions above (it deletes the
