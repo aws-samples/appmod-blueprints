@@ -1623,6 +1623,11 @@ tasks:
         # Keep the optional external-dns scope widening set by hand on <hub>/config
         # (docs/install/prerequisites.md); without it a re-install narrows domainFilters back.
         PREV_EDF=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .external_dns_domain_filters) // empty | tostring' 2>/dev/null || true)
+        # fleet_nat_egress_cidrs is written AFTER this seed by secrets-manager:seed-fleet-nat-egress
+        # (it needs the spokes provisioned), so preserve it across re-seeds like nat_egress_cidrs /
+        # the spoke_* observability keys, or a re-install drops the fleet spokes' NAT from the hub
+        # allowlist and breaks their SSO/telemetry.
+        PREV_FLEET_NAT=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .fleet_nat_egress_cidrs) // empty' 2>/dev/null)
         # Build VPC JSON for the aws-resources chart ExternalSecret
         PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n \
@@ -1666,6 +1671,9 @@ tasks:
         fi
         if [ -n "$ALB_INBOUND_CIDRS" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg c "$ALB_INBOUND_CIDRS" '. + {config_inbound_cidrs:$c}')
+        fi
+        if [ -n "$PREV_FLEET_NAT" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg f "$PREV_FLEET_NAT" '. + {fleet_nat_egress_cidrs:$f}')
         fi
         if [ "$PREV_OBS" != "{}" ]; then
           METADATA=$(echo "$METADATA" | jq -c --argjson o "$PREV_OBS" '$o + .')
@@ -1737,6 +1745,73 @@ tasks:
           --secret-string "$CONFIG_UPDATED" \
           --region {{.AWS_REGION}} >/dev/null
         printf '{{.C_OK}}✓ nat_egress_cidrs in %s: %s -> %s{{.C_RESET}}\n' "$SECRET_KEY" "${STORED:-<none>}" "${NAT:-<none>}"
+      - task: hub:force-eso-refresh
+
+  secrets-manager:seed-fleet-nat-egress:
+    desc: Union the NAT egress IP(s) of fleet spokes running OAP addons into fleet_nat_egress_cidrs of <hub>/config, then force an ESO refresh
+    cmds:
+      - |
+        # Spokes that run OAP addons call THIS hub's public Keycloak (JWKS/OIDC) and OTel endpoint
+        # server-side, egressing through their own VPC NAT, so the hub ALB must allow those NAT
+        # EIPs (docs/platform/alb-ip-allowlist.md pitfall 1). The hub holds every spoke's ACK
+        # ElasticIPAddress CR — the kro EksclusterWithVpc graph runs on the hub, namespace = spoke
+        # name — so this reads them locally: no AWS NAT lookup, no cross-cluster access, nothing in
+        # git, no extra IAM.
+        #
+        # WHEN: runs AFTER the spokes are provisioned (wired into `task install` after the spoke
+        # phase) and is re-runnable on its own. It REBUILDS the union from the live resources every
+        # run, so a spoke added later is included on the next run and a removed spoke drops out (its
+        # EIP CR and cluster secret are gone -> its IP is no longer in the union; an empty union
+        # removes the key). The value is written to fleet_nat_egress_cidrs in <hub>/config
+        # (preserved across re-seeds by secrets-manager:seed); the registry passes it to
+        # ingress-class-alb as fleetEgressCidrs, which the chart appends to the allowlist ONLY when
+        # one is set — so with no allowlist this changes nothing.
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        # OAP-spoke selection (generic, no cluster name / prefix / IP hard-coded): a registered
+        # spoke cluster secret (label argocd.argoproj.io/secret-type=cluster) that is NOT the
+        # control-plane and carries an enabled OAP addon that makes the hub-bound calls — the agent
+        # gateway (JWKS) or the OTel collector (telemetry), exactly the addons pitfall 1 names. The
+        # label keys are the addon registry's own enable_* selectors, so this tracks whatever the
+        # fleet enables without a bespoke marker; extend the OR below if more hub-calling OAP addons
+        # appear.
+        SECRETS_JSON=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null || echo '{"items":[]}')
+        SPOKES=$(echo "$SECRETS_JSON" | jq -r '
+          .items[]
+          | select((.metadata.labels["fleet_member"] // "") != "control-plane")
+          | select((.metadata.labels["enable_agent_gateway"] // "") == "true"
+                or (.metadata.labels["enable_otel_collector"] // "") == "true")
+          | (.metadata.annotations["aws_cluster_name"] // .metadata.name)' 2>/dev/null | sort -u)
+        FLEET=$(
+          for SPOKE in $SPOKES; do
+            [ -n "$SPOKE" ] || continue
+            kubectl get elasticipaddresses.ec2.services.k8s.aws -n "$SPOKE" -o json 2>/dev/null \
+              | jq -r '.items[]? | .status.publicIP // empty | select(. != "") | . + "/32"' 2>/dev/null || true
+          done | awk 'NF' | sort -u | paste -sd, -
+        )
+        echo "[seed-fleet-nat-egress] OAP spokes: $(echo $SPOKES | tr '\n' ' ')"
+        echo "[seed-fleet-nat-egress] fleet_nat_egress_cidrs=${FLEET:-<none>}"
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null) || CONFIG_EXISTING=""
+        if [ -z "$CONFIG_EXISTING" ]; then
+          printf '{{.C_ERR}}⚠ %s not readable — run the install (secrets-manager:seed) first.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        fi
+        STORED=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .fleet_nat_egress_cidrs // ""') || {
+          printf '{{.C_ERR}}⚠ %s metadata is not JSON — fleet_nat_egress_cidrs not updated.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        }
+        if [ "$STORED" = "$FLEET" ]; then
+          printf '{{.C_OK}}✓ fleet_nat_egress_cidrs already up to date in %s (%s).{{.C_RESET}}\n' "$SECRET_KEY" "${FLEET:-<none>}"
+          exit 0
+        fi
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq --arg f "$FLEET" \
+          '.metadata = (.metadata // "{}" | (if type == "string" then fromjson else . end)
+             | (if $f == "" then del(.fleet_nat_egress_cidrs) else .fleet_nat_egress_cidrs = $f end) | tojson)')
+        aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$CONFIG_UPDATED" \
+          --region {{.AWS_REGION}} >/dev/null
+        printf '{{.C_OK}}✓ fleet_nat_egress_cidrs in %s: %s -> %s{{.C_RESET}}\n' "$SECRET_KEY" "${STORED:-<none>}" "${FLEET:-<none>}"
       - task: hub:force-eso-refresh
 
   secrets-manager:seed-keycloak:

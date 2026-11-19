@@ -162,6 +162,14 @@ spec:
         # karpenter_service_account: string | default="karpenter-sa"
         # karpenter_sqs_queue_name: string | default=""
 
+    # Surface the nested Vpc's public NAT egress CIDR(s) (list of /32s, one per NAT; a single
+    # NAT today) so a consumer can read them from this top-level claim. On the hub the
+    # seed-fleet-nat-egress task reads the ACK ElasticIPAddress CRs directly, but exposing the
+    # value here keeps it available GitOps-natively. See rg-vpc.yaml and
+    # docs/platform/alb-ip-allowlist.md pitfall 1.
+    status:
+      natEgressCidrs: ${vpc.status.natEgressCidrs}
+
   resources:
   - id: vpc
     template:

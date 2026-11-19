@@ -120,10 +120,10 @@ def _run(tmp_path, env, script_text, tvars):
                           capture_output=True, text=True, timeout=120)
 
 
-def _seed(tmp_path, provider, config, insecure="false", domain="idp.example.com"):
+def _seed(tmp_path, provider, config, insecure="false", domain="idp.example.com", existing=None):
     cfg = tmp_path / "config.local.yaml"
     cfg.write_text(yaml.safe_dump(config))
-    sf, env = _env(tmp_path)
+    sf, env = _env(tmp_path, secret=existing)
     tvars = dict(TVARS, CONFIG_FILE=str(cfg), ROOT_DIR=str(tmp_path),
                  INSECURE=insecure, DOMAIN=domain, INGRESS_DOMAIN=domain)
     cmds = _task(provider)["cmds"]
@@ -183,6 +183,26 @@ class TestSeedConfigInbound:
     def test_the_secret_is_never_printed(self, tmp_path, provider):
         _, res = _seed(tmp_path, provider, _cfg(albInboundCidrs=["203.0.113.0/24"]))
         assert "not-a-real-token" not in res.stdout + res.stderr
+
+
+@needs_task
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestSeedPreservesFleetNat:
+    # fleet_nat_egress_cidrs is written AFTER hub:seed by secrets-manager:seed-fleet-nat-egress,
+    # so hub:seed must carry it across a re-seed (like nat_egress_cidrs / the spoke_* keys) or a
+    # re-install drops the fleet spokes' NAT from the hub allowlist.
+    def _existing(self, **extra):
+        meta = dict({"aws_cluster_name": HUB, "ingress_domain_name": "idp.example.com"}, **extra)
+        return json.dumps({"metadata": json.dumps(meta)})
+
+    def test_fleet_nat_is_preserved_across_reseed(self, tmp_path, provider):
+        existing = self._existing(fleet_nat_egress_cidrs="203.0.113.201/32,203.0.113.202/32")
+        secret, _ = _seed(tmp_path, provider, _cfg(), existing=existing)
+        assert _meta(secret)["fleet_nat_egress_cidrs"] == "203.0.113.201/32,203.0.113.202/32"
+
+    def test_absent_fleet_nat_is_not_invented(self, tmp_path, provider):
+        secret, _ = _seed(tmp_path, provider, _cfg(), existing=self._existing())
+        assert "fleet_nat_egress_cidrs" not in _meta(secret)
 
 
 # --- appmod providers: the non-fatal hardening warning --------------------------------------

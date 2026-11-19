@@ -121,12 +121,39 @@ def test_egress_still_ignored_without_any_allowlist():
                    "--set-string", f"clusterEgressCidrs={NAT}") == base
 
 
+@needs_helm
+def test_fleet_egress_appended_with_allowlist_and_deduped():
+    # fleetEgressCidrs (spoke OAP NAT IPs, auto-discovered) is appended alongside the hub NAT
+    # (clusterEgressCidrs) when the allowlist is non-empty, and deduplicated against it.
+    out = _render("--set", "configInboundCidrs={203.0.113.0/24}",
+                  "--set-string", f"clusterEgressCidrs={NAT}",
+                  "--set-string", "fleetEgressCidrs=203.0.113.201/32\\,203.0.113.200/32")
+    assert _cidrs(out) == ["203.0.113.0/24", NAT, "203.0.113.201/32"]
+
+
+@needs_helm
+def test_fleet_egress_ignored_without_allowlist():
+    # No allowlist -> fleetEgressCidrs is ignored, the ALB stays open (byte-identical to base).
+    base = _render()
+    assert _render("--set-string", "fleetEgressCidrs=203.0.113.201/32") == base
+
+
+@needs_helm
+@pytest.mark.parametrize("mode", sorted(MODES))
+def test_all_egress_keys_empty_is_byte_identical(mode):
+    base = _render(*MODES[mode])
+    assert _render(*MODES[mode], "--set-string", "configInboundCidrs=",
+                   "--set-string", "clusterEgressCidrs=", "--set-string", "fleetEgressCidrs=") == base
+
+
 def test_registry_passes_the_config_annotation_under_a_distinct_key():
     with open(REGISTRY) as f:
         entry = yaml.safe_load(f)["ingress-class-alb"]
     vo = entry["valuesObject"]
     assert vo["configInboundCidrs"] == \
         '{{default "" (index .metadata.annotations "config_inbound_cidrs")}}'
+    assert vo["fleetEgressCidrs"] == \
+        '{{default "" (index .metadata.annotations "fleet_nat_egress_cidrs")}}'
     # The overlay still owns inboundCidrs/extraInboundCidrs: valuesObject wins over value files
     # in ArgoCD, so the registry must never set those two (it would clobber the overlay list).
     assert "inboundCidrs" not in vo and "extraInboundCidrs" not in vo

@@ -35,6 +35,13 @@ spec:
       publicSubnet2ID: ${publicSubnet2.status.subnetID}
       privateSubnet1ID: ${privateSubnet1.status.subnetID}
       privateSubnet2ID: ${privateSubnet2.status.subnetID}
+      # Public NAT egress CIDR(s) of this VPC, as a LIST of /32s built in CEL from the ACK
+      # ElasticIPAddress status. Consumed on the hub by the ingress-class-alb allowlist
+      # (fleet_nat_egress_cidrs): a spoke running OAP addons calls the hub's public Keycloak/OTel
+      # through this NAT, so its EIP must be allowed (docs/platform/alb-ip-allowlist.md pitfall 1).
+      # List form so adding one NAT per AZ later (natGateways>1 -> eip2, …) is an append, not a
+      # shape change. Today there is a single NAT (natGateways default 1).
+      natEgressCidrs: ${[eip1.status.publicIP + "/32"]}
   resources: # how to publish a field in the RG claim e.g. vpcID
   - id: vpc
     template:

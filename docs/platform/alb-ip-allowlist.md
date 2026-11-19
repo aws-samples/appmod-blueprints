@@ -223,10 +223,12 @@ get 401). The app logs show timeouts to `https://<domain>/keycloak/...`.
 
 The allowlist must contain, as `/32`s (for example `<nat-eip>/32`):
 
-- every NAT gateway Elastic IP of the **hub** VPC;
+- every NAT gateway Elastic IP of the **hub** VPC (added automatically on kind-kro-ack /
+  kind-crossplane, see below);
 - every NAT gateway Elastic IP of **each spoke that runs agentic platform (OAP) addons**: those
   spokes also call the hub's public ALB (OTel export to `https://<hub-domain>/api/public/otel`,
-  Agent Gateway JWKS from the hub's Keycloak).
+  Agent Gateway JWKS from the hub's Keycloak). Added automatically on kind-kro-ack /
+  kind-crossplane (see [Spoke OAP NAT](#spoke-oap-nat-added-automatically-on-kind-kro-ack-and-kind-crossplane)).
 
 #### Hub NAT: added automatically on kind-kro-ack and kind-crossplane
 
@@ -268,11 +270,40 @@ allowlist is complete from the ALB's creation.
   else (a Transit Gateway to a central egress VPC, a proxy, a firewall) gets nothing added: list
   that egress IP yourself in `inboundCidrs` or `extraInboundCidrs`.
 
+#### Spoke OAP NAT: added automatically on kind-kro-ack and kind-crossplane
+
+The NAT egress IP of a **spoke running OAP addons** is discovered and added to the hub allowlist
+automatically on these two providers — nothing to list by hand. A hub-side task,
+`secrets-manager:seed-fleet-nat-egress`, reads the spoke `ElasticIPAddress` resources the hub
+already holds (the kro `EksclusterWithVpc` graph runs on the hub, so every spoke's ACK
+`ElasticIPAddress` CR lives there), selects the spokes that enable an OAP addon which calls the hub
+server-side — the agent gateway (`enable_agent_gateway`, JWKS) or the OTel collector
+(`enable_otel_collector`, telemetry) — and writes the sorted, deduplicated union into the
+`fleet_nat_egress_cidrs` key of `<hub>/config`. ESO turns it into the hub cluster-secret annotation
+and the registry passes it to the chart as `fleetEgressCidrs`, appended to the allowlist on the
+same gate as the hub NAT (only when an allowlist is set). `hub:seed` preserves the key across
+re-seeds (like the `spoke_*` observability keys).
+
+- **When it runs.** It needs the spokes provisioned, so it runs **after** the spoke phase (the
+  consumer declares spokes — the base `cluster-providers` install provisions the hub only) and is
+  **re-runnable on its own**. It REBUILDS the union from the live resources each run, so a spoke
+  **added** later is included on the next run and a **removed** spoke drops out (an empty union
+  removes the key). Re-run it after adding or removing an OAP spoke:
+
+  ```bash
+  task kind-kro-ack:secrets-manager:seed-fleet-nat-egress   # or kind-crossplane:...
+  ```
+
+- The task reads cluster-local resources only — no AWS NAT lookup, no cross-cluster access, no
+  extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the
+  chart ignores it until one is, so with no allowlist the ALB stays open (unchanged).
+
 #### Still manual
 
 - the hub NAT on other providers (`byoc`, `terraform`);
-- the NAT egress IPs of **spokes running OAP**, on every provider: add them to the hub list in
-  `inboundCidrs` or `extraInboundCidrs`.
+- the NAT egress IPs of **spokes running OAP on `byoc` / `terraform`** (the auto-discovery above is
+  `kind-kro-ack` / `kind-crossplane` only): add them to the hub list in `inboundCidrs` or
+  `extraInboundCidrs`.
 
 To list the NAT gateway Elastic IPs of a VPC:
 

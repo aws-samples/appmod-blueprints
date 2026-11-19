@@ -60,15 +60,23 @@ spec:
   allowlist the ALB stays open and this list is ignored, so it can never turn an open ALB
   into a NAT-only one. Needed because in-cluster apps reach the public Keycloak issuer
   through this same ALB from the NAT EIP (see docs/platform/alb-ip-allowlist.md pitfall 1).
+
+  fleetEgressCidrs: the NAT egress address(es) of fleet SPOKES running OAP addons, which call
+  THIS hub's public Keycloak (JWKS/OIDC) and OTel endpoint server-side through this ALB. Auto
+  -discovered on the hub (the hub holds every spoke's ACK ElasticIPAddress CR) and written to
+  the hub cluster secret as fleet_nat_egress_cidrs by the seed-fleet-nat-egress task; passed by
+  the registry. Same gate as clusterEgressCidrs: appended, deduplicated, ONLY when the allowlist
+  above is non-empty (see docs/platform/alb-ip-allowlist.md pitfall 1).
 */}}
 {{- if $cidrs }}
-{{- $egress := .Values.clusterEgressCidrs }}
+{{- range $egress := list .Values.clusterEgressCidrs .Values.fleetEgressCidrs }}
 {{- $eraw := list }}
 {{- if kindIs "string" $egress }}{{- $eraw = splitList "," $egress }}{{- else if $egress }}{{- $eraw = $egress }}{{- end }}
 {{- range $eraw }}
 {{- $t := . | toString | trim }}
 {{- if and $t (not (has $t $cidrs)) }}
 {{- $cidrs = append $cidrs $t }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
