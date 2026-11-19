@@ -1299,7 +1299,7 @@ tasks:
             TERMINAL=$(kubectl get roles.iam.aws.upbound.io \
               -n {{.HUB_CLUSTER_NAME}} \
               -o jsonpath='{range .items[*]}{.metadata.name} {range .status.conditions[*]}{.type}={.status} {end}{"\n"}{end}' \
-              2>/dev/null | grep "ACK.Terminal=True" | awk '{print $1}' || true)
+              2>/dev/null | grep "ACK.Terminal=True" | awk '{print $1}') || TERMINAL=""
             if [ -n "$TERMINAL" ]; then
               printf '{{.C_INFO}}  ♻ ACK.Terminal IAM roles detected — deleting for auto-recovery: %s{{.C_RESET}}\n' "$TERMINAL"
               for R in $TERMINAL; do
@@ -1893,7 +1893,7 @@ tasks:
       - |
         KC={{.ROOT_DIR}}/private/hub-kubeconfig
         printf '{{.C_STEP}}▸ Forcing ESO refresh of cluster secret annotations...{{.C_RESET}}\n'
-        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1 || true)
+        ES=$(KUBECONFIG=$KC kubectl -n argocd get externalsecret -o name 2>/dev/null | grep -i fleet-secret | grep {{.HUB_CLUSTER_NAME}} | head -1) || ES=""
         if [ -n "$ES" ]; then
           KUBECONFIG=$KC kubectl -n argocd annotate "$ES" \
             force-sync="$(date +%s)" --overwrite >/dev/null 2>&1 || true
@@ -4711,7 +4711,23 @@ tasks:
         done
         is_byo() { case " $BYO_SERVICES " in *" $1 "*) return 0;; esac; return 1; }
         # Create all 7 roles in parallel — each is independent
-        _PIDS=""
+        # Created SERIALLY, not in parallel background subshells. Task runs cmds
+        # through its own shell (mvdan.cc/sh), not bash, and there `( ... ) &`
+        # cannot be used to fan work out:
+        #   - `$!` is not implemented and expands to EMPTY, so the `_PIDS` list
+        #     stayed empty and the `wait` loop below waited for nothing. With the
+        #     global `set: [..., nounset, ...]` on line 2 it is worse than useless:
+        #     referencing $! aborts the task with "!: unbound variable", so
+        #     hub:create-mgmt-roles could never complete.
+        #   - backgrounded subshells do not outlive the script moving on. Measured
+        #     with three `( sleep 1; touch f ) &` children and a bare `wait`: only
+        #     ONE finished, the other two were killed.
+        # Together those produced a SILENT partial failure -- roles for the last
+        # services in the list existed, the earlier ones did not, and the install
+        # then died later with "role <prefix>-cluster-mgmt-iam does not exist".
+        # Serial costs a few seconds here and is correct; if this ever needs real
+        # parallelism, use a tool that does not depend on shell job control
+        # (e.g. `xargs -P`) rather than `&`.
         for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
           is_byo "$service" && continue
           (
@@ -4725,11 +4741,8 @@ tasks:
               aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$arn" 2>/dev/null || true
             done
             echo "  ✓ $ROLE_NAME"
-          ) &
-          _PIDS="$_PIDS $!"
+          )
         done
-        # Wait for all role creations to complete
-        for _pid in $_PIDS; do wait "$_pid" || true; done
         # cluster-mgmt-iam: scoped customer-managed policy <prefix>-cluster-mgmt-iam-scoped
         # instead of IAMFullAccess (done here, not in the parallel subshells above, so a
         # failure stops the install instead of being lost). managed-policy.sh creates or
