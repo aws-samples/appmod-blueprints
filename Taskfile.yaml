@@ -80,7 +80,8 @@ tasks:
       - task: "{{.PROVIDER}}:install"
       # Activate EKS Capability (kro) controller log delivery for all provisioned
       # clusters. Idempotent; skips clusters whose kro capability is not yet
-      # ACTIVE or DEGRADED after waiting up to CAP_LOGS_WAIT s while CREATING/UPDATING, and
+      # ACTIVE or DEGRADED after waiting up to CAP_LOGS_WAIT s in total (default 600) while
+      # CREATING/UPDATING or not created yet on a cluster still being created, and
       # lists them in a final ⚠ line (re-run `task enable-capability-logs` after enabling more spokes).
       # NOTE: imperative for now because ACK/Crossplane lack DeliverySource/
       # DeliveryDestination/Delivery CRDs. Tracking issue to move this into the
@@ -354,34 +355,53 @@ tasks:
         aws logs put-resource-policy --policy-name EKSCapabilityVendedLogs --policy-document "$POLICY" --region "$REGION" >/dev/null
         WAIT_MAX="${CAP_LOGS_WAIT:-600}"
         case "$WAIT_MAX" in ''|*[!0-9]*|0?*|???????*) echo "  CAP_LOGS_WAIT='$WAIT_MAX' is not a number of seconds — using 600"; WAIT_MAX=600 ;; esac
-        ERRF=$(mktemp); trap 'rm -f "$ERRF"' EXIT
+        ERRF=$(mktemp); ERRC=$(mktemp); trap 'rm -f "$ERRF" "$ERRC"' EXIT
         SKIPPED=""
+        # CAP_LOGS_WAIT is ONE budget for the whole run (all clusters): the clusters create in
+        # parallel, so time spent waiting on one is time the next one has already progressed.
+        TOTAL=0
         CLUSTERS=$(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text 2>"$ERRF") \
           || { echo "  WARN: list-clusters failed: $(head -c 300 "$ERRF")"; SKIPPED=" (all: list-clusters failed)"; CLUSTERS=""; }
         for C in $CLUSTERS; do
           # A capability still CREATING/UPDATING rejects put-delivery-source with a
           # ConflictException, which aborted the install when spokes were just created.
-          # Wait while CREATING/UPDATING (up to CAP_LOGS_WAIT seconds per cluster, default
-          # 600), then deliver for ACTIVE or DEGRADED and skip any other state.
-          WAITED=0
+          # Wait while CREATING/UPDATING, then deliver for ACTIVE or DEGRADED and skip any
+          # other state. A capability does not exist before its cluster is ACTIVE, so a spoke
+          # still being created has NO capability yet (ResourceNotFound): that is "not yet",
+          # not "absent". Keep waiting for it once the cluster has been seen CREATING (PENDING),
+          # also after the cluster turns ACTIVE. All waits share the CAP_LOGS_WAIT budget
+          # (TOTAL, default 600 s). A cluster that is already ACTIVE with no capability is
+          # skipped at once (shortcut: it may never get one, e.g. a cluster without kro;
+          # the narrow window between a cluster turning ACTIVE and its capability being
+          # created is only covered when the cluster was seen CREATING first).
+          WAITED=0; PENDING=""; CL_STATUS=""
           while :; do
             RC=0
             OUT=$(aws eks describe-capability --cluster-name "$C" --capability-name "$CAP" --region "$REGION" --query 'capability.[arn,status]' --output text 2>"$ERRF") || RC=$?
             CAP_ARN=$(echo "$OUT" | awk '{print $1}'); CAP_STATUS=$(echo "$OUT" | awk '{print $2}')
-            case "$CAP_STATUS" in CREATING|UPDATING) ;; *) break ;; esac
-            [ "$WAITED" -ge "$WAIT_MAX" ] && break
-            NAP=$((WAIT_MAX - WAITED)); [ "$NAP" -gt 15 ] && NAP=15; [ "$NAP" -gt 0 ] || break
-            sleep "$NAP"; WAITED=$((WAITED + NAP))
+            if [ "$RC" -eq 0 ]; then
+              case "$CAP_STATUS" in CREATING|UPDATING) ;; *) break ;; esac
+            else
+              # Only ResourceNotFound can mean "not created yet"; any other error is reported below.
+              if ! grep -q ResourceNotFoundException "$ERRF"; then break; fi
+              CL_STATUS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>"$ERRC") \
+                || CL_STATUS="UNKNOWN ($(head -c 200 "$ERRC"))"
+              case "$CL_STATUS" in
+                CREATING) PENDING=1 ;;
+                ACTIVE) if [ -z "$PENDING" ]; then break; fi ;;
+                *) break ;;
+              esac
+            fi
+            if [ "$TOTAL" -ge "$WAIT_MAX" ]; then break; fi
+            NAP=$((WAIT_MAX - TOTAL)); if [ "$NAP" -gt 15 ]; then NAP=15; fi
+            sleep "$NAP"; WAITED=$((WAITED + NAP)); TOTAL=$((TOTAL + NAP))
           done
           if [ "$RC" -ne 0 ]; then
             # Only ResourceNotFound means "no capability"; anything else (expired
             # credentials, AccessDenied, throttling) is reported, not hidden.
             if grep -q ResourceNotFoundException "$ERRF"; then
-              # A cluster still being created has no capability yet: that is a skip, not "absent".
-              CL_STATUS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>"$ERRF") \
-                || CL_STATUS="UNKNOWN ($(head -c 200 "$ERRF"))"
-              if [ "$CL_STATUS" = "ACTIVE" ]; then echo "  $C: no '$CAP' capability — skipping"
-              else echo "  $C: cluster is $CL_STATUS, no '$CAP' capability yet — skipping"; SKIPPED="$SKIPPED $C"; fi
+              if [ "$CL_STATUS" = "ACTIVE" ] && [ -z "$PENDING" ]; then echo "  $C: no '$CAP' capability — skipping"
+              else echo "  $C: cluster is $CL_STATUS, no '$CAP' capability yet after ${WAITED}s — skipping (re-run task enable-capability-logs later)"; SKIPPED="$SKIPPED $C"; fi
             else echo "  WARN $C: describe-capability failed (rc=$RC): $(head -c 300 "$ERRF") — skipping, re-run task enable-capability-logs"; SKIPPED="$SKIPPED $C"; fi
             continue
           fi
