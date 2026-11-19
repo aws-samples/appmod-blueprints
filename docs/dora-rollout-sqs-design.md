@@ -1,7 +1,7 @@
 # Design: Record DORA deployments from Argo Rollouts via SQS
 
 Status: Proposed
-Scope: `argo-rollouts` addon, `ack-pod-identity` and `crossplane-pod-identity` (argo-rollouts identity), a new hub-side `dora-spoke-queue` addon, `devlake` chart (shared consumer), `cicd-pipeline` RGD (one ConfigMap added, DORA polling removed)
+Scope: `argo-rollouts` addon, `ack-pod-identity` and `crossplane-pod-identity` (argo-rollouts identity), a new hub-side `devlake-spoke-queue` addon, `devlake` chart (shared consumer), `cicd-pipeline` RGD (one ConfigMap added, DORA polling removed)
 
 ## Problem
 
@@ -28,11 +28,12 @@ The measuring-platform-success blog (`containers-blog-maelstrom/measuring-platfo
 ## Design
 
 ```
-spoke (any cluster labeled environment=dev|prod)      hub
+spoke (labeled enable_devlake_spoke_queue=true,      hub
+       environment=dev|prod)
 Rollout ─ Healthy / Degraded ─┐
 argo-rollouts notifications ──┴─awssqs──▶ SQS <prefix>-dora-<spoke cluster>
   (default subscription: every Rollout)        │   created per spoke from its cluster secret
-                                               │   (dora-spoke-queue addon, destinationHub)
+                                               │   (devlake-spoke-queue addon, destinationHub)
                                      EventSource + Sensor dora-<spoke cluster>   (devlake ns, per spoke)
                                                │   environment = this spoke's label (dev → DEVELOPMENT, prod → PRODUCTION)
                                                ▼
@@ -132,9 +133,11 @@ The per-cluster parts go in the registry's `valuesObject` (`gitops/addons/regist
       notifiers:
         service.awssqs: |
           region: '{{default .metadata.annotations.aws_region (index .metadata.annotations "hub_region")}}'
-        # Only for clusters whose environment label has a DevLake mapping (section 3).
+        # Only for clusters that have a queue: the same gate and environment mapping as
+        # the devlake-spoke-queue addon (section 3). Otherwise Rollouts would send to a
+        # queue that doesn't exist.
         subscriptions: |
-          {{- if has (index .metadata.labels "environment") (list "dev" "prod") }}
+          {{- if and (eq (index .metadata.labels "enable_devlake_spoke_queue") "true") (has (index .metadata.labels "environment") (list "dev" "prod")) }}
           - recipients: ['awssqs:{{.metadata.annotations.resource_prefix}}-dora-{{.metadata.annotations.aws_cluster_name}}']
             triggers: [on-dora-success, on-dora-failure]
           {{- end }}
@@ -161,17 +164,31 @@ Changes:
 
 The SA already carries `eks.amazonaws.com/role-arn: …/<cluster>-argo-rollouts` (`gitops/addons/registry/gitops.yaml`).
 
-### 3. Hub, per spoke: new `dora-spoke-queue` addon
+### 3. Hub, per spoke: new `devlake-spoke-queue` addon
 
-A registry entry with `destinationHub: true`, the pattern `pod_identities` and `ack_pod_identities` already use. It is generated from each spoke's cluster secret and deployed to the hub.
+A separate addon, not a values field in the `devlake` addon. The `devlake` addon is one Application rendered from the hub's own cluster secret, and Helm under Argo CD can't look up other clusters' secrets, so it can't list the spokes. A list in its values would be hand-maintained cluster names again.
+
+Instead, a registry entry with `destinationHub: true`, the pattern `pod_identities` and `ack_pod_identities` already use. The ApplicationSet generates one Application per matching spoke from its cluster secret and deploys it to the hub. Removing a spoke from the fleet prunes its Application, and with it the queue, identity, EventSource and Sensor.
+
+It is named and labeled for DevLake, because it only works alongside it:
+
+- **Name:** `devlake-spoke-queue` (registry key `devlake_spoke_queue`, chart `gitops/addons/charts/devlake-spoke-queue`). Every resource it renders carries `app.kubernetes.io/part-of: devlake`.
+- **Gate:** a spoke opts in with the label `enable_devlake_spoke_queue: 'true'`, following the `enable_<addon>` convention. The selector can only see the spoke's labels, not the hub's. So set the label only on spokes whose hub runs DevLake (`enable_devlake: 'true'`). Otherwise the per-spoke Sensors would land in a `devlake` namespace with no EventBus and no `dora-record-deployment`.
+- **Order:** sync wave `8`, after `devlake` (wave `7`), so the namespace, EventBus and WorkflowTemplate exist before the first per-spoke EventSource and Sensor. Waves only order Applications synced together. On a spoke added later, DevLake is already running, and Argo CD retries a Sensor whose EventBus isn't ready yet.
 
 ```yaml
-dora_spoke_queue:
+devlake_spoke_queue:
   namespace: devlake
-  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/dora-spoke-queue'
+  path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/devlake-spoke-queue'
   destinationHub: true
+  annotationsAppSet:
+    # After devlake (wave 7): needs its namespace, EventBus and dora-record-deployment.
+    argocd.argoproj.io/sync-wave: '8'
   selector:
     matchExpressions:
+      - key: enable_devlake_spoke_queue
+        operator: In
+        values: ['true']
       - key: fleet_member
         operator: In
         values: ['spoke']
@@ -187,7 +204,7 @@ dora_spoke_queue:
     hubClusterName: '{{.metadata.annotations.hub_cluster_name}}'
 ```
 
-Chart `gitops/addons/charts/dora-spoke-queue`, rendered into `devlake` on the hub:
+Chart `gitops/addons/charts/devlake-spoke-queue`, rendered into `devlake` on the hub:
 
 | Resource | Notes |
 |---|---|
@@ -203,7 +220,7 @@ environmentMap:           # cluster secret environment label → DevLake environ
   prod: PRODUCTION
 ```
 
-- A label with no mapping renders nothing, rather than guessing an environment. Keep the selector and the spoke subscription condition (section 1) in step with this map.
+- A label with no mapping renders nothing, rather than guessing an environment. Keep the selector and the spoke subscription condition (section 1) in step with this map and with the `enable_devlake_spoke_queue` gate.
 - **New annotation `hub_region`** on spoke cluster secrets, next to `hub_cluster_name`, from both providers (the `EksCluster` RGD and the Crossplane fleet-secret chart). It is the hub's region, the same `aws_region` the registry passes to the DevLake chart as `clusterRegion` for the RDS. Until it exists, `aws_region` is the fallback.
 - `hub_cluster_name` (where `destinationHub` apps go and where the pod identity association is created) is itself built from `resourcePrefix` today (`rg-eks.yaml:649`). That predates this design, but it has the same customer-supplied-name problem, and it should be fixed with `hub_region`.
 
@@ -294,7 +311,7 @@ Run these on a dev spoke with one app, **on both providers** where marked.
 2. **Values merge:** `service.awssqs` and `subscriptions` from the registry `valuesObject`, and the triggers and templates from `configs/argo-rollouts/values.yaml`, all end up in `argo-rollouts-notification-configmap`. The default subscription fires for a Rollout with no annotations.
 3. **kro and the `notified` annotation:** kro keeps the controller's `notified.notifications.argoproj.io` annotation on the Rollout through reconciles. If kro strips it, `oncePer` can't track what it already sent, and notifications repeat on every reconcile. That would block this design; you'd have to move the subscription or tracking elsewhere.
 4. **Cross-namespace ConfigMap:** kro (capability) can create `dora-app-<namespace>` in `devlake` from a CICDPipeline in another namespace, and deletes it when the instance is deleted.
-5. **`destinationHub` + ACK in `devlake`:** the per-spoke app lands on the hub. ACK creates the queue (with the chosen SQS role) and the IAM role and pod identity association through the new `iam`/`eks` selectors.
+5. **`destinationHub` + ACK in `devlake`:** with `enable_devlake_spoke_queue: 'true'` on the spoke, the `devlake-spoke-queue` app lands on the hub at wave 8, after `devlake`. ACK creates the queue (with the chosen SQS role) and the IAM role and pod identity association through the new `iam`/`eks` selectors. Without the label, no app is generated and the spoke's ConfigMap has no `dora` subscription.
 6. **Trigger expressions and conditions:**
    - `rollout.status.abort` and `phase == 'Degraded'` both fire for an aborted canary, and only one FAILURE is sent.
    - The `Healthy` and `Progressing` conditions carry the expected `lastTransitionTime` on argo-rollouts v1.8.
