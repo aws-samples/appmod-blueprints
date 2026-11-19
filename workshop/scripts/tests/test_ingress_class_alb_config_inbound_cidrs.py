@@ -81,6 +81,17 @@ def test_config_unions_with_overlay_inbound_and_extra():
 
 
 @needs_helm
+def test_a_cidr_in_both_sources_is_deduplicated():
+    # A CIDR listed in both the overlay (inboundCidrs) and the install-time config
+    # (configInboundCidrs) renders once: the combined inbound list is deduplicated, so
+    # overlapping sources never waste a security-group rule slot (pitfall 3). First
+    # occurrence wins the position.
+    out = _render("--set", "inboundCidrs={203.0.113.0/24,203.0.113.10/32}",
+                  "--set", "configInboundCidrs={203.0.113.0/24,203.0.113.60/32}")
+    assert _cidrs(out) == ["203.0.113.0/24", "203.0.113.10/32", "203.0.113.60/32"]
+
+
+@needs_helm
 def test_config_csv_form_is_split():
     out = _render("--set-string", "configInboundCidrs=203.0.113.0/24\\,203.0.113.60/32")
     assert _cidrs(out) == ["203.0.113.0/24", "203.0.113.60/32"]

@@ -43,10 +43,13 @@ spec:
 {{- $raw = concat $raw $v }}
 {{- end }}
 {{- end }}
+{{- /* Deduplicate the combined inbound list (overlay inboundCidrs + extraInboundCidrs +
+       install-time configInboundCidrs): a CIDR listed in more than one source renders once,
+       so overlapping sources never waste a security-group rule slot. First occurrence wins. */}}
 {{- $cidrs := list }}
 {{- range $raw }}
 {{- $t := . | toString | trim }}
-{{- if $t }}
+{{- if and $t (not (has $t $cidrs)) }}
 {{- $cidrs = append $cidrs $t }}
 {{- end }}
 {{- end }}
