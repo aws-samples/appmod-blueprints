@@ -416,6 +416,14 @@ ingress-class-alb:
     # appends them to inboundCidrs/extraInboundCidrs ONLY when an allowlist is set, so an
     # open ALB stays open. Empty/absent annotation => no-op.
     clusterEgressCidrs: '{{default "" (index .metadata.annotations "nat_egress_cidrs")}}'
+    # Install-time source-IP allowlist from config.yaml (albInboundCidrs), carried on the
+    # cluster-secret annotation config_inbound_cidrs (provider-written at install). The chart
+    # CONCATENATES it with the overlay's inboundCidrs/extraInboundCidrs and appends the NAT
+    # egress IPs, so the shared "platform" ALB is restricted from creation. It MUST use its own
+    # key (not inboundCidrs): valuesObject wins over the overlay value files in ArgoCD, so
+    # writing inboundCidrs here would clobber an operator's overlay allowlist. Empty/absent
+    # annotation => no install-time entries => the overlay keys alone decide (unchanged).
+    configInboundCidrs: '{{default "" (index .metadata.annotations "config_inbound_cidrs")}}'
     # Scheme is internal ONLY when this cluster is fronted by an edge (CloudFront),
     # signalled by a non-empty ingress_domain_name annotation: a CloudFront VPC-origin
     # requires an internal ALB, and the IngressClassParams scheme MUST match the adopted

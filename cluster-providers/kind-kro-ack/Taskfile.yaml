@@ -1513,6 +1513,28 @@ tasks:
           exit 1
         fi
         echo "[hub:seed] ingress_domain_name=$RUNTIME_DOMAIN"
+        # Install-time source-IP allowlist for the shared "platform" ALB, from config.yaml
+        # (albInboundCidrs: a YAML list OR a comma-separated string). Normalised to a
+        # comma-separated string and written as the config_inbound_cidrs metadata key below;
+        # ESO turns it into a cluster-secret annotation that the ingress-class-alb registry
+        # entry passes to the chart as configInboundCidrs, concatenated with the overlay's
+        # inboundCidrs/extraInboundCidrs. Empty/absent -> key not written -> unchanged (ALB
+        # open unless a post-install overlay sets inboundCidrs). config.yaml is authoritative,
+        # so it is recomputed every seed (no preserve-from-existing needed).
+        ALB_INBOUND_CIDRS=$(yq -r '[.albInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
+        if [ "$ALB_INBOUND_CIDRS" = "null" ]; then ALB_INBOUND_CIDRS=""; fi
+        echo "[hub:seed] config_inbound_cidrs=${ALB_INBOUND_CIDRS:-<none>}"
+        # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
+        # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
+        # when insecure != true (insecure=true => internal ALB behind an upstream edge, where
+        # a client allowlist must NOT be set — it would see origin IPs, see
+        # docs/platform/alb-ip-allowlist.md pitfall 4). Does not fail the install.
+        if [ -n "$RUNTIME_DOMAIN" ] && [ "{{.INSECURE}}" != "true" ] && [ -z "$ALB_INBOUND_CIDRS" ]; then
+          echo "[hub:seed] ⚠ WARNING: domain is set and the shared platform ALB has no source-IP allowlist."
+          echo "           The internet-facing ALB (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana) will accept connections from any source IP."
+          echo "           To restrict it from install time, set 'albInboundCidrs' in config.local.yaml"
+          echo "           (include the hub and OAP-spoke NAT egress IPs). See docs/platform/alb-ip-allowlist.md."
+        fi
         # Platform-wide AWS tags (SpringClean auto-delete=no, cost, compliance) from
         # config.local.yaml as a compact single-line JSON object. Stored as the string
         # metadata key `platform_tags` below (ESO expands metadata keys 1:1 into cluster
@@ -1626,7 +1648,7 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$EDF_FINAL" --arg nat "$NAT_FINAL" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$EDF_FINAL" --arg nat "$NAT_FINAL" --arg cic "$ALB_INBOUND_CIDRS" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
@@ -1636,6 +1658,7 @@ tasks:
              | (if $fs == "true" then .fleet_scope_by_prefix = "true" else . end)
              | (if $edf != "" then .external_dns_domain_filters = $edf else . end)
              | (if $nat != "" then .nat_egress_cidrs = $nat else . end)
+             | (if $cic != "" then .config_inbound_cidrs = $cic else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
         aws secretsmanager create-secret \

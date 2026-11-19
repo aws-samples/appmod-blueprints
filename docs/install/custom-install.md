@@ -177,6 +177,14 @@ certificateArn: arn:aws:acm:<region>:<account-id>:certificate/<cert-id>   # ISSU
 
 resourcePrefix: <prefix>              # lowercase, starts with a letter; prefixes ECR repos / S3 buckets / IAM roles
 
+# Hardening (own-domain mode): restrict the shared platform ALB to known source IPs from install
+# time. YAML list or comma-separated string of IPv4 CIDRs. MUST include the hub + OAP-spoke NAT
+# egress IPs (hub NAT auto-added on kind-kro-ack/kind-crossplane). Omit => ALB open (today's
+# default). Do NOT set with insecure: true. See docs/platform/alb-ip-allowlist.md.
+# albInboundCidrs:
+#   - 203.0.113.0/24
+#   - 203.0.113.201/32
+
 # REQUIRED (true) when another hub runs in the same AWS account, or when the fleet repo is a
 # fork / shared by several hubs -> see section 3a. Set it BEFORE the first install.
 fleetScopeByPrefix: false
@@ -206,11 +214,30 @@ platformTags:
 > `AWS_PROFILE=<name>` in‑file (not with an `export` on a shell command line), so both the config
 > reads and the bare host‑side `aws` calls resolve to the target account.
 
-**Restricting the ALB by source IP (optional, own‑domain mode).** The `inboundCidrs` allowlist
-is set after install from your fleet repo, see
-[Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md). It must include the
-NAT egress IPs of the hub and of OAP spokes (`<nat-eip>/32`), re‑checked after each reinstall,
-or SSO breaks ([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
+**Restricting the ALB by source IP (hardening, own‑domain mode).** All hub platform UIs share one
+internet‑facing ALB that is open to `0.0.0.0/0` by default. Set `albInboundCidrs` in
+`config.local.yaml` (a YAML list or comma‑separated string of IPv4 CIDRs) to restrict it **from
+install time**, so the ALB is never briefly open while you wire a post‑install overlay:
+
+```yaml
+albInboundCidrs:
+  - 203.0.113.0/24      # corporate / VPN egress range (example)
+  - 203.0.113.201/32    # NAT egress IP of a spoke running OAP addons (example)
+```
+
+It is applied by `kind-kro-ack` / `kind-crossplane`, concatenated with any fleet‑repo
+`inboundCidrs` / `extraInboundCidrs` (never overriding them). It **must** include the NAT egress
+IPs of the hub and of OAP spokes (`<nat-eip>/32`), re‑checked after each reinstall, or SSO breaks
+([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes));
+the hub NAT is added automatically on these two providers. Do **not** set it with `insecure: true`
+(internal ALB behind CloudFront). To change the list after install, or on other providers, use the
+fleet‑repo overlay instead — see
+[Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md).
+
+**Still internet‑facing after this.** `albInboundCidrs` covers only the shared hub platform ALB.
+The GitLab NLB and each spoke's own platform ALB are exposed separately and are **not** restricted
+by this key — see the exposure notes in
+[Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md#other-internet-facing-surfaces).
 
 ---
 

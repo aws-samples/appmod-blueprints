@@ -120,6 +120,23 @@ fleetScopeByPrefix: false
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
 
+# Source-IP allowlist for the shared "platform" ALB, applied FROM INSTALL TIME (hardening).
+# All hub platform UIs (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana, …)
+# share one internet-facing ALB; by default it accepts connections from any source IP. Set
+# this to restrict it to known networks from the moment the ALB is created, instead of only
+# after a post-install fleet-repo overlay edit. kind-kro-ack / kind-crossplane only (the
+# providers that seed <hub>/config); empty/omitted = unchanged (ALB open unless an overlay
+# sets inboundCidrs later). A YAML list or a comma-separated string of IPv4 CIDRs.
+# ALWAYS include the NAT egress IP(s) of the hub and of every spoke running OAP addons, or
+# in-cluster SSO to the public Keycloak issuer breaks; the hub NAT is appended automatically
+# on these two providers. Do NOT set it with insecure: true (internal ALB behind CloudFront —
+# it would see origin IPs, not clients). Concatenated with any fleet-overlay inboundCidrs /
+# extraInboundCidrs, never overriding them. See docs/platform/alb-ip-allowlist.md.
+# albInboundCidrs:
+#   - 203.0.113.0/24      # example corporate / VPN egress range (RFC 5737 doc range)
+#   - 203.0.113.201/32    # example NAT egress IP of a spoke running OAP addons
+# # equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.201/32"
+
 # Platform-wide AWS tags applied to every AWS resource the platform creates:
 #   - hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in
 #     platform-engineering-on-eks (Layer 1);

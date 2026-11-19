@@ -24,6 +24,10 @@ The `ingress-class-alb` chart accepts two optional values that you set:
 A third value, `clusterEgressCidrs`, is filled automatically and only matters once an allowlist
 is set: see [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes).
 
+A fourth value, `configInboundCidrs`, carries the install‑time allowlist set from `config.yaml`
+(see [Set it from install time](#set-it-from-install-time-configyaml)); it is concatenated with
+`inboundCidrs` + `extraInboundCidrs`, so the two sources add up rather than override each other.
+
 Each key accepts a **YAML list** *or* a **comma‑separated string**; blank entries are dropped. The
 two lists are concatenated and rendered into `IngressClassParams.spec.inboundCIDRs` of the
 `platform` IngressClassParams:
@@ -44,6 +48,46 @@ inboundCidrs + extraInboundCidrs (+ clusterEgressCidrs, only when the first two 
   Mode (`alb_controller_mode` unset or `auto`, the default) and `elbv2.k8s.aws/v1beta1` with the
   open‑source AWS Load Balancer Controller (`alb_controller_mode: oss`). Both support
   `inboundCIDRs`; the same values work in either mode.
+
+---
+
+## Set it from install time (config.yaml)
+
+The two keys above live in your fleet repo, so they take effect only **after** the first install —
+the shared ALB is open for the window between its creation and your overlay landing. To restrict it
+**from the moment it is created**, set `albInboundCidrs` in `config.local.yaml` before `task install`:
+
+```yaml
+# config.local.yaml (appmod-blueprints) — or the OAP config.local.yaml, which forwards it
+albInboundCidrs:
+  - 203.0.113.0/24        # corporate / VPN egress range (example)
+  - 203.0.113.201/32      # NAT egress IP of a spoke running OAP addons (example)
+# equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.201/32"
+```
+
+- **Providers.** Applied by `kind-kro-ack` and `kind-crossplane`: `hub:seed` normalises the value
+  (list or comma‑separated string) and writes it as the `config_inbound_cidrs` metadata key of
+  `<hub>/config`. ESO turns it into a hub cluster‑secret annotation, and the `ingress-class-alb`
+  registry entry passes it to the chart as `configInboundCidrs`. On `byoc` / `terraform` the key is
+  not written (see [Other internet‑facing surfaces](#other-internet-facing-surfaces)); use the
+  fleet‑repo overlay there.
+- **Adds up with the overlay.** `configInboundCidrs` is concatenated (and deduplicated) with
+  `inboundCidrs` + `extraInboundCidrs`; it uses its own chart key rather than `inboundCidrs` because
+  the registry `valuesObject` wins over overlay value files in ArgoCD, so reusing `inboundCidrs`
+  would clobber an operator's overlay list. You can set it from `config.yaml`, from the overlay, or
+  both.
+- **NAT egress still required.** Include the hub and OAP‑spoke NAT egress IPs (see
+  [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)); the hub NAT is appended
+  automatically on these two providers.
+- **CloudFront mode.** Leave it unset with `insecure: true`
+  ([pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)). `hub:seed` prints a non‑fatal
+  warning when a domain is set, `insecure` is not `true`, and `albInboundCidrs` is empty — the ALB
+  is then open; the warning is a reminder, not a failure.
+- **OAP entrypoint.** When you install through OAP, set `albInboundCidrs` in the OAP
+  `config.local.yaml`: OAP's `platform:configure` forwards it into the appmod `config.local.yaml` it
+  generates.
+- **Empty = unchanged.** Omitted or empty: nothing is written and the behaviour is exactly today's
+  (the ALB is open unless an overlay sets `inboundCidrs`).
 
 ---
 
@@ -281,6 +325,27 @@ the NAT egress IPs you must list by hand, see [pitfall 1](#1-include-the-nat-egr
 endpoint is not behind this ALB) so you can revert from the cluster if needed: removing the keys in
 Git and syncing, or as a last resort editing the IngressClassParams directly (ArgoCD will reconcile
 it back to Git on the next sync).
+
+---
+
+## Other internet-facing surfaces
+
+`inboundCidrs` / `configInboundCidrs` restrict **one** load balancer: the shared hub `platform`
+ALB (the IngressGroup that fronts Backstage, Keycloak, Grafana, Argo Workflows, Kargo, JupyterHub
+and the other hub UIs). Two surfaces are exposed **separately** and are not covered by it:
+
+- **GitLab** is published through its own internet‑facing **NLB** (a `LoadBalancer` Service), not
+  the `platform` ALB. Restrict its source IPs by attaching a security group that allows only your
+  ranges: set the `security_groups` value of the `gitlab` chart (rendered as the
+  `service.beta.kubernetes.io/aws-load-balancer-security-groups` annotation) through your fleet
+  overlay, or front GitLab with your own edge. The `albInboundCidrs` / `inboundCidrs` keys do **not**
+  reach it.
+- **Each spoke cluster** has its **own** `platform` ALB, created on the spoke by the spoke's own
+  `ingress-class-alb` addon. Its allowlist is driven by that spoke's cluster secret, which the
+  platform provisions through the kro `EksCluster` resource graph — the hub's `config.yaml`
+  `albInboundCidrs` does not propagate to spokes. Restrict a spoke ALB from the fleet overlay for
+  that spoke (`overlays/clusters/<spoke-name>/ingress-class-alb/values.yaml`, with the spoke's own
+  NAT egress IP) exactly as for the hub in [Where to put it](#where-to-put-it).
 
 ---
 

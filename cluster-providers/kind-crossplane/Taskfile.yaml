@@ -1636,6 +1636,26 @@ tasks:
           echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
           exit 1
         fi
+        # Install-time source-IP allowlist for the shared "platform" ALB, from config.yaml
+        # (albInboundCidrs: a YAML list OR a comma-separated string). Normalised to a
+        # comma-separated string and written as the config_inbound_cidrs metadata key below;
+        # ESO turns it into a cluster-secret annotation that the ingress-class-alb registry
+        # entry passes to the chart as configInboundCidrs, concatenated with the overlay's
+        # inboundCidrs/extraInboundCidrs. Empty/absent -> key not written -> unchanged (ALB
+        # open unless a post-install overlay sets inboundCidrs). config.yaml is authoritative.
+        ALB_INBOUND_CIDRS=$(yq -r '[.albInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
+        if [ "$ALB_INBOUND_CIDRS" = "null" ]; then ALB_INBOUND_CIDRS=""; fi
+        echo "[hub:seed] config_inbound_cidrs=${ALB_INBOUND_CIDRS:-<none>}"
+        # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
+        # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
+        # when insecure != true (insecure=true => internal ALB behind an upstream edge, where
+        # a client allowlist must NOT be set, see docs/platform/alb-ip-allowlist.md pitfall 4).
+        if [ -n "{{.INGRESS_DOMAIN}}" ] && [ "{{.INSECURE}}" != "true" ] && [ -z "$ALB_INBOUND_CIDRS" ]; then
+          echo "[hub:seed] ⚠ WARNING: domain is set and the shared platform ALB has no source-IP allowlist."
+          echo "           The internet-facing ALB (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana) will accept connections from any source IP."
+          echo "           To restrict it from install time, set 'albInboundCidrs' in config.local.yaml"
+          echo "           (include the hub and OAP-spoke NAT egress IPs). See docs/platform/alb-ip-allowlist.md."
+        fi
         METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","addons_repo_url":"{{.AGENTIC_REPO_URL}}","addons_repo_revision":"{{.AGENTIC_REPO_REVISION}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}'
         if [ -n "$OVL_URL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg u "$OVL_URL" --arg r "$OVL_REV" --arg b "$OVL_BP" '. + {overlay_repo_url:$u, overlay_repo_revision:$r, overlay_repo_basepath:$b}')
@@ -1643,6 +1663,9 @@ tasks:
         fi
         if [ -n "$NAT_FINAL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg n "$NAT_FINAL" '. + {nat_egress_cidrs:$n}')
+        fi
+        if [ -n "$ALB_INBOUND_CIDRS" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg c "$ALB_INBOUND_CIDRS" '. + {config_inbound_cidrs:$c}')
         fi
         if [ "$PREV_OBS" != "{}" ]; then
           METADATA=$(echo "$METADATA" | jq -c --argjson o "$PREV_OBS" '$o + .')

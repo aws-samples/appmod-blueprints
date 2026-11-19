@@ -7,6 +7,16 @@
 #   inboundCidrs, extraInboundCidrs  (YAML list or comma-separated string; both empty => ALB open)
 # See docs/platform/alb-ip-allowlist.md.
 
+# Install-time base allowlist from config.yaml (albInboundCidrs). The registry fills it from the
+# cluster-secret annotation config_inbound_cidrs, which the cluster provider writes into
+# <cluster>/config at install time, so the shared "platform" ALB is restricted from creation
+# instead of only after a post-install overlay edit. A YAML list or a comma-separated string.
+# It is CONCATENATED with inboundCidrs + extraInboundCidrs (and deduplicated), NOT merged into
+# them: it has its own key because the registry valuesObject wins over the overlay value files
+# in ArgoCD, so putting it in inboundCidrs would clobber an operator's overlay allowlist. Empty
+# (default) => no install-time entries => the overlay keys alone decide, unchanged behaviour.
+configInboundCidrs: ""
+
 # This cluster's OWN NAT egress address(es), as a YAML list or a comma-separated string of
 # CIDRs. The registry fills it from the cluster-secret annotation nat_egress_cidrs, which the
 # cluster provider writes into <cluster>/config at install time. It is appended (deduplicated)
