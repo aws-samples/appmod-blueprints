@@ -1,7 +1,7 @@
 # Design: Record DORA deployments from Argo Rollouts via SQS
 
 Status: Proposed
-Scope: `cicd-pipeline` RGD, `devlake` chart (SQS queues, eventually), `appmod-service` RGD, `argo-rollouts` addon, `crossplane-pod-identity` (argo-rollouts identity)
+Scope: `devlake` chart (queues + consumer), `argo-rollouts` addon, `crossplane-pod-identity` (argo-rollouts identity), `cicd-pipeline` RGD (removals only)
 
 ## Problem
 
@@ -22,33 +22,45 @@ The measuring-platform-success blog (`containers-blog-maelstrom/measuring-platfo
 | Rollouts `webhook` → DevLake | DevLake would need to be reachable across clusters (new exposure). |
 | Argo CD notifications (EKS Capability) | The capability has no `webhook` service, and any URL must be public `https`. It supports `awssqs` and `eventbridge`, but its health is per Application, its logs are off by default, and the capability role is managed outside this repo. |
 | SNS | Rollouts notifications have no SNS service (`Publish` needs SigV4). SNS pushes to a public endpoint, so it would still need an SQS queue to deliver privately. Revisit only for fan-out, and do the fan-out on the hub Sensor instead. |
+| Per-app queues created by `cicd-pipeline` | Every pipeline would carry 2 queues, an IAM policy, role, SA, pod identity association and EventSource. The spoke IAM would need a wildcard per cluster. It also doesn't fit the DevLake chart owning the queues. Its only advantage, per-app isolation, is weak: a spoke's role could write every app's queue on its cluster anyway. |
 
 ## Design
 
 ```
-spoke (dev|prod)                         hub (per CICDPipeline, team-<app> ns)
+spoke (dev|prod)                            hub, devlake namespace (devlake chart)
 Rollout ─ Healthy / Degraded ─┐
-argo-rollouts notifications ──┴─awssqs──▶ SQS <prefix>-dora-team-<app>-<spoke cluster>
-                                              │   (one queue per app per environment)
-                                              │ long-poll (pod identity, SQS read only)
-                                    EventSource <name>-dora-sqs (dev + prod sources)
-                                              │
-                                    existing Sensor: filter image = this app's ECR repo + SHA tag;
-                                                     environment = which queue it came from
-                                              │
-                                    slim doradeploy Workflow: jq → POST DevLake /deployments
+argo-rollouts notifications ──┴─awssqs──▶ SQS <prefix>-dora-<spoke cluster>   (one per environment)
+  (default subscription: every Rollout)        │ long-poll (pod identity, SQS read only)
+                                     EventSource devlake-dora-sqs (one source per queue)
+                                               │
+                                     Sensor: SHA-tagged image in a team-* namespace;
+                                             environment = which queue it came from
+                                               │
+                                     WorkflowTemplate dora-record-deployment:
+                                       app = namespace minus "team-"
+                                       check image is <acct>.dkr.ecr.<region>.amazonaws.com/<prefix>/<app>:<sha>
+                                       POST devlake-lake:8080/plugins/webhook/connections/by-name/<app>_webhook/deployments
 ```
 
 Principles:
 
-- The spoke sends a **plain rollout event that knows nothing about DevLake**. All DevLake details (IDs, repo URL, payload shape) stay on the hub.
-- **One queue per app per environment.** Each CICDPipeline has its own DevLake project and webhook connection, and SQS delivers each message to only one consumer. Per-app queues let the existing per-pipeline Sensor and `devlake-webhook-secret` keep working without a routing layer.
-- **The environment comes from the queue, not from the sender.** Each spoke's argo-rollouts role can write only to queues named for its own cluster, so a dev spoke can't produce PRODUCTION records.
-- Queue name convention: `<resourcePrefix>-dora-team-<app>-<spoke cluster name>`. Both RGDs derive it independently:
-  - `appmod-service`: `${resourcePrefix}-dora-${namespace}-${clusterName}`, using the existing `clusterName` field.
-  - `cicd-pipeline`: one queue for `deployClusterName` (DEVELOPMENT) and one for `prodClusterName` (PRODUCTION).
-  - SQS names are limited to 80 characters; check the longest app name plus cluster name fits.
+- The spoke sends a **plain rollout event that knows nothing about DevLake**. All DevLake details (IDs, repo URL, payload shape, routing to the app's connection) stay on the hub.
+- **One queue per environment, shared by all apps.** All apps already land in the same DevLake instance and database, so one consumer routes each event to the app's existing webhook connection by name. `cicd-pipeline` gains no new resources.
+- **The environment comes from the queue, not from the sender.** Each spoke's argo-rollouts role can send only to its own cluster's queue (an exact ARN, no wildcard), so a dev spoke can't produce PRODUCTION records.
+- **Apps without a pipeline are dropped on the hub.** When `<app>_webhook` doesn't exist, the consumer logs and skips, so spokes need no per-app opt-in.
 - DevLake stays private. The hub pulls from SQS, so nothing is exposed.
+
+### DevLake API support (checked against the source)
+
+- `v1.0.3-beta14` (`backend/plugins/webhook/impl/impl.go`) registers:
+  - `connections/by-name/:connectionName/deployments`;
+  - `connections/by-name/:connectionName/pull_requests`;
+  - `connections/by-name/:connectionName/issues`;
+  - the existing `connections/:connectionId/…` routes, so the `dorapullrequest` and `doraincident` workflows keep working unchanged.
+- `v1.0.3-beta7`, the version in use today, already has the same `by-name` routes, so this doesn't depend on the upgrade.
+- beta14 also adds `projects/:projectName/deployments`. Don't use it: it finds or creates a separate connection named `<project>_deployments`. Deployments would land in a different connection from the PRs and incidents in `<app>_webhook`.
+- **Auth:** beta14 adds an auth chain to the lake API (`RestAuthentication` for `/rest/*`, a push-key gate for `/push/*`, OIDC, then `RequireAuth`). `RequireAuth` is a no-op unless `AUTH_ENABLED=true`, and `AUTH_ENABLED` defaults to false (`helpers/oidchelper/config.go`). Calls to `devlake-lake:8080/plugins/...` without a key keep working, as the setup workflow already relies on.
+  - If `AUTH_ENABLED` is ever turned on, the consumer must call `/rest/plugins/webhook/connections/by-name/...` with an API key whose allowed path covers `/plugins/webhook/.*`.
 
 ### Event schema (spoke → SQS)
 
@@ -103,7 +115,7 @@ notifications:
       # identical, with "result":"FAILURE"
 ```
 
-The `service.awssqs` notifier is set per cluster in the registry's `valuesObject` (`gitops/addons/registry/gitops.yaml`, next to the existing `serviceAccount` annotation). That file is templated per cluster:
+The parts that differ per cluster go in the registry's `valuesObject` (`gitops/addons/registry/gitops.yaml`, next to the existing `serviceAccount` annotation), which is templated per cluster. That covers the `service.awssqs` notifier and a **default subscription** that sends every Rollout's events to this cluster's queue:
 
 ```yaml
   valuesObject:
@@ -111,112 +123,80 @@ The `service.awssqs` notifier is set per cluster in the registry's `valuesObject
       notifiers:
         service.awssqs: |
           region: '{{.metadata.annotations.aws_region}}'
+        subscriptions: |
+          - recipients: ['awssqs:{{.metadata.annotations.resource_prefix}}-dora-{{.metadata.annotations.aws_cluster_name}}']
+            triggers: [on-dora-success, on-dora-failure]
 ```
 
-`aws_region` is the spoke's region. The queues live in the DevLake RDS region on the hub (section 4), so this only works while hub and spokes share a region (see open questions).
+With a default subscription, Rollouts need no per-app annotations, so **`appmod-service` doesn't change**.
 
-No environment overlays are needed: the hub sets the environment from the queue.
+Region: the queues live in the DevLake RDS region (section 3). Using the spoke's own `aws_region` only gives the same value while hub and spokes share a region (see open questions).
+
+If the chart doesn't render `subscriptions` through `notifiers` (spike check 2), fall back to annotating the Rollouts in `appmod-service`. Use `${schema.spec.resourcePrefix}-dora-${schema.spec.clusterName}` as the recipient in all four Rollout variants (`rolloutWithDynamoDB`, `rolloutWithoutDynamoDB`, `rolloutWithGatesAndDynamoDB`, `rolloutWithGatesWithoutDynamoDB`).
 
 ### 2. Spoke: argo-rollouts IAM
 
 `gitops/addons/charts/crossplane-pod-identity/values.yaml`, the `argo-rollouts` identity (IRSA, `skipPIA: true`):
 
-- Add a statement with `sqs:SendMessage` and `sqs:GetQueueUrl` on **only this cluster's queues**: `arn:aws:sqs:<region>:<account>:<prefix>-dora-*-{{ .Values.aws.clusterName }}`. The policy document is rendered through `tpl` and the role is already per cluster (`<cluster>-argo-rollouts`), so each spoke can write only to queues ending in its own cluster name. The prod queues allow only the prod spoke's role.
-- Make sure no cluster name is a suffix of another (for example `spoke-dev` and `x-spoke-dev`); otherwise the wildcard would match the other cluster's queues.
+- Add `sqs:SendMessage` and `sqs:GetQueueUrl` on **exactly this cluster's queue**: `arn:aws:sqs:<region>:<account>:<prefix>-dora-{{ .Values.aws.clusterName }}`. The policy document is rendered through `tpl`, and the role is already per cluster (`<cluster>-argo-rollouts`). So the dev spoke can't write to the prod queue, and the reverse.
 - This role is currently enabled only in `overlays/environments/dev/pod-identities`. Prod needs it as well. The prod overlay asks that workload identities self-provision rather than be added there, so decide which way to create it (see open questions).
 
 The SA already carries `eks.amazonaws.com/role-arn: …/<cluster>-argo-rollouts` (`gitops/addons/registry/gitops.yaml`).
 
-### 3. Spoke: `appmod-service` RGD
+### 3. Hub: `devlake` chart
 
-`gitops/addons/charts/kro/resource-groups/manifests/appmod-service.yaml`. Add these annotations to the Rollout metadata in all four variants (`rolloutWithDynamoDB`, `rolloutWithoutDynamoDB`, `rolloutWithGatesAndDynamoDB`, `rolloutWithGatesWithoutDynamoDB`):
+All new hub resources live in `gitops/addons/charts/devlake`, in the `devlake` namespace.
+
+**Region:** the queues and the EventSource use `.Values.clusterRegion`, the same region as the DevLake RDS (`templates/rds-ack.yaml`). The registry sets it from the hub's `aws_region` (`registry/platform.yaml`). That region is the source of truth for the spoke `service.awssqs` region (section 1) and the `<region>` in the spoke IAM statement (section 2).
+
+**New values:**
 
 ```yaml
-annotations:
-  notifications.argoproj.io/subscribe.on-dora-success.awssqs: ${schema.spec.resourcePrefix}-dora-${schema.metadata.namespace}-${schema.spec.clusterName}
-  notifications.argoproj.io/subscribe.on-dora-failure.awssqs: ${schema.spec.resourcePrefix}-dora-${schema.metadata.namespace}-${schema.spec.clusterName}
+dora:
+  dryRun: true        # Phase 1: log payloads, don't POST
+  environments:       # one queue per spoke; defaults match cicd-pipeline's deployClusterName / prodClusterName
+    - cluster: '<prefix>-spoke-dev'
+      environment: DEVELOPMENT
+    - cluster: '<prefix>-spoke-prod'
+      environment: PRODUCTION
 ```
 
-`clusterName` must be the name of the spoke the Rollout runs on; it already feeds the AMP query's `cluster` label. A wrong value doesn't mislabel records: that spoke's role is denied on the other cluster's queue.
+**New templates:**
 
-Apps with no CICDPipeline (and so no queue) will record `NotificationFailed` events. If that's too noisy, add a `dora.enabled: boolean | default=true` schema field and use it to choose between annotated and unannotated variants.
-
-### 4. Hub: SQS queues (target: `devlake` chart)
-
-The queues will eventually live in the DevLake chart (`gitops/addons/charts/devlake`), not in `cicd-pipeline`. They use the **same region as the DevLake RDS**: `.Values.clusterRegion`, which the registry sets from the hub's `aws_region` (`registry/platform.yaml`) and `templates/rds-ack.yaml` already uses. That region is the source of truth for:
-
-- the hub EventSource's `sqs.*.region`;
-- the spoke `service.awssqs` region (section 1);
-- the `<region>` in the spoke IAM statement (section 2).
-
-The spoke side can't read the DevLake chart's values. While hub and spokes share a region, the spoke's own `aws_region` gives the same value. If they ever differ, the spokes need the hub's region passed in explicitly (see open questions).
-
-**Conflict to resolve before moving the queues:** the DevLake chart is installed once per hub and doesn't know which apps exist, so it can't create the per-app queues described here. Moving the queues into the chart means one of:
-
-- **Shared queues, one per environment** (for example `<prefix>-dora-<spoke cluster>`). This keeps the rule that the environment comes from the queue. But a single consumer must then route each event to the right app's DevLake webhook connection, and those credentials (`devlake-webhook-secret` / `devlake-webhook-id`) live in each `team-<app>` namespace. The per-pipeline Sensors can't share one SQS consumer.
-- **The chart owns the shared pieces, `cicd-pipeline` keeps the per-app queues.** The chart would hold the SQS IAM statement, region and defaults, while each pipeline still creates its own queues in the chart's region. This keeps the per-pipeline Sensor and secrets unchanged.
-
-Until that's decided, the table below has `cicd-pipeline` creating the queues, with the region set to the DevLake chart's `clusterRegion` (on the hub that's the same value as `schema.spec.aws.region`).
-
-### 5. Hub: `cicd-pipeline` RGD
-
-#### Add
-
-| id | Resource | Notes |
+| Template | Resource | Notes |
 |---|---|---|
-| `doraqueuedev`, `doraqueueprod` | ACK `sqs.services.k8s.aws/v1alpha1` `Queue`s: `<prefix>-dora-team-<app>-${deployClusterName}` and `…-${prodClusterName}` | `receiveMessageWaitTimeSeconds: "20"`, `messageRetentionPeriod: "345600"` (4 days), so events wait in the queue while the hub or DevLake is down. Like `amp-incident`, they rely on the ACK capability role (there is no `cluster-mgmt-sqs` role or IAMRoleSelector). |
-| `dorasqspolicy` | ACK IAM `Policy` | Only `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueUrl`, `sqs:GetQueueAttributes` on the two queue ARNs. |
-| `dorasqsrole` | ACK IAM `Role` with a pod identity trust policy | Same pattern as `iamrole`. |
-| `dorasqssa` | ServiceAccount `<name>-dora-sa` | **Dedicated.** Don't reuse `<name>-sa`, which can push to ECR. |
-| `dorasqspia` | ACK `PodIdentityAssociation` | Binds `dorasqsrole` to `<name>-dora-sa`. |
-| `dorasqseventsource` | Argo Events `EventSource` `<name>-dora-sqs`, `spec.template.serviceAccountName: <name>-dora-sa` | Keep it separate from the GitLab EventSource, which faces the internet and is deliberately kept free of credentials. |
+| `dora-sqs.yaml` | ACK `sqs.services.k8s.aws/v1alpha1` `Queue` per `dora.environments` entry, `queueName: <prefix>-dora-<cluster>` | `receiveMessageWaitTimeSeconds: "20"`, `messageRetentionPeriod: "345600"` (4 days), so events wait in the queue while the hub or DevLake is down. There's no `cluster-mgmt-sqs` role: either rely on the ACK capability role as `amp-incident` does, or add the role and an `IAMRoleSelector` next to the existing ones in `iam-role-selectors.yaml`. |
+| `dora-consumer-iam.yaml` | ACK IAM `Policy` + `Role` (pod identity trust) + `PodIdentityAssociation` + ServiceAccount `devlake-dora-consumer` | Only `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueUrl`, `sqs:GetQueueAttributes` on the queue ARNs. Needs `iam` and `eks` `IAMRoleSelector`s for the `devlake` namespace, which the chart doesn't have yet (it has `ec2` and `rds`). |
+| `dora-eventbus.yaml` | Argo Events `EventBus` `default` | EventBuses are per namespace, and `devlake` has none. Use the same JetStream spec and PDB as the team namespaces. |
+| `dora-eventsource.yaml` | `EventSource` `devlake-dora-sqs`, `spec.template.serviceAccountName: devlake-dora-consumer` | One `sqs` source per environment (`rollout-<cluster>`), each with `region: {{ .Values.clusterRegion }}`, `waitTimeSeconds: 20`, `jsonBody: true`. |
+| `dora-sensor.yaml` | `Sensor` `devlake-dora` + SA/RBAC to submit Workflows in `devlake` | One dependency and one trigger per environment. Each trigger submits `dora-record-deployment` with `body` and `environment` set from the matching entry. |
+| `dora-workflowtemplate.yaml` | `WorkflowTemplate` `dora-record-deployment` + SA allowed only `workflowtaskresults` | See below. |
 
-EventSource:
-
-```yaml
-spec:
-  template:
-    serviceAccountName: ${dorasqssa.metadata.name}
-  sqs:
-    rollout-dev:
-      region: ${schema.spec.aws.region}
-      queue: ${doraqueuedev.spec.queueName}
-      waitTimeSeconds: 20
-      jsonBody: true
-    rollout-prod:
-      region: ${schema.spec.aws.region}
-      queue: ${doraqueueprod.spec.queueName}
-      waitTimeSeconds: 20
-      jsonBody: true
-```
-
-#### Sensor (`sensor`)
-
-Add two dependencies, `rollout-event-dev` (`eventName: rollout-dev`) and `rollout-event-prod` (`eventName: rollout-prod`), each with the same filter:
+Sensor dependency filter (per environment):
 
 ```yaml
-- name: rollout-event-dev
-  eventSourceName: ${dorasqseventsource.metadata.name}
-  eventName: rollout-dev
-  filters:
-    data:
-      # string filter values are regex
-      - path: body.image
-        type: string
-        value: ['^${ecrmainrepo.status.repositoryURI}:[0-9a-f]{40}$']
+filters:
+  data:
+    # string filter values are regex
+    - path: body.namespace
+      type: string
+      value: ['^team-[a-z0-9-]+$']
+    - path: body.image
+      type: string
+      value: ['^[0-9]{12}[.]dkr[.]ecr[.][a-z0-9-]+[.]amazonaws[.]com/.+:[0-9a-f]{40}$']
 ```
 
-This filter replaces `resolve-deployed-tag`. The `httpd:alpine` prod placeholder, gate images and other apps' images never match it.
+This drops placeholder images (such as `httpd:alpine` in a PROD manifest before its first promotion), gate images and non-team namespaces before any workflow runs. The per-app ECR check is in the workflow.
 
-Add two triggers, `dora-rollout-dev-trigger` and `dora-rollout-prod-trigger`. Each submits `doradeploy`, passes `body` exactly as the existing triggers do, and sets the `environment` parameter (`DEVELOPMENT` or `PRODUCTION`) from which dependency fired.
+**`dora-record-deployment`**: one script step.
 
-#### Rewrite `doradeploy`
-
-Replace the three templates (`handle-rollout-check-and-process-deploy`, `check-rollout-status`, `resolve-deployed-tag`, about 280 lines) with one script step:
-
-- Parameters: `body`, `environment` (set by the trigger, never read from the body), `dryRun` (default `"true"` during migration).
+- Parameters: `body`, `environment` (set by the trigger, never read from the body), `dryRun` (from `.Values.dora.dryRun`).
 - `BODY` comes in as an env var (it is untrusted input, so never inline it in the script).
-- `envFrom` `devlake-webhook-secret` / `devlake-webhook-id`.
+- Steps:
+  1. `APP=${namespace#team-}`. Accept only `^[a-z0-9-]+$`, since it is used in a URL path.
+  2. Check `image` is exactly `<awsAccountId>.dkr.ecr.<clusterRegion>.amazonaws.com/<resourcePrefix>/<APP>:<40-hex>`: the repo `cicd-pipeline` creates (`ecrmainrepo`, `${resourcePrefix}/${application.name}`). If it isn't, log and exit 0.
+  3. `GET devlake-lake.devlake.svc.cluster.local:8080/plugins/webhook/connections/by-name/${APP}_webhook`. On a 404 (no pipeline for this app), log and exit 0. On another error, fail.
+  4. Build the payload and, unless `dryRun`, `POST …/connections/by-name/${APP}_webhook/deployments`. Fail on a non-2xx response.
 - Payload:
 
 ```
@@ -226,7 +206,7 @@ environment:   the environment parameter
 result:        body.result
 createdDate / startedDate / finishedDate: body.finishedAt
 deploymentCommits: [{
-  repoUrl:      https://<gitlab.hostname>/<gitlab.username>/<app>.git   # must match today's repository.git_http_url
+  repoUrl:      https://<gitlab_domain_name>/<git_username>/<APP>.git   # chart values; matches today's repository.git_http_url
   refName:      main
   commitSha:    ${image##*:}
   startedDate / finishedDate: body.finishedAt
@@ -234,53 +214,60 @@ deploymentCommits: [{
 }]
 ```
 
-- `dryRun=true` → print the payload only. `dryRun=false` → `curl` POST to `devlake-ui.devlake.svc.cluster.local:4000/api/rest/plugins/webhook/connections/$DEVLAKE_HOOK_ID/deployments`, then fail the step on a non-2xx response.
-- Keep `podGC` and `ttlStrategy` as they are today.
+`repoUrl` is required by the webhook API and is part of the deployment-commit ID hash. Keep it stable and identical to today's value. The registry already knows `gitlab_domain_name` and `git_username`; pass them to the DevLake chart.
 
-#### Remove (Phase 2)
+- Set `podGC` and `ttlStrategy` as the pipeline workflows do.
+
+### 4. Hub: `cicd-pipeline` RGD (removals only, Phase 2)
 
 - Sensor triggers `gitlab-dora-trigger` and `gitlab-dora-prod-trigger`, plus the `prod-deploy-webhook` dependency (first check nothing else uses it).
+- The `doradeploy` WorkflowTemplate.
 - `prodaccessentry`: its comment says it exists only for the DORA check.
 - `accessentry`: cluster-admin on the dev spoke. The only `update-kubeconfig` call found is in `doradeploy`; confirm in a test run before deleting.
 - The `eks:DescribeCluster` statement in `iampolicy`.
-- The workflow parameters `target-cluster-name`, `target-cluster-region`, `target-role-arn`.
 
-Keep: `doraincident`, `dorapullrequest`, `dorasetuptemplate`, `dorasetupworkflow`.
+Keep: `doraincident`, `dorapullrequest`, `dorasetuptemplate`, `dorasetupworkflow`. The setup still creates the `<app>` project and the `<app>_webhook` connection that the consumer posts to by name.
 
 ## Behavior changes
 
 - **Deployment frequency goes up.** Every rollout gets recorded, including rollbacks, re-promotes, and Kargo promotions, not only pushes. That's more accurate, but trends will step up after the cutover.
 - **Start time becomes the finish time.** You lose the ReplicaSet-creation start time. DevLake measures lead time to `finishedDate`, so the impact is small.
-- **One commit per deployment.** Only the image commit is recorded, not every commit in the push. DevLake links lead time to PRs through `mergeCommitSha`, and for a merge to main that is the image commit.
+- **One commit per deployment.** Only the image commit is recorded, not every commit in the push. In beta14, lead time matches a PR to its first production deployment through `commits_diffs` and the PR's `mergeCommitSha` (`plugins/dora/tasks/change_lead_time_calculator.go`), not through the list of commits on the deployment.
 - **No timeout.** A rollout paused for manual promotion is recorded whenever it resolves.
 - **Same commit, several records.** Records are keyed by Rollout revision, so redeploying a commit, or rolling back to it, adds a new record instead of overwriting the old one. A SUCCESS and a FAILURE at the same revision (an aborted canary that is then retried) are also kept separate by the `result` suffix.
 - **A second abort of the same revision isn't recorded.** `oncePer` sends one FAILURE per revision. Retrying an aborted canary and aborting it again doesn't change the revision.
+- **One consumer for all apps.** If it's broken, no app records deployments, but events wait in SQS for 4 days. Watch the queues' `ApproximateAgeOfOldestMessage`.
 
 ## Spike: verify before building
 
 Run these on a dev spoke with one app.
 
-1. **IRSA credentials:** the Rollouts `awssqs` service on chart 2.40.9 picks up credentials through the default chain. Send a test message to a hand-made queue. Also confirm a send to another cluster's queue is denied.
-2. **Values merge:** the `service.awssqs` notifier from the registry `valuesObject` and the triggers and templates from `configs/argo-rollouts/values.yaml` both end up in `argo-rollouts-notification-configmap`.
+1. **IRSA credentials:** the Rollouts `awssqs` service on chart 2.40.9 picks up credentials through the default chain. Send a test message to a hand-made queue. Also confirm a send to the other cluster's queue is denied.
+2. **Values merge:** `service.awssqs` and `subscriptions` from the registry `valuesObject`, and the triggers and templates from `configs/argo-rollouts/values.yaml`, all end up in `argo-rollouts-notification-configmap`. Then confirm the default subscription fires for a Rollout with no annotations.
 3. **kro and the `notified` annotation:** kro keeps the controller's `notified.notifications.argoproj.io` annotation on the Rollout through reconciles. If kro strips it, `oncePer` can't track what it already sent, and notifications repeat on every reconcile. That would block this design; you'd have to move the subscription or tracking elsewhere.
-4. **Queue creation:** the ACK capability role can create SQS queues in `team-*` namespaces.
+4. **Queue and IAM creation in `devlake`:** the chosen SQS role (the capability role or a new `cluster-mgmt-sqs`) can create the queues, and the new `iam`/`eks` selectors work in the `devlake` namespace.
 5. **Trigger expressions:** `rollout.status.abort` and `phase == 'Degraded'` both fire for an aborted canary, and only one FAILURE is sent.
 6. **Rollback:** deploy A, deploy B, then roll back to A (`kubectl argo rollouts undo`). Confirm three SUCCESS messages arrive with three different `revision` values, and that the rollback reuses A's pod hash but not its revision.
+7. **By-name POST:** `POST devlake-lake:8080/plugins/webhook/connections/by-name/<app>_webhook/deployments` without a key returns 2xx, and the record shows up under the app's project after the blueprint runs.
+8. **Lead time in webhook-only mode (existing behavior, not new):** beta14 computes lead time through `commits_diffs` (git data) and maps PRs to the project through `project_mapping` repos. A project fed only by webhooks may show no lead time whatever this design does. Check what today's setup actually produces before comparing.
 
 ## Migration
 
-1. **Phase 1:** ship changes 1–5 with `dryRun=true`. Compare the logged payloads with the records the old path sends for one app across a dev push, a prod promotion, an abort, and a rollback.
-2. **Phase 2:** in one PR, set `dryRun=false` and delete the items under "Remove". Running both paths live would double-count deployment frequency.
+1. **Phase 1:** ship changes 1–3 with `dora.dryRun: true`. Compare the logged payloads with the records the old path sends for one app across a dev push, a prod promotion, an abort, and a rollback.
+2. **Phase 2:** in one PR, set `dora.dryRun: false` and make the removals in change 4. Running both paths live would double-count deployment frequency.
 3. **Tests and docs:**
-   - Replace `workshop/scripts/tests/test_dora_prod_skip_placeholder.py` with a test of the Sensor image-filter regex: own repo + SHA matches; `httpd:alpine`, another repo, or a non-SHA tag doesn't.
+   - Replace `workshop/scripts/tests/test_dora_prod_skip_placeholder.py` with tests of the Sensor filter and the workflow's per-app ECR check. Own repo + SHA matches. `httpd:alpine`, another app's repo, a non-SHA tag, and a non-`team-` namespace don't.
    - Review `test_dora_setup_rerun.py`; setup is unchanged.
-   - Update the workshop DORA troubleshooting text: check SQS depth or the EventSource logs, then the `doradeploy` workflow.
+   - Update the workshop DORA troubleshooting text: check SQS depth or the `devlake-dora-sqs` EventSource logs, then the `dora-record-deployment` workflow in `devlake`.
 
 ## Open questions
 
 - Prod `argo-rollouts` IAM role: enable it in the prod `pod-identities` overlay (fast) or self-provision it (matches the prod convention)?
-- Spoke and hub in different regions or accounts? The design assumes the same account and region. A different region needs the DevLake RDS region (the hub's `aws_region`, as passed to the DevLake chart's `clusterRegion`) in `service.awssqs`: add a hub-region annotation to the spoke cluster secrets instead of using `aws_region`.
-- Queue ownership: when the queues move into the DevLake chart, use shared per-environment queues with a central router, or keep per-app queues in `cicd-pipeline` in the chart's region? See section 4. Cross-account also needs an SQS queue policy that allows the spoke roles, plus `account` in `service.awssqs`.
+- SQS permissions for ACK in `devlake`: rely on the ACK capability role (as `amp-incident` does) or add a scoped `cluster-mgmt-sqs` role and `IAMRoleSelector`?
+- Spoke and hub in different regions or accounts? The design assumes the same account and region.
+  - A different region needs the DevLake RDS region (the hub's `aws_region`, as passed to the DevLake chart's `clusterRegion`) in `service.awssqs`. Add a hub-region annotation to the spoke cluster secrets instead of using `aws_region`.
+  - Cross-account also needs an SQS queue policy that allows the spoke roles, plus `account` in `service.awssqs`.
+- Spoke cluster names in `dora.environments`: hard-code the `<prefix>-spoke-dev` / `<prefix>-spoke-prod` defaults, or derive them from the fleet (spoke cluster secrets) so new spokes get a queue automatically?
 - Add a DLQ? Probably not: the EventSource deletes each message once it's handed to the event bus, so failures show up as failed workflows, not redeliveries.
 
 ## Related fixes (independent of this design)
@@ -290,6 +277,7 @@ These don't depend on the spike. Track each one as its own issue (links to be ad
 - **PR sensor filter likely never matches:** `pull-request-webhook` filters `body.object_attributes.target_branch` as both string `main` and bool `false`. Data filters must all pass, so merge-request events are dropped. The bool filter was probably meant for `draft`.
 - **`dorapullrequest` IDs:** `pullRequestKey` should use `object_attributes.iid`, and `headRepoId` should be `.project.id`, matching `repoId`.
 - **Incident filter:** only count GitLab issues with `issue_type == "incident"` (or a label) toward change failure rate.
-- **DevLake version:** upgrade from `v1.0.3-beta7` to `v1.0.3-beta14` (not beta15, which has a broken migration). Bump both `configs/devlake/values.yaml` and `devlake_version` in `registry/observability.yaml`.
+- **DevLake version:** upgrade from `v1.0.3-beta7` to `v1.0.3-beta14` (not beta15, which has a broken migration). Bump both `configs/devlake/values.yaml` and `devlake_version` in `registry/observability.yaml`. beta14 keeps the `connections/:connectionId/pull_requests`, `…/issues` and `…/deployments` routes the current workflows use, and adds an auth chain that stays off unless `AUTH_ENABLED=true`.
 - **Lake memory:** re-measure; the 512Mi limit is likely too low.
+- **Lake API exposure:** `devlake-lake:8080` accepts unauthenticated calls from anywhere in the hub cluster. Add a NetworkPolicy that allows only the `devlake` namespace (consumer, setup) and the team namespaces' setup and webhook workflows.
 - **Docs:** state that DevLake computes change failure rate and recovery time from incidents linked by timestamp, not from rollout failures (workshop content and `.kiro/skills/eks-platform-engineering/references/measuring-success.md`).
