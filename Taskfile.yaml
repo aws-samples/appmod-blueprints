@@ -337,6 +337,8 @@ tasks:
       AWS_ACCOUNT_ID:
         sh: aws sts get-caller-identity --query Account --output text
       CAP: '{{.CAP | default "kro"}}'
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     env:
       # Settable as a task var (task enable-capability-logs CAP_LOGS_WAIT=30) or as an env var;
       # an env var already set in the caller wins (go-task does not override it).
@@ -361,27 +363,37 @@ tasks:
         # parallel, so time spent waiting on one is time the next one has already progressed.
         TOTAL=0
         # Once a cluster that was being created is ACTIVE, its capability follows within about
-        # a minute when the provider creates one. Wait at most this long (inside the budget)
-        # for a capability that never comes (a spoke created without kro).
+        # two minutes when the provider creates one (live: 55 s and 114 s). Wait at most this
+        # long (inside the budget) for a capability that never comes (a spoke created without kro).
         ACTIVE_GRACE=180
+        # Only kind-kro-ack creates a kro capability on every spoke (its RGD always does).
+        # shortcut: kind-crossplane spokes have no kro capability by default (PlatformCluster
+        # spec.capabilities.kro.enabled is false), so they are never waited for; read that
+        # claim field instead if that changes.
+        EXPECT_CAP=false
+        if [ "{{.PROVIDER}}" = kind-kro-ack ]; then EXPECT_CAP=true; fi
         CLUSTERS=$(aws eks list-clusters --region "$REGION" --query "clusters[?starts_with(@, '{{.RESOURCE_PREFIX}}-')]" --output text 2>"$ERRF") \
           || { echo "  WARN: list-clusters failed: $(head -c 300 "$ERRF")"; SKIPPED=" (all: list-clusters failed)"; CLUSTERS=""; }
         # Clusters that are CREATING now. Recorded before the first wait: the loop is sequential,
         # so a spoke that is CREATING at the start can be ACTIVE (and still without its
         # capability) by the time its own turn comes, and must still be waited for.
+        # A failed read (throttle, expired token) counts as CREATING: the wait is bounded, and
+        # skipping a spoke that is still being created would print a success line for it.
         CREATING_NOW=""
-        for C in $CLUSTERS; do
-          CS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null) || CS=""
-          if [ "$CS" = "CREATING" ]; then CREATING_NOW="$CREATING_NOW $C "; fi
-        done
+        if [ "$EXPECT_CAP" = true ]; then
+          for C in $CLUSTERS; do
+            CS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>/dev/null) || CS=UNKNOWN
+            case "$CS" in CREATING|UNKNOWN) CREATING_NOW="$CREATING_NOW $C " ;; esac
+          done
+        fi
         for C in $CLUSTERS; do
           # A capability still CREATING/UPDATING rejects put-delivery-source with a
           # ConflictException, which aborted the install when spokes were just created.
           # Wait while CREATING/UPDATING, then deliver for ACTIVE or DEGRADED and skip any
           # other state. A capability does not exist before its cluster is ACTIVE, so a spoke
           # still being created has NO capability yet (ResourceNotFound): that is "not yet",
-          # not "absent". Keep waiting for it once the cluster has been seen CREATING (PENDING),
-          # also after the cluster turns ACTIVE. All waits share the CAP_LOGS_WAIT budget
+          # not "absent". On kind-kro-ack, keep waiting for it for a cluster that was CREATING
+          # when the task started (PENDING), also after the cluster turns ACTIVE. All waits share the CAP_LOGS_WAIT budget
           # (TOTAL, default 600 s). A cluster that is already ACTIVE with no capability is
           # skipped at once (shortcut: it may never get one, e.g. a cluster without kro;
           # the window between a cluster turning ACTIVE and its capability being created is
@@ -401,7 +413,7 @@ tasks:
               CL_STATUS=$(aws eks describe-cluster --name "$C" --region "$REGION" --query 'cluster.status' --output text 2>"$ERRC") \
                 || CL_STATUS="UNKNOWN ($(head -c 200 "$ERRC"))"
               case "$CL_STATUS" in
-                CREATING) PENDING=1 ;;
+                CREATING) if [ -z "$PENDING" ]; then break; fi ;;
                 ACTIVE) if [ -z "$PENDING" ] || [ "$GRACE" -ge "$ACTIVE_GRACE" ]; then break; fi ;;
                 *) break ;;
               esac

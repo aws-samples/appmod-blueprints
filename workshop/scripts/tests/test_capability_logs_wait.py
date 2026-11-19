@@ -27,7 +27,9 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")
 # never a capability. spoke-clerr: no capability and describe-cluster fails. spoke-late2:
 # like spoke-late but its cluster is already ACTIVE by the time its turn comes (the first
 # describe-cluster, before any wait, saw CREATING). spoke-nocap: cluster CREATING then ACTIVE,
-# a capability that is never created.
+# a capability that is never created (spoke-nocap2: the same, a second one). spoke-none2:
+# CREATING forever, named so that spoke-none is a prefix of it. spoke-pp: the first
+# describe-cluster (the pre-pass) is throttled, then CREATING, then ACTIVE.
 FAKE_AWS = r"""#!/usr/bin/env bash
 echo "$*" >> "$FAKE_AWS_LOG"
 val() { prev=""; for a in "$@"; do [ "$prev" = "$KEY" ] && { echo "$a"; return; }; prev="$a"; done; }
@@ -40,7 +42,8 @@ case "$1 $2" in
     C=$(KEY=--cluster-name val "$@")
     N=$(grep -c "describe-capability --cluster-name $C " "$FAKE_AWS_LOG")
     case "$C" in
-      acme-spoke-none|acme-spoke-new|acme-spoke-new2|acme-spoke-clerr|acme-spoke-nocap) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
+      acme-spoke-none|acme-spoke-none2|acme-spoke-new|acme-spoke-new2|acme-spoke-clerr|acme-spoke-nocap|acme-spoke-nocap2) echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254 ;;
+      acme-spoke-pp) if [ "$N" -le 2 ]; then echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254; fi; S=ACTIVE ;;
       acme-spoke-late2) if [ "$N" -le 2 ]; then echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254; fi; S=ACTIVE ;;
       acme-spoke-late)
         if [ "$N" -le 2 ]; then echo "An error occurred (ResourceNotFoundException) when calling the DescribeCapability operation" >&2; exit 254; fi
@@ -58,9 +61,13 @@ case "$1 $2" in
     C=$(KEY=--name val "$@")
     N=$(grep -c "describe-cluster --name $C " "$FAKE_AWS_LOG")
     case "$C" in
-      acme-spoke-new|acme-spoke-new2|acme-spoke-err) echo CREATING ;;
+      acme-spoke-new|acme-spoke-new2|acme-spoke-none2|acme-spoke-err) echo CREATING ;;
       acme-spoke-late|acme-spoke-late2) if [ "$N" -le 1 ]; then echo CREATING; else echo ACTIVE; fi ;;
-      acme-spoke-nocap) if [ "$N" -le 2 ]; then echo CREATING; else echo ACTIVE; fi ;;
+      acme-spoke-nocap|acme-spoke-nocap2) if [ "$N" -le 2 ]; then echo CREATING; else echo ACTIVE; fi ;;
+      acme-spoke-pp)
+        # the first look (the pre-pass) is throttled; later looks: CREATING, then ACTIVE
+        if [ "$N" -le 1 ]; then echo "An error occurred (ThrottlingException) when calling the DescribeCluster operation" >&2; exit 254; fi
+        if [ "$N" -le 2 ]; then echo CREATING; else echo ACTIVE; fi ;;
       acme-spoke-clerr) echo "An error occurred (AccessDeniedException) when calling the DescribeCluster operation" >&2; exit 254 ;;
       *) echo ACTIVE ;;
     esac ;;
@@ -81,7 +88,7 @@ esac
 ALL = "acme-hub acme-spoke-dev acme-spoke-upd acme-spoke-prod acme-spoke-deg acme-spoke-none acme-spoke-err"
 
 
-def _run(tmp_path, wait, clusters=ALL, task_args=(), stale=""):
+def _run(tmp_path, wait, clusters=ALL, task_args=(), stale="", provider="kind-kro-ack"):
     r = tmp_path / "repo"
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
@@ -92,7 +99,7 @@ def _run(tmp_path, wait, clusters=ALL, task_args=(), stale=""):
     (r / "workshop").mkdir()
     shutil.copy(os.path.join(REPO, "workshop", "Taskfile.yaml"), r / "workshop" / "Taskfile.yaml")
     (r / "config.local.yaml").write_text(
-        "clusterProvider: kind-kro-ack\nresourcePrefix: acme\naws: {region: us-west-2}\n")
+        f"clusterProvider: {provider}\nresourcePrefix: acme\naws: {{region: us-west-2}}\n")
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in (("aws", FAKE_AWS), ("sleep", "#!/bin/sh\necho \"sleep $*\" >> \"$FAKE_AWS_LOG\"\n")):
@@ -287,3 +294,35 @@ def test_active_cluster_that_never_gets_a_capability_waits_only_the_grace(tmp_pa
     assert "⚠ kro capability logs NOT enabled for: acme-spoke-nocap " in out, out
     assert sum(int(l.split()[1]) for l in _sleeps(tmp_path)) == 195, _sleeps(tmp_path)
     assert sources == [], sources
+
+
+def test_two_kro_less_spokes_each_get_their_own_grace(tmp_path):
+    res, out, _ = _run(tmp_path, "600", "acme-spoke-nocap acme-spoke-nocap2")
+    assert res.returncode == 0, out
+    assert "acme-spoke-nocap: cluster is ACTIVE, no 'kro' capability yet after 195s" in out, out
+    assert "acme-spoke-nocap2: cluster is ACTIVE, no 'kro' capability yet after 195s" in out, out
+
+
+def test_cluster_name_that_is_a_prefix_of_a_creating_one_is_not_waited_for(tmp_path):
+    res, out, _ = _run(tmp_path, "50", "acme-spoke-none acme-spoke-none2")
+    assert res.returncode == 0, out
+    assert "acme-spoke-none: no 'kro' capability — skipping" in out, out
+    assert "acme-spoke-none2: cluster is CREATING, no 'kro' capability yet after 50s" in out, out
+    assert "⚠ kro capability logs NOT enabled for: acme-spoke-none2 " in out, out
+
+
+def test_throttled_prepass_still_waits_for_the_spoke(tmp_path):
+    # describe-cluster throttled in the pre-pass: the spoke is treated as possibly CREATING.
+    res, out, sources = _run(tmp_path, "120", "acme-hub acme-spoke-pp")
+    assert res.returncode == 0, out
+    assert _delivered(sources, "acme-spoke-pp"), out
+    assert "✓ kro capability logs enabled for acme-* clusters" in out, out
+
+
+def test_kind_crossplane_creating_spoke_is_not_waited_for(tmp_path):
+    # kind-crossplane spokes have no kro capability by default: skipped at once, as before.
+    res, out, sources = _run(tmp_path, "600", "acme-spoke-new", provider="kind-crossplane")
+    assert res.returncode == 0, out
+    assert "acme-spoke-new: cluster is CREATING, no 'kro' capability yet after 0s" in out, out
+    assert "⚠ kro capability logs NOT enabled for: acme-spoke-new " in out, out
+    assert _sleeps(tmp_path) == [], _sleeps(tmp_path)
