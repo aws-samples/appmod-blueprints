@@ -1,6 +1,6 @@
 dependencies:
 - name: devlake
   repository: https://apache.github.io/devlake-helm-chart
-  version: 1.0.3-beta7
-digest: sha256:1ecf0311b976daee4c14d9cc62a538ad6a9196611e7bc4035817be594bf641d9
-generated: "2026-06-05T14:48:21.295981489Z"
+  version: 1.0.3-beta14
+digest: sha256:9e6779dba9148c7ec0e84c1f6e767a6f7ba6679c4d131dc0dd3f7ce5d5b426dc
+generated: "2026-11-19T13:01:09.611558-05:00"

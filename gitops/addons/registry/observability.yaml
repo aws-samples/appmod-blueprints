@@ -205,7 +205,7 @@ grafana-dashboards:
     # would block grafana-dashboards-hub on a non-existent source secret.
     devlake:
       enabled: '{{index .metadata.labels "enable_devlake" | default "false"}}'
-    devlake_version: 'v1.0.3-beta7'
+    devlake_version: 'v1.0.3-beta14'
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret

@@ -21,7 +21,7 @@ devlake:
       # boot, so DevLake comes up ready to serve on a clean deploy.
       FORCE_MIGRATION: "true"
     image:
-      tag: v1.0.3-beta7
+      tag: v1.0.3-beta14
     livenessProbe:
       httpGet:
         path: /ping
@@ -63,6 +63,15 @@ devlake:
         drop: ["ALL"]
       seccompProfile:
         type: RuntimeDefault
+    # Chart >= 1.0.3-beta14 reads the waiting-database-ready init container's security
+    # context from here; earlier charts read alpine.containerSecurityContext below.
+    initContainerSecurityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
   alpine:
     securityContext:
       runAsNonRoot: true
@@ -77,7 +86,7 @@ devlake:
         type: RuntimeDefault
   ui:
     image:
-      tag: v1.0.3-beta7
+      tag: v1.0.3-beta14
     resources:
       requests:
         cpu: 50m
