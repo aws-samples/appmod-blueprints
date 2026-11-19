@@ -272,12 +272,21 @@ Run these on a dev spoke with one app.
 
 ## Related fixes (independent of this design)
 
-These don't depend on the spike. Track each one as its own issue (links to be added) so it can land separately.
+These don't depend on the spike and land separately on branch `fix/dora-devlake-related`.
 
-- **PR sensor filter likely never matches:** `pull-request-webhook` filters `body.object_attributes.target_branch` as both string `main` and bool `false`. Data filters must all pass, so merge-request events are dropped. The bool filter was probably meant for `draft`.
-- **`dorapullrequest` IDs:** `pullRequestKey` should use `object_attributes.iid`, and `headRepoId` should be `.project.id`, matching `repoId`.
-- **Incident filter:** only count GitLab issues with `issue_type == "incident"` (or a label) toward change failure rate.
-- **DevLake version:** upgrade from `v1.0.3-beta7` to `v1.0.3-beta14` (not beta15, which has a broken migration). Bump both `configs/devlake/values.yaml` and `devlake_version` in `registry/observability.yaml`. beta14 keeps the `connections/:connectionId/pull_requests`, `…/issues` and `…/deployments` routes the current workflows use, and adds an auth chain that stays off unless `AUTH_ENABLED=true`.
-- **Lake memory:** re-measure; the 512Mi limit is likely too low.
-- **Lake API exposure:** `devlake-lake:8080` accepts unauthenticated calls from anywhere in the hub cluster. Add a NetworkPolicy that allows only the `devlake` namespace (consumer, setup) and the team namespaces' setup and webhook workflows.
-- **Docs:** state that DevLake computes change failure rate and recovery time from incidents linked by timestamp, not from rollout failures (workshop content and `.kiro/skills/eks-platform-engineering/references/measuring-success.md`).
+Done on that branch:
+
+- **No-op merge-request filter:** `pull-request-webhook` also tests `body.object_attributes.target_branch` as bool `false`. In Argo Events v1.9.10 (`pkg/sensors/dependencies/filter.go`) a bool filter parses its own value and compares it with gjson's `Bool()` of the field. For a string like `"main"` that is `false`, so the filter always passes. It doesn't drop events, as an earlier revision of this doc said; it's dead config. Removed.
+- **`dorapullrequest` keys:** `pullRequestKey` now uses the MR number (`object_attributes.iid`) instead of GitLab's global `id`, and `headRepoId` uses `.project.id`, the same as `repoId`. The record `id` is unchanged, so existing rows are updated, not duplicated. DevLake decodes webhook bodies with `WeaklyTypedInput`, and sets `baseRepoId` to `webhook:<connectionId>` itself.
+- **DevLake `v1.0.3-beta7` → `v1.0.3-beta14`** (not beta15, which has a broken migration):
+  - Chart dependency, `Chart.lock`, image tags, and `devlake_version` in `registry/observability.yaml`.
+  - beta14 moved the Grafana dashboards to `grafana/dashboards/mysql/` and renamed the detail dashboards (for example `DORADetails-ChangeFailureRate.json` → `dora-details-change-failure-rate.json`). `grafana-dashboards/templates/dora-dashboards.yaml` is updated to match. They still reference the `mysql` datasource.
+  - The upstream chart's values only changed image repositories (scarf mirror → Docker Hub) and added optional keys, so our overrides are unchanged.
+  - beta14 keeps the `connections/:connectionId/…` routes the current workflows use, and its new auth chain stays off unless `AUTH_ENABLED=true`.
+- **Docs:** `.kiro/skills/eks-platform-engineering/references/measuring-success.md` now says DevLake derives change failure rate and recovery time from incidents linked to deployments by time, not from rollout failures.
+
+Not done (need a decision or a running cluster):
+
+- **Incident filter** (`issue_type == "incident"` or a label): the workshop's change-failure-rate exercise (`scripts/validation/validate-workshop-from-content.md`, Phase 70.3a) creates a plain issue. Filtering would break that exercise unless the content creates an incident-type issue or adds a label. Change the content and the filter together.
+- **Lake memory:** the 512Mi limit is likely too low, but set it from measured usage on a running hub, not by guessing.
+- **Lake API exposure:** `devlake-lake:8080` accepts unauthenticated calls from anywhere in the hub cluster. A NetworkPolicy on the lake alone isn't enough: `devlake-ui:4000`, which team workflows must reach for webhooks, proxies `/api/*` to the lake. Options are `AUTH_ENABLED=true` with API keys (and the consumer on `/rest/...`), or restricting the config UI's proxy to `/api/rest/*` for callers outside `devlake`.
