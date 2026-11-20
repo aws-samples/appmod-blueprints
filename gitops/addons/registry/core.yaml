@@ -435,10 +435,10 @@ aws-load-balancer-controller:
   namespace: kube-system
   chartName: aws-load-balancer-controller
   chartRepository: https://aws.github.io/eks-charts
-  # On chart bump: re-check that the Issuer name in charts/lbc-webhook-issuer
-  # (aws-load-balancer-selfsigned-issuer) still matches the issuerRef of the
-  # chart's webhook Certificate (templates/webhook.yaml) and that it still has no sync-wave.
-  defaultVersion: '1.14.1'
+  # On chart bump: re-check that the chart still honours certManager.issuerRef
+  # (templates/webhook.yaml Certificate issuerRef, templates/cert-manager.yaml gate)
+  # so the webhook cert keeps using the wave -1 Issuer from charts/lbc-webhook-issuer.
+  defaultVersion: '1.17.1'
   annotationsAppSet:
     argocd.argoproj.io/sync-wave: '5'
   selector:
@@ -484,6 +484,14 @@ aws-load-balancer-controller:
     # serving cert and the injected caBundle from the same issuer, so they
     # always rotate together. cert-manager syncs at wave 2 (before LBC at 5).
     enableCertManager: true
+    # Sign the webhook serving cert with the Issuer rendered by charts/lbc-webhook-issuer
+    # (sync-wave -1, so it exists before the Certificate). With issuerRef set, chart
+    # 1.17.1 renders none of its own Issuers or root CA (templates/cert-manager.yaml is
+    # gated on `not .Values.certManager.issuerRef`).
+    certManager:
+      issuerRef:
+        kind: Issuer
+        name: aws-load-balancer-selfsigned-issuer
     serviceAccount:
       create: true
       name: aws-load-balancer-controller-sa
@@ -664,7 +672,7 @@ external-dns:
 karpenter:
   namespace: kube-system
   path: '{{.metadata.annotations.addonsRepoBasepath}}addons/charts/karpenter'
-  defaultVersion: '0.1.0'
+  defaultVersion: '0.1.1'
   annotationsAppSet:
     # After crossplane-base (wave 3) registers iam/eks CRDs. The in-chart IAM
     # resources carry their own negative sync-waves so they apply first within this app.
