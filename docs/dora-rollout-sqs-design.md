@@ -1,7 +1,7 @@
 # Design: Record DORA deployments from Argo Rollouts via SQS
 
 Status: Proposed
-Scope: `argo-rollouts` addon, `ack-pod-identity` and `crossplane-pod-identity` (argo-rollouts identity), a new hub-side `devlake-spoke-queue` addon, `devlake` chart (shared consumer), `cicd-pipeline` RGD (one ConfigMap added, DORA polling removed)
+Scope: `argo-rollouts` addon, `ack-pod-identity` and `crossplane-pod-identity` (argo-rollouts identity), a new hub-side `devlake-spoke-queue` addon and `DevlakeSpokeQueue` RGD, `devlake` chart (shared consumer), `cicd-pipeline` RGD (one ConfigMap added, DORA polling removed), and both cluster providers, `kind-kro-ack` and `kind-crossplane` (a new `<prefix>-cluster-mgmt-sqs` role)
 
 ## Problem
 
@@ -70,6 +70,7 @@ Principles:
 {
   "result": "SUCCESS | FAILURE",
   "rollout": "<rollout name>",
+  "uid": "<rollout.metadata.uid>",
   "namespace": "<rollout namespace>",
   "images": ["<image of each container in the pod template>", "..."],
   "revision": "<rollout.argoproj.io/revision annotation>",
@@ -84,13 +85,16 @@ Principles:
   - SUCCESS: `lastTransitionTime` of the `Healthy` condition;
   - FAILURE: `lastTransitionTime` of the `Progressing` condition (reason `RolloutAborted` when aborted);
   - if the condition is missing, the notification time.
-- `revision` identifies the rollout; `podHash` is for debugging only.
+- `uid` and `revision` together identify one rollout of one Rollout object. `uid` keeps record ids unique across two spokes with the same `environment` label and after a Rollout is deleted and re-created, which restarts its revisions at 1. `podHash` is for debugging only.
+- `result` is `SUCCESS` or `FAILURE`, the only deployment results DevLake beta14 defines (`core/models/domainlayer/devops/cicd_pipeline.go`). There's no `ABORT`, so an aborted canary is a `FAILURE`.
 
 ### Why `oncePer` uses the revision, not the pod hash
 
 notifications-engine never clears an `oncePer` entry when the condition goes false (`pkg/controller/state.go`). It keeps up to 100 entries (`notifiedHistoryMaxSize`), keyed by the `oncePer` value. Keying on `currentPodHash` would therefore drop rollbacks: rolling back to a revision that was Healthy before brings back a pod hash that already has an entry, so no SUCCESS is sent.
 
-`rollout.argoproj.io/revision` on the Rollout increments on every rollout, including a rollback to an older ReplicaSet. Keying both `oncePer` and the DevLake record `id` on it records every rollout once, and a rollback gets its own record instead of overwriting an earlier one.
+`rollout.argoproj.io/revision` on the Rollout increments on every rollout, including a rollback to an older ReplicaSet. Keying `oncePer` on it records every rollout once. Keying the DevLake record `id` on it, together with the Rollout `uid`, means a rollback gets its own record instead of overwriting an earlier one.
+
+`oncePer` doesn't need the `uid`: the controller keeps its `notified` state in an annotation on the Rollout, so a re-created Rollout starts with fresh state.
 
 ## Changes
 
@@ -116,6 +120,7 @@ notifications:
         {{- range .rollout.status.conditions -}}{{- if eq .type "Healthy" -}}{{- $at = .lastTransitionTime -}}{{- end -}}{{- end -}}
         {"result":"SUCCESS",
          "rollout":"{{.rollout.metadata.name}}",
+         "uid":"{{.rollout.metadata.uid}}",
          "namespace":"{{.rollout.metadata.namespace}}",
          "images":[{{range $i, $c := .rollout.spec.template.spec.containers}}{{if $i}},{{end}}"{{$c.image}}"{{end}}],
          "revision":"{{index .rollout.metadata.annotations "rollout.argoproj.io/revision"}}",
@@ -125,7 +130,9 @@ notifications:
       # same, with "result":"FAILURE" and $at from the Progressing condition
 ```
 
-The per-cluster parts go in the registry's `valuesObject` (`gitops/addons/registry/gitops.yaml`, next to the existing `serviceAccount` annotation), which is templated per cluster from its cluster secret. They are the `service.awssqs` notifier, and a **default subscription** that sends every Rollout's events to this cluster's queue:
+The per-cluster parts go in the registry's `valuesObject` (`gitops/addons/registry/gitops.yaml`, next to the existing `serviceAccount` annotation), which is templated per cluster from its cluster secret. They are the `service.awssqs` notifier, and a **default subscription** that sends every Rollout's events to this cluster's queue.
+
+The subscription uses the chart's own `notifications.subscriptions` list. Chart 2.40.9 renders it into the ConfigMap's `subscriptions` key (`templates/controller/notifications-configmap.yaml`), so there's no need to pass it through `notifiers`:
 
 ```yaml
   valuesObject:
@@ -133,19 +140,16 @@ The per-cluster parts go in the registry's `valuesObject` (`gitops/addons/regist
       notifiers:
         service.awssqs: |
           region: '{{default .metadata.annotations.aws_region (index .metadata.annotations "hub_region")}}'
-        # Only for clusters that have a queue: the same gate and environment mapping as
-        # the devlake-spoke-queue addon (section 3). Otherwise Rollouts would send to a
-        # queue that doesn't exist.
-        subscriptions: |
-          {{- if and (eq (index .metadata.labels "enable_devlake_spoke_queue") "true") (has (index .metadata.labels "environment") (list "dev" "prod")) }}
-          - recipients: ['awssqs:{{.metadata.annotations.resource_prefix}}-dora-{{.metadata.annotations.aws_cluster_name}}']
-            triggers: [on-dora-success, on-dora-failure]
-          {{- end }}
+      # Only for clusters that have a queue: the same gate and environment mapping as
+      # the devlake-spoke-queue addon (section 3). Otherwise Rollouts would send to a
+      # queue that doesn't exist.
+      subscriptions: '{{ if and (eq (index .metadata.labels "enable_devlake_spoke_queue") "true") (has (index .metadata.labels "environment") (list "dev" "prod")) }}[{"recipients":["awssqs:{{.metadata.annotations.resource_prefix}}-dora-{{.metadata.annotations.aws_cluster_name}}"],"triggers":["on-dora-success","on-dora-failure"],"selector":"!dora.platform/exclude"}]{{ else }}[]{{ end }}'
 ```
 
-- With a default subscription, Rollouts need no per-app annotations, so **`appmod-service` doesn't change**.
+- With a default subscription, Rollouts need no per-app annotations, so **`appmod-service` doesn't change**. It also covers Rollouts KubeVela creates.
+- **Selector:** `!dora.platform/exclude` skips any Rollout labeled `dora.platform/exclude`, so Rollouts that aren't app deployments don't send a message each. App Rollouts need no label, so KubeVela coverage stays. The consumer drops non-pipeline Rollouts anyway; the selector just saves the messages. If most Rollouts on a spoke turn out not to be apps, switch to an opt-in label instead.
+- How the ApplicationSet passes a list through `valuesObject` (a JSON string as above, or a templated YAML list) is checked in spike check 2.
 - `hub_region` is a new cluster secret annotation (section 3): the region of the hub's DevLake RDS, where the queues live. Until it exists, the spoke's own `aws_region` is used, which is only right while hub and spokes share a region.
-- If the chart doesn't render `subscriptions` through `notifiers` (spike check 2), fall back to a Rollout annotation in `appmod-service` with the same recipient, using its `clusterName` field.
 
 ### 2. Spoke: argo-rollouts IAM (both providers)
 
@@ -154,13 +158,12 @@ The argo-rollouts role is created by whichever pod identity chart the cluster's 
 | Provider | Chart and overlays | Trust policy today |
 |---|---|---|
 | kro-ack (default) | `gitops/addons/charts/ack-pod-identity`, enabled in `overlays/environments/{dev,prod}/ack-pod-identities/values.yaml` | IRSA when `skipPIA` and `aws.oidcIssuer` are set (`templates/role.yaml:22-40`). Works. |
-| Crossplane | `gitops/addons/charts/crossplane-pod-identity`, enabled only in `overlays/environments/dev/pod-identities/values.yaml` | Only `pods.eks.amazonaws.com` (`templates/role.yaml:27`). **The IRSA annotation can't assume it**, so on this path the role is unusable for Rollouts today (the AMP gate included). |
+| Crossplane | `gitops/addons/charts/crossplane-pod-identity`, enabled in `overlays/environments/{dev,prod}/pod-identities/values.yaml` | Only `pods.eks.amazonaws.com` (`templates/role.yaml:27`). **The IRSA annotation can't assume it**, so on this path the role is unusable for Rollouts today (the AMP gate included). |
 
 Changes:
 
 - **Both charts:** add `sqs:SendMessage` and `sqs:GetQueueUrl` on exactly this cluster's queue, `arn:aws:sqs:<hub region>:<account>:<prefix>-dora-{{ .Values.aws.clusterName }}`, to the argo-rollouts policy. Both charts render the policy document through `tpl`, and the role is per cluster, so the dev spoke can't write to the prod queue, and the reverse.
 - **`crossplane-pod-identity`:** add the IRSA trust branch the ACK chart has (`Federated` OIDC provider, `sts:AssumeRoleWithWebIdentity`, `sub` = `system:serviceaccount:<ns>:<sa>`) when `skipPIA` is true and `aws.oidcIssuer` is set, and pass `oidcIssuer` from the registry as `ack_pod_identities` does. This is a bug fix in its own right: it also unblocks the AMP gate on Crossplane spokes.
-- **Crossplane prod:** argo-rollouts isn't enabled in `overlays/environments/prod/pod-identities`. That overlay asks for workload identities to self-provision rather than be added there (see open questions). kro-ack prod already enables it.
 
 The SA already carries `eks.amazonaws.com/role-arn: …/<cluster>-argo-rollouts` (`gitops/addons/registry/gitops.yaml`).
 
@@ -204,14 +207,32 @@ devlake_spoke_queue:
     hubClusterName: '{{.metadata.annotations.hub_cluster_name}}'
 ```
 
-Chart `gitops/addons/charts/devlake-spoke-queue`, rendered into `devlake` on the hub:
+Chart `gitops/addons/charts/devlake-spoke-queue` renders one `DevlakeSpokeQueue` instance into `devlake` on the hub. The new RGD `gitops/addons/charts/kro/resource-groups/manifests/devlake-spoke-queue/` builds the graph below. It's a kro graph rather than plain Helm templates for one reason: `peeks/depends-on` (the convention `cicd-pipeline` uses) orders each ACK resource after its `IAMRoleSelector`. kro then deletes the resource **before** its selector, so a teardown can't leave a Queue, Role or PodIdentityAssociation CR stuck with no role to delete it. Helm can't express that order, least of all across two Applications.
 
-| Resource | Notes |
-|---|---|
-| ACK `Queue` `<prefix>-dora-<clusterName>` | In `region`. `receiveMessageWaitTimeSeconds: "20"`, `messageRetentionPeriod: "345600"` (4 days), so events wait in the queue while the hub or DevLake is down. |
-| ACK IAM `Policy` + `Role` (pod identity trust) + `PodIdentityAssociation` on `hubClusterName` + ServiceAccount `dora-<clusterName>` | Only `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueUrl`, `sqs:GetQueueAttributes` on **this** queue. One identity per spoke, so no policy has to list every queue. |
-| `EventSource` `dora-<clusterName>` | `sqs.rollout`: this queue, `region`, `waitTimeSeconds: 20`, `jsonBody: true`; runs as `dora-<clusterName>`. |
-| `Sensor` `dora-<clusterName>` | One dependency. Its trigger submits `dora-record-deployment` with `body` and `environment`, from `environmentMap`. |
+| Resource id | Resource | Notes |
+|---|---|---|
+| `selectorSqs`, `selectorIam`, `selectorEks` | Cluster-scoped `IAMRoleSelector`s for `sqs` → `<prefix>-cluster-mgmt-sqs`, `iam` → `<prefix>-cluster-mgmt-iam`, `eks` → `<prefix>-cluster-mgmt-eks` | `namespaceSelector: [devlake]`, plus `resourceLabelSelector: kro.run/instance-name: <instance>`, as `cicd-pipeline` does. Each spoke's selectors match only that spoke's resources, so the instances never conflict. |
+| `queue` | ACK `Queue` `<prefix>-dora-<clusterName>`, annotated `peeks/depends-on: ${selectorSqs.metadata.name}` | In `region`. A **Standard** queue. `receiveMessageWaitTimeSeconds: "20"`; `messageRetentionPeriod: "345600"` (4 days), so events wait while the hub or DevLake is down; `sqsManagedSSEEnabled: "true"`; a queue policy that denies any request with `aws:SecureTransport` false. |
+| `consumerPolicy`, `consumerRole` | ACK IAM `Policy` + `Role` (pod identity trust), `peeks/depends-on: ${selectorIam.metadata.name}` | Only `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueUrl`, `sqs:GetQueueAttributes` on **this** queue's ARN. One identity per spoke, so no policy has to list every queue. |
+| `consumerPia` | ACK `PodIdentityAssociation` on `hubClusterName` for SA `dora-<clusterName>`, `peeks/depends-on: ${selectorEks.metadata.name}` | |
+| `consumerSa` | ServiceAccount `dora-<clusterName>` | |
+| `eventsource` | `EventSource` `dora-<clusterName>` | `sqs.rollout`: this queue, `region`, `waitTimeSeconds: 20`, `jsonBody: true`; runs as `dora-<clusterName>`. |
+| `sensor` | `Sensor` `dora-<clusterName>` | One dependency. Its trigger submits `dora-record-deployment` with `body` and `environment`, from `environmentMap`. |
+
+**Delivery semantics.**
+
+- The queue is Standard, so delivery is at-least-once and unordered. The Rollouts SQS notifier sends no message group or deduplication id, so a FIFO queue wouldn't help.
+- Duplicates are harmless: the record `id` is deterministic, so a repeated message updates the same DevLake row.
+- Order doesn't matter: each record carries its own timestamps.
+- The EventSource deletes a message once it has handed it to the event bus. A `dora-record-deployment` failure after that point is **not** redelivered from SQS, so retries live in the workflow (section 4).
+
+**Provisioning role `<prefix>-cluster-mgmt-sqs`.**
+
+- The ACK capability role can't create SQS resources: it only has `AssumeWorkloadRoles` and `ManageIRSARoles`. `amp-incident` routes its SQS/SNS CRs through a dedicated `cluster-mgmt-incident-bridge` role for the same reason (`workshop/aiops-agent/chart/files/aiops-agent-app.yaml:631-665`).
+- So both cluster providers create `<prefix>-cluster-mgmt-sqs` next to the existing `cluster-mgmt-*` roles: `cluster-providers/kind-kro-ack/Taskfile.yaml` and `cluster-providers/kind-crossplane/Taskfile.yaml`, including the `privilegedSteps: external` path.
+- It is trusted by the ACK capability role, like the other `cluster-mgmt-*` roles. The capability's `AssumeWorkloadRoles` already covers `<prefix>-cluster-mgmt-*`.
+- Its policy allows only `sqs:CreateQueue`, `DeleteQueue`, `GetQueueAttributes`, `SetQueueAttributes`, `GetQueueUrl`, `TagQueue`, `UntagQueue` and `ListQueueTags`, on `arn:aws:sqs:*:<account>:<prefix>-dora-*`.
+- Update `workshop/scripts/tests/test_install_no_admin_managed_policies.py`, and the teardown sweep (add an SQS reaper for `<prefix>-dora-*`), to match.
 
 ```yaml
 # chart values
@@ -233,24 +254,30 @@ Pieces every spoke's Sensor uses, in `gitops/addons/charts/devlake`, in the `dev
 | `dora-eventbus.yaml` | Argo Events `EventBus` `default` | EventBuses are per namespace, and `devlake` has none. Use the same JetStream spec and PDB as the team namespaces. |
 | `dora-sensor-rbac.yaml` | ServiceAccount + Role for the Sensors to submit Workflows in `devlake` | |
 | `dora-workflowtemplate.yaml` | `WorkflowTemplate` `dora-record-deployment` + an SA allowed only `workflowtaskresults` and `get` on ConfigMaps in `devlake` | See below. |
-| `iam-role-selectors.yaml` | Add `iam` and `eks` `IAMRoleSelector`s for the `devlake` namespace | The chart has `ec2` and `rds` only. They're needed for the per-spoke IAM resources. |
 
-SQS permissions for ACK: there's no `cluster-mgmt-sqs` role. Either rely on the ACK capability role as `amp-incident` does, or add the role and a selector here (see open questions).
+The `sqs`, `iam` and `eks` `IAMRoleSelector`s live in each `DevlakeSpokeQueue` instance (section 3), not in this chart, so `peeks/depends-on` can order them.
 
 **`dora-record-deployment`**: one script step, generic.
 
 - Parameters: `body`, `environment` (set by the trigger, never read from the body), `dryRun` (from `.Values.dora.dryRun`, default `true` in Phase 1).
 - `BODY` comes in as an env var (it is untrusted input, so never inline it in the script).
 - Steps:
-  1. Read `namespace` and accept only a valid Kubernetes namespace name (`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`).
+  1. Validate the message; on any failure, log and exit 0:
+     - `namespace` is a valid Kubernetes namespace name (`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`);
+     - `result` is `SUCCESS` or `FAILURE`;
+     - `finishedAt` is an RFC 3339 timestamp;
+     - `revision` is a positive integer;
+     - `uid` is a UUID.
   2. `GET` ConfigMap `dora-app-<namespace>` in `devlake`. If it's missing (no pipeline for this namespace), log and exit 0.
   3. From the ConfigMap, take `connectionName`, `repoUrl` and `imageRepository`. Pick the entry in `images` that is `<imageRepository>:<40-hex>`. If there's none (placeholder image, gate image, another app's image), log and exit 0.
   4. Check the connection exists (`GET …/connections/by-name/<connectionName>`). If it doesn't, log and exit 0. On any other error, fail.
   5. Build the payload and, unless `dryRun`, `POST …/connections/by-name/<connectionName>/deployments`. Fail on a non-2xx response.
+- **Retries:** the template sets `retryStrategy` (`limit: 6`, `retryPolicy: Always`, exponential backoff from 10s with `factor: 2` up to 10m), because DevLake restarts are routine. SQS won't redeliver once the EventSource has consumed the message (section 3).
+- **Alerting:** the template emits an Argo Workflows Prometheus counter on failure (`dora_record_deployment_failed_total`, labeled by environment). An alert fires when it increases. A failed workflow after all retries is a lost record; re-run it from the Argo UI.
 - Payload:
 
 ```
-id:            <namespace>-<environment>-<revision>-<result lowercased>
+id:            <rollout uid>-<revision>-<result lowercased>
 name:          deployment-<sha[0:7]>
 environment:   the environment parameter
 result:        body.result
@@ -299,7 +326,7 @@ Keep: `doraincident`, `dorapullrequest`, `dorasetuptemplate`, `dorasetupworkflow
 - **Start time becomes the finish time.** Lead time is measured to `finishedDate`, so the impact is small.
 - **One commit per deployment.** Only the image commit is recorded, not every commit in the push. In beta14, lead time matches a PR to its first production deployment through `commits_diffs` and the PR's `mergeCommitSha`, not through the list of commits on the deployment.
 - **No timeout.** A rollout paused for manual promotion is recorded whenever it resolves.
-- **Same commit, several records.** Records are keyed by Rollout revision, so redeploying a commit, or rolling back to it, adds a new record instead of overwriting the old one. A SUCCESS and a FAILURE at the same revision (an aborted canary that is then retried) are also kept separate by the `result` suffix.
+- **Same commit, several records.** Records are keyed by Rollout `uid` and revision, so redeploying a commit, or rolling back to it, adds a new record instead of overwriting the old one. A SUCCESS and a FAILURE at the same revision (an aborted canary that is then retried) are also kept separate by the `result` suffix.
 - **A second abort of the same revision isn't recorded.** `oncePer` sends one FAILURE per revision. Retrying an aborted canary and aborting it again doesn't change the revision.
 - **One consumer template for all apps.** If it's broken, no app records deployments, but events wait in SQS for 4 days. Watch each queue's `ApproximateAgeOfOldestMessage`.
 
@@ -308,10 +335,10 @@ Keep: `doraincident`, `dorapullrequest`, `dorasetuptemplate`, `dorasetupworkflow
 Run these on a dev spoke with one app, **on both providers** where marked.
 
 1. **IRSA credentials (kro-ack and Crossplane):** the Rollouts `awssqs` service on chart 2.40.9 gets credentials from the IRSA role through the default chain. Send a test message to a hand-made queue, and confirm a send to another cluster's queue is denied. On Crossplane, do this after adding the IRSA trust branch (section 2).
-2. **Values merge:** `service.awssqs` and `subscriptions` from the registry `valuesObject`, and the triggers and templates from `configs/argo-rollouts/values.yaml`, all end up in `argo-rollouts-notification-configmap`. The default subscription fires for a Rollout with no annotations.
+2. **Values merge:** `service.awssqs` and the `notifications.subscriptions` list from the registry `valuesObject`, and the triggers and templates from `configs/argo-rollouts/values.yaml`, all end up in `argo-rollouts-notification-configmap`. The default subscription fires for a Rollout with no annotations, and the `!dora.platform/exclude` selector skips a labeled one.
 3. **kro and the `notified` annotation:** kro keeps the controller's `notified.notifications.argoproj.io` annotation on the Rollout through reconciles. If kro strips it, `oncePer` can't track what it already sent, and notifications repeat on every reconcile. That would block this design; you'd have to move the subscription or tracking elsewhere.
 4. **Cross-namespace ConfigMap:** kro (capability) can create `dora-app-<namespace>` in `devlake` from a CICDPipeline in another namespace, and deletes it when the instance is deleted.
-5. **`destinationHub` + ACK in `devlake`:** with `enable_devlake_spoke_queue: 'true'` on the spoke, the `devlake-spoke-queue` app lands on the hub at wave 8, after `devlake`. ACK creates the queue (with the chosen SQS role) and the IAM role and pod identity association through the new `iam`/`eks` selectors. Without the label, no app is generated and the spoke's ConfigMap has no `dora` subscription.
+5. **`destinationHub` + ACK in `devlake`:** with `enable_devlake_spoke_queue: 'true'` on the spoke, the `devlake-spoke-queue` app lands on the hub at wave 8, after `devlake`. ACK creates the queue through `<prefix>-cluster-mgmt-sqs`, and the IAM role and pod identity association through the instance's `iam`/`eks` selectors. Then delete the instance and confirm kro removes the Queue, Role and PodIdentityAssociation CRs before their selectors, with none left stuck. Without the label, no app is generated and the spoke's ConfigMap has no `dora` subscription.
 6. **Trigger expressions and conditions:**
    - `rollout.status.abort` and `phase == 'Degraded'` both fire for an aborted canary, and only one FAILURE is sent.
    - The `Healthy` and `Progressing` conditions carry the expected `lastTransitionTime` on argo-rollouts v1.8.
@@ -322,20 +349,33 @@ Run these on a dev spoke with one app, **on both providers** where marked.
 ## Migration
 
 1. **Phase 1:** ship changes 1–5 (without the removals) with `dora.dryRun: true`. Compare the logged payloads with the records the old path sends for one app across a dev push, a prod promotion, an abort, and a rollback.
+   - **Compare:** `environment`, `result`, the deployment commit's `commitSha`, and `finishedDate` within a window (about 2 minutes: the old path stamps the time its poll saw the result, the new one the condition's transition time).
+   - **Expected to differ, by design:**
+     - the record `id`;
+     - `refName`: `main` here, `refs/heads/main` today (`cicd-pipeline.yaml:1909`);
+     - the commit list: one image commit here, every commit in the push today;
+     - `startedDate`: equal to the finish time here, the ReplicaSet creation time today.
+   - **Extra records the old path never sent** (rollbacks, re-promotes) are expected too.
 2. **Phase 2:** in one PR, set `dora.dryRun: false` and make the removals in change 5. Running both paths live would double-count deployment frequency.
 3. **Tests and docs:**
    - Replace `workshop/scripts/tests/test_dora_prod_skip_placeholder.py` with tests of `dora-record-deployment`. The app image + SHA matches even when it isn't the first container. A placeholder or gate image, another app's repo, a non-SHA tag, an invalid namespace, and a namespace without a `dora-app-` ConfigMap are skipped.
    - Review `test_dora_setup_rerun.py`; setup is unchanged.
    - Update the workshop DORA troubleshooting text: check SQS depth or the `dora-<spoke>` EventSource logs, then the `dora-record-deployment` workflow in `devlake`.
 
+## Workshop content
+
+The workshop content describes today's flow, a workflow in the team namespace that checks the Rollout right after the push. Update it in the same release as Phase 2:
+
+- **`70_MeasuringPlatformSuccess/72_DeploymentFrequency`, practice and failure-demo steps:** the deployment record now appears as a `dora-record-deployment` workflow in `devlake`, after Argo CD syncs and the canary completes (or aborts), not as a workflow started by the push. Learners should watch that workflow, or the DevLake record, instead of the team-namespace workflow.
+- **Onboarding overview:** replace "the pipeline checks the Rollout after each push" with: the Rollouts controller reports each rollout's outcome through the spoke's queue, and the hub records it.
+- **Prod demos:** only `PRODUCTION` deployments move the DORA dashboards. The deployment-frequency and failure demos must deploy to the prod spoke, or say that dev deployments are recorded but not charted.
+
 ## Open questions
 
-- **Crossplane prod role:** enable argo-rollouts in the Crossplane prod `pod-identities` overlay (fast) or self-provision it (matches the prod convention)?
-- **SQS permissions for ACK in `devlake`:** rely on the ACK capability role (as `amp-incident` does) or add a scoped `cluster-mgmt-sqs` role and `IAMRoleSelector`?
 - **Cross-account spokes:** the design assumes hub and spokes share an account. Cross-account also needs an SQS queue policy that allows the spoke roles, plus `account` in `service.awssqs`.
 - **Other `environment` labels** (for example `staging`): map them to DevLake's `STAGING`/`TESTING`, or leave them unrecorded? They're unrecorded until added to `environmentMap` and the two places that mirror it.
 - **Two pipelines in one namespace:** today each pipeline deploys to its own namespace. If that ever changes, key the ConfigMap on namespace and rollout name.
-- **Add a DLQ?** Probably not: the EventSource deletes each message once it's handed to the event bus, so failures show up as failed workflows, not redeliveries.
+- **Add a DLQ?** No: a DLQ only catches messages SQS redelivers, and the EventSource deletes each message once it's on the event bus. Failures after that are failed `dora-record-deployment` workflows, covered by the retry strategy and the failure alert (section 4). A DLQ would only help if the EventSource itself kept failing to hand off, and then the queue's `ApproximateAgeOfOldestMessage` alarm is the signal.
 
 ## Related fixes (independent of this design)
 
