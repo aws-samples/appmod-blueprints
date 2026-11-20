@@ -248,6 +248,12 @@ spec:
           enableGeneralPurposeNodePool: ${schema.spec.enableGeneralPurposeNodePool}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
+          # Spoke NAT egress CIDR(s) (comma-separated), from the nested Vpc graph's
+          # ElasticIPAddress status, so the EksCluster can stamp them onto the spoke cluster
+          # secret (nat_egress_cidrs) for its own ingress-class-alb allowlist. The EIP's public IP
+          # resolves early (alongside the subnets the cluster already waits on), so this adds no
+          # material delay to cluster creation.
+          natEgressCidrs: ${vpc.status.natEgressCidrs}
           awsTags: ${schema.spec.?awsTags.orValue({})}
           argocdCapability:
             enabled: ${schema.spec.argocdCapability.enabled}

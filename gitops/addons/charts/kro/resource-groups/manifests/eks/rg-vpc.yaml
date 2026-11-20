@@ -35,13 +35,17 @@ spec:
       publicSubnet2ID: ${publicSubnet2.status.subnetID}
       privateSubnet1ID: ${privateSubnet1.status.subnetID}
       privateSubnet2ID: ${privateSubnet2.status.subnetID}
-      # Public NAT egress CIDR(s) of this VPC, as a LIST of /32s built in CEL from the ACK
-      # ElasticIPAddress status. Consumed on the hub by the ingress-class-alb allowlist
-      # (fleet_nat_egress_cidrs): a spoke running OAP addons calls the hub's public Keycloak/OTel
-      # through this NAT, so its EIP must be allowed (docs/platform/alb-ip-allowlist.md pitfall 1).
-      # List form so adding one NAT per AZ later (natGateways>1 -> eip2, …) is an append, not a
-      # shape change. Today there is a single NAT (natGateways default 1).
-      natEgressCidrs: ${[eip1.status.publicIP + "/32"]}
+      # Public NAT egress CIDR(s) of this VPC, as a COMMA-SEPARATED string of /32s built in CEL
+      # from the ACK ElasticIPAddress status. Two consumers: (1) the hub allowlist discovery reads
+      # every spoke's EIP CRs directly; (2) the SPOKE's own ingress-class-alb — this value is
+      # threaded into the spoke cluster-secret `nat_egress_cidrs` annotation (rg-eks.yaml) which the
+      # registry passes to the chart as `clusterEgressCidrs`, so a spoke that sets an allowlist
+      # includes its own NAT. A spoke's addons reach the hub's public Keycloak/OTel through this
+      # NAT (docs/platform/alb-ip-allowlist.md pitfall 1). It is a comma-separated STRING (not a
+      # list) because both consumers read a comma-separated value and the managed kro CEL has no
+      # join(). Today there is a single NAT (natGateways default 1); for a future NAT-per-AZ
+      # (natGateways>1 -> eip2, …) append: + "," + eip2.status.publicIP + "/32".
+      natEgressCidrs: ${eip1.status.publicIP + "/32"}
   resources: # how to publish a field in the RG claim e.g. vpcID
   - id: vpc
     template:

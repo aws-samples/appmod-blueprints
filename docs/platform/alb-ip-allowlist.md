@@ -372,12 +372,47 @@ and the other hub UIs). Two surfaces are exposed **separately** and are not cove
   `service.beta.kubernetes.io/aws-load-balancer-security-groups` annotation) through your fleet
   overlay, or front GitLab with your own edge. The `albInboundCidrs` / `inboundCidrs` keys do **not**
   reach it.
-- **Each spoke cluster** has its **own** `platform` ALB, created on the spoke by the spoke's own
-  `ingress-class-alb` addon. Its allowlist is driven by that spoke's cluster secret, which the
-  platform provisions through the kro `EksCluster` resource graph — the hub's `config.yaml`
-  `albInboundCidrs` does not propagate to spokes. Restrict a spoke ALB from the fleet overlay for
-  that spoke (`overlays/clusters/<spoke-name>/ingress-class-alb/values.yaml`, with the spoke's own
-  NAT egress IP) exactly as for the hub in [Where to put it](#where-to-put-it).
+- **Each spoke cluster** has its **own** internet‑facing `platform` ALB (the spoke's own
+  `ingress-class-alb` addon). It fronts the **participant applications**, so it is open to
+  `0.0.0.0/0` by default and the hub's `config.yaml` `albInboundCidrs` does **not** propagate to
+  spokes. Restrict it per spoke — see [Restrict a spoke's own ALB](#restrict-a-spokes-own-alb).
+
+---
+
+## Restrict a spoke's own ALB
+
+Each spoke runs its own `ingress-class-alb` (same chart as the hub) and therefore its own
+internet‑facing `platform` ALB. Unlike the hub ALB — which fronts operator UIs — a **spoke ALB
+fronts the participant applications**, so restricting it by source IP restricts **who can open the
+app**. Treat it as an explicit, operator‑chosen, opt‑in decision.
+
+**How to restrict it (today, per spoke).** Set `inboundCidrs` (and optionally `extraInboundCidrs`)
+in the spoke's fleet overlay, exactly as for the hub in [Where to put it](#where-to-put-it):
+
+```yaml
+# overlays/clusters/<spoke-name>/ingress-class-alb/values.yaml
+inboundCidrs:
+  - 203.0.113.0/24        # the participant / corporate source ranges allowed to reach the app
+```
+
+- **The spoke's own NAT is added automatically.** On `kind-kro-ack` / `kind-crossplane` the spoke's
+  own NAT egress IP is stamped onto its cluster secret (`nat_egress_cidrs`, from the kro VPC graph's
+  Elastic IP) and the chart appends it as `clusterEgressCidrs` once an allowlist is set — so a spoke
+  app that calls back through the spoke ALB keeps working without listing the spoke NAT by hand.
+  Nothing is added while the allowlist is empty.
+- **Participant lockout — the main caveat.** Because the spoke ALB is participant‑facing, an
+  allowlist that omits a participant's source range blocks that participant from the app. In a
+  corporate/VPN event the ranges are known and this is useful hardening; in an **open / public
+  workshop** they are not, so leave the spoke allowlist unset there. It must always be opt‑in and
+  operator‑chosen — never a silent default.
+- **Security‑group rule limit.** Each CIDR becomes one inbound rule per listener port; the managed
+  security group allows ~60 rules by default, so plan for roughly 30 CIDRs (fewer with HTTP+HTTPS)
+  — summarise ranges or move to AWS WAF beyond that (same as the hub, pitfall 3).
+- **Internal‑ALB / edge case.** If a spoke is ever given its own domain with `insecure: true` it
+  gets an **internal** ALB behind an edge (e.g. CloudFront); do **not** set a client source‑IP
+  allowlist there — it would see the origin interface IPs, not clients (same as
+  [pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)). Today spokes are internet‑facing
+  (no domain of their own), so this is a guard for a future spoke‑domain mode.
 
 ---
 
