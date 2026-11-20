@@ -64,6 +64,11 @@ spec:
       # insecure setting rather than requiring every spoke declaration to
       # repeat it. See kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
+      # Optional source-IP allowlist for this spoke's own platform ALB (comma-separated CIDRs),
+      # passed through to the nested EksCluster which stamps the spoke cluster-secret
+      # config_inbound_cidrs annotation. Empty (default) = spoke ALB open (unchanged). Set via the
+      # fleet entry or the hub's spokeAlbInboundCidrs default (kro-clusters/templates/clusters.yaml).
+      albInboundCidrs: string | default=""
       # Forwarded to the nested EksCluster. "true" (default) keeps the built-in
       # Built-in general-purpose NodePool toggle; "false" keeps only the "system"
       # built-in (drops general-purpose). See rg-eks.yaml for the full rationale.
@@ -245,6 +250,10 @@ spec:
           createArgocdClusterSecret: ${schema.spec.createArgocdClusterSecret}
           domainName: ${schema.spec.domainName}
           insecure: ${schema.spec.insecure}
+          # Spoke ALB source-IP allowlist, forwarded to the EksCluster (stamped as the spoke
+          # cluster-secret config_inbound_cidrs annotation). A plain schema value (not a VPC
+          # status ref), so it never gates cluster creation.
+          albInboundCidrs: ${schema.spec.albInboundCidrs}
           enableGeneralPurposeNodePool: ${schema.spec.enableGeneralPurposeNodePool}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}

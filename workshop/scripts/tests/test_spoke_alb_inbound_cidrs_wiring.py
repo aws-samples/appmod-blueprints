@@ -1,0 +1,177 @@
+"""Wiring tests for the install-time spoke-ALB source-IP allowlist (option c).
+
+`config.yaml spokeAlbInboundCidrs` is a fleet-wide default source-IP allowlist for EVERY spoke's
+own internet-facing `platform` ALB; a single spoke overrides it with an `albInboundCidrs` field in
+its own fleet entry. The value is threaded, with the kro EksCluster RGD as the single writer of the
+spoke-secret key:
+
+  config.yaml spokeAlbInboundCidrs
+    -> hub:seed  (both providers) normalise -> <hub>/config metadata `spoke_alb_inbound_cidrs`
+      -> ESO     -> hub cluster-secret annotation `spoke_alb_inbound_cidrs`
+        -> clusters-kro.yaml appset  global.spokeAlbInboundCidrs = that annotation
+          -> clusters.yaml claim  albInboundCidrs = $cluster.albInboundCidrs
+                                   | default global.spokeAlbInboundCidrs | default "" (per-spoke wins)
+            -> rg-eks-vpc.yaml  EksclusterWithVpc passes ${schema.spec.albInboundCidrs} into the
+                                nested EksCluster
+              -> rg-eks.yaml  EksCluster schema field albInboundCidrs, stamped into the spoke
+                              cluster secret as the `config_inbound_cidrs` annotation (default
+                              fleet-secret path AND the createArgocdClusterSecret parity path)
+                -> registry core.yaml  ingress-class-alb configInboundCidrs reads
+                                       `config_inbound_cidrs` (shared hub+spoke entry)
+                  -> chart  concatenates it into the spoke ALB allowlist.
+
+These are static parses of the RGDs/appset/claim/registry (kro/CEL cannot be rendered here) plus
+helm-template proofs of the kro-clusters claim: the fleet-wide default is inherited, a per-spoke
+value wins, and an empty default renders albInboundCidrs "" (spoke ALB unchanged).
+
+Run:  python -m pytest workshop/scripts/tests/test_spoke_alb_inbound_cidrs_wiring.py -q
+"""
+import os
+import shutil
+import subprocess
+
+import pytest
+
+yaml = pytest.importorskip("yaml")
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+EKS = os.path.join(REPO, "gitops", "addons", "charts", "kro", "resource-groups", "manifests", "eks")
+REGISTRY = os.path.join(REPO, "gitops", "addons", "registry", "core.yaml")
+APPSET = os.path.join(REPO, "gitops", "bootstrap", "clusters-kro.yaml")
+CLAIM_CHART = os.path.join(REPO, "gitops", "abstractions", "kro", "kro-clusters")
+CONFIG_YAML = os.path.join(REPO, "config.yaml")
+SCHEMA = os.path.join(REPO, "config.schema.json")
+HELM = shutil.which("helm")
+needs_helm = pytest.mark.skipif(HELM is None, reason="helm not on PATH")
+
+
+def _rgd(name):
+    with open(os.path.join(EKS, name)) as f:
+        return yaml.safe_load(f)
+
+
+def _resource(rgd, rid):
+    for r in rgd["spec"]["resources"]:
+        if r.get("id") == rid:
+            return r
+    raise AssertionError(f"resource id {rid} not found")
+
+
+# --- config.yaml + schema expose the key ----------------------------------------------------
+def test_config_schema_declares_spoke_key_list_or_string():
+    import json
+    sch = json.load(open(SCHEMA))["properties"]["spokeAlbInboundCidrs"]
+    assert sch["type"] == ["array", "string"]
+    assert sch["default"] == ""
+    # The warning about participant lockout must be in the description (it is the whole point).
+    assert "participant" in sch["description"].lower()
+
+
+def test_config_yaml_documents_the_key_commented_off_by_default():
+    text = open(CONFIG_YAML).read()
+    # documented but NOT active, so the default render is unchanged (byte-identical behaviour).
+    assert "spokeAlbInboundCidrs" in text
+    for ln in text.splitlines():
+        if "spokeAlbInboundCidrs" in ln:
+            assert ln.lstrip().startswith("#"), f"spokeAlbInboundCidrs must stay commented: {ln!r}"
+
+
+# --- the thread, node by node ---------------------------------------------------------------
+def test_appset_reads_the_annotation_into_global():
+    # `index` so a hub without the annotation yields "" rather than failing to render.
+    docs = [d for d in yaml.safe_load_all(open(APPSET)) if d]
+    found = None
+    for d in docs:
+        s = yaml.safe_dump(d)
+        if "spokeAlbInboundCidrs" in s:
+            found = s
+    assert found is not None, "appset does not thread spokeAlbInboundCidrs"
+    assert 'index .metadata.annotations "spoke_alb_inbound_cidrs"' in found
+
+
+def test_claim_defaults_to_global_and_lets_a_spoke_override():
+    # static text assertion of the precedence expression (helm proof below renders it).
+    claim = open(os.path.join(CLAIM_CHART, "templates", "clusters.yaml")).read()
+    line = next(l for l in claim.splitlines() if l.strip().startswith("albInboundCidrs:"))
+    assert "$cluster.albInboundCidrs" in line
+    assert "$.Values.global.spokeAlbInboundCidrs" in line
+    # per-spoke value is first in the default chain => it wins over the fleet-wide default.
+    assert line.index("$cluster.albInboundCidrs") < line.index("$.Values.global.spokeAlbInboundCidrs")
+
+
+def test_eksclusterwithvpc_schema_and_passthrough():
+    wrap = _rgd("rg-eks-vpc.yaml")
+    assert wrap["spec"]["schema"]["spec"]["albInboundCidrs"].startswith("string")
+    eks = _resource(wrap, "eks")
+    assert eks["template"]["spec"]["albInboundCidrs"] == "${schema.spec.albInboundCidrs}"
+
+
+def test_ekscluster_schema_declares_alb_inbound_cidrs():
+    eks = _rgd("rg-eks.yaml")
+    assert eks["spec"]["schema"]["spec"]["albInboundCidrs"].startswith("string")
+
+
+def test_default_fleet_secret_path_stamps_config_inbound_cidrs():
+    eks = _rgd("rg-eks.yaml")
+    cfg = _resource(eks, "clusterConfigK8sSecretFleet")["template"]["stringData"]["config"]
+    assert '\\"config_inbound_cidrs\\":\\"${schema.spec.albInboundCidrs}\\"' in cfg, \
+        "config_inbound_cidrs not stamped from albInboundCidrs into the fleet-secret metadata"
+
+
+def test_parity_argocd_secret_path_stamps_config_inbound_cidrs():
+    eks = _rgd("rg-eks.yaml")
+    ann = _resource(eks, "argocdSecret")["template"]["metadata"]["annotations"]
+    assert ann.get("config_inbound_cidrs") == "${schema.spec.albInboundCidrs}"
+
+
+def test_registry_feeds_config_inbound_cidrs_to_configInboundCidrs():
+    with open(REGISTRY) as f:
+        vo = yaml.safe_load(f)["ingress-class-alb"]["valuesObject"]
+    assert vo["configInboundCidrs"] == '{{default "" (index .metadata.annotations "config_inbound_cidrs")}}'
+
+
+# --- helm: the claim precedence actually renders --------------------------------------------
+def _render_claim(values):
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(values, f)
+        vf = f.name
+    try:
+        res = subprocess.run([HELM, "template", "x", CLAIM_CHART, "-f", vf],
+                             capture_output=True, text=True, timeout=60)
+        assert res.returncode == 0, res.stderr
+        return list(yaml.safe_load_all(res.stdout))
+    finally:
+        os.unlink(vf)
+
+
+def _alb_by_cluster(docs):
+    out = {}
+    for d in docs:
+        if d and d.get("kind") == "EksclusterWithVpc":
+            out[d["metadata"]["name"]] = d["spec"].get("albInboundCidrs")
+    return out
+
+
+@needs_helm
+def test_fleet_default_inherited_and_per_spoke_override_wins():
+    docs = _render_claim({
+        "global": {"resourcePrefix": "acme", "accountId": "111122223333",
+                   "defaultRegion": "us-west-2", "provider": "kro-ack",
+                   "spokeAlbInboundCidrs": "203.0.113.0/24"},
+        "clusters": {
+            "spoke-default": {"accountId": "111122223333"},
+            "spoke-override": {"accountId": "111122223333", "albInboundCidrs": "203.0.113.9/32"},
+        }})
+    alb = _alb_by_cluster(docs)
+    assert alb["spoke-default"] == "203.0.113.0/24"   # inherits the fleet-wide default
+    assert alb["spoke-override"] == "203.0.113.9/32"  # per-spoke value wins
+
+
+@needs_helm
+def test_empty_default_renders_blank_spoke_allowlist():
+    docs = _render_claim({
+        "global": {"resourcePrefix": "acme", "accountId": "111122223333",
+                   "defaultRegion": "us-west-2", "provider": "kro-ack"},
+        "clusters": {"spoke-default": {"accountId": "111122223333"}}})
+    assert _alb_by_cluster(docs)["spoke-default"] == ""

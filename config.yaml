@@ -138,6 +138,26 @@ ingressSecurityGroups: ""
 #   - 203.0.113.10/32     # example extra operator source IP
 # # equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.10/32"
 
+# Source-IP allowlist applied FROM INSTALL TIME to EVERY fleet SPOKE's own "platform" ALB
+# (hardening). Each spoke runs its own internet-facing ALB fronting the PARTICIPANT applications;
+# by default it accepts any source IP. This is the fleet-wide default for all spokes; a spoke can
+# override it with an `albInboundCidrs` field in its own fleet entry (fleet/spoke-values/.../
+# kro-clusters/clusters/<spoke>.json). YAML list or comma-separated string of IPv4 CIDRs.
+# kind-kro-ack / kind-crossplane only. When set, the spoke's own NAT egress IP is added
+# automatically (so app-to-ALB callbacks keep working). Empty/omitted = unchanged (every spoke
+# ALB stays open), render byte-identical.
+#
+#   ⚠ A spoke ALB is PARTICIPANT-FACING: an allowlist blocks any participant whose source IP is
+#     not listed. Do NOT enable it for an open / public event — only when the participant source
+#     ranges are known (corporate / VPN). It is opt-in and operator-chosen.
+#   ⚠ Each CIDR is one security-group rule per listener port (~60-rule default => ~30 CIDRs);
+#     summarise ranges or use AWS WAF beyond that.
+#   ⚠ Do NOT use it on an internal ALB (a spoke given its own domain + insecure: true, behind an
+#     edge such as CloudFront): it would see origin IPs, not clients. Spokes are internet-facing
+#     by default (no domain of their own), so this guard only matters for a future spoke-domain mode.
+# spokeAlbInboundCidrs:
+#   - 203.0.113.0/24      # example participant / corporate source range (RFC 5737 doc range)
+
 # Platform-wide AWS tags applied to every AWS resource the platform creates:
 #   - hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in
 #     platform-engineering-on-eks (Layer 1);

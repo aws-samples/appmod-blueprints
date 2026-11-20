@@ -386,8 +386,38 @@ internet‑facing `platform` ALB. Unlike the hub ALB — which fronts operator U
 fronts the participant applications**, so restricting it by source IP restricts **who can open the
 app**. Treat it as an explicit, operator‑chosen, opt‑in decision.
 
-**How to restrict it (today, per spoke).** Set `inboundCidrs` (and optionally `extraInboundCidrs`)
-in the spoke's fleet overlay, exactly as for the hub in [Where to put it](#where-to-put-it):
+**From install time (fleet‑wide default).** Set `spokeAlbInboundCidrs` in `config.yaml` — the
+install‑time counterpart of `albInboundCidrs` ([Set it from install time](#set-it-from-install-time-configyaml)),
+but applied to **every** spoke's own ALB instead of the hub ALB. It is a YAML list or a
+comma‑separated string of IPv4 CIDRs, and it is the fleet‑wide default; a single spoke can override
+it (see the per‑spoke override below). The OAP config forwards an identically named key into the
+generated platform config.
+
+```yaml
+# config.local.yaml (appmod-blueprints) — or the OAP config.local.yaml, which forwards it
+spokeAlbInboundCidrs:
+  - 203.0.113.0/24        # participant / corporate source ranges allowed to reach the spoke apps
+# equivalently: spokeAlbInboundCidrs: "203.0.113.0/24"
+```
+
+On `kind-kro-ack` / `kind-crossplane`, `hub:seed` normalises the value to a comma‑separated string
+and writes it as the `spoke_alb_inbound_cidrs` annotation of the hub cluster secret; the
+`clusters-kro` appset threads it as the default `albInboundCidrs` of every spoke claim, and the
+`EksCluster` RGD (the single writer of that key) stamps it onto each spoke cluster secret as
+`config_inbound_cidrs`, which the spoke's `ingress-class-alb` addon passes to its chart as
+`configInboundCidrs`. The spoke's own NAT is still added automatically (below). **Empty or omitted
+=> the key is not written => every spoke ALB stays open, render byte‑identical.** The participant
+lockout, security‑group rule limit, and internal‑ALB caveats below apply exactly the same — do
+**not** enable it for an open / public event.
+
+**Per‑spoke override.** A single spoke can override the fleet‑wide default with an `albInboundCidrs`
+field in its own fleet entry (`fleet/spoke-values/.../kro-clusters/clusters/<spoke>.json`); the
+per‑spoke value wins over `config.yaml`'s `spokeAlbInboundCidrs`, and an empty value disables the
+allowlist for that one spoke.
+
+**Post‑install, per spoke (overlay).** You can also set `inboundCidrs` (and optionally
+`extraInboundCidrs`) in the spoke's fleet overlay after install, exactly as for the hub in
+[Where to put it](#where-to-put-it):
 
 ```yaml
 # overlays/clusters/<spoke-name>/ingress-class-alb/values.yaml

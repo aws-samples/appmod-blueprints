@@ -185,6 +185,13 @@ resourcePrefix: <prefix>              # lowercase, starts with a letter; prefixe
 #   - 203.0.113.0/24
 #   - 203.0.113.10/32
 
+# Same hardening for every SPOKE's own (participant-facing) ALB, fleet-wide default; a spoke can
+# override it in its own fleet entry. WARNING: a spoke ALB fronts participant apps, so an allowlist
+# blocks any participant whose IP is not listed — only set it for known (corporate/VPN) ranges, not
+# an open event. Omit => every spoke ALB open. See docs/platform/alb-ip-allowlist.md.
+# spokeAlbInboundCidrs:
+#   - 203.0.113.0/24
+
 # REQUIRED (true) when another hub runs in the same AWS account, or when the fleet repo is a
 # fork / shared by several hubs -> see section 3a. Set it BEFORE the first install.
 fleetScopeByPrefix: false
@@ -236,9 +243,16 @@ Do **not** set it with `insecure: true`
 fleet‑repo overlay instead — see
 [Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md).
 
-**Still internet‑facing after this.** `albInboundCidrs` covers only the shared hub platform ALB.
-The GitLab NLB and each spoke's own platform ALB are exposed separately and are **not** restricted
-by this key — see the exposure notes in
+**Restricting the spoke ALBs too (optional).** `albInboundCidrs` covers only the shared hub platform
+ALB. Each spoke runs its own internet‑facing ALB fronting the **participant applications**; restrict
+those from install time with `spokeAlbInboundCidrs` (same list/comma‑string form; fleet‑wide
+default, overridable per spoke). Because a spoke ALB is participant‑facing, an allowlist blocks any
+participant whose source IP is not listed — set it only for known corporate/VPN ranges, never for an
+open event — see
+[Restrict a spoke's own ALB](../platform/alb-ip-allowlist.md#restrict-a-spokes-own-alb).
+
+**Still internet‑facing after this.** The GitLab NLB is exposed separately and is **not** restricted
+by either key — see the exposure notes in
 [Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md#other-internet-facing-surfaces).
 
 ---

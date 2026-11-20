@@ -1651,6 +1651,15 @@ tasks:
         ALB_INBOUND_CIDRS=$(yq -r '[.albInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
         if [ "$ALB_INBOUND_CIDRS" = "null" ]; then ALB_INBOUND_CIDRS=""; fi
         echo "[hub:seed] config_inbound_cidrs=${ALB_INBOUND_CIDRS:-<none>}"
+        # Fleet-wide default source-IP allowlist for every spoke's OWN platform ALB
+        # (spokeAlbInboundCidrs: YAML list OR comma string). Written as the spoke_alb_inbound_cidrs
+        # metadata key; the clusters-kro appset threads it as the default albInboundCidrs for every
+        # spoke claim (a spoke's own fleet entry can override it), which the EksCluster RGD stamps
+        # onto the spoke cluster secret as config_inbound_cidrs -> configInboundCidrs. Empty/absent
+        # -> key not written -> spoke ALBs unchanged. config.yaml is authoritative.
+        SPOKE_ALB_INBOUND_CIDRS=$(yq -r '[.spokeAlbInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
+        if [ "$SPOKE_ALB_INBOUND_CIDRS" = "null" ]; then SPOKE_ALB_INBOUND_CIDRS=""; fi
+        echo "[hub:seed] spoke_alb_inbound_cidrs=${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
         # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
         # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
         # when insecure != true (insecure=true => internal ALB behind an upstream edge, where
@@ -1671,6 +1680,9 @@ tasks:
         fi
         if [ -n "$ALB_INBOUND_CIDRS" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg c "$ALB_INBOUND_CIDRS" '. + {config_inbound_cidrs:$c}')
+        fi
+        if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg s "$SPOKE_ALB_INBOUND_CIDRS" '. + {spoke_alb_inbound_cidrs:$s}')
         fi
         if [ -n "$PREV_FLEET_NAT" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg f "$PREV_FLEET_NAT" '. + {fleet_nat_egress_cidrs:$f}')

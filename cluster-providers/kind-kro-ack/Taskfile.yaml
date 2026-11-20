@@ -1524,6 +1524,16 @@ tasks:
         ALB_INBOUND_CIDRS=$(yq -r '[.albInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
         if [ "$ALB_INBOUND_CIDRS" = "null" ]; then ALB_INBOUND_CIDRS=""; fi
         echo "[hub:seed] config_inbound_cidrs=${ALB_INBOUND_CIDRS:-<none>}"
+        # Fleet-wide default source-IP allowlist for every spoke's OWN platform ALB
+        # (spokeAlbInboundCidrs: YAML list OR comma string). Normalised and written as the
+        # spoke_alb_inbound_cidrs metadata key; the clusters-kro appset threads it as the default
+        # albInboundCidrs for every spoke claim (a spoke's own fleet entry can override it), which
+        # the EksCluster RGD stamps onto the spoke cluster secret as config_inbound_cidrs ->
+        # configInboundCidrs. Empty/absent -> key not written -> spoke ALBs unchanged. config.yaml
+        # is authoritative, recomputed every seed.
+        SPOKE_ALB_INBOUND_CIDRS=$(yq -r '[.spokeAlbInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
+        if [ "$SPOKE_ALB_INBOUND_CIDRS" = "null" ]; then SPOKE_ALB_INBOUND_CIDRS=""; fi
+        echo "[hub:seed] spoke_alb_inbound_cidrs=${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
         # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
         # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
         # when insecure != true (insecure=true => internal ALB behind an upstream edge, where
@@ -1653,7 +1663,7 @@ tasks:
         # seeded Grafana URL / spoke scraper wiring.
         SECRET_VALUE=$(echo "$SECRET_VALUE" | jq \
           --arg ou "$PRESERVED_OVERLAY_URL" --arg orv "$PRESERVED_OVERLAY_REV" --arg ob "$PRESERVED_OVERLAY_BASE" \
-          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$EDF_FINAL" --arg nat "$NAT_FINAL" --arg cic "$ALB_INBOUND_CIDRS" --arg fnat "$PRESERVED_FLEET_NAT" --argjson obs "$PRESERVED_OBS" \
+          --arg pt "$PLATFORM_TAGS_JSON" --arg fs "$FLEET_SCOPE" --arg edf "$EDF_FINAL" --arg nat "$NAT_FINAL" --arg cic "$ALB_INBOUND_CIDRS" --arg scic "$SPOKE_ALB_INBOUND_CIDRS" --arg fnat "$PRESERVED_FLEET_NAT" --argjson obs "$PRESERVED_OBS" \
           '.metadata |= ( (fromjson) as $m
              | $obs + $m
              | (if $ou  != "" then .overlay_repo_url      = $ou  else . end)
@@ -1664,6 +1674,7 @@ tasks:
              | (if $edf != "" then .external_dns_domain_filters = $edf else . end)
              | (if $nat != "" then .nat_egress_cidrs = $nat else . end)
              | (if $cic != "" then .config_inbound_cidrs = $cic else . end)
+             | (if $scic != "" then .spoke_alb_inbound_cidrs = $scic else . end)
              | (if $fnat != "" then .fleet_nat_egress_cidrs = $fnat else . end)
              | tojson )')
         aws secretsmanager restore-secret --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} 2>/dev/null || true
