@@ -127,15 +127,16 @@ ingressSecurityGroups: ""
 # after a post-install fleet-repo overlay edit. kind-kro-ack / kind-crossplane only (the
 # providers that seed <hub>/config); empty/omitted = unchanged (ALB open unless an overlay
 # sets inboundCidrs later). A YAML list or a comma-separated string of IPv4 CIDRs.
-# ALWAYS include the NAT egress IP(s) of the hub and of every spoke running OAP addons, or
-# in-cluster SSO to the public Keycloak issuer breaks; the hub NAT is appended automatically
-# on these two providers. Do NOT set it with insecure: true (internal ALB behind CloudFront —
-# it would see origin IPs, not clients). Concatenated with any fleet-overlay inboundCidrs /
-# extraInboundCidrs, never overriding them. See docs/platform/alb-ip-allowlist.md.
+# Typically just your corporate / VPN source ranges: on kind-kro-ack / kind-crossplane the hub
+# NAT and every registered fleet spoke's NAT are appended automatically (in-cluster and spoke
+# apps reach the public Keycloak issuer through this ALB, so a missing NAT breaks their SSO). Do
+# NOT set it with insecure: true (internal ALB behind CloudFront — it would see origin IPs, not
+# clients). Concatenated with any fleet-overlay inboundCidrs / extraInboundCidrs, never overriding
+# them. See docs/platform/alb-ip-allowlist.md.
 # albInboundCidrs:
 #   - 203.0.113.0/24      # example corporate / VPN egress range (RFC 5737 doc range)
-#   - 203.0.113.201/32    # example NAT egress IP of a spoke running OAP addons
-# # equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.201/32"
+#   - 203.0.113.10/32     # example extra operator source IP
+# # equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.10/32"
 
 # Platform-wide AWS tags applied to every AWS resource the platform creates:
 #   - hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in

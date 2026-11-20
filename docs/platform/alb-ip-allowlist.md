@@ -61,7 +61,7 @@ the shared ALB is open for the window between its creation and your overlay land
 # config.local.yaml (appmod-blueprints) — or the OAP config.local.yaml, which forwards it
 albInboundCidrs:
   - 203.0.113.0/24        # corporate / VPN egress range (example)
-  - 203.0.113.201/32      # NAT egress IP of a spoke running OAP addons (example)
+  - 203.0.113.201/32      # NAT egress IP of a fleet spoke (example)
 # equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.201/32"
 ```
 
@@ -127,7 +127,7 @@ set). Create:
 inboundCidrs:
   - 203.0.113.0/25        # corporate / VPN egress range
   # - 203.0.113.200/32    # hub NAT egress IP -- only outside kind-kro-ack / kind-crossplane
-  # - 203.0.113.201/32    # NAT egress IP of a spoke running OAP addons, if any
+  # - 203.0.113.201/32    # NAT egress IP of a fleet spoke, if any
 # Optional ad-hoc additions, appended after the base (list or comma-separated string):
 extraInboundCidrs: "203.0.113.10/32,203.0.113.11/32"
 ```
@@ -225,10 +225,10 @@ The allowlist must contain, as `/32`s (for example `<nat-eip>/32`):
 
 - every NAT gateway Elastic IP of the **hub** VPC (added automatically on kind-kro-ack /
   kind-crossplane, see below);
-- every NAT gateway Elastic IP of **each spoke that runs agentic platform (OAP) addons**: those
-  spokes also call the hub's public ALB (OTel export to `https://<hub-domain>/api/public/otel`,
-  Agent Gateway JWKS from the hub's Keycloak). Added automatically on kind-kro-ack /
-  kind-crossplane (see [Spoke OAP NAT](#spoke-oap-nat-added-automatically-on-kind-kro-ack-and-kind-crossplane)).
+- every NAT gateway Elastic IP of **each fleet spoke**: a spoke's addons also call the hub's
+  public ALB (OTel export to `https://<hub-domain>/api/public/otel`, Agent Gateway JWKS from the
+  hub's Keycloak, and any other server-side OIDC/JWKS call). Added automatically on kind-kro-ack /
+  kind-crossplane (see [Spoke NAT](#spoke-nat-added-automatically-on-kind-kro-ack-and-kind-crossplane)).
 
 #### Hub NAT: added automatically on kind-kro-ack and kind-crossplane
 
@@ -270,15 +270,16 @@ allowlist is complete from the ALB's creation.
   else (a Transit Gateway to a central egress VPC, a proxy, a firewall) gets nothing added: list
   that egress IP yourself in `inboundCidrs` or `extraInboundCidrs`.
 
-#### Spoke OAP NAT: added automatically on kind-kro-ack and kind-crossplane
+#### Spoke NAT: added automatically on kind-kro-ack and kind-crossplane
 
-The NAT egress IP of a **spoke running OAP addons** is discovered and added to the hub allowlist
+The NAT egress IP of **every fleet spoke** is discovered and added to the hub allowlist
 automatically on these two providers — nothing to list by hand. A hub-side task,
 `secrets-manager:seed-fleet-nat-egress`, reads the spoke `ElasticIPAddress` resources the hub
 already holds (the kro `EksclusterWithVpc` graph runs on the hub, so every spoke's ACK
-`ElasticIPAddress` CR lives there), selects the spokes that enable an OAP addon which calls the hub
-server-side — the agent gateway (`enable_agent_gateway`, JWKS) or the OTel collector
-(`enable_otel_collector`, telemetry) — and writes the sorted, deduplicated union into the
+`ElasticIPAddress` CR lives there), takes **every registered spoke** (all cluster secrets except
+the control-plane and any being deleted — no per-addon filter, because any spoke addon may call
+the hub server-side, and allowing a few extra of our own NAT `/32`s is cheaper than a missed one
+breaking a spoke's SSO), and writes the sorted, deduplicated union into the
 `fleet_nat_egress_cidrs` key of `<hub>/config`. ESO turns it into the hub cluster-secret annotation
 and the registry passes it to the chart as `fleetEgressCidrs`, appended to the allowlist on the
 same gate as the hub NAT (only when an allowlist is set). `hub:seed` preserves the key across
@@ -301,7 +302,7 @@ re-seeds (like the `spoke_*` observability keys).
 #### Still manual
 
 - the hub NAT on other providers (`byoc`, `terraform`);
-- the NAT egress IPs of **spokes running OAP on `byoc` / `terraform`** (the auto-discovery above is
+- the NAT egress IPs of **fleet spokes on `byoc` / `terraform`** (the auto-discovery above is
   `kind-kro-ack` / `kind-crossplane` only): add them to the hub list in `inboundCidrs` or
   `extraInboundCidrs`.
 

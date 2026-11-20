@@ -1720,15 +1720,17 @@ tasks:
       - task: hub:force-eso-refresh
 
   secrets-manager:seed-fleet-nat-egress:
-    desc: Union the NAT egress IP(s) of fleet spokes running OAP addons into fleet_nat_egress_cidrs of <hub>/config, then force an ESO refresh
+    desc: Union the NAT egress IP(s) of all registered fleet spokes into fleet_nat_egress_cidrs of <hub>/config, then force an ESO refresh
     cmds:
       - |
-        # Spokes that run OAP addons call THIS hub's public Keycloak (JWKS/OIDC) and OTel endpoint
-        # server-side, egressing through their own VPC NAT, so the hub ALB must allow those NAT
-        # EIPs (docs/platform/alb-ip-allowlist.md pitfall 1). The hub holds every spoke's ACK
-        # ElasticIPAddress CR — the kro EksclusterWithVpc graph runs on the hub, namespace = spoke
-        # name — so this reads them locally: no AWS NAT lookup, no cross-cluster access, nothing in
-        # git, no extra IAM.
+        # A spoke's addons can call THIS hub's public Keycloak (OIDC/JWKS) and OTel endpoint
+        # server-side, egressing through the spoke's own VPC NAT, so the hub ALB must allow those
+        # NAT EIPs (docs/platform/alb-ip-allowlist.md pitfall 1). We allow EVERY registered spoke's
+        # NAT, not a per-addon subset: any addon may make such a call, and a few extra /32s of our
+        # own NAT gateways cost nothing while a missed one breaks that spoke's SSO. The hub holds
+        # every spoke's ACK ElasticIPAddress CR — the kro EksclusterWithVpc graph runs on the hub,
+        # namespace = spoke name — so this reads them locally: no AWS NAT lookup, no cross-cluster
+        # access, nothing in git, no extra IAM.
         #
         # WHEN: runs AFTER the spokes are provisioned. The base cluster-providers install is
         # hub-only (spokes are a consumer concern), so this is intentionally NOT wired into the
@@ -1741,18 +1743,19 @@ tasks:
         # ingress-class-alb as fleetEgressCidrs, which the chart appends to the allowlist ONLY when
         # one is set — so with no allowlist this changes nothing.
         SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
-        # OAP-spoke selection (generic, no cluster name / prefix / IP hard-coded): a registered
+        # Spoke selection (generic, no cluster name / prefix / IP hard-coded): EVERY registered
         # spoke cluster secret (label argocd.argoproj.io/secret-type=cluster) that is NOT the
-        # control-plane and carries an enabled OAP addon that makes the hub-bound calls — the agent
-        # gateway (JWKS) or the OTel collector (telemetry), exactly the addons pitfall 1 names. The
-        # label keys are the addon registry's own enable_* selectors (the label value must be the
-        # string "true"); extend the OR below if more hub-calling OAP addons appear.
+        # control-plane and is not being deleted. No per-addon filter: ANY addon on a spoke may
+        # call the hub's public Keycloak server-side (OIDC/JWKS) or the hub OTel endpoint, so the
+        # cheap, robust rule is to allow every spoke's own NAT EIP — a few extra /32s of our own
+        # NAT gateways cost nothing on the ALB security group, a broken spoke SSO does. A spoke
+        # with no resolved EIP (or whose EIP is being released) contributes nothing (handled below).
         #
         # A kubectl READ FAILURE must never masquerade as "zero spokes": that would let the empty
         # union DELETE a stored fleet_nat_egress_cidrs on a transient apiserver/token/throttle error
-        # and silently drop every fleet spoke's NAT from the allowlist (breaking their SSO/OTel). So
-        # FAIL CLOSED — warn, keep the stored value, exit non-zero — on any non-zero kubectl rc.
-        # Only a SUCCESSFUL read that finds no OAP spoke (or no EIP) yields an empty union that
+        # and silently drop every spoke's NAT from the allowlist (breaking their SSO/OTel). So FAIL
+        # CLOSED — warn, keep the stored value, exit non-zero — on any non-zero kubectl rc. Only a
+        # SUCCESSFUL read that finds no eligible spoke (or no EIP) yields an empty union that
         # legitimately clears the key.
         if ! SECRETS_JSON=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null); then
           printf '{{.C_ERR}}⚠ kubectl get secrets failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
@@ -1761,8 +1764,7 @@ tasks:
         SPOKES=$(echo "$SECRETS_JSON" | jq -r '
           .items[]
           | select((.metadata.labels["fleet_member"] // "") != "control-plane")
-          | select((.metadata.labels["enable_agent_gateway"] // "") == "true"
-                or (.metadata.labels["enable_otel_collector"] // "") == "true")
+          | select(.metadata.deletionTimestamp == null)
           | (.metadata.annotations["aws_cluster_name"] // .metadata.name)' | sort -u)
         FLEET_ITEMS=""
         for SPOKE in $SPOKES; do
@@ -1771,13 +1773,15 @@ tasks:
             printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses failed for spoke %s — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n' "$SPOKE"
             exit 1
           fi
-          IPS=$(echo "$EIP_JSON" | jq -r '.items[]? | .status.publicIP // empty | select(. != "") | . + "/32"')
+          # Skip an EIP that is being released (deletionTimestamp set): its publicIP may still be
+          # present but the address is going away, so it must not stay in the allowlist.
+          IPS=$(echo "$EIP_JSON" | jq -r '.items[]? | select(.metadata.deletionTimestamp == null) | .status.publicIP // empty | select(. != "") | . + "/32"')
           FLEET_ITEMS="$FLEET_ITEMS $IPS"
         done
         # Unquoted on purpose: word-split the accumulated IPs (no spaces in a CIDR) one per line,
         # drop blanks, dedupe, sort, join with commas. Empty -> FLEET="".
         FLEET=$(printf '%s\n' $FLEET_ITEMS | awk 'NF' | sort -u | paste -sd, -)
-        echo "[seed-fleet-nat-egress] OAP spokes: $(echo $SPOKES | tr '\n' ' ')"
+        echo "[seed-fleet-nat-egress] spokes: $(echo $SPOKES | tr '\n' ' ')"
         echo "[seed-fleet-nat-egress] fleet_nat_egress_cidrs=${FLEET:-<none>}"
         CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null) || CONFIG_EXISTING=""

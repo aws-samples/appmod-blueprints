@@ -26,12 +26,12 @@ configInboundCidrs: ""
 # To opt out on one cluster, set it to "" through the overlay's overrides.yaml valuesObject.
 clusterEgressCidrs: ""
 
-# NAT egress address(es) of fleet SPOKES running OAP addons (YAML list or comma-separated
-# string). The registry fills it from the hub cluster-secret annotation fleet_nat_egress_cidrs,
-# which the hub-side seed-fleet-nat-egress task computes by reading every spoke's ACK
-# ElasticIPAddress CR (the hub holds them all) and selecting the spokes that run OAP addons.
-# Those spokes call THIS hub's public Keycloak (JWKS/OIDC) and OTel endpoint server-side through
-# this ALB, so their NAT EIP must be allowed or their SSO/telemetry times out. Appended
+# NAT egress address(es) of the fleet SPOKES (YAML list or comma-separated string). The registry
+# fills it from the hub cluster-secret annotation fleet_nat_egress_cidrs, which the hub-side
+# seed-fleet-nat-egress task computes by reading every registered spoke's ACK ElasticIPAddress CR
+# (the hub holds them all) and unioning them — no per-addon filter, since any spoke addon may call
+# THIS hub's public Keycloak (JWKS/OIDC) and OTel endpoint server-side through this ALB, so the
+# spoke NAT EIP must be allowed or that spoke's SSO/telemetry times out. Appended
 # (deduplicated) to inboundCidrs + extraInboundCidrs + configInboundCidrs ONLY when that
 # allowlist is non-empty — same gate as clusterEgressCidrs. Empty/absent => no-op.
 fleetEgressCidrs: ""

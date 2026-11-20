@@ -178,12 +178,12 @@ certificateArn: arn:aws:acm:<region>:<account-id>:certificate/<cert-id>   # ISSU
 resourcePrefix: <prefix>              # lowercase, starts with a letter; prefixes ECR repos / S3 buckets / IAM roles
 
 # Hardening (own-domain mode): restrict the shared platform ALB to known source IPs from install
-# time. YAML list or comma-separated string of IPv4 CIDRs. MUST include the hub + OAP-spoke NAT
-# egress IPs (hub NAT auto-added on kind-kro-ack/kind-crossplane). Omit => ALB open (today's
-# default). Do NOT set with insecure: true. See docs/platform/alb-ip-allowlist.md.
+# time. YAML list or comma-separated string of IPv4 CIDRs — typically just your corporate/VPN
+# ranges (the hub NAT and every fleet spoke's NAT are auto-added on kind-kro-ack/kind-crossplane).
+# Omit => ALB open (today's default). Do NOT set with insecure: true. See docs/platform/alb-ip-allowlist.md.
 # albInboundCidrs:
 #   - 203.0.113.0/24
-#   - 203.0.113.201/32
+#   - 203.0.113.10/32
 
 # REQUIRED (true) when another hub runs in the same AWS account, or when the fleet repo is a
 # fork / shared by several hubs -> see section 3a. Set it BEFORE the first install.
@@ -222,14 +222,16 @@ install time**, so the ALB is never briefly open while you wire a post‑install
 ```yaml
 albInboundCidrs:
   - 203.0.113.0/24      # corporate / VPN egress range (example)
-  - 203.0.113.201/32    # NAT egress IP of a spoke running OAP addons (example)
+  - 203.0.113.10/32     # extra operator source IP (example)
 ```
 
 It is applied by `kind-kro-ack` / `kind-crossplane`, concatenated with any fleet‑repo
-`inboundCidrs` / `extraInboundCidrs` (never overriding them). It **must** include the NAT egress
-IPs of the hub and of OAP spokes (`<nat-eip>/32`), re‑checked after each reinstall, or SSO breaks
-([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes));
-the hub NAT is added automatically on these two providers. Do **not** set it with `insecure: true`
+`inboundCidrs` / `extraInboundCidrs` (never overriding them). On these two providers the hub NAT
+and **every fleet spoke's** NAT are added automatically, so you normally list only your
+corporate/VPN source ranges here; the NAT egress IPs still need re‑checking after each reinstall on
+other providers, or SSO breaks
+([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
+Do **not** set it with `insecure: true`
 (internal ALB behind CloudFront). To change the list after install, or on other providers, use the
 fleet‑repo overlay instead — see
 [Restrict the platform ALB by source IP](../platform/alb-ip-allowlist.md).

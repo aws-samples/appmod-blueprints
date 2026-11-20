@@ -1,11 +1,11 @@
 """Hermetic tests for `secrets-manager:seed-fleet-nat-egress` (kind-kro-ack, kind-crossplane).
 
 The task runs on the hub, where every spoke's ACK `ElasticIPAddress` CR lives (the kro
-EksclusterWithVpc graph runs on the hub, namespace = spoke name). It selects the spokes that run
-OAP addons calling the hub's public Keycloak/OTel (cluster-secret labels `enable_agent_gateway` or
-`enable_otel_collector`, excluding the control-plane), unions their `status.publicIP` as sorted,
-deduplicated /32s, and writes `fleet_nat_egress_cidrs` into `<hub>/config` (empty union removes the
-key). The registry passes it to ingress-class-alb as `fleetEgressCidrs`.
+EksclusterWithVpc graph runs on the hub, namespace = spoke name). It takes EVERY registered spoke
+(all cluster secrets except the control-plane and any being deleted — no per-addon filter), unions
+their `status.publicIP` as sorted, deduplicated /32s (skipping an EIP that is being released), and
+writes `fleet_nat_egress_cidrs` into `<hub>/config` (empty union removes the key). The registry
+passes it to ingress-class-alb as `fleetEgressCidrs`.
 
 `kubectl` and `aws` are fakes on PATH driven by a state file; `jq`/`awk`/`sort`/`paste` are real.
 The task's shell block is read verbatim from the provider Taskfile and run under go-task.
@@ -49,7 +49,11 @@ if a[:1] == ["get"] and a[1].startswith("elasticipaddresses"):
     if ns in st.get("fail_eips", []):
         sys.stderr.write("error: the server was unable to return a response\n")
         sys.exit(1)
-    items = [{"status": {"publicIP": ip}} for ip in st.get("eips", {}).get(ns, [])]
+    items = [{"metadata": {}, "status": {"publicIP": ip}}
+             for ip in st.get("eips", {}).get(ns, [])]
+    # EIPs being released: carry a deletionTimestamp (must be skipped by the task).
+    items += [{"metadata": {"deletionTimestamp": "2026-11-20T00:00:00Z"}, "status": {"publicIP": ip}}
+              for ip in st.get("eips_deleting", {}).get(ns, [])]
     print(json.dumps({"items": items})); sys.exit(0)
 sys.stderr.write("unexpected kubectl %r\n" % a); sys.exit(2)
 '''
@@ -80,17 +84,19 @@ sys.exit(rc)
 '''
 
 
-def _cluster_secret(name, labels, cluster_name=None):
+def _cluster_secret(name, labels, cluster_name=None, deleting=False):
     s = {"metadata": {"name": name, "labels": labels, "annotations": {}}}
     if cluster_name:
         s["metadata"]["annotations"]["aws_cluster_name"] = cluster_name
+    if deleting:
+        s["metadata"]["deletionTimestamp"] = "2026-11-20T00:00:00Z"
     return s
 
 
-# hub (control-plane, excluded), two OAP spokes (gateway + otel), one non-OAP spoke (excluded).
+# hub (control-plane, excluded), three spokes of ANY addon mix — ALL included now (no addon
+# filter); labels are arbitrary to prove the selection no longer depends on them.
 SECRETS = {"items": [
-    _cluster_secret("acme-hub", {"fleet_member": "control-plane",
-                                 "enable_agent_gateway": "true"}, "acme-hub"),
+    _cluster_secret("acme-hub", {"fleet_member": "control-plane"}, "acme-hub"),
     _cluster_secret("sdev", {"fleet_member": "spoke", "enable_agent_gateway": "true"},
                     "acme-spoke-dev"),
     _cluster_secret("sprod", {"fleet_member": "spoke", "enable_otel_collector": "true"},
@@ -102,9 +108,9 @@ EIPS = {
     "acme-hub": ["203.0.113.1"],            # must NOT be collected (control-plane excluded)
     "acme-spoke-dev": ["203.0.113.201"],
     "acme-spoke-prod": ["203.0.113.202", "203.0.113.202"],  # duplicate -> deduped
-    "acme-spoke-plain": ["203.0.113.250"],  # must NOT be collected (not OAP)
+    "acme-spoke-plain": ["203.0.113.250"],  # now INCLUDED (no addon filter)
 }
-EXPECTED = "203.0.113.201/32,203.0.113.202/32"
+EXPECTED = "203.0.113.201/32,203.0.113.202/32,203.0.113.250/32"
 
 META_BASE = {"aws_cluster_name": HUB, "ingress_domain_name": "idp.example.com"}
 
@@ -121,7 +127,8 @@ def _task_shell(provider):
     return "\n".join(shell), t
 
 
-def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None):
+def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
+         eips_deleting=None):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "kubectl").write_text(FAKE_KUBECTL.replace("{python}", sys.executable))
@@ -130,7 +137,8 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
     (bindir / "aws").chmod(0o755)
     ks = tmp_path / "kubectl.json"
     ks.write_text(json.dumps({"secrets": secrets, "eips": eips,
-                              "fail_secrets": fail_secrets, "fail_eips": fail_eips or []}))
+                              "fail_secrets": fail_secrets, "fail_eips": fail_eips or [],
+                              "eips_deleting": eips_deleting or {}}))
     aws = tmp_path / "aws.json"
     aws.write_text(json.dumps({"secret": secret, "writes": []}))
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
@@ -138,9 +146,10 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
     return aws, env
 
 
-def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None):
+def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
+         eips_deleting=None):
     shell, _ = _task_shell(provider)
-    aws, env = _env(tmp_path, secret, secrets, eips, fail_secrets, fail_eips)
+    aws, env = _env(tmp_path, secret, secrets, eips, fail_secrets, fail_eips, eips_deleting)
     tf = tmp_path / "Taskfile.yml"
     tf.write_text(yaml.safe_dump({
         "version": "3", "set": ["errexit", "nounset", "pipefail"],
@@ -165,25 +174,48 @@ def _sub(tmp_path, n):
 @needs_task
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
 class TestFleetTask:
-    def test_unions_selected_spoke_eips_sorted_deduped(self, tmp_path, provider):
+    def test_unions_all_spoke_eips_sorted_deduped(self, tmp_path, provider):
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)))
         assert res.returncode == 0, res.stdout + res.stderr
         assert len(st["writes"]) == 1
         assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == EXPECTED
 
-    def test_excludes_control_plane_and_non_oap_spokes(self, tmp_path, provider):
+    def test_includes_every_spoke_excludes_only_control_plane(self, tmp_path, provider):
         _, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)))
         v = _meta(st["writes"][0])["fleet_nat_egress_cidrs"]
-        assert "203.0.113.1/32" not in v   # hub (control-plane)
-        assert "203.0.113.250/32" not in v  # non-OAP spoke
+        assert "203.0.113.1/32" not in v          # hub (control-plane) excluded
+        # every spoke included regardless of which addon labels it carries
+        assert "203.0.113.201/32" in v and "203.0.113.202/32" in v and "203.0.113.250/32" in v
+
+    def test_spoke_being_deleted_is_excluded(self, tmp_path, provider):
+        # A spoke whose cluster secret carries a deletionTimestamp must not contribute its NAT.
+        secrets = {"items": [
+            _cluster_secret("acme-hub", {"fleet_member": "control-plane"}, "acme-hub"),
+            _cluster_secret("sdev", {"fleet_member": "spoke"}, "acme-spoke-dev"),
+            _cluster_secret("sgone", {"fleet_member": "spoke"}, "acme-spoke-gone", deleting=True),
+        ]}
+        eips = {"acme-spoke-dev": ["203.0.113.201"], "acme-spoke-gone": ["203.0.113.209"]}
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)), secrets=secrets, eips=eips)
+        assert res.returncode == 0, res.stdout + res.stderr
+        v = _meta(st["writes"][0])["fleet_nat_egress_cidrs"]
+        assert v == "203.0.113.201/32"            # the deleting spoke's 209 is excluded
+
+    def test_eip_being_released_is_excluded(self, tmp_path, provider):
+        # An EIP CR with a deletionTimestamp (address being released) must be skipped.
+        secrets = {"items": [
+            _cluster_secret("sdev", {"fleet_member": "spoke"}, "acme-spoke-dev"),
+        ]}
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)),
+                       secrets=secrets, eips={"acme-spoke-dev": ["203.0.113.201"]},
+                       eips_deleting={"acme-spoke-dev": ["203.0.113.209"]})
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == "203.0.113.201/32"
 
     def test_empty_union_removes_the_key(self, tmp_path, provider):
-        # No OAP spokes selected -> empty union -> key deleted even if it was stored.
-        secrets = {"items": [_cluster_secret("splain", {"fleet_member": "spoke",
-                                                        "enable_metrics_server": "true"},
-                                             "acme-spoke-plain")]}
+        # No eligible spokes (only the control-plane) -> empty union -> key deleted if stored.
+        secrets = {"items": [_cluster_secret("acme-hub", {"fleet_member": "control-plane"}, "acme-hub")]}
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs="203.0.113.9/32")),
-                       secrets=secrets)
+                       secrets=secrets, eips={"acme-hub": ["203.0.113.1"]})
         assert res.returncode == 0, res.stdout + res.stderr
         assert "fleet_nat_egress_cidrs" not in _meta(st["writes"][0])
 

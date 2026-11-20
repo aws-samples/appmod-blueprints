@@ -416,10 +416,10 @@ ingress-class-alb:
     # appends them to inboundCidrs/extraInboundCidrs ONLY when an allowlist is set, so an
     # open ALB stays open. Empty/absent annotation => no-op.
     clusterEgressCidrs: '{{default "" (index .metadata.annotations "nat_egress_cidrs")}}'
-    # NAT egress IP(s) of fleet spokes running OAP addons (provider/task-written
-    # fleet_nat_egress_cidrs). Those spokes call this hub's public Keycloak/OTel through this
-    # ALB, so their NAT EIP must be allowed. The hub-side seed-fleet-nat-egress task discovers
-    # them from the spoke ACK ElasticIPAddress CRs the hub holds and writes the union here. The
+    # NAT egress IP(s) of ALL registered fleet spokes (provider/task-written
+    # fleet_nat_egress_cidrs). A spoke's addons can call this hub's public Keycloak/OTel through
+    # this ALB, so every spoke NAT EIP is allowed. The hub-side seed-fleet-nat-egress task
+    # discovers them from the spoke ACK ElasticIPAddress CRs the hub holds and writes the union. The
     # chart appends them to the allowlist ONLY when one is set (same gate as clusterEgressCidrs).
     # Empty/absent annotation => no-op.
     fleetEgressCidrs: '{{default "" (index .metadata.annotations "fleet_nat_egress_cidrs")}}'

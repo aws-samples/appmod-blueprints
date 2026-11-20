@@ -27,7 +27,7 @@ spec:
                          A separate key UNIONs the two sources instead of overriding one.
   Each accepts a YAML list OR a comma-separated string. All empty/unset => field omitted
   => ALB open (unchanged behaviour). IPv4/IPv6 may be mixed (the LBC splits them).
-  When set, include the NAT gateway EIP(s) of every spoke running OAP addons and, on
+  When set, include the NAT gateway EIP(s) of the fleet spokes and, on
   providers that do not fill clusterEgressCidrs (below), of the hub VPC (<nat-eip>/32):
   in-cluster apps reach the public Keycloak issuer through this ALB, so SSO times out
   without them. The EIP changes when the VPC is recreated (reinstall).
@@ -61,12 +61,13 @@ spec:
   into a NAT-only one. Needed because in-cluster apps reach the public Keycloak issuer
   through this same ALB from the NAT EIP (see docs/platform/alb-ip-allowlist.md pitfall 1).
 
-  fleetEgressCidrs: the NAT egress address(es) of fleet SPOKES running OAP addons, which call
-  THIS hub's public Keycloak (JWKS/OIDC) and OTel endpoint server-side through this ALB. Auto
+  fleetEgressCidrs: the NAT egress address(es) of the fleet SPOKES, whose addons can call THIS
+  hub's public Keycloak (JWKS/OIDC) and OTel endpoint server-side through this ALB. Auto
   -discovered on the hub (the hub holds every spoke's ACK ElasticIPAddress CR) and written to
-  the hub cluster secret as fleet_nat_egress_cidrs by the seed-fleet-nat-egress task; passed by
-  the registry. Same gate as clusterEgressCidrs: appended, deduplicated, ONLY when the allowlist
-  above is non-empty (see docs/platform/alb-ip-allowlist.md pitfall 1).
+  the hub cluster secret as fleet_nat_egress_cidrs by the seed-fleet-nat-egress task, which
+  unions the NAT of EVERY registered spoke (no per-addon filter); passed by the registry. Same
+  gate as clusterEgressCidrs: appended, deduplicated, ONLY when the allowlist above is non-empty
+  (see docs/platform/alb-ip-allowlist.md pitfall 1).
 */}}
 {{- if $cidrs }}
 {{- range $egress := list .Values.clusterEgressCidrs .Values.fleetEgressCidrs }}
