@@ -97,6 +97,14 @@ spec:
   # rather than silently defaulting to secure/HTTPS. Requires the insecure
   # schema field on EksclusterWithVpc (rg-eks-vpc.yaml) to accept this value.
   insecure: {{ $cluster.insecure | default $.Values.global.insecure | default "false" | quote }}
+  # Source-IP allowlist for THIS spoke's own platform ALB (comma-separated or single CIDR string).
+  # Per-cluster fleet entry wins; else the fleet-wide default (global.spokeAlbInboundCidrs, from the
+  # hub cluster secret's spoke_alb_inbound_cidrs annotation = config.local.yaml spokeAlbInboundCidrs);
+  # else "" (spoke ALB open). The EksclusterWithVpc RGD forwards it to the nested EksCluster, which
+  # stamps the spoke cluster-secret config_inbound_cidrs annotation (-> chart configInboundCidrs).
+  # Empty => no allowlist, spoke ALB unchanged. A spoke ALB is participant-facing: only set it when
+  # the participant source ranges are known (see docs/platform/alb-ip-allowlist.md).
+  albInboundCidrs: {{ $cluster.albInboundCidrs | default $.Values.global.spokeAlbInboundCidrs | default "" | quote }}
   # Per-cluster fleet-config value wins, else "true". hasKey keeps a YAML boolean
   # false from being swallowed by Helm's `default`. When "false", only the built-in
   # general-purpose NodePool is dropped; the built-in "system" pool is always kept.

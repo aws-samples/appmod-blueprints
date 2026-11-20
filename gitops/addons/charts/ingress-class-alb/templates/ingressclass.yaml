@@ -15,13 +15,19 @@ spec:
   IngressClassParams.spec.inboundCIDRs (group-level form of the inbound-cidrs annotation:
   applied once to the shared managed SG, so identical for every ingress of the group, and
   it overrides any per-ingress annotation). Supported by elbv2.k8s.aws/v1beta1 (OSS LBC)
-  and eks.amazonaws.com/v1 (EKS Auto Mode). Two CONCATENATED keys, so a deployment keeps a
+  and eks.amazonaws.com/v1 (EKS Auto Mode). Three CONCATENATED keys, so a deployment keeps a
   stable base and appends ad-hoc entries without touching the base:
-    inboundCidrs       - base allowlist
-    extraInboundCidrs  - extra entries appended after the base
+    inboundCidrs       - base allowlist (fleet-overlay value file)
+    extraInboundCidrs  - extra entries appended after the base (fleet-overlay value file)
+    configInboundCidrs - install-time base from config.yaml, set by the registry valuesObject
+                         from the config_inbound_cidrs cluster-secret annotation. It has its
+                         OWN key (never inboundCidrs) on purpose: the registry valuesObject
+                         wins over the overlay value files in ArgoCD, so writing it to
+                         inboundCidrs would clobber the overlay's inboundCidrs/extraInboundCidrs.
+                         A separate key UNIONs the two sources instead of overriding one.
   Each accepts a YAML list OR a comma-separated string. All empty/unset => field omitted
   => ALB open (unchanged behaviour). IPv4/IPv6 may be mixed (the LBC splits them).
-  When set, include the NAT gateway EIP(s) of every spoke running OAP addons and, on
+  When set, include the NAT gateway EIP(s) of the fleet spokes and, on
   providers that do not fill clusterEgressCidrs (below), of the hub VPC (<nat-eip>/32):
   in-cluster apps reach the public Keycloak issuer through this ALB, so SSO times out
   without them. The EIP changes when the VPC is recreated (reinstall).
@@ -30,17 +36,20 @@ spec:
   private origin ENI IPs, not client IPs.
 */}}
 {{- $raw := list }}
-{{- range $v := list .Values.inboundCidrs .Values.extraInboundCidrs }}
+{{- range $v := list .Values.inboundCidrs .Values.extraInboundCidrs .Values.configInboundCidrs }}
 {{- if kindIs "string" $v }}
 {{- $raw = concat $raw (splitList "," $v) }}
 {{- else if $v }}
 {{- $raw = concat $raw $v }}
 {{- end }}
 {{- end }}
+{{- /* Deduplicate the combined inbound list (overlay inboundCidrs + extraInboundCidrs +
+       install-time configInboundCidrs): a CIDR listed in more than one source renders once,
+       so overlapping sources never waste a security-group rule slot. First occurrence wins. */}}
 {{- $cidrs := list }}
 {{- range $raw }}
 {{- $t := . | toString | trim }}
-{{- if $t }}
+{{- if and $t (not (has $t $cidrs)) }}
 {{- $cidrs = append $cidrs $t }}
 {{- end }}
 {{- end }}
@@ -51,15 +60,24 @@ spec:
   allowlist the ALB stays open and this list is ignored, so it can never turn an open ALB
   into a NAT-only one. Needed because in-cluster apps reach the public Keycloak issuer
   through this same ALB from the NAT EIP (see docs/platform/alb-ip-allowlist.md pitfall 1).
+
+  fleetEgressCidrs: the NAT egress address(es) of the fleet SPOKES, whose addons can call THIS
+  hub's public Keycloak (JWKS/OIDC) and OTel endpoint server-side through this ALB. Auto
+  -discovered on the hub (the hub holds every spoke's ACK ElasticIPAddress CR) and written to
+  the hub cluster secret as fleet_nat_egress_cidrs by the seed-fleet-nat-egress task, which
+  unions the NAT of EVERY registered spoke (no per-addon filter); passed by the registry. Same
+  gate as clusterEgressCidrs: appended, deduplicated, ONLY when the allowlist above is non-empty
+  (see docs/platform/alb-ip-allowlist.md pitfall 1).
 */}}
 {{- if $cidrs }}
-{{- $egress := .Values.clusterEgressCidrs }}
+{{- range $egress := list .Values.clusterEgressCidrs .Values.fleetEgressCidrs }}
 {{- $eraw := list }}
 {{- if kindIs "string" $egress }}{{- $eraw = splitList "," $egress }}{{- else if $egress }}{{- $eraw = $egress }}{{- end }}
 {{- range $eraw }}
 {{- $t := . | toString | trim }}
 {{- if and $t (not (has $t $cidrs)) }}
 {{- $cidrs = append $cidrs $t }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
