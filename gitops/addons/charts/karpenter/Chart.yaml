@@ -10,9 +10,9 @@ description: >-
   requires when the cluster has none. One enable_karpenter flip brings up the
   controller + all its IAM together.
 type: application
-version: 0.1.0
+version: 0.1.1
 dependencies:
   - name: karpenter
     # First upstream release with cpuOptions.nestedVirtualization (Kata).
-    version: '1.14.1'
+    version: '1.14.4'
     repository: oci://public.ecr.aws/karpenter

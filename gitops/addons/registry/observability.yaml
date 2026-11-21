@@ -297,7 +297,8 @@ aws-for-fluentbit:
       # openssl-libs / openssl-fips-provider-latest 3.5.8-1.amzn2023.0.3
       # (ALAS2023-2026-3204), curl / libcurl 8.21.0-5.amzn2023.0.3
       # (ALAS2023-2026-3267) and libbrotli 1.1.0-1.amzn2023.0.2 (ALAS2023-2026-3334).
-      tag: 3.5.7
+      # 3.5.7 -> 3.5.9: latest 3.x release; 3.5.7 was flagged by image scanning.
+      tag: 3.5.9
     # The chart defaults every output to us-east-1. Ship logs to the cluster's own
     # region, from the same aws_region annotation every other AWS addon reads.
     cloudWatchLogs:
