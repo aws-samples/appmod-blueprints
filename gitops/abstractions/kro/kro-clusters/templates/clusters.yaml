@@ -127,6 +127,14 @@ spec:
   awsTags: {}
   {{- end }}
   workloads: {{ $cluster.workloads | default "false" | quote }}
+  {{- /* Opt-in VPC Block Public Access exclusion for this
+       cluster's VPC (rg-vpc.yaml). Per-cluster only, no global: each environment
+       declares its own exception. Rendered only when true, so a hub whose RGD
+       predates the field never receives it ("field not declared in schema").
+       Accepts a YAML boolean or the string "true". */}}
+  {{- if eq (toString ($cluster.vpcBlockPublicAccessExclusion | default false)) "true" }}
+  vpcBlockPublicAccessExclusion: true
+  {{- end }}
   {{- if $cluster.subHostedZone | quote }}
   subHostedZone:
     {{- toYaml $cluster.subHostedZone | nindent 4 }}
