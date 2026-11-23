@@ -42,8 +42,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: sweep-on-emulator-${{ github.event.pull_request.number || github.ref }}
-  # Cancel superseded PR runs only: every push to main keeps its own result.
+  # One group per PR: a new push cancels its superseded run. Pushes to main and
+  # dispatches get a group of their own (run_id), so none is ever cancelled or
+  # replaced while pending.
+  group: >-
+    sweep-on-emulator-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

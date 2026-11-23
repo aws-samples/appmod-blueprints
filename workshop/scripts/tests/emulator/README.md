@@ -80,6 +80,7 @@ python3 -m venv /tmp/emu-venv
 
 `env -i` starts from an empty environment, so the guard does not trip on your own AWS variables.
 Everything goes under `EMU_WORK` (default `${TMPDIR:-/tmp}/sweep-emulator`), outside the checkout.
+Each rerun in the same `EMU_WORK` adds a fresh `taskrepo.*` copy (about 1.4 MB).
 Linux x86_64 only. `EMU_DOWNLOAD_DIR` can point at a cache of the downloads, which are still
 verified when cached.
 
