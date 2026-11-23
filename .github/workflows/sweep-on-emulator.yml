@@ -1,0 +1,79 @@
+name: sweep-on-emulator
+
+# Runs the workshop teardown sweep and the issue #10 capability-logs
+# reconcile against a local AWS Emulator (in-memory, fake account
+# 000000000000). No AWS account, secret or OIDC role is used: the scripts
+# refuse to run if any AWS_* or ACTIONS_ID_TOKEN_* variable is set.
+# Details: workshop/scripts/tests/emulator/README.md
+#
+# The paths are what the job runs, or what go-task parses to run
+# enable-capability-logs (the root Taskfile includes every provider's).
+on:
+  pull_request:
+    paths:
+      - 'workshop/scripts/sweep-workshop-resources.py'
+      - 'workshop/scripts/sweep/**'
+      - 'workshop/scripts/tests/test_sweep_*.py'
+      - 'workshop/scripts/tests/test_capability_logs_wait.py'
+      - 'workshop/scripts/tests/emulator/**'
+      - 'Taskfile.yaml'
+      - 'workshop/Taskfile.yaml'
+      - 'cluster-providers/**'
+      - 'gitops/addons/registry/**'
+      - 'scripts/install-timing.sh'
+      - '.github/workflows/sweep-on-emulator.yml'
+  push:
+    branches: [main]
+    paths:  # same list as pull_request
+      - 'workshop/scripts/sweep-workshop-resources.py'
+      - 'workshop/scripts/sweep/**'
+      - 'workshop/scripts/tests/test_sweep_*.py'
+      - 'workshop/scripts/tests/test_capability_logs_wait.py'
+      - 'workshop/scripts/tests/emulator/**'
+      - 'Taskfile.yaml'
+      - 'workshop/Taskfile.yaml'
+      - 'cluster-providers/**'
+      - 'gitops/addons/registry/**'
+      - 'scripts/install-timing.sh'
+      - '.github/workflows/sweep-on-emulator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sweep-on-emulator-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sweep-on-emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Python dependencies (hash-pinned)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --require-hashes \
+            -r workshop/scripts/tests/emulator/requirements.txt
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: "Sweep and issue #10 replay on AWS Emulator"
+        env:
+          EMU_WORK: ${{ runner.temp }}/sweep-emulator
+        run: bash workshop/scripts/tests/emulator/run-all.sh
+
+      - name: Keep logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sweep-on-emulator-logs
+          path: |
+            ${{ runner.temp }}/sweep-emulator/*.log
+            ${{ runner.temp }}/sweep-emulator/manifest.tsv
+          if-no-files-found: ignore
+          retention-days: 7
