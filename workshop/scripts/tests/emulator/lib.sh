@@ -33,7 +33,7 @@ log() { printf '[emulator-ci] %s\n' "$*"; }
 guard_host_env() {
   local v bad=""
   for v in $(compgen -v | grep -E '^(AWS_|ACTIONS_ID_TOKEN_)' || true); do
-    if [ -n "${!v:-}" ]; then bad="$bad $v"; fi
+    if [ -n "${!v+x}" ]; then bad="$bad $v"; fi  # set, even to an empty value
   done
   [ -z "$bad" ] || die "refusing to run: set in the environment:$bad. This job must never see real AWS credentials or endpoints."
 }
@@ -44,8 +44,8 @@ emu_load() {
   . "$EMU_STATE"
 }
 
-# Checked before EVERY call: the endpoint is https://127.0.0.1:<port>, the emulator process
-# we started is alive, and its generated files exist.
+# Checked before every command started by emu_run: the endpoint is https://127.0.0.1:<port>,
+# the emulator process we started is alive, and its generated files exist.
 emu_check_endpoint() {
   [[ "${EMU_ENDPOINT:-}" =~ ^https://127\.0\.0\.1:[0-9]+$ ]] \
     || die "emulator endpoint '${EMU_ENDPOINT:-}' is not https://127.0.0.1:<port>"
@@ -133,7 +133,7 @@ emu_stop() {
   . "$EMU_STATE"
   if [ -n "${EMU_PID:-}" ] && kill -0 "$EMU_PID" 2>/dev/null; then
     kill "$EMU_PID"
-    # Not always our child (stop may run from another shell): poll instead of `wait`.
+    # Started through env, so not our direct child: poll instead of `wait`.
     for _ in $(seq 20); do kill -0 "$EMU_PID" 2>/dev/null || break; sleep 0.5; done
   fi
   rm -f "$EMU_STATE"

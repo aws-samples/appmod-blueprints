@@ -41,7 +41,8 @@ log "#10 control reproduced: $(grep -o 'ConflictException.*' <<<"$OUT" | head -c
 
 # 3. The real task, from a scratch copy of the repo pieces the Taskfile loads (same list as
 #    test_capability_logs_wait.py), with a config naming the prefix and the region.
-R="$EMU_WORK/taskrepo"
+# A fresh copy per run, so a local rerun never parses files deleted from the checkout since.
+R=$(mktemp -d "$EMU_WORK/taskrepo.XXXXXX")
 mkdir -p "$R/scripts" "$R/workshop" "$R/gitops/addons"
 cp "$REPO_ROOT/Taskfile.yaml" "$R/"
 cp -R "$REPO_ROOT/cluster-providers" "$R/"
