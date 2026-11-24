@@ -1,0 +1,4 @@
+# Python packages of the sweep-on-emulator job. Regenerate requirements.txt with:
+#   uv pip compile --generate-hashes --python-version 3.12 requirements.in -o requirements.txt
+boto3==1.44.9
+tenacity==9.2.1
