@@ -323,6 +323,14 @@ def test_gate_ignores_a_resource_that_disappeared_after_listing():
         assert residue.still_exists(ctx, fam, ident) is False, fam
 
 
+def test_gate_ignores_a_table_already_deleting():
+    ctx = make_ctx()
+    ctx.ddb.describe_table = lambda TableName: {"Table": {"TableName": TableName, "TableStatus": "DELETING"}}
+    assert residue.still_exists(ctx, "dynamodb", "peeks-table") is False
+    ctx.ddb.describe_table = lambda TableName: {"Table": {"TableName": TableName, "TableStatus": "ACTIVE"}}
+    assert residue.still_exists(ctx, "dynamodb", "peeks-table") is True
+
+
 def test_gate_keeps_a_resource_whose_lookup_is_denied():
     ctx = make_ctx()
     ctx.ddb.describe_table = lambda TableName: (_ for _ in ()).throw(AwsError("AccessDeniedException", "no"))

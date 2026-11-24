@@ -166,8 +166,9 @@ def still_exists(ctx, family, ident):
         if family == "ecr":
             return bool(ctx.ecr.describe_repositories(repositoryNames=[ident]).get("repositories", []))
         if family == "dynamodb":
-            ctx.ddb.describe_table(TableName=ident)
-            return True
+            # DELETING is one-way: the §16c delete was accepted and the table is going away
+            # (a few seconds even for an empty table), so it is not residue.
+            return ctx.ddb.describe_table(TableName=ident)["Table"].get("TableStatus") != "DELETING"
         if family == "ssm":
             return bool(ctx.ssm.get_parameter(Name=ident).get("Parameter"))
         if family == "log-group":
