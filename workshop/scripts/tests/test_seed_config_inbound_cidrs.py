@@ -277,8 +277,9 @@ class TestSeedRejects:
 # parse error there and hub:seed failed on EVERY non-empty value on a macOS host while gawk (the
 # awk of CI) accepted it. Two barriers:
 #   1. static, runs everywhere: no "/" inside a bracket expression, no {n,m} interval (BWK
-#      20200816, the macOS awk, has none), and none of the usual gawk-only regex escapes or
-#      functions in the CIDR_CHECK program. A denylist: it cannot prove the program portable;
+#      20200816, the macOS awk, has none), and none of the usual gawk-only regex escapes,
+#      functions (bit operations, strtonum, ...) or 3-argument match / 4-argument split in the
+#      CIDR_CHECK program. A denylist: it cannot prove the program portable;
 #   2. dynamic, when a BWK awk is available: run hub:seed with it as `awk` on PATH. A candidate
 #      ($BWK_AWK, then bwkawk / original-awk / one-true-awk / nawk on PATH, then the PATH `awk`)
 #      counts only if `--version` prints "awk version YYYYMMDD", BWK's format: a Debian `nawk`
@@ -329,8 +330,10 @@ class TestCidrCheckPortable:
     def test_no_gawk_only_construct(self, provider):
         prog = _cidr_check_program(provider)
         for pat, what in [(r"\\[sSwWyB<>`']", "gawk regex escape"),
-                          (r"\b(gensub|asort|asorti|strftime|systime|patsplit|isarray|typeof)\s*\(",
-                           "gawk-only function"),
+                          (r"\b(gensub|asort|asorti|strftime|systime|mktime|patsplit|isarray|typeof"
+                           r"|strtonum|and|or|xor|compl|lshift|rshift)\s*\(", "gawk-only function"),
+                          (r"\bmatch\s*\([^()]*,[^()]*,", "3-argument match()"),
+                          (r"\bsplit\s*\([^()]*,[^()]*,[^()]*,", "4-argument split()"),
                           (r"\b(IGNORECASE|FPAT|RT|BEGINFILE|ENDFILE)\b", "gawk-only variable")]:
             m = _re.search(pat, prog)
             assert not m, f"{provider}: {what} {m.group(0)!r} is not in BWK awk"
