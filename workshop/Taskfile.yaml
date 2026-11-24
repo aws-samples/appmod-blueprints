@@ -268,7 +268,7 @@ tasks:
       - '{{.MARK}} step workshop seed-fleet-nat-egress'
       - |
         if ! (cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress); then
-          printf '{{.C_ERR}}⚠ secrets-manager:seed-fleet-nat-egress failed: the spoke NATs are NOT in the hub ALB allowlist (spoke SSO/OTel to the hub breaks if it has one). Re-run from %s: task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress{{.C_RESET}}\n' "{{.PLATFORM_DIR}}"
+          printf '{{.C_ERR}}⚠ secrets-manager:seed-fleet-nat-egress failed: the spoke NATs are NOT in the hub ALB allowlist (spoke SSO/OTel to the hub breaks if it has one; a pinned platform.ref older than the task has no allowlist feature, ignore it then). Re-run from %s: task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress{{.C_RESET}}\n' "{{.PLATFORM_DIR}}"
         fi
       # Background: wait for the spoke apps to sync (same tolerant loop and nudges as
       # before), THEN pre-deploy the Path A Next.js frontend and the Rust dev manifest on

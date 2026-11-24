@@ -235,9 +235,9 @@ def _git_show(path):
 
 @needs_helm
 def test_default_claim_render_is_byte_identical_to_main(tmp_path):
-    # Like vpcBlockPublicAccessExclusion (#1313), albInboundCidrs is rendered only when
-    # non-empty: a hub whose EksclusterWithVpc RGD predates the field never receives it on a
-    # claim it does not need, and the default render is unchanged.
+    # albInboundCidrs is rendered only when non-empty: a hub whose EksclusterWithVpc RGD
+    # predates the field never receives it on a claim it does not need, and the default render
+    # is unchanged.
     rel = "gitops/abstractions/kro/kro-clusters"
     ls = subprocess.run(["git", "-C", REPO, "ls-tree", "-r", "--name-only", "origin/main", rel + "/"],
                         capture_output=True, text=True)

@@ -105,7 +105,7 @@ spec:
        fleet-wide default (global.spokeAlbInboundCidrs, from the hub cluster secret's
        spoke_alb_inbound_cidrs annotation = config.local.yaml spokeAlbInboundCidrs). A YAML list
        is joined with "," (join passes a string through and turns nil into "").
-       Rendered only when non-empty, like vpcBlockPublicAccessExclusion: an empty value means
+       Rendered only when non-empty: an empty value means
        the EksclusterWithVpc RGD default "" (spoke ALB open), the default render is unchanged,
        and a hub whose RGD predates the field never receives it on a claim that does not use it.
        The RGD forwards it to the nested EksCluster, which stamps the spoke cluster-secret
