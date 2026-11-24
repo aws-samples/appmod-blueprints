@@ -5,7 +5,7 @@
    marked "kept" (the control prefix) still exists.
 2. A name/tag scan finds no resource of the test prefix at all, seeded or not.
 
-Deletions can finish asynchronously (a DynamoDB table stays DELETING for a few seconds), so
+Deletions can finish asynchronously (a VPC endpoint passes through `deleting`, for example), so
 the checks are retried for up to VERIFY_TIMEOUT seconds before failing.
 
 Usage: python3 verify.py <manifest.tsv> <region> <prefix>

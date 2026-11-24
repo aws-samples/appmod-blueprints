@@ -28,6 +28,5 @@ if grep -q "ListVpcOrigins" "$OUT" && grep -q "NotImplemented" "$OUT"; then
 fi
 
 if [ "$rc" -ne 0 ]; then
-  grep '✗ ' "$OUT" >&2 || true
-  die "sweep exited RC=$rc"
+  die "sweep exited RC=$rc (its residue lines, if any, are in the log above)"
 fi
