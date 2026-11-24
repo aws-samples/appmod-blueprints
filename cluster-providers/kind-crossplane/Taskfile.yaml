@@ -1708,7 +1708,7 @@ tasks:
           echo "[hub:seed] ⚠ WARNING: domain is set and the shared platform ALB has no source-IP allowlist."
           echo "           The internet-facing ALB (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana) will accept connections from any source IP."
           echo "           To restrict it from install time, set 'albInboundCidrs' in config.local.yaml"
-          echo "           (include the hub and OAP-spoke NAT egress IPs). See docs/platform/alb-ip-allowlist.md."
+          echo "           (the hub NAT is added for you, kro spoke NATs by seed-fleet-nat-egress). See docs/platform/alb-ip-allowlist.md."
         fi
         # Day-2 (review #1308): a spoke gets spoke_alb_inbound_cidrs only when its EksCluster is
         # CREATED. The ACK Secret behind <spoke>/config only references the kro data Secret, so ACK
@@ -1720,6 +1720,25 @@ tasks:
           echo "           Only spokes created from now on get the new value. Each EXISTING kro spoke keeps its old"
           echo "           ALB allowlist (open if it had none) until its ACK Secret spec is bumped: see"
           echo "           docs/platform/alb-ip-allowlist.md, 'Existing spokes (day-2)'."
+        fi
+        # Two non-fatal checks on the hub allowlist built from config.yaml (review #1308):
+        # - no hub NAT known (lookup failed on a first install, or egress through a TGW/proxy):
+        #   the hub apps' own server-side Keycloak calls through this ALB are then blocked;
+        # - size: each entry is two security-group rules (HTTP + HTTPS) and the default limit is
+        #   60, so above ~28 entries the load balancer controller's SG update fails, which only
+        #   shows as an Ingress event. Counted before any overlay inboundCidrs/extraInboundCidrs.
+        if [ -n "$ALB_INBOUND_CIDRS" ]; then
+          if [ -z "$NAT_FINAL" ]; then
+            printf '{{.C_WARN}}[hub:seed] ⚠ WARNING: albInboundCidrs is set but no hub NAT egress IP is known (NAT lookup failed, or the hub egresses through a Transit Gateway/proxy).{{.C_RESET}}\n'
+            echo "           The hub apps' own SSO calls to Keycloak through this ALB will time out: add that egress IP to albInboundCidrs."
+            echo "           See docs/platform/alb-ip-allowlist.md pitfall 1."
+          fi
+          N_ALLOW=$(printf '%s,%s,%s' "$ALB_INBOUND_CIDRS" "$NAT_FINAL" "$PREV_FLEET_NAT" | tr ',' '\n' | awk 'NF' | sort -u | wc -l | tr -d ' ')
+          if [ "$N_ALLOW" -gt 28 ]; then
+            printf '{{.C_WARN}}[hub:seed] ⚠ WARNING: the hub ALB allowlist has %s entries before any overlay entries (albInboundCidrs + hub NAT + spoke NATs).{{.C_RESET}}\n' "$N_ALLOW"
+            echo "           Each entry is 2 security-group rules (HTTP + HTTPS) and the default limit is 60: beyond ~28 entries the"
+            echo "           ALB security-group update fails (only visible as an Ingress event). Summarise ranges or use AWS WAF (pitfall 3)."
+          fi
         fi
         METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","addons_repo_url":"{{.AGENTIC_REPO_URL}}","addons_repo_revision":"{{.AGENTIC_REPO_REVISION}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}'
         if [ -n "$OVL_URL" ]; then
@@ -1897,6 +1916,18 @@ tasks:
           printf '{{.C_ERR}}⚠ %s metadata is not JSON — fleet_nat_egress_cidrs not updated.{{.C_RESET}}\n' "$SECRET_KEY"
           exit 1
         }
+        # Size check (non-fatal, review #1308): with an allowlist set, every entry is two
+        # security-group rules (HTTP + HTTPS) and the default limit is 60, so above ~28 entries the
+        # ALB security-group update fails (only visible as an Ingress event). Counted before any
+        # overlay inboundCidrs/extraInboundCidrs.
+        ALLOW_CFG=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .config_inbound_cidrs // ""' 2>/dev/null) || ALLOW_CFG=""
+        if [ -n "$ALLOW_CFG" ]; then
+          HUB_NAT=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .nat_egress_cidrs // ""' 2>/dev/null) || HUB_NAT=""
+          N_ALLOW=$(printf '%s,%s,%s' "$ALLOW_CFG" "$HUB_NAT" "$FLEET" | tr ',' '\n' | awk 'NF' | sort -u | wc -l | tr -d ' ')
+          if [ "$N_ALLOW" -gt 28 ]; then
+            printf '{{.C_WARN}}⚠ the hub ALB allowlist has %s entries before any overlay entries (albInboundCidrs + hub NAT + spoke NATs): beyond ~28 the ALB security-group update fails (60-rule default, 2 rules per entry). Summarise ranges or use AWS WAF (docs/platform/alb-ip-allowlist.md pitfall 3).{{.C_RESET}}\n' "$N_ALLOW"
+          fi
+        fi
         if [ "$STORED" = "$FLEET" ]; then
           printf '{{.C_OK}}✓ fleet_nat_egress_cidrs already up to date in %s (%s).{{.C_RESET}}\n' "$SECRET_KEY" "${FLEET:-<none>}"
           exit 0

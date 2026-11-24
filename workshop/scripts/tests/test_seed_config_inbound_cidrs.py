@@ -120,12 +120,13 @@ def _run(tmp_path, env, script_text, tvars):
                           capture_output=True, text=True, timeout=120)
 
 
-def _seed_raw(tmp_path, provider, config, insecure="false", domain="idp.example.com", existing=None):
+def _seed_raw(tmp_path, provider, config, insecure="false", domain="idp.example.com", existing=None,
+              nat=""):
     cfg = tmp_path / "config.local.yaml"
     cfg.write_text(yaml.safe_dump(config))
     sf, env = _env(tmp_path, secret=existing)
     tvars = dict(TVARS, CONFIG_FILE=str(cfg), ROOT_DIR=str(tmp_path),
-                 INSECURE=insecure, DOMAIN=domain, INGRESS_DOMAIN=domain)
+                 INSECURE=insecure, DOMAIN=domain, INGRESS_DOMAIN=domain, NAT_EGRESS_CIDRS=nat)
     cmds = _task(provider)["cmds"]
     text = "\n".join(c["cmd"] if isinstance(c, dict) else c for c in cmds)
     res = _run(tmp_path, env, text, tvars)
@@ -208,6 +209,13 @@ class TestSeedPreservesFleetNat:
         secret, _ = _seed(tmp_path, provider, _cfg(), existing=self._existing())
         assert "fleet_nat_egress_cidrs" not in _meta(secret)
 
+    def test_removing_albInboundCidrs_drops_the_stored_key(self, tmp_path, provider):
+        # docs "Remove the filtering": config.yaml is authoritative, a re-seed without the key
+        # removes config_inbound_cidrs (it is not preserved like the fleet NAT).
+        existing = self._existing(config_inbound_cidrs="203.0.113.0/24")
+        secret, _ = _seed(tmp_path, provider, _cfg(), existing=existing)
+        assert "config_inbound_cidrs" not in _meta(secret)
+
 
 # --- appmod providers: invalid allowlists and insecure mode are refused (review #1308) -------
 BAD_CIDRS = [
@@ -253,6 +261,38 @@ class TestSeedRejects:
         assert "config_inbound_cidrs" not in _meta(secret)
 
 
+# --- review #1308 smaller items: no hub NAT, and too many entries for the SG ---------------
+@needs_task
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestSeedAllowlistWarnings:
+    def test_warns_when_allowlist_set_without_hub_nat(self, tmp_path, provider):
+        res, st = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=["203.0.113.0/24"]), nat="")
+        assert res.returncode == 0 and len(st["writes"]) == 1, res.stdout + res.stderr
+        assert "no hub NAT egress IP is known" in res.stdout
+
+    def test_no_nat_warning_when_hub_nat_known(self, tmp_path, provider):
+        res, _ = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=["203.0.113.0/24"]),
+                           nat="198.51.100.9/32")
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "no hub NAT egress IP is known" not in res.stdout
+
+    def test_no_nat_warning_without_allowlist(self, tmp_path, provider):
+        res, _ = _seed_raw(tmp_path, provider, _cfg(), nat="")
+        assert "no hub NAT egress IP is known" not in res.stdout
+
+    def test_warns_above_28_entries(self, tmp_path, provider):
+        many = ["203.0.113.%d/32" % i for i in range(1, 29)]      # 28 + hub NAT = 29
+        res, st = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=many), nat="198.51.100.9/32")
+        assert res.returncode == 0 and len(st["writes"]) == 1, res.stdout + res.stderr
+        assert "allowlist has 29 entries" in res.stdout
+
+    def test_no_size_warning_at_28_entries(self, tmp_path, provider):
+        many = ["203.0.113.%d/32" % i for i in range(1, 28)]      # 27 + hub NAT = 28
+        res, _ = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=many), nat="198.51.100.9/32")
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "entries before any overlay" not in res.stdout
+
+
 # --- appmod providers: the non-fatal hardening warning --------------------------------------
 @needs_task
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
@@ -264,7 +304,9 @@ class TestSeedWarning:
 
     def test_no_warning_when_allowlist_is_set(self, tmp_path, provider):
         _, res = _seed(tmp_path, provider, _cfg(albInboundCidrs=["203.0.113.0/24"]), insecure="false")
-        assert "WARNING" not in res.stdout
+        # The open-ALB warning is gone. (This fake finds no hub NAT, so the separate "no hub NAT
+        # egress IP is known" warning still prints: see TestSeedAllowlistWarnings.)
+        assert "has no source-IP allowlist" not in res.stdout
 
     def test_no_warning_in_insecure_mode(self, tmp_path, provider):
         # insecure=true => internal ALB behind an edge; a client allowlist must not be set.

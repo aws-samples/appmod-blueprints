@@ -61,8 +61,10 @@ the shared ALB is open for the window between its creation and your overlay land
 # config.local.yaml (appmod-blueprints) — or the OAP config.local.yaml, which forwards it
 albInboundCidrs:
   - 203.0.113.0/24        # corporate / VPN egress range (example)
-  - 203.0.113.201/32      # NAT egress IP of a fleet spoke (example)
-# equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.201/32"
+  - 203.0.113.10/32       # extra operator source IP (example)
+# equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.10/32"
+# Hub NAT and kro spoke NATs are added for you (pitfall 1); list only NATs that are not
+# discovered (Crossplane-composed spokes, byoc/terraform spokes, egress through a TGW/proxy).
 ```
 
 - **Providers.** Applied by `kind-kro-ack` and `kind-crossplane`: `hub:seed` normalises the value
@@ -76,9 +78,15 @@ albInboundCidrs:
   the registry `valuesObject` wins over overlay value files in ArgoCD, so reusing `inboundCidrs`
   would clobber an operator's overlay list. You can set it from `config.yaml`, from the overlay, or
   both.
-- **NAT egress still required.** Include the hub and OAP‑spoke NAT egress IPs (see
-  [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)); the hub NAT is appended
-  automatically on these two providers.
+- **NAT egress.** The hub NAT is appended automatically on these two providers, and kro spoke
+  NATs by `secrets-manager:seed-fleet-nat-egress` (the workshop install runs it; elsewhere re-run
+  it after adding or removing spokes). List by hand only the NATs that are not discovered (see
+  [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)). `hub:seed` warns
+  when no hub NAT is known, and when the list exceeds about 28 entries
+  ([pitfall 3](#3-securitygroup-rule-limits)).
+- **Validated.** Every entry must be an IPv4 CIDR `a.b.c.d/n`: `hub:seed` fails, before writing
+  anything, on an entry such as `203.0.113.5` (no mask), `10.0.0.0/33` or `corp-vpn`, and when
+  `albInboundCidrs` is set together with `insecure: true`.
 - **CloudFront mode.** Leave it unset with `insecure: true`
   ([pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)). `hub:seed` prints a non‑fatal
   warning when a domain is set, `insecure` is not `true`, and `albInboundCidrs` is empty — the ALB
@@ -121,13 +129,13 @@ set). Create:
 # overlays/clusters/<hub-name>/ingress-class-alb/values.yaml
 #
 # Source-IP allowlist for the shared "platform" ALB (all hub UIs).
-# IPv4 CIDRs. The hub's own NAT egress IP(s) are added automatically on kind-kro-ack and
-# kind-crossplane installs; elsewhere, list them here. The NAT egress IP(s) of every OAP spoke
-# always go here, and must be updated after each reinstall (see pitfall 1).
+# IPv4 CIDRs. On kind-kro-ack / kind-crossplane the hub NAT and the kro spoke NATs are added for
+# you (pitfall 1); list here only the NATs that are not discovered, and update them after each
+# reinstall.
 inboundCidrs:
   - 203.0.113.0/25        # corporate / VPN egress range
   # - 203.0.113.200/32    # hub NAT egress IP -- only outside kind-kro-ack / kind-crossplane
-  # - 203.0.113.201/32    # NAT egress IP of a fleet spoke, if any
+  # - 203.0.113.201/32    # NAT of a spoke that is not discovered (Crossplane-composed, byoc/terraform)
 # Optional ad-hoc additions, appended after the base (list or comma-separated string):
 extraInboundCidrs: "203.0.113.10/32,203.0.113.11/32"
 ```
@@ -197,8 +205,12 @@ inboundCidrs: []
 extraInboundCidrs: ""
 ```
 
-Commit, push to the tracked revision and sync as above. The `inboundCIDRs` field disappears from
-the IngressClassParams and the controller restores the default `0.0.0.0/0` inbound rules. Verify
+Commit, push to the tracked revision and sync as above. This only removes the **overlay** entries:
+if `albInboundCidrs` is set in `config.local.yaml`, the ALB stays restricted to it (plus the NATs).
+To open the ALB fully, also remove `albInboundCidrs` (or set it empty) and re‑run
+`secrets-manager:seed` (or the install), which then drops `config_inbound_cidrs`. With no entry
+left, the `inboundCIDRs` field disappears from the IngressClassParams and the controller restores
+the default `0.0.0.0/0` inbound rules. Verify
 with the same two commands: `inboundCIDRs` no longer appears, and the security group shows
 `0.0.0.0/0` on the listener ports.
 

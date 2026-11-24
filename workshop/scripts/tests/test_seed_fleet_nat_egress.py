@@ -292,6 +292,17 @@ class TestFleetTask:
         assert "spoke acme-spoke-xp: no ACK ElasticIPAddress" in out
         assert "acme-spoke-dev: no ACK" not in out
 
+    def test_warns_when_the_allowlist_exceeds_28_entries(self, tmp_path, provider):
+        cfg = ",".join("198.51.100.%d/32" % i for i in range(1, 26))   # 25 + 1 hub NAT + 3 spokes
+        res, _ = _run(tmp_path, provider, _secret_string(dict(
+            META_BASE, config_inbound_cidrs=cfg, nat_egress_cidrs="192.0.2.1/32")))
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "allowlist has 29 entries" in res.stdout + res.stderr
+
+    def test_no_size_warning_without_config_allowlist(self, tmp_path, provider):
+        res, _ = _run(tmp_path, provider, _secret_string(dict(META_BASE)))
+        assert "entries before any overlay" not in res.stdout + res.stderr
+
     def test_fetches_hub_kubeconfig_first(self, provider):
         _, t = _task_shell(provider)
         assert t["cmds"][0] == {"task": "hub:kubeconfig"}
