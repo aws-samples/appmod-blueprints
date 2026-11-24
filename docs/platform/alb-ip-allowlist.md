@@ -411,9 +411,23 @@ lockout, security‑group rule limit, and internal‑ALB caveats below apply exa
 **not** enable it for an open / public event.
 
 **Per‑spoke override.** A single spoke can override the fleet‑wide default with an `albInboundCidrs`
-field in its own fleet entry (`fleet/spoke-values/.../kro-clusters/clusters/<spoke>.json`); the
-per‑spoke value wins over `config.yaml`'s `spokeAlbInboundCidrs`, and an empty value disables the
-allowlist for that one spoke.
+key in its own entry of the fleet repo's KRO values file,
+`fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml` (the `clusters.<spoke>` block the
+claim is rendered from). `clusters/<spoke>.json` is only the ApplicationSet trigger: a field there
+is never read. The per‑spoke value wins whenever the key is present, as a YAML list or a
+comma‑separated string; an empty value (`""`, `[]`) disables the allowlist for that one spoke;
+without the key the spoke gets `spokeAlbInboundCidrs`.
+
+```yaml
+# fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml
+clusters:
+  <spoke-a>:
+    albInboundCidrs:            # this spoke only: replaces the fleet-wide default
+      - 198.51.100.0/24
+      - 198.51.100.7/32
+  <spoke-b>:
+    albInboundCidrs: ""         # this spoke stays open, whatever spokeAlbInboundCidrs says
+```
 
 **Post‑install, per spoke (overlay).** You can also set `inboundCidrs` (and optionally
 `extraInboundCidrs`) in the spoke's fleet overlay after install, exactly as for the hub in

@@ -175,3 +175,52 @@ def test_empty_default_renders_blank_spoke_allowlist():
                    "defaultRegion": "us-west-2", "provider": "kro-ack"},
         "clusters": {"spoke-default": {"accountId": "111122223333"}}})
     assert _alb_by_cluster(docs)["spoke-default"] == ""
+
+
+# --- review #1308: per-spoke override semantics ---------------------------------------------
+FLEET_DEFAULT = {"resourcePrefix": "acme", "accountId": "111122223333",
+                 "defaultRegion": "us-west-2", "provider": "kro-ack",
+                 "spokeAlbInboundCidrs": "203.0.113.0/24"}
+
+
+@needs_helm
+def test_per_spoke_empty_value_disables_the_fleet_default():
+    # A spoke entry with albInboundCidrs: "" (or [] / null) turns the allowlist off for that one
+    # spoke; `default` used to swallow the empty value and render the fleet default instead.
+    docs = _render_claim({"global": FLEET_DEFAULT, "clusters": {
+        "spoke-empty": {"accountId": "111122223333", "albInboundCidrs": ""},
+        "spoke-emptylist": {"accountId": "111122223333", "albInboundCidrs": []},
+        "spoke-null": {"accountId": "111122223333", "albInboundCidrs": None},
+        "spoke-absent": {"accountId": "111122223333"}}})
+    alb = _alb_by_cluster(docs)
+    assert alb["spoke-empty"] == ""
+    assert alb["spoke-emptylist"] == ""
+    assert alb["spoke-null"] == ""
+    assert alb["spoke-absent"] == "203.0.113.0/24"   # no key => fleet default still applies
+
+
+@needs_helm
+def test_per_spoke_list_renders_comma_separated_cidrs():
+    # A YAML list used to render as one invalid CIDR "[198.51.100.0/24 198.51.100.7/32]".
+    docs = _render_claim({"global": FLEET_DEFAULT, "clusters": {
+        "spoke-list": {"accountId": "111122223333",
+                       "albInboundCidrs": ["198.51.100.0/24", "198.51.100.7/32"]},
+        "spoke-string": {"accountId": "111122223333",
+                         "albInboundCidrs": "198.51.100.0/24,198.51.100.7/32"}}})
+    alb = _alb_by_cluster(docs)
+    assert alb["spoke-list"] == "198.51.100.0/24,198.51.100.7/32"
+    assert alb["spoke-string"] == "198.51.100.0/24,198.51.100.7/32"
+
+
+def test_docs_point_the_override_at_kro_clusters_values_not_the_trigger_json():
+    # clusters/<spoke>.json is only the appset generator trigger; the claim reads
+    # clusters.<name> from the fleet repo's kro-clusters/values.yaml.
+    import json
+    texts = {
+        "config.yaml": open(CONFIG_YAML).read(),
+        "schema": json.load(open(SCHEMA))["properties"]["spokeAlbInboundCidrs"]["description"],
+        "doc": open(os.path.join(REPO, "docs", "platform", "alb-ip-allowlist.md")).read(),
+    }
+    for name, t in texts.items():
+        assert "kro-clusters/clusters/<spoke>.json" not in t, name
+        assert "kro-clusters/values.yaml" in t, name

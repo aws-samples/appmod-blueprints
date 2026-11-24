@@ -141,8 +141,10 @@ ingressSecurityGroups: ""
 # Source-IP allowlist applied FROM INSTALL TIME to EVERY fleet SPOKE's own "platform" ALB
 # (hardening). Each spoke runs its own internet-facing ALB fronting the PARTICIPANT applications;
 # by default it accepts any source IP. This is the fleet-wide default for all spokes; a spoke can
-# override it with an `albInboundCidrs` field in its own fleet entry (fleet/spoke-values/.../
-# kro-clusters/clusters/<spoke>.json). YAML list or comma-separated string of IPv4 CIDRs.
+# override it with an `albInboundCidrs` key under `clusters.<spoke>` in the fleet repo's
+# fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml (not in clusters/<name>.json, which
+# only triggers the appset); an empty value there turns it off for that spoke. YAML list or
+# comma-separated string of IPv4 CIDRs.
 # kind-kro-ack / kind-crossplane only. When set, the spoke's own NAT egress IP is added
 # automatically (so app-to-ALB callbacks keep working). Empty/omitted = unchanged (every spoke
 # ALB stays open), render byte-identical.
