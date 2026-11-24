@@ -229,6 +229,9 @@ BAD_CIDRS = [
     ["203.0.113.0/08"],                       # leading zero in the mask
     ["10.0.0.1/8"],                           # host bits set (network is 10.0.0.0/8)
     ["203.0.113.5/24"],                       # host bits set (network is 203.0.113.0/24)
+    ["192.0.2.64/25"],                        # only the highest host bit set
+    ["10.128.0.0/8"],                         # only the highest host bit set
+    "203.0.113.0/24,",                        # trailing comma = blank last entry
 ]
 
 
@@ -273,11 +276,15 @@ class TestSeedRejects:
 # BWK awk ends a regex literal at the first unescaped "/", even inside [...], so "[/]" is a
 # parse error there and hub:seed failed on EVERY non-empty value on a macOS host while gawk (the
 # awk of CI) accepted it. Two barriers:
-#   1. static, runs everywhere: no "/" inside a bracket expression and no {n,m} interval (BWK
-#      20200816, the macOS awk, has none) in the CIDR_CHECK program;
-#   2. dynamic, when a BWK awk is available: run hub:seed with it as `awk` on PATH. Found from
-#      $BWK_AWK, then bwkawk / original-awk / one-true-awk / nawk on PATH, then a PATH `awk`
-#      that reports "awk version YYYYMMDD" (BWK's format, the macOS awk). Skipped otherwise.
+#   1. static, runs everywhere: no "/" inside a bracket expression, no {n,m} interval (BWK
+#      20200816, the macOS awk, has none), and none of the usual gawk-only regex escapes or
+#      functions in the CIDR_CHECK program. A denylist: it cannot prove the program portable;
+#   2. dynamic, when a BWK awk is available: run hub:seed with it as `awk` on PATH. A candidate
+#      ($BWK_AWK, then bwkawk / original-awk / one-true-awk / nawk on PATH, then the PATH `awk`)
+#      counts only if `--version` prints "awk version YYYYMMDD", BWK's format: a Debian `nawk`
+#      that links to mawk or gawk is not BWK. $BWK_AWK set to something else FAILS the test
+#      instead of skipping it. Skipped otherwise, and nothing else runs it: this repo has no CI
+#      for these tests.
 import re as _re
 
 
@@ -288,22 +295,28 @@ def _cidr_check_program(provider):
     return m.group(1)
 
 
+def _is_bwk(path):
+    if not (path and os.access(path, os.X_OK)):
+        return False
+    try:
+        v = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(_re.match(r"awk version \d{8}", v))
+
+
 def _bwk_awk():
-    cands = [os.environ.get("BWK_AWK", "")]
-    cands += [shutil.which(n) or "" for n in ("bwkawk", "original-awk", "one-true-awk", "nawk")]
-    for c in cands:
-        if c and os.access(c, os.X_OK):
+    for n in ("bwkawk", "original-awk", "one-true-awk", "nawk", "awk"):
+        c = shutil.which(n)
+        if c and _is_bwk(c):
             return c
-    a = shutil.which("awk")
-    if a:
-        v = subprocess.run([a, "--version"], capture_output=True, text=True).stdout
-        if _re.match(r"awk version \d{8}", v):
-            return a
     return None
 
 
-BWK = _bwk_awk()
-needs_bwk = pytest.mark.skipif(BWK is None, reason="no BWK awk (set BWK_AWK=<path> to run)")
+BWK_ENV = os.environ.get("BWK_AWK", "")
+BWK = BWK_ENV if _is_bwk(BWK_ENV) else (None if BWK_ENV else _bwk_awk())
+needs_bwk = pytest.mark.skipif(BWK is None and not BWK_ENV,
+                               reason="no BWK awk found (set BWK_AWK=<path> to run)")
 
 
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
@@ -312,6 +325,15 @@ class TestCidrCheckPortable:
         prog = _cidr_check_program(provider)
         for b in _re.findall(r"\[[^\]]*\]", prog):
             assert "/" not in b, f"{provider}: {b!r} ends the regex on BWK awk; write \\/"
+
+    def test_no_gawk_only_construct(self, provider):
+        prog = _cidr_check_program(provider)
+        for pat, what in [(r"\\[sSwWyB<>`']", "gawk regex escape"),
+                          (r"\b(gensub|asort|asorti|strftime|systime|patsplit|isarray|typeof)\s*\(",
+                           "gawk-only function"),
+                          (r"\b(IGNORECASE|FPAT|RT|BEGINFILE|ENDFILE)\b", "gawk-only variable")]:
+            m = _re.search(pat, prog)
+            assert not m, f"{provider}: {what} {m.group(0)!r} is not in BWK awk"
 
     def test_no_interval_expression(self, provider):
         assert not _re.search(r"\{\d", _cidr_check_program(provider)), \
@@ -324,11 +346,15 @@ class TestCidrCheckPortable:
         (" 203.0.113.0/24 , 0.0.0.0/0", "203.0.113.0/24,0.0.0.0/0"),
         (["10.0.0.0/33"], None),
         (["10.0.0.1/8"], None),
+        (["192.0.2.64/25"], None),
+        ("203.0.113.0/24,", None),
         (["203.0.113.5/32", "0.0.0.0/0", "192.0.2.128/25"], "203.0.113.5/32,0.0.0.0/0,192.0.2.128/25"),
         (["corp-vpn"], None),
         ("203.0.113.0/24;198.51.100.0/24", None),
     ], ids=repr)
     def test_seed_under_bwk_awk(self, tmp_path, provider, value, expected):
+        if BWK is None:
+            pytest.fail(f"BWK_AWK={BWK_ENV!r} is not a BWK awk (--version is not 'awk version YYYYMMDD')")
         (tmp_path / "bin").mkdir()
         os.symlink(BWK, tmp_path / "bin" / "awk")
         res, st = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=value))
@@ -336,6 +362,8 @@ class TestCidrCheckPortable:
         if expected is None:
             assert res.returncode != 0 and st["writes"] == [], out
             bad = value if isinstance(value, str) else value[0]
+            if bad.endswith(","):
+                bad = ""                               # trailing comma: the blank entry is named
             assert '"%s"' % bad.strip() in out, out    # the message names the bad entry
         else:
             assert res.returncode == 0, out

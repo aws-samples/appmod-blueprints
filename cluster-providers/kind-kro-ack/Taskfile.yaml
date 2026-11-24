@@ -1540,7 +1540,9 @@ tasks:
         # open stays at 0.0.0.0/0 while the operator thinks it is restricted, and no other ingress
         # change in the group is deployed. Every entry of both keys must be an IPv4 CIDR a.b.c.d/n
         # (octets 0-255, n 0-32, no leading zeros, no host bits, no blank entry); entries are trimmed and the
-        # normalised comma-separated list is what gets written. awk, not bash: go-task runs this
+        # normalised comma-separated list is what gets written. A "," is appended before awk so a
+        # trailing comma yields a blank last record, refused like any blank entry (RS=, drops an
+        # unterminated empty last record). awk, not bash: go-task runs this
         # under mvdan/sh, and the same program runs on the macOS (BWK) awk. Keep it BWK-portable:
         # no "/" inside [...] (BWK ends the regex there: write \/) and no {n,m} intervals;
         # test_seed_config_inbound_cidrs.py TestCidrCheckPortable checks both.
@@ -1562,11 +1564,11 @@ tasks:
           ok($0) { g = g (g == "" ? "" : ",") $0; next }
           { b = b " \"" $0 "\"" }
           END { if (b != "") { print b; exit 1 } else print g }'
-        if [ -n "$ALB_INBOUND_CIDRS" ] && ! ALB_INBOUND_CIDRS=$(printf '%s' "$ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
+        if [ -n "$ALB_INBOUND_CIDRS" ] && ! ALB_INBOUND_CIDRS=$(printf '%s,' "$ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
           printf '{{.C_ERR}}✗ albInboundCidrs: not an IPv4 CIDR (network address a.b.c.d/n, n 0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$ALB_INBOUND_CIDRS"
           exit 1
         fi
-        if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ] && ! SPOKE_ALB_INBOUND_CIDRS=$(printf '%s' "$SPOKE_ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
+        if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ] && ! SPOKE_ALB_INBOUND_CIDRS=$(printf '%s,' "$SPOKE_ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
           printf '{{.C_ERR}}✗ spokeAlbInboundCidrs: not an IPv4 CIDR (network address a.b.c.d/n, n 0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$SPOKE_ALB_INBOUND_CIDRS"
           exit 1
         fi

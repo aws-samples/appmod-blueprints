@@ -86,7 +86,8 @@ albInboundCidrs:
   ([pitfall 3](#3-securitygroup-rule-limits)).
 - **Validated.** Every entry must be an IPv4 network address `a.b.c.d/n`: `hub:seed` fails, before
   writing anything, on an entry such as `203.0.113.5` (no mask), `10.0.0.0/33`, `corp-vpn` or
-  `10.0.0.1/8` (host bits set: write `10.0.0.0/8`), and when `albInboundCidrs` is set together with
+  `10.0.0.1/8` (host bits set: write `10.0.0.0/8`), on a blank entry (`a,,b` or a trailing comma),
+  and when `albInboundCidrs` is set together with
   `insecure: true`. The same rules apply to `spokeAlbInboundCidrs`. IPv6 entries are refused here;
   on a dual‑stack ALB put them in the overlay `inboundCidrs`.
 - **CloudFront mode.** Leave it unset with `insecure: true`
