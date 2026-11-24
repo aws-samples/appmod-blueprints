@@ -1534,6 +1534,35 @@ tasks:
         SPOKE_ALB_INBOUND_CIDRS=$(yq -r '[.spokeAlbInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
         if [ "$SPOKE_ALB_INBOUND_CIDRS" = "null" ]; then SPOKE_ALB_INBOUND_CIDRS=""; fi
         echo "[hub:seed] spoke_alb_inbound_cidrs=${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
+        # Reject a bad allowlist BEFORE anything is written (review #1308). The chart renders both
+        # values unchanged into IngressClassParams.inboundCIDRs; an entry the load balancer
+        # controller cannot parse fails the whole IngressGroup reconcile, so an ALB that is already
+        # open stays at 0.0.0.0/0 while the operator thinks it is restricted, and no other ingress
+        # change in the group is deployed. Every entry of both keys must be an IPv4 CIDR a.b.c.d/n
+        # (octets 0-255, n 0-32, no leading zeros, no blank entry); entries are trimmed and the
+        # normalised comma-separated list is what gets written. awk, not bash: go-task runs this
+        # under mvdan/sh, and the same program runs on the macOS (BWK) awk.
+        CIDR_CHECK='
+          function ok(c,  p, o, i) {
+            if (c !~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[/][0-9]+$/) return 0
+            split(c, p, "/")
+            if (p[2] !~ /^(0|[1-9][0-9]?)$/ || p[2] + 0 > 32) return 0
+            split(p[1], o, ".")
+            for (i = 1; i <= 4; i++) if (o[i] !~ /^(0|[1-9][0-9]?[0-9]?)$/ || o[i] + 0 > 255) return 0
+            return 1
+          }
+          { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "") }
+          ok($0) { g = g (g == "" ? "" : ",") $0; next }
+          { b = b " \"" $0 "\"" }
+          END { if (b != "") { print b; exit 1 } else print g }'
+        if [ -n "$ALB_INBOUND_CIDRS" ] && ! ALB_INBOUND_CIDRS=$(printf '%s' "$ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
+          printf '{{.C_ERR}}✗ albInboundCidrs: not an IPv4 CIDR (a.b.c.d/0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$ALB_INBOUND_CIDRS"
+          exit 1
+        fi
+        if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ] && ! SPOKE_ALB_INBOUND_CIDRS=$(printf '%s' "$SPOKE_ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
+          printf '{{.C_ERR}}✗ spokeAlbInboundCidrs: not an IPv4 CIDR (a.b.c.d/0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$SPOKE_ALB_INBOUND_CIDRS"
+          exit 1
+        fi
         # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
         # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
         # when insecure != true (insecure=true => internal ALB behind an upstream edge, where

@@ -120,7 +120,7 @@ def _run(tmp_path, env, script_text, tvars):
                           capture_output=True, text=True, timeout=120)
 
 
-def _seed(tmp_path, provider, config, insecure="false", domain="idp.example.com", existing=None):
+def _seed_raw(tmp_path, provider, config, insecure="false", domain="idp.example.com", existing=None):
     cfg = tmp_path / "config.local.yaml"
     cfg.write_text(yaml.safe_dump(config))
     sf, env = _env(tmp_path, secret=existing)
@@ -129,8 +129,12 @@ def _seed(tmp_path, provider, config, insecure="false", domain="idp.example.com"
     cmds = _task(provider)["cmds"]
     text = "\n".join(c["cmd"] if isinstance(c, dict) else c for c in cmds)
     res = _run(tmp_path, env, text, tvars)
+    return res, json.loads(sf.read_text())
+
+
+def _seed(tmp_path, provider, config, insecure="false", domain="idp.example.com", existing=None):
+    res, st = _seed_raw(tmp_path, provider, config, insecure, domain, existing)
     assert res.returncode == 0, res.stdout + res.stderr
-    st = json.loads(sf.read_text())
     assert len(st["writes"]) == 1, st
     return st["writes"][0], res
 
@@ -203,6 +207,39 @@ class TestSeedPreservesFleetNat:
     def test_absent_fleet_nat_is_not_invented(self, tmp_path, provider):
         secret, _ = _seed(tmp_path, provider, _cfg(), existing=self._existing())
         assert "fleet_nat_egress_cidrs" not in _meta(secret)
+
+
+# --- appmod providers: invalid allowlists are refused (review #1308) -----------------------
+BAD_CIDRS = [
+    ["203.0.113.5"],                          # no mask
+    ["10.0.0.0/33"],                          # mask > 32
+    ["corp-vpn"],                             # a name, not a CIDR
+    "203.0.113.0/24;198.51.100.0/24",         # wrong separator
+    ["203.0.113.0/24", "198.51.100.256/32"],  # octet > 255 (one bad entry among good ones)
+    "203.0.113.0/24,,198.51.100.0/24",        # blank entry
+    ["2001:db8::/32"],                        # IPv6: the schema promises IPv4 CIDRs
+    ["203.0.113.0/08"],                       # leading zero in the mask
+]
+
+
+@needs_task
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestSeedRejects:
+    @pytest.mark.parametrize("key", ["albInboundCidrs", "spokeAlbInboundCidrs"])
+    @pytest.mark.parametrize("bad", BAD_CIDRS, ids=lambda v: repr(v))
+    def test_invalid_cidr_fails_before_any_write(self, tmp_path, provider, key, bad):
+        res, st = _seed_raw(tmp_path, provider, _cfg(**{key: bad}))
+        assert res.returncode != 0, res.stdout + res.stderr
+        assert st["writes"] == [], st
+        assert key in res.stdout + res.stderr and "not an IPv4 CIDR" in res.stdout + res.stderr
+
+    def test_entries_are_trimmed_and_normalised(self, tmp_path, provider):
+        secret, _ = _seed(tmp_path, provider,
+                          _cfg(albInboundCidrs=" 203.0.113.0/24 , 198.51.100.7/32",
+                               spokeAlbInboundCidrs=["0.0.0.0/0", " 192.0.2.0/24"]))
+        m = _meta(secret)
+        assert m["config_inbound_cidrs"] == "203.0.113.0/24,198.51.100.7/32"
+        assert m["spoke_alb_inbound_cidrs"] == "0.0.0.0/0,192.0.2.0/24"
 
 
 # --- appmod providers: the non-fatal hardening warning --------------------------------------
