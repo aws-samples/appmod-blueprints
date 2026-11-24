@@ -1,0 +1,13 @@
+# ExternalSecret refresh intervals (how often External Secrets polls AWS Secrets Manager).
+# Empty = chart built-in default. Precedence: per-object key > global key > built-in.
+externalSecrets:
+  # Global: devlake-encryption-secret, mysql-passwords (built-in 1h), devlake-mysql-auth (built-in 1m).
+  refreshInterval: ""
+  devlakeMysqlAuth:
+    refreshInterval: ""      # built-in 1m
+
+pushSecrets:
+  mysqlEndpointPush:
+    # PushSecret devlake-mysql-endpoint-push (built-in 30s). Not affected by
+    # externalSecrets.refreshInterval: it publishes the RDS endpoint during bootstrap.
+    refreshInterval: ""

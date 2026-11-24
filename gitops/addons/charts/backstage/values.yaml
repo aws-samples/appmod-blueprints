@@ -23,3 +23,15 @@ langfuse_enabled: "false"
 global:
   aws_cluster_name: ""
   clusterName: ""
+
+# ExternalSecret refresh intervals (how often External Secrets polls AWS Secrets Manager).
+# Empty = chart built-in default. Precedence: per-object key > global key > built-in.
+externalSecrets:
+  # Global: backstage-oidc-vars, backstage-postgres-vars, backstage-session-vars (built-in 30s)
+  # and git-credentials (built-in 5m).
+  refreshInterval: ""
+  gitCredentials:
+    refreshInterval: ""      # built-in 5m
+  argocdCredentials:
+    # Built-in "0" = fetch once, never refresh. The global key does NOT apply here.
+    refreshInterval: ""

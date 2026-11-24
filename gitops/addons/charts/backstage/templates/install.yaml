@@ -874,7 +874,7 @@ spec:
   secretStoreRef:
     name: aws-secrets-manager
     kind: ClusterSecretStore
-  refreshInterval: "30s"
+  refreshInterval: {{ .Values.externalSecrets.refreshInterval | default "30s" | quote }}
   target:
     name: backstage-oidc-vars
     creationPolicy: Owner
@@ -914,7 +914,7 @@ spec:
   secretStoreRef:
     name: aws-secrets-manager
     kind: ClusterSecretStore
-  refreshInterval: "30s"
+  refreshInterval: {{ .Values.externalSecrets.refreshInterval | default "30s" | quote }}
   target:
     name: backstage-postgres-vars
     creationPolicy: Owner
@@ -941,7 +941,7 @@ spec:
   secretStoreRef:
     name: aws-secrets-manager
     kind: ClusterSecretStore
-  refreshInterval: "30s"
+  refreshInterval: {{ .Values.externalSecrets.refreshInterval | default "30s" | quote }}
   target:
     name: backstage-session-vars
     creationPolicy: Owner

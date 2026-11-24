@@ -1,2 +1,7 @@
 global:
   clusterName: ""
+
+# ExternalSecret refresh interval for spark-oidc-secret (how often External Secrets
+# polls AWS Secrets Manager). Empty = built-in 30s.
+externalSecrets:
+  refreshInterval: ""
