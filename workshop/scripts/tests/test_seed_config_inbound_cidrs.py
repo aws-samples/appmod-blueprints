@@ -209,7 +209,7 @@ class TestSeedPreservesFleetNat:
         assert "fleet_nat_egress_cidrs" not in _meta(secret)
 
 
-# --- appmod providers: invalid allowlists are refused (review #1308) -----------------------
+# --- appmod providers: invalid allowlists and insecure mode are refused (review #1308) -------
 BAD_CIDRS = [
     ["203.0.113.5"],                          # no mask
     ["10.0.0.0/33"],                          # mask > 32
@@ -240,6 +240,17 @@ class TestSeedRejects:
         m = _meta(secret)
         assert m["config_inbound_cidrs"] == "203.0.113.0/24,198.51.100.7/32"
         assert m["spoke_alb_inbound_cidrs"] == "0.0.0.0/0,192.0.2.0/24"
+
+    def test_insecure_with_hub_allowlist_fails(self, tmp_path, provider):
+        res, st = _seed_raw(tmp_path, provider,
+                            _cfg(insecure=True, albInboundCidrs=["203.0.113.0/24"]), insecure="true")
+        assert res.returncode != 0, res.stdout + res.stderr
+        assert st["writes"] == [], st
+        assert "insecure" in res.stdout + res.stderr
+
+    def test_insecure_without_hub_allowlist_still_seeds(self, tmp_path, provider):
+        secret, _ = _seed(tmp_path, provider, _cfg(insecure=True), insecure="true")
+        assert "config_inbound_cidrs" not in _meta(secret)
 
 
 # --- appmod providers: the non-fatal hardening warning --------------------------------------

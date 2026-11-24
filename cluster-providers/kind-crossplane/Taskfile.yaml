@@ -1689,6 +1689,14 @@ tasks:
           printf '{{.C_ERR}}✗ spokeAlbInboundCidrs: not an IPv4 CIDR (a.b.c.d/0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$SPOKE_ALB_INBOUND_CIDRS"
           exit 1
         fi
+        # insecure: true => the hub ALB is internal behind CloudFront and only sees the CloudFront
+        # VPC-origin IPs, so a client allowlist cuts CloudFront off and every hub URL fails
+        # (docs/platform/alb-ip-allowlist.md pitfall 4). Refuse it instead of writing it.
+        if [ "{{.INSECURE}}" = "true" ] && [ -n "$ALB_INBOUND_CIDRS" ]; then
+          printf '{{.C_ERR}}✗ albInboundCidrs is set with insecure: true. The hub ALB is then internal behind CloudFront and would block CloudFront itself.{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  Remove albInboundCidrs and filter clients at the edge (AWS WAF IP set). See docs/platform/alb-ip-allowlist.md pitfall 4. Nothing was written.{{.C_RESET}}\n'
+          exit 1
+        fi
         # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
         # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
         # when insecure != true (insecure=true => internal ALB behind an upstream edge, where
