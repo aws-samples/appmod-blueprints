@@ -202,7 +202,7 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
 
 
 def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
-         eips_deleting=None, **kstate):
+         eips_deleting=None, cli_vars=(), **kstate):
     # Every cmd of the real task, in order, except the trailing ESO refresh (it talks to the
     # cluster for 60s and is asserted separately), with the provider's own hub:kubeconfig task
     # and its Taskfile-level env KUBECONFIG (the kind bootstrap cluster), so a kubectl call that
@@ -218,7 +218,7 @@ def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=Fa
         "tasks": {"run": {"cmds": cmds},
                   "hub:kubeconfig": _provider_task(provider, "hub:kubeconfig")}},
         sort_keys=False))
-    res = subprocess.run([TASK, "-s", "-t", str(tf), "run"], cwd=tmp_path, env=env,
+    res = subprocess.run([TASK, "-s", "-t", str(tf), "run", *cli_vars], cwd=tmp_path, env=env,
                          capture_output=True, text=True, timeout=120)
     st = json.loads(aws.read_text())
     return res, st
@@ -438,6 +438,49 @@ class TestFleetTask:
         assert res.returncode != 0, res.stdout + res.stderr
         assert st["writes"] == []
         assert "reports no ElasticIPAddress type" in res.stdout + res.stderr
+        assert "FLEET_NAT_FORCE=true" in res.stdout + res.stderr
+
+    # --- pre-review round 3 of #1308: a REGISTERED spoke being deleted -----------------------
+    def test_registered_spoke_being_deleted_is_not_added(self, tmp_path, provider):
+        # spokes:disable-kro keeps the cluster secret up to 180 s after the prune (or for good
+        # when the appsets do not refresh); the Secret has no finalizer, so its own
+        # deletionTimestamp never lingers. The EksclusterWithVpc deletionTimestamp is the signal.
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)),
+                       instances={"acme-spoke-dev": "live", "acme-spoke-prod": "deleting",
+                                  "acme-spoke-plain": "live"})
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        v = _meta(st["writes"][0])["fleet_nat_egress_cidrs"]
+        assert v == "203.0.113.201/32,203.0.113.250/32", v
+        assert "spoke acme-spoke-prod: being deleted (EksclusterWithVpc deletionTimestamp)" in out
+
+    def test_registered_spoke_being_deleted_leaves_a_stored_union(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       instances={"acme-spoke-prod": "deleting"})
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == "203.0.113.201/32,203.0.113.250/32"
+
+    def test_missing_kro_type_never_shrinks_a_stored_union(self, tmp_path, provider):
+        # the kro type is reported missing while an unregistered spoke's NAT is stored: without
+        # the instances the task cannot tell a live spoke from a deleted one, so it keeps it.
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs="203.0.113.201/32")),
+                       secrets=self.HUB_ONLY, eips={"acme-spoke-dev": ["203.0.113.201"]}, no_kro_crd=True)
+        out = res.stdout + res.stderr
+        assert res.returncode != 0, out
+        assert st["writes"] == []
+        assert "reports no EksclusterWithVpc type" in out and "FLEET_NAT_FORCE=true" in out
+
+    @pytest.mark.parametrize("crd", ["no_eip_crd", "no_kro_crd"])
+    def test_force_lets_a_missing_type_shrink_the_union(self, tmp_path, provider, crd):
+        # the operator's way out once the type is really gone (e.g. every kro spoke deleted and
+        # the ACK EC2 controller removed afterwards): FLEET_NAT_FORCE=true.
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       secrets=self.HUB_ONLY, eips={}, cli_vars=("FLEET_NAT_FORCE=true",), **{crd: True})
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert "fleet_nat_egress_cidrs" not in _meta(st["writes"][0])
+        assert "FLEET_NAT_FORCE=true" in out
 
     def test_eip_listing_failure_keeps_stored_key(self, tmp_path, provider):
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),

@@ -338,6 +338,21 @@ re-seeds (like the `spoke_*` observability keys).
   up. A spoke whose VPC graph has not created its EIP at all is invisible to the task;
   `wait-for-spokes` has then already printed `not ACTIVE ... continuing`, and the same re‑run
   applies.
+- **A spoke being deleted.** A kro spoke whose `EksclusterWithVpc` carries a deletionTimestamp is
+  left out **with or without** its cluster secret (`spoke <name>: being deleted ...: its NAT is NOT
+  added`): `spokes:disable-kro` keeps the secret for up to 180 s after the prune, or until it is
+  re‑run when the ApplicationSets do not refresh, and kro deletes the EIP last. So a run during a
+  deletion drops that NAT instead of keeping an address about to be released.
+- **When a read fails.** Any failed read (cluster secrets, EIPs, kro instances) leaves
+  `fleet_nat_egress_cidrs` unchanged and exits non‑zero; there is no bypass, since the task could
+  not tell a spoke being deleted from a live one. If the hub reports that the `ElasticIPAddress`
+  or `EksclusterWithVpc` type does not exist while a list is stored, the task also leaves it
+  unchanged (most likely an API discovery gap). Once that type is really gone on purpose (every
+  kro spoke deleted, then the controller removed), re‑run it with `FLEET_NAT_FORCE=true`:
+
+  ```bash
+  task kind-kro-ack:secrets-manager:seed-fleet-nat-egress FLEET_NAT_FORCE=true
+  ```
 - The task reads cluster-local resources only — no AWS NAT lookup, no cross-cluster access, no
   extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the
   chart ignores it until one is, so with no allowlist the ALB stays open (unchanged).
