@@ -90,12 +90,12 @@ def test_appset_reads_the_annotation_into_global():
 
 
 def test_claim_defaults_to_global_and_lets_a_spoke_override():
-    # static text assertion of the precedence expression (helm proof below renders it).
+    # static text assertion of the precedence expression (helm proofs below render it).
     claim = open(os.path.join(CLAIM_CHART, "templates", "clusters.yaml")).read()
-    line = next(l for l in claim.splitlines() if l.strip().startswith("albInboundCidrs:"))
-    assert "$cluster.albInboundCidrs" in line
+    line = next(l for l in claim.splitlines() if "$cluster.albInboundCidrs" in l)
     assert "$.Values.global.spokeAlbInboundCidrs" in line
-    # per-spoke value is first in the default chain => it wins over the fleet-wide default.
+    assert 'hasKey $cluster "albInboundCidrs"' in line
+    # ternary: the per-spoke value comes first => it wins whenever the key is present.
     assert line.index("$cluster.albInboundCidrs") < line.index("$.Values.global.spokeAlbInboundCidrs")
 
 
@@ -174,7 +174,7 @@ def test_empty_default_renders_blank_spoke_allowlist():
         "global": {"resourcePrefix": "acme", "accountId": "111122223333",
                    "defaultRegion": "us-west-2", "provider": "kro-ack"},
         "clusters": {"spoke-default": {"accountId": "111122223333"}}})
-    assert _alb_by_cluster(docs)["spoke-default"] == ""
+    assert _alb_by_cluster(docs)["spoke-default"] is None      # not rendered when empty
 
 
 # --- review #1308: per-spoke override semantics ---------------------------------------------
@@ -193,9 +193,10 @@ def test_per_spoke_empty_value_disables_the_fleet_default():
         "spoke-null": {"accountId": "111122223333", "albInboundCidrs": None},
         "spoke-absent": {"accountId": "111122223333"}}})
     alb = _alb_by_cluster(docs)
-    assert alb["spoke-empty"] == ""
-    assert alb["spoke-emptylist"] == ""
-    assert alb["spoke-null"] == ""
+    # not rendered => the RGD default "" applies => no allowlist for that spoke
+    assert alb["spoke-empty"] is None
+    assert alb["spoke-emptylist"] is None
+    assert alb["spoke-null"] is None
     assert alb["spoke-absent"] == "203.0.113.0/24"   # no key => fleet default still applies
 
 
@@ -224,3 +225,47 @@ def test_docs_point_the_override_at_kro_clusters_values_not_the_trigger_json():
     for name, t in texts.items():
         assert "kro-clusters/clusters/<spoke>.json" not in t, name
         assert "kro-clusters/values.yaml" in t, name
+
+
+# --- pre-review #1308: default claim render byte-identical to main; field only when set -----
+def _git_show(path):
+    r = subprocess.run(["git", "-C", REPO, "show", "origin/main:" + path], capture_output=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+@needs_helm
+def test_default_claim_render_is_byte_identical_to_main(tmp_path):
+    # Like vpcBlockPublicAccessExclusion (#1313), albInboundCidrs is rendered only when
+    # non-empty: a hub whose EksclusterWithVpc RGD predates the field never receives it on a
+    # claim it does not need, and the default render is unchanged.
+    rel = "gitops/abstractions/kro/kro-clusters"
+    ls = subprocess.run(["git", "-C", REPO, "ls-tree", "-r", "--name-only", "origin/main", rel + "/"],
+                        capture_output=True, text=True)
+    files = [f[len(rel) + 1:] for f in ls.stdout.splitlines()] if ls.returncode == 0 else []
+    main = {f: _git_show(f"{rel}/{f}") for f in files}
+    if not main or any(v is None for v in main.values()):
+        pytest.skip("origin/main not available in this checkout")
+    mdir = tmp_path / "main-chart"
+    for f, b in main.items():
+        (mdir / f).parent.mkdir(parents=True, exist_ok=True)
+        (mdir / f).write_bytes(b)
+    vals = tmp_path / "v.yaml"
+    yaml.safe_dump({"global": {"resourcePrefix": "acme", "accountId": "111122223333",
+                               "defaultRegion": "us-west-2", "provider": "kro-ack",
+                               "spokeAlbInboundCidrs": ""},
+                    "clusters": {"acme-spoke-dev": {"environment": "dev"},
+                                 "acme-spoke-off": {"albInboundCidrs": ""}}}, open(vals, "w"))
+    out = []
+    for chart in (str(mdir), CLAIM_CHART):
+        r = subprocess.run([HELM, "template", "x", chart, "-f", str(vals)],
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        out.append(r.stdout)
+    assert out[0] == out[1]
+
+
+@needs_helm
+def test_field_rendered_only_when_set():
+    docs = _render_claim({"global": FLEET_DEFAULT, "clusters": {
+        "spoke-default": {"accountId": "111122223333"}}})
+    assert _alb_by_cluster(docs)["spoke-default"] == "203.0.113.0/24"

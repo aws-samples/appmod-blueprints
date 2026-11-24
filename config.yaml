@@ -150,14 +150,17 @@ ingressSecurityGroups: ""
 # comma-separated string of IPv4 CIDRs.
 # kind-kro-ack / kind-crossplane, kro spokes only: a spoke created as a Crossplane composition
 # (spokes:enable-crossplane) does not get it. When set, the spoke's own NAT egress IP is added
-# automatically (so app-to-ALB callbacks keep working). Empty/omitted = unchanged (every spoke
-# ALB stays open), render byte-identical. Applied when a spoke is CREATED: changing it later does
+# automatically (so app-to-ALB callbacks keep working). Empty/omitted = every spoke ALB stays open:
+# the kro-clusters claim and the spoke ingress-class-alb renders are unchanged (a new spoke's cluster
+# secret carries an empty config_inbound_cidrs, which the chart ignores). Applied when a spoke is
+# CREATED: changing it later does
 # not reach existing spokes on its own (docs/platform/alb-ip-allowlist.md, "Existing spokes").
 #
 #   ⚠ A spoke ALB is PARTICIPANT-FACING: an allowlist blocks any participant whose source IP is
 #     not listed. Do NOT enable it for an open / public event — only when the participant source
 #     ranges are known (corporate / VPN). It is opt-in and operator-chosen.
-#   ⚠ Each CIDR is one security-group rule per listener port (~60-rule default => ~30 CIDRs);
+#   ⚠ Each CIDR is one security-group rule per listener port (60-rule default, HTTP + HTTPS =>
+#     about 28 CIDRs including the spoke NAT);
 #     summarise ranges or use AWS WAF beyond that.
 #   ⚠ Do NOT use it on an internal ALB (a spoke given its own domain + insecure: true, behind an
 #     edge such as CloudFront): it would see origin IPs, not clients. Spokes are internet-facing

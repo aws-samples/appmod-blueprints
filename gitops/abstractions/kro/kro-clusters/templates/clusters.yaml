@@ -97,18 +97,25 @@ spec:
   # rather than silently defaulting to secure/HTTPS. Requires the insecure
   # schema field on EksclusterWithVpc (rg-eks-vpc.yaml) to accept this value.
   insecure: {{ $cluster.insecure | default $.Values.global.insecure | default "false" | quote }}
-  # Source-IP allowlist for THIS spoke's own platform ALB, rendered as a comma-separated string.
-  # The cluster's own albInboundCidrs (clusters.<name> in the fleet repo's kro-clusters/values.yaml)
-  # wins whenever the key is present, so an empty value ("", [] or null) turns the allowlist off
-  # for that one spoke (hasKey, as for enableGeneralPurposeNodePool: `default` would swallow it).
-  # Without the key: the fleet-wide default (global.spokeAlbInboundCidrs, from the hub cluster
-  # secret's spoke_alb_inbound_cidrs annotation = config.local.yaml spokeAlbInboundCidrs); else ""
-  # (spoke ALB open). A YAML list is joined with "," (join also passes a string through and turns
-  # nil into ""). The EksclusterWithVpc RGD forwards it to the nested EksCluster, which stamps the
-  # spoke cluster-secret config_inbound_cidrs annotation (-> chart configInboundCidrs). A spoke ALB
-  # is participant-facing: only set it when the participant source ranges are known (see
-  # docs/platform/alb-ip-allowlist.md).
-  albInboundCidrs: {{ join "," (ternary $cluster.albInboundCidrs $.Values.global.spokeAlbInboundCidrs (hasKey $cluster "albInboundCidrs")) | quote }}
+  {{- /* Source-IP allowlist for THIS spoke's own platform ALB, as a comma-separated string.
+       The cluster's own albInboundCidrs (clusters.<name> in the fleet repo's
+       kro-clusters/values.yaml) wins whenever the key is present, so an empty value ("", []
+       or null) turns the allowlist off for that one spoke (hasKey, as for
+       enableGeneralPurposeNodePool: `default` would swallow it). Without the key: the
+       fleet-wide default (global.spokeAlbInboundCidrs, from the hub cluster secret's
+       spoke_alb_inbound_cidrs annotation = config.local.yaml spokeAlbInboundCidrs). A YAML list
+       is joined with "," (join passes a string through and turns nil into "").
+       Rendered only when non-empty, like vpcBlockPublicAccessExclusion: an empty value means
+       the EksclusterWithVpc RGD default "" (spoke ALB open), the default render is unchanged,
+       and a hub whose RGD predates the field never receives it on a claim that does not use it.
+       The RGD forwards it to the nested EksCluster, which stamps the spoke cluster-secret
+       config_inbound_cidrs annotation (-> chart configInboundCidrs). A spoke ALB is
+       participant-facing: only set it when the participant source ranges are known (see
+       docs/platform/alb-ip-allowlist.md). */}}
+  {{- $albInboundCidrs := join "," (ternary $cluster.albInboundCidrs $.Values.global.spokeAlbInboundCidrs (hasKey $cluster "albInboundCidrs")) }}
+  {{- if $albInboundCidrs }}
+  albInboundCidrs: {{ $albInboundCidrs | quote }}
+  {{- end }}
   # Per-cluster fleet-config value wins, else "true". hasKey keeps a YAML boolean
   # false from being swallowed by Helm's `default`. When "false", only the built-in
   # general-purpose NodePool is dropped; the built-in "system" pool is always kept.

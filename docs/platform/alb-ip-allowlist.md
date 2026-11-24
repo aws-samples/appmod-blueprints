@@ -379,7 +379,7 @@ address is the IP you need to allow.
 ### 3. Security‑group rule limits
 
 Each CIDR becomes one inbound rule **per listener port**: with HTTP + HTTPS listeners that is two
-rules per CIDR. A security group allows 60 inbound rules by default, so plan for **about 30 CIDRs
+rules per CIDR. A security group allows 60 inbound rules by default, so plan for **about 28 CIDRs
 at most** (about 60 with an HTTP‑only ALB). Summarise ranges, or move to AWS WAF, beyond that. The
 platform ALB is IPv4 by default, so list IPv4 CIDRs; IPv6 entries are only useful on a dual‑stack
 ALB.
@@ -452,7 +452,10 @@ claim, and the
 `EksCluster` RGD (the single writer of that key) stamps it onto each spoke cluster secret as
 `config_inbound_cidrs`, which the spoke's `ingress-class-alb` addon passes to its chart as
 `configInboundCidrs`. The spoke's own NAT is still added automatically (below). **Empty or omitted
-=> the key is not written => every spoke ALB stays open, render byte‑identical.** The participant
+=> the key is not written => every spoke ALB stays open.** The kro-clusters claim then carries no
+`albInboundCidrs` field (it is rendered only when non‑empty, so the claim render is unchanged), and
+the spoke `ingress-class-alb` render is unchanged; a spoke created by the new RGD has an empty
+`config_inbound_cidrs` in its cluster‑secret metadata, which the chart ignores. The participant
 lockout, security‑group rule limit, and internal‑ALB caveats below apply exactly the same — do
 **not** enable it for an open / public event. Only the `clusters-kro` path carries the value: a
 spoke created as a **Crossplane composition** (`spokes:enable-crossplane`, the default spoke type
@@ -499,7 +502,7 @@ inboundCidrs:
   workshop** they are not, so leave the spoke allowlist unset there. It must always be opt‑in and
   operator‑chosen — never a silent default.
 - **Security‑group rule limit.** Each CIDR becomes one inbound rule per listener port; the managed
-  security group allows ~60 rules by default, so plan for roughly 30 CIDRs (fewer with HTTP+HTTPS)
+  security group allows ~60 rules by default, so plan for roughly 28 CIDRs with HTTP + HTTPS
   — summarise ranges or move to AWS WAF beyond that (same as the hub, pitfall 3).
 - **Internal‑ALB / edge case.** If a spoke is ever given its own domain with `insecure: true` it
   gets an **internal** ALB behind an edge (e.g. CloudFront); do **not** set a client source‑IP
