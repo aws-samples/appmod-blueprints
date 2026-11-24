@@ -41,7 +41,7 @@ esac
 PROVIDERS = ["kind-kro-ack", "kind-crossplane"]
 
 
-def _run(tmp_path, provider, amg):
+def _run(tmp_path, provider, amg, task_name=None):
     r = tmp_path / "repo"
     r.mkdir()
     shutil.copy(os.path.join(REPO, "Taskfile.yaml"), r / "Taskfile.yaml")
@@ -64,7 +64,10 @@ def _run(tmp_path, provider, amg):
                FAKE_AMG=amg, FAKE_PWN=str(tmp_path / "pwned"), HOME=str(tmp_path), TMPDIR=str(tmp_path))
     for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG"):
         env.pop(k, None)
-    res = subprocess.run([TASK, "-d", str(r), f"{provider}:urls"], env=env,
+    # The root test runs with -v so stderr logs `task: "<name>" started`. -v also echoes every
+    # command (both if/else branches) to stderr, so verbose output must not be asserted on as a whole.
+    verbose = ["-v"] if task_name else []
+    res = subprocess.run([TASK, *verbose, "-d", str(r), task_name or f"{provider}:urls"], env=env,
                          capture_output=True, text=True, timeout=120)
     return res, res.stdout + res.stderr
 
@@ -90,3 +93,14 @@ def test_no_amg_prints_a_clear_fallback_not_a_404_path(tmp_path, provider, amg):
     assert "dxyz.cloudfront.example/grafana" not in out, out
     assert "Kargo:      https://dxyz.cloudfront.example/kargo\n" in out, out
     assert not (tmp_path / "pwned").exists(), "endpoint was evaluated by a shell"
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_root_urls_dispatches_to_configured_provider(tmp_path, provider):
+    # The no-AMG fallback tells the user to "re-run task urls": that root task must exist and
+    # reach the provider named by clusterProvider.
+    res, out = _run(tmp_path, provider, "none", task_name="urls")
+    assert res.returncode == 0, out
+    assert "re-run task urls once it exists" in res.stdout, out
+    assert "Kargo:      https://dxyz.cloudfront.example/kargo\n" in res.stdout, out
+    assert f'task: "{provider}:urls" started' in res.stderr, out

@@ -1,5 +1,5 @@
 # Root Taskfile — delegates to the cluster provider specified in config.yaml
-# Usage: task install / task status / task destroy-kind / task hub:update
+# Usage: task install / task status / task urls / task destroy-kind / task hub:update
 version: "3"
 set: [errexit, nounset, pipefail]
 
@@ -154,6 +154,14 @@ tasks:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - task: "{{.PROVIDER}}:status"
+
+  urls:
+    desc: Print platform URLs for the configured provider
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
+    cmds:
+      - task: "{{.PROVIDER}}:urls"
 
   backstage-catalog:
     desc: Update backstage-dynamic-catalog ConfigMap with environment-specific values
