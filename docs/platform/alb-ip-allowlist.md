@@ -325,13 +325,17 @@ re-seeds (like the `spoke_*` observability keys).
   ```
 
 - **A spoke that is not registered yet.** The task takes the spokes from the Argo CD cluster
-  secrets, and also lists every ACK `ElasticIPAddress` on the hub. An EIP in a namespace that no
-  cluster secret names (a spoke still provisioning, or whose secret is briefly absent on a re-run)
-  is **added** with a warning `namespace <spoke>: ACK ElasticIPAddress but no registered Argo CD
-  cluster secret ...`, so a slow spoke is not left out and a re-run does not drop its stored NAT.
-  An EIP that has no public IP yet is reported (`no public IP yet`) and not added: re-run the task
-  once that spoke is up. A spoke whose VPC graph has not created its EIP at all is invisible to the
-  task; `wait-for-spokes` has then already printed `not ACTIVE ... continuing`, and the same re-run
+  secrets, and also lists every ACK `ElasticIPAddress` and every kro `EksclusterWithVpc` on the
+  hub. An EIP in a namespace that no cluster secret names is **added**, with a warning
+  `namespace <spoke>: ACK ElasticIPAddress but no registered Argo CD cluster secret ...`, only when
+  that namespace holds an `EksclusterWithVpc` that is not being deleted: a spoke still
+  provisioning, or whose secret is briefly absent on a re‑run. So a slow spoke is not left out and
+  a re‑run does not drop its stored NAT. Any other such EIP is reported (`... NOT added`) and left
+  out: a spoke being deleted (`spokes:disable-kro` removes the cluster secret while kro is still
+  deleting the graph, and the EIP goes last), or an EIP that is not a spoke's. An EIP that has no
+  public IP yet is reported (`no public IP yet`) and not added: re‑run the task once that spoke is
+  up. A spoke whose VPC graph has not created its EIP at all is invisible to the task;
+  `wait-for-spokes` has then already printed `not ACTIVE ... continuing`, and the same re‑run
   applies.
 - The task reads cluster-local resources only — no AWS NAT lookup, no cross-cluster access, no
   extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the

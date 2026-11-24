@@ -1883,23 +1883,39 @@ tasks:
         # wait-for-spokes gave up on it; or briefly absent on a re-run) is not in $SPOKES, but its
         # ACK ElasticIPAddress already lives on the hub, namespace = spoke name. Reading only the
         # cluster secrets skipped it silently: on a first install its NAT was never added, on a
-        # re-run its stored NAT was dropped. So also list every EIP on the hub and add the ones
-        # in a namespace that NO cluster secret names (the control plane and spokes being deleted
-        # count as named, so the hub's own EIP and a deleted spoke's are never re-added), with a
-        # warning. Same fail-closed rule as above on a read error; a hub without the ACK EC2 CRD
-        # simply has no such EIP.
+        # re-run its stored NAT was dropped. So also list every EIP on the hub. An EIP in a
+        # namespace that no cluster secret names is added ONLY when that namespace holds a live
+        # EksclusterWithVpc (no deletionTimestamp): a spoke being provisioned. A spoke being
+        # deleted does not qualify: spokes:disable-kro deletes its cluster secret as soon as the
+        # instance starts deleting, kro deletes the EIP last (after the NAT gateway), and the
+        # instance keeps its deletionTimestamp until its whole graph is gone (spokes:sweep-kro
+        # waits on exactly that), so its released EIP is never re-added. An EIP in a namespace
+        # with no live kro instance is not a spoke's: reported, NOT added. Fail closed on a read
+        # error. A missing CRD means "no such object", except that a missing EIP type never
+        # shrinks a stored union (checked below).
         KNOWN=$(echo "$SECRETS_JSON" | jq -r '.items[] | .metadata.name, (.metadata.annotations["aws_cluster_name"] // empty)' | sort -u)
-        EIP_ERR=$(mktemp)
+        EIP_ERR=$(mktemp); EIP_TYPE_MISSING=""
         if ! EIP_ALL=$(KUBECONFIG="$KC" kubectl get elasticipaddresses.ec2.services.k8s.aws -A -o json 2>"$EIP_ERR"); then
           if grep -q "doesn't have a resource type" "$EIP_ERR"; then
-            EIP_ALL='{"items":[]}'
+            EIP_ALL='{"items":[]}'; EIP_TYPE_MISSING=1
           else
             rm -f "$EIP_ERR"
             printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses -A failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
             exit 1
           fi
         fi
+        if ! INST_ALL=$(KUBECONFIG="$KC" kubectl get eksclusterwithvpcs.kro.run -A -o json 2>"$EIP_ERR"); then
+          if grep -q "doesn't have a resource type" "$EIP_ERR"; then
+            INST_ALL='{"items":[]}'
+          else
+            rm -f "$EIP_ERR"
+            printf '{{.C_ERR}}⚠ kubectl get eksclusterwithvpcs -A failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
         rm -f "$EIP_ERR"
+        # Namespaces holding a kro spoke instance that is not being deleted, space-delimited.
+        LIVE=" $(echo $(echo "$INST_ALL" | jq -r '.items[]? | select(.metadata.deletionTimestamp == null) | .metadata.namespace // empty' | sort -u)) "
         ORPHANS=$(echo "$EIP_ALL" | jq -r --arg known "$KNOWN" '($known | split("\n")) as $k
           | [.items[]? | select(.metadata.deletionTimestamp == null)
               | select((.metadata.namespace // "") as $n | any($k[]; . == $n) | not)]
@@ -1907,7 +1923,10 @@ tasks:
           | "\(.[0].metadata.namespace)=\([.[] | .status.publicIP // empty | select(. != "") | . + "/32"] | join(","))"')
         for O in $ORPHANS; do
           NS=${O%%=*}; OIPS=${O#*=}
-          if [ -n "$OIPS" ]; then
+          case "$LIVE" in *" $NS "*) LIVE_NS=true ;; *) LIVE_NS=false ;; esac
+          if [ "$LIVE_NS" != true ]; then
+            printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress (%s) with no registered Argo CD cluster secret and no EksclusterWithVpc that is not being deleted (a spoke being deleted, or not a spoke): NOT added.{{.C_RESET}}\n' "$NS" "${OIPS:-no public IP}"
+          elif [ -n "$OIPS" ]; then
             printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress but no registered Argo CD cluster secret (a spoke still provisioning?): its NAT %s is added. Re-run this task once the spoke is registered.{{.C_RESET}}\n' "$NS" "$OIPS"
             FLEET_ITEMS="$FLEET_ITEMS $(echo "$OIPS" | tr ',' ' ')"
           else
@@ -1940,6 +1959,12 @@ tasks:
           if [ "$N_ALLOW" -gt 28 ]; then
             printf '{{.C_WARN}}⚠ the hub ALB allowlist has %s entries before any overlay entries (albInboundCidrs + hub NAT + spoke NATs): beyond ~28 the ALB security-group update fails (60-rule default, 2 rules per entry). Summarise ranges or use AWS WAF (docs/platform/alb-ip-allowlist.md pitfall 3).{{.C_RESET}}\n' "$N_ALLOW"
           fi
+        fi
+        # The hub said it has no ElasticIPAddress type while a union is stored: an API discovery
+        # gap, not "no spoke". Never shrink the stored union on that (fail closed).
+        if [ -n "$EIP_TYPE_MISSING" ] && [ -n "$STORED" ] && [ "$STORED" != "$FLEET" ]; then
+          printf '{{.C_ERR}}⚠ the hub reports no ElasticIPAddress type, but %s holds fleet_nat_egress_cidrs (%s) — left unchanged. Check the ACK EC2 controller, then re-run.{{.C_RESET}}\n' "$SECRET_KEY" "$STORED"
+          exit 1
         fi
         if [ "$STORED" = "$FLEET" ]; then
           printf '{{.C_OK}}✓ fleet_nat_egress_cidrs already up to date in %s (%s).{{.C_RESET}}\n' "$SECRET_KEY" "${FLEET:-<none>}"

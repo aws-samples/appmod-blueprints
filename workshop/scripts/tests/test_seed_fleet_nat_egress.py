@@ -53,6 +53,21 @@ if a[:2] == ["get", "secrets"]:
         sys.stderr.write("Unable to connect to the server: net/http: TLS handshake timeout\n")
         sys.exit(1)
     print(json.dumps(st["secrets"])); sys.exit(0)
+if a[:1] == ["get"] and a[1].startswith("eksclusterwithvpcs") and "-A" in a:
+    # kro spoke instances on the hub: st["instances"] = {namespace: "live" | "deleting"}
+    if st.get("no_kro_crd"):
+        sys.stderr.write('error: the server doesn\'t have a resource type "eksclusterwithvpcs"\n')
+        sys.exit(1)
+    if st.get("fail_instances"):
+        sys.stderr.write("error: the server was unable to return a response\n")
+        sys.exit(1)
+    items = []
+    for ns, state in st.get("instances", {}).items():
+        md = {"name": ns, "namespace": ns}
+        if state == "deleting":
+            md["deletionTimestamp"] = "2026-11-20T00:00:00Z"
+        items.append({"metadata": md})
+    print(json.dumps({"items": items})); sys.exit(0)
 if a[:1] == ["get"] and a[1].startswith("elasticipaddresses") and "-A" in a:
     # every EIP on the hub, all namespaces (unregistered-spoke detection)
     if st.get("no_eip_crd"):
@@ -328,12 +343,15 @@ class TestFleetTask:
     TWO_EIPS = {"acme-hub": ["203.0.113.1"], "acme-spoke-dev": ["203.0.113.201"],
                 "acme-spoke-prod": ["203.0.113.202"]}
 
+    LIVE2 = {"acme-spoke-dev": "live", "acme-spoke-prod": "live"}
+
     def test_spoke_with_eip_but_no_cluster_secret_is_added_and_reported(self, tmp_path, provider):
         # wait-for-spokes gave up before the spokes' cluster secrets were registered: their EIPs
-        # already live on the hub. They used to be skipped silently ("already up to date (<none>)").
+        # and their live kro instances already live on the hub. They used to be skipped silently
+        # ("already up to date (<none>)").
         res, st = _run(tmp_path, provider, _secret_string(dict(
             META_BASE, config_inbound_cidrs="198.51.100.0/24")),
-            secrets=self.HUB_ONLY, eips=self.TWO_EIPS)
+            secrets=self.HUB_ONLY, eips=self.TWO_EIPS, instances=self.LIVE2)
         out = res.stdout + res.stderr
         assert res.returncode == 0, out
         assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == "203.0.113.201/32,203.0.113.202/32"
@@ -341,12 +359,13 @@ class TestFleetTask:
         for ns in ("acme-spoke-dev", "acme-spoke-prod"):
             assert "namespace %s: ACK ElasticIPAddress but no registered Argo CD cluster secret" % ns in out
 
-    def test_rerun_keeps_the_nat_of_a_spoke_whose_secret_is_briefly_absent(self, tmp_path, provider):
+    def test_rerun_keeps_the_nat_of_a_live_spoke_whose_secret_is_briefly_absent(self, tmp_path, provider):
+        # prod's secret is briefly absent but its kro instance is live (not being deleted).
         secrets = {"items": self.HUB_ONLY["items"] + [
             _cluster_secret("sdev", {"fleet_member": "spoke"}, "acme-spoke-dev")]}
         stored = "203.0.113.201/32,203.0.113.202/32"
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=stored)),
-                       secrets=secrets, eips=self.TWO_EIPS)
+                       secrets=secrets, eips=self.TWO_EIPS, instances=self.LIVE2)
         out = res.stdout + res.stderr
         assert res.returncode == 0, out
         assert st["writes"] == [], st                        # the stored union is not narrowed
@@ -354,7 +373,8 @@ class TestFleetTask:
 
     def test_unregistered_eip_without_public_ip_yet_is_reported(self, tmp_path, provider):
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)),
-                       secrets=self.HUB_ONLY, eips={}, eips_pending=["acme-spoke-dev"])
+                       secrets=self.HUB_ONLY, eips={}, eips_pending=["acme-spoke-dev"],
+                       instances={"acme-spoke-dev": "live"})
         out = res.stdout + res.stderr
         assert res.returncode == 0, out
         assert "namespace acme-spoke-dev" in out and "no public IP yet" in out
@@ -364,6 +384,60 @@ class TestFleetTask:
                        eips={}, eips_deleting={"acme-spoke-gone": ["203.0.113.209"]})
         assert res.returncode == 0, res.stdout + res.stderr
         assert st["writes"] == []
+
+    def test_eip_of_a_spoke_being_deleted_without_secret_is_not_added(self, tmp_path, provider):
+        # spokes:disable-kro deletes the cluster secret as soon as the EksclusterWithVpc starts
+        # deleting; kro deletes the EIP last. Its NAT must leave the union, not be re-added
+        # (review: a deleted spoke's released EIP must not stay allowlisted).
+        secrets = {"items": self.HUB_ONLY["items"] + [
+            _cluster_secret("sdev", {"fleet_member": "spoke"}, "acme-spoke-dev")]}
+        stored = "203.0.113.201/32,203.0.113.202/32"
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=stored)),
+                       secrets=secrets, eips=self.TWO_EIPS,
+                       instances={"acme-spoke-dev": "live", "acme-spoke-prod": "deleting"})
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == "203.0.113.201/32"
+        assert "namespace acme-spoke-prod: ACK ElasticIPAddress (203.0.113.202/32)" in out
+        assert "NOT added" in out
+
+    def test_eip_in_a_non_spoke_namespace_is_not_added(self, tmp_path, provider):
+        # an ACK EIP in a namespace with no kro instance (team-a) is not a spoke's.
+        eips = dict(EIPS, **{"team-a": ["203.0.113.77"]})
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)), eips=eips)
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        v = _meta(st["writes"][0])["fleet_nat_egress_cidrs"]
+        assert v == EXPECTED and "203.0.113.77" not in v
+        assert "namespace team-a: ACK ElasticIPAddress (203.0.113.77/32)" in out and "NOT added" in out
+
+    def test_eip_of_a_spoke_with_no_kro_instance_left_is_not_added(self, tmp_path, provider):
+        # instance gone (graph deleted) but an EIP CR lingers: not added.
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)), secrets=self.HUB_ONLY,
+                       eips={"acme-spoke-gone": ["203.0.113.209"]}, instances={})
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert st["writes"] == []
+
+    def test_instance_listing_failure_keeps_stored_key(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       fail_instances=True)
+        assert res.returncode != 0
+        assert st["writes"] == []
+
+    def test_hub_without_the_kro_crd_adds_no_orphan(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)), secrets=self.HUB_ONLY,
+                       eips={"acme-spoke-dev": ["203.0.113.201"]}, no_kro_crd=True)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert st["writes"] == []
+
+    def test_missing_eip_type_never_shrinks_a_stored_union(self, tmp_path, provider):
+        # discovery gap: the -A call says "doesn't have a resource type" while a union is stored
+        # (and no spoke secret is registered, so no per-spoke call fails first).
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       secrets=self.HUB_ONLY, eips={}, no_eip_crd=True)
+        assert res.returncode != 0, res.stdout + res.stderr
+        assert st["writes"] == []
+        assert "reports no ElasticIPAddress type" in res.stdout + res.stderr
 
     def test_eip_listing_failure_keeps_stored_key(self, tmp_path, provider):
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
