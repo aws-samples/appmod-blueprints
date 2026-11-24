@@ -52,7 +52,6 @@ these scripts.
 
 | Case | Treatment |
 |---|---|
-| The §17 gate of the sweep counts a DynamoDB table in `DELETING` as present, so the sweep ends with `DESTROY INCOMPLETE`, RC=1, although the table is being deleted. It is a probable false residue, and whether AWS behaves the same is being checked separately. | The table **is** seeded, so the residue reaper is exercised. `run-sweep.sh` accepts RC=1 only if every resource that `DESTROY INCOMPLETE` lists is in `KNOWN_FALSE_RESIDUE`, and it emits a `::warning::`. `verify.py` then checks on its own that the table is gone. Any other residue, or any other exit code, fails the job. Once the sweep is fixed, RC becomes 0 and the list should be emptied. |
 | CloudFront `ListVpcOrigins` is a stub in the emulator (`NotImplemented`). | The CloudFront reaper logs the error and the sweep carries on, which also exercises its error tolerance. No CloudFront resource is seeded. `run-sweep.sh` emits a `::notice::`. |
 | The emulator keeps the same capability ARN when a capability is recreated. | The "previous incarnation" ARN of issue #10 is a synthetic one, injected directly. |
 | The emulator, like AWS, refuses `aws:cloudformation:*` tags. | The CFN-owned IDE VPC path (`is_our_ide_vpc`) is not covered. It needs a real stack. |
@@ -68,6 +67,11 @@ The job checks that resources end up deleted, not which reaper deleted them. A r
 resource a later stage also removes can regress unnoticed: the §17 re-drive deletes the ECR repo
 and releases a freed EIP, and the §14 orphan reaper deletes the spoke VPC (in this run the §10
 spoke reaper always hits `DependencyViolation`, as designed, and §14 finishes the job).
+
+The emulator's Resource Groups Tagging API returns no EC2 resources (`GetResources` does not
+list tagged EC2 resources at 1.0.556, an open emulator issue). So the §16b final net and the §17
+tag check see no EC2 resource here: a §16b change that deletes the wrong EC2 resource, or none,
+still passes. Only `verify.py`'s describe-based scan catches EC2 leftovers.
 
 ## Running it locally
 

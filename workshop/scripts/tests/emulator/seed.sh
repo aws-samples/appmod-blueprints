@@ -107,8 +107,8 @@ seed_stack() { # prefix expect
   rec "$e" log-group "/aws/eks/$p-hub/cluster"
   emu_aws ssm put-parameter --name "/$p/hub/test" --type String --value seed >/dev/null
   rec "$e" ssm-param "/$p/hub/test"
-  # The DynamoDB table IS seeded: the residue reaper must delete it. See README.md for the
-  # known DELETING-table false residue in the §17 gate and how run-sweep.sh treats it.
+  # The DynamoDB table IS seeded: the residue reaper must delete it, and since #1314 the §17
+  # gate no longer counts it as residue while it is DELETING, so the sweep must exit 0.
   emu_aws dynamodb create-table --table-name "$p-terraform-lock" \
     --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH \
     --billing-mode PAY_PER_REQUEST >/dev/null

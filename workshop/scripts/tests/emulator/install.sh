@@ -79,3 +79,6 @@ fetch "https://github.com/mikefarah/yq/releases/download/v$YQ_VERSION/yq_linux_a
 check_sha "$DL/yq-$YQ_VERSION" "$YQ_SHA256"
 install -m 0755 "$DL/yq-$YQ_VERSION" "$BIN/yq"
 log "installed into $BIN: aws-emulator $EMULATOR_VERSION, task $TASK_VERSION, yq $YQ_VERSION"
+# The AWS CLI is not pinned: it comes from the runner image (or the host). Log it, so a result
+# that changes after an image bump can be traced to a CLI version.
+log "aws CLI (unpinned, from the runner image): $(aws --version 2>&1)"
