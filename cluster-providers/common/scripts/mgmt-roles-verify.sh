@@ -62,6 +62,7 @@ IAM_ROLE_CHECK_LIB=1 . "$HERE/iam-role-check.sh"
 MISSING=""
 ERRORS=""
 WARNINGS=""
+NOGUARD=""
 add_error() { ERRORS="${ERRORS}    - $1: $(printf '%s' "$2" | tr '\n' ' ')
 "; }
 for svc in $SERVICES; do
@@ -90,6 +91,21 @@ for svc in $SERVICES; do
   if [ "$svc" = iam ]; then
     SCOPED="${RESOURCE_PREFIX}-cluster-mgmt-iam-scoped"
     has_scoped "$ATTACHED" "$SCOPED" || MISSING="$MISSING policy:$ROLE:$SCOPED"
+    # Read-only content check: the attached scoped policy must carry the attach Deny
+    # (cluster-providers/common/iam/cluster-mgmt-iam-policy.json). Warning only, so an
+    # existing hub is told to re-run the runner instead of failing the install.
+    SCOPED_ARN=$(echo "$ATTACHED" | tr '\t' '\n' | grep -E ":policy/$SCOPED(-[0-9a-f]{8})?\$" | head -n 1 || true)
+    if [ -n "$SCOPED_ARN" ]; then
+      if VID=$(aws iam get-policy --policy-arn "$SCOPED_ARN" --query Policy.DefaultVersionId --output text 2>/dev/null) &&
+         DOC=$(aws iam get-policy-version --policy-arn "$SCOPED_ARN" --version-id "$VID" --query PolicyVersion.Document --output json 2>/dev/null); then
+        case "$DOC" in
+          *DenyAttachAwsManagedPolicyOutsideAllowlist*) ;;
+          *) NOGUARD="$NOGUARD $ROLE" ;;
+        esac
+      else
+        NOGUARD="$NOGUARD $ROLE(unreadable)"
+      fi
+    fi
     case "$ATTACHED" in *policy/IAMFullAccess*)
       WARNINGS="$WARNINGS $ROLE:IAMFullAccess" ;;
     esac
@@ -149,6 +165,9 @@ for w in $WARNINGS; do
   else
     echo "  ⚠ ${w%%:*} still has ${w#*:} attached (from an older install); re-run task privileged:pre on the runner to detach it" >&2
   fi
+done
+for r in $NOGUARD; do
+  echo "  ⚠ ${r%%(*} scoped policy has no DenyAttachAwsManagedPolicyOutsideAllowlist statement (older install, or policy not readable); re-run task privileged:pre on the runner to update it" >&2
 done
 if [ -n "$ERRORS" ]; then
   echo "✗ could not read the IAM roles (an AWS error, not a missing role):" >&2

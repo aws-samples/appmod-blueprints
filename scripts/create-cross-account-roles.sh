@@ -9,12 +9,12 @@
 #
 # Usage:
 #   # First time - run from target account:
-#   export HUB_ACCOUNT_ID=515966522948
+#   export HUB_ACCOUNT_ID=<hub-account-id>
 #   export RESOURCE_PREFIX=peeks
 #   ./create-cross-account-roles.sh --target-only
 #
 #   # Then - run from hub account:
-#   export TARGET_ACCOUNT_ID=586794472760
+#   export TARGET_ACCOUNT_ID=<target-account-id>
 #   export RESOURCE_PREFIX=peeks
 #   export HUB_CLUSTER_NAME=peeks-hub
 #   ./create-cross-account-roles.sh
@@ -73,6 +73,17 @@ EOF
   INLINE_POLICIES[dynamodb]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:*"],"Resource":"*"}]}'
   INLINE_POLICIES[secretsmanager]='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["secretsmanager:*"],"Resource":"*"}]}'
 
+  # The iam role is the identity ACK uses for iam.services.k8s.aws CRs in a cross-account spoke.
+  # Add the same attach Deny as <prefix>-cluster-mgmt-iam (an explicit Deny beats IAMFullAccess).
+  local deny_src
+  deny_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../cluster-providers/common/iam/cluster-mgmt-iam-policy.json"
+  command -v jq >/dev/null || { echo "jq is required" >&2; return 1; }
+  [ -s "$deny_src" ] || { echo "missing $deny_src" >&2; return 1; }
+  INLINE_POLICIES[iam]=$(jq -c --argjson base "${INLINE_POLICIES[iam]}" \
+    '. as $f | $base | .Statement += [$f.Statement[] | select(.Sid == "DenyAttachAwsManagedPolicyOutsideAllowlist")]
+     | if ([.Statement[] | select(.Effect == "Deny")] | length) == 1 then . else error("attach Deny statement not found") end' \
+    "$deny_src") || { echo "failed to build iam inline policy" >&2; return 1; }
+
   for service in ec2 eks iam ecr s3 dynamodb secretsmanager rds; do
     ROLE_NAME="${RESOURCE_PREFIX}-cluster-mgmt-${service}"
     if aws iam get-role --role-name "$ROLE_NAME" &>/dev/null; then
@@ -80,10 +91,13 @@ EOF
     else
       aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "$TRUST_POLICY" --no-cli-pager >/dev/null
     fi
-    for policy_arn in ${MANAGED_POLICIES[$service]}; do
+    for policy_arn in ${MANAGED_POLICIES[$service]:-}; do
       aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$policy_arn"
     done
-    aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name "${service}-permissions" --policy-document "${INLINE_POLICIES[$service]}"
+    # rds has no managed/inline policy defined here; do not abort under `set -u` (pre-existing).
+    if [ -n "${INLINE_POLICIES[$service]:-}" ]; then
+      aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name "${service}-permissions" --policy-document "${INLINE_POLICIES[$service]}"
+    fi
     echo "  ✅ $ROLE_NAME"
   done
 }
