@@ -87,6 +87,14 @@ json.dump(st, open(p, "w"))
 
 FAKE_SLEEP = '''#!/bin/sh
 printf '["sleep", "%s"]\\n' "$1" >> "$FAKE_LOG"
+# FAKE_CONCURRENT=<secret-id>: another task merges a key into that secret while we sleep.
+if [ -n "${FAKE_CONCURRENT:-}" ]; then
+  "$FAKE_PYTHON" -I -c 'import json, os
+p = os.environ["FAKE_STATE"]; k = os.environ["FAKE_CONCURRENT"]
+st = json.load(open(p)); m = json.loads(json.loads(st["secrets"][k])["metadata"])
+m["fleet_nat_egress_cidrs"] = "203.0.113.201/32"
+st["secrets"][k] = json.dumps({"metadata": json.dumps(m)}); json.dump(st, open(p, "w"))'
+fi
 '''
 
 
@@ -231,3 +239,15 @@ def test_resolver_api_error_keeps_the_stored_keys(tmp_path, provider):
         assert meta[k] == v, (k, meta)
     assert meta["spoke_prod_security_group_id"] == f"sg-{PREFIX}-spoke-prod", meta
     assert "stored scraper keys kept" in res.stdout, res.stdout
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_keys_merged_by_another_task_during_the_wait_are_kept(tmp_path, provider):
+    # The workshop install runs seed-fleet-nat-egress as soon as the spokes are ACTIVE, while the
+    # background seed-observability may still be in its CREATING wait. Its write must start from
+    # a fresh read of <hub>/config, not the copy read before the wait (review #1308).
+    res, meta, _ = _run(tmp_path, provider, _spokes(3, 0),
+                        env_extra={"FAKE_CONCURRENT": f"{HUB}/config", "FAKE_PYTHON": sys.executable})
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert meta["fleet_nat_egress_cidrs"] == "203.0.113.201/32", meta
+    assert meta["spoke_dev_security_group_id"] == f"sg-{PREFIX}-spoke-dev", meta

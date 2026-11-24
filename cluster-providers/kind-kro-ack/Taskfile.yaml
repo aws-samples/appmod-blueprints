@@ -4463,6 +4463,11 @@ tasks:
           fi
         done
         if [ -n "$SPOKE_DEV_ARN" ] || [ -n "$SPOKE_PROD_ARN" ]; then
+          # Re-read <hub>/config right before writing it: the spoke loop above can wait many
+          # minutes for a CREATING spoke, and other tasks merge their own keys into this secret
+          # meanwhile (the workshop install runs seed-fleet-nat-egress as soon as the spokes are
+          # ACTIVE). Writing back the copy read before the wait would drop those keys.
+          CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$CONFIG_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text)
           CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq \
             --arg sda "$SPOKE_DEV_ARN" \
             --arg sds "$SPOKE_DEV_SUBNETS" \
