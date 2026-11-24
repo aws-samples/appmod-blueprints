@@ -1541,10 +1541,12 @@ tasks:
         # change in the group is deployed. Every entry of both keys must be an IPv4 CIDR a.b.c.d/n
         # (octets 0-255, n 0-32, no leading zeros, no blank entry); entries are trimmed and the
         # normalised comma-separated list is what gets written. awk, not bash: go-task runs this
-        # under mvdan/sh, and the same program runs on the macOS (BWK) awk.
+        # under mvdan/sh, and the same program runs on the macOS (BWK) awk. Keep it BWK-portable:
+        # no "/" inside [...] (BWK ends the regex there: write \/) and no {n,m} intervals;
+        # test_seed_config_inbound_cidrs.py TestCidrCheckPortable checks both.
         CIDR_CHECK='
           function ok(c,  p, o, i) {
-            if (c !~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[/][0-9]+$/) return 0
+            if (c !~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+\/[0-9]+$/) return 0
             split(c, p, "/")
             if (p[2] !~ /^(0|[1-9][0-9]?)$/ || p[2] + 0 > 32) return 0
             split(p[1], o, ".")

@@ -261,6 +261,77 @@ class TestSeedRejects:
         assert "config_inbound_cidrs" not in _meta(secret)
 
 
+# --- the CIDR check must parse on the macOS (BWK) awk, not only on gawk (pre-review #1308) ---
+# BWK awk ends a regex literal at the first unescaped "/", even inside [...], so "[/]" is a
+# parse error there and hub:seed failed on EVERY non-empty value on a macOS host while gawk (the
+# awk of CI) accepted it. Two barriers:
+#   1. static, runs everywhere: no "/" inside a bracket expression and no {n,m} interval (BWK
+#      20200816, the macOS awk, has none) in the CIDR_CHECK program;
+#   2. dynamic, when a BWK awk is available: run hub:seed with it as `awk` on PATH. Found from
+#      $BWK_AWK, then bwkawk / original-awk / one-true-awk / nawk on PATH, then a PATH `awk`
+#      that reports "awk version YYYYMMDD" (BWK's format, the macOS awk). Skipped otherwise.
+import re as _re
+
+
+def _cidr_check_program(provider):
+    text = "\n".join(c["cmd"] if isinstance(c, dict) else c for c in _task(provider)["cmds"])
+    m = _re.search(r"CIDR_CHECK='(.*?)'\n", text, _re.S)
+    assert m, f"{provider}: CIDR_CHECK program not found"
+    return m.group(1)
+
+
+def _bwk_awk():
+    cands = [os.environ.get("BWK_AWK", "")]
+    cands += [shutil.which(n) or "" for n in ("bwkawk", "original-awk", "one-true-awk", "nawk")]
+    for c in cands:
+        if c and os.access(c, os.X_OK):
+            return c
+    a = shutil.which("awk")
+    if a:
+        v = subprocess.run([a, "--version"], capture_output=True, text=True).stdout
+        if _re.match(r"awk version \d{8}", v):
+            return a
+    return None
+
+
+BWK = _bwk_awk()
+needs_bwk = pytest.mark.skipif(BWK is None, reason="no BWK awk (set BWK_AWK=<path> to run)")
+
+
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestCidrCheckPortable:
+    def test_no_slash_inside_a_bracket_expression(self, provider):
+        prog = _cidr_check_program(provider)
+        for b in _re.findall(r"\[[^\]]*\]", prog):
+            assert "/" not in b, f"{provider}: {b!r} ends the regex on BWK awk; write \\/"
+
+    def test_no_interval_expression(self, provider):
+        assert not _re.search(r"\{\d", _cidr_check_program(provider)), \
+            f"{provider}: BWK awk 20200816 has no {{n,m}} intervals"
+
+    @needs_task
+    @needs_bwk
+    @pytest.mark.parametrize("value,expected", [
+        (["203.0.113.0/24", "198.51.100.7/32"], "203.0.113.0/24,198.51.100.7/32"),
+        (" 203.0.113.0/24 , 0.0.0.0/0", "203.0.113.0/24,0.0.0.0/0"),
+        (["10.0.0.0/33"], None),
+        (["corp-vpn"], None),
+        ("203.0.113.0/24;198.51.100.0/24", None),
+    ], ids=repr)
+    def test_seed_under_bwk_awk(self, tmp_path, provider, value, expected):
+        (tmp_path / "bin").mkdir()
+        os.symlink(BWK, tmp_path / "bin" / "awk")
+        res, st = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=value))
+        out = res.stdout + res.stderr
+        if expected is None:
+            assert res.returncode != 0 and st["writes"] == [], out
+            bad = value if isinstance(value, str) else value[0]
+            assert '"%s"' % bad.strip() in out, out    # the message names the bad entry
+        else:
+            assert res.returncode == 0, out
+            assert _meta(st["writes"][0])["config_inbound_cidrs"] == expected
+
+
 # --- review #1308 smaller items: no hub NAT, and too many entries for the SG ---------------
 @needs_task
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
