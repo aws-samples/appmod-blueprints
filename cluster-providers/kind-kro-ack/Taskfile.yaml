@@ -1733,6 +1733,10 @@ tasks:
   secrets-manager:seed-fleet-nat-egress:
     desc: Union the NAT egress IP(s) of all registered fleet spokes into fleet_nat_egress_cidrs of <hub>/config, then force an ESO refresh
     cmds:
+      # The spoke cluster secrets and ElasticIPAddress CRs live on the HUB. The Taskfile-level
+      # env KUBECONFIG is the kind bootstrap cluster (or gone after the pivot), so fetch the hub
+      # kubeconfig and pass it to every kubectl call, as hub:force-eso-refresh does.
+      - task: hub:kubeconfig
       - |
         # A spoke's addons can call THIS hub's public Keycloak (OIDC/JWKS) and OTel endpoint
         # server-side, egressing through the spoke's own VPC NAT, so the hub ALB must allow those
@@ -1768,7 +1772,8 @@ tasks:
         # CLOSED — warn, keep the stored value, exit non-zero — on any non-zero kubectl rc. Only a
         # SUCCESSFUL read that finds no eligible spoke (or no EIP) yields an empty union that
         # legitimately clears the key.
-        if ! SECRETS_JSON=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null); then
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        if ! SECRETS_JSON=$(KUBECONFIG="$KC" kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null); then
           printf '{{.C_ERR}}⚠ kubectl get secrets failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
           exit 1
         fi
@@ -1780,7 +1785,7 @@ tasks:
         FLEET_ITEMS=""
         for SPOKE in $SPOKES; do
           [ -n "$SPOKE" ] || continue
-          if ! EIP_JSON=$(kubectl get elasticipaddresses.ec2.services.k8s.aws -n "$SPOKE" -o json 2>/dev/null); then
+          if ! EIP_JSON=$(KUBECONFIG="$KC" kubectl get elasticipaddresses.ec2.services.k8s.aws -n "$SPOKE" -o json 2>/dev/null); then
             printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses failed for spoke %s — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n' "$SPOKE"
             exit 1
           fi

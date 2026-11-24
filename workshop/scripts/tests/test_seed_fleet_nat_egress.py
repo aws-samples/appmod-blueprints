@@ -39,6 +39,15 @@ FAKE_KUBECTL = r'''#!{python} -I
 import json, os, sys
 st = json.load(open(os.environ["FAKE_KUBECTL_STATE"]))
 a = sys.argv[1:]
+# Only the HUB answers. Any other kubeconfig (the Taskfile-level env KUBECONFIG = the kind
+# bootstrap cluster, or nothing) fails like an unreachable/foreign cluster, so a task that
+# forgets to point kubectl at the hub kubeconfig cannot pass by accident (review #1308).
+kc = os.environ.get("KUBECONFIG", "")
+st.setdefault("kubeconfigs", []).append(kc)
+json.dump(st, open(os.environ["FAKE_KUBECTL_STATE"], "w"))
+if kc != os.environ["FAKE_HUB_KUBECONFIG"] or not os.path.isfile(kc):
+    sys.stderr.write("error: not the hub cluster (KUBECONFIG=%r)\n" % kc)
+    sys.exit(1)
 if a[:2] == ["get", "secrets"]:
     if st.get("fail_secrets"):
         sys.stderr.write("Unable to connect to the server: net/http: TLS handshake timeout\n")
@@ -70,7 +79,10 @@ while i < len(rest):
     else:
         i += 1
 rc = 0
-if (svc, op) == ("secretsmanager", "get-secret-value"):
+if (svc, op) == ("eks", "update-kubeconfig"):
+    # hub:kubeconfig: write a kubeconfig for the hub at --kubeconfig.
+    open(opts["kubeconfig"], "w").write("# fake hub kubeconfig for %s\n" % opts["name"])
+elif (svc, op) == ("secretsmanager", "get-secret-value"):
     if st["secret"] is None:
         sys.stderr.write("ResourceNotFoundException\n"); rc = 254
     else:
@@ -127,6 +139,11 @@ def _task_shell(provider):
     return "\n".join(shell), t
 
 
+def _provider_task(provider, name):
+    with open(PROVIDERS[provider]) as f:
+        return yaml.safe_load(f)["tasks"][name]
+
+
 def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
          eips_deleting=None):
     bindir = tmp_path / "bin"
@@ -135,6 +152,7 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
     (bindir / "kubectl").chmod(0o755)
     (bindir / "aws").write_text(FAKE_AWS.replace("{python}", sys.executable))
     (bindir / "aws").chmod(0o755)
+    (tmp_path / "private").mkdir(exist_ok=True)
     ks = tmp_path / "kubectl.json"
     ks.write_text(json.dumps({"secrets": secrets, "eips": eips,
                               "fail_secrets": fail_secrets, "fail_eips": fail_eips or [],
@@ -142,19 +160,29 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
     aws = tmp_path / "aws.json"
     aws.write_text(json.dumps({"secret": secret, "writes": []}))
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
-               FAKE_KUBECTL_STATE=str(ks), FAKE_AWS_STATE=str(aws))
+               FAKE_KUBECTL_STATE=str(ks), FAKE_AWS_STATE=str(aws),
+               FAKE_HUB_KUBECONFIG=str(tmp_path / "private" / "hub-kubeconfig"))
+    env.pop("KUBECONFIG", None)
     return aws, env
 
 
 def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
          eips_deleting=None):
-    shell, _ = _task_shell(provider)
+    # Every cmd of the real task, in order, except the trailing ESO refresh (it talks to the
+    # cluster for 60s and is asserted separately), with the provider's own hub:kubeconfig task
+    # and its Taskfile-level env KUBECONFIG (the kind bootstrap cluster), so a kubectl call that
+    # is not pointed at the hub kubeconfig reaches the "kind" cluster and fails.
+    _, t = _task_shell(provider)
+    cmds = [c for c in t["cmds"] if c != {"task": "hub:force-eso-refresh"}]
     aws, env = _env(tmp_path, secret, secrets, eips, fail_secrets, fail_eips, eips_deleting)
     tf = tmp_path / "Taskfile.yml"
     tf.write_text(yaml.safe_dump({
         "version": "3", "set": ["errexit", "nounset", "pipefail"],
+        "env": {"KUBECONFIG": "{{.ROOT_DIR}}/private/kubeconfig"},
         "vars": dict({k: "" for k in COLORS}, HUB_CLUSTER_NAME=HUB, AWS_REGION=REGION),
-        "tasks": {"run": {"cmds": [shell]}}}, sort_keys=False))
+        "tasks": {"run": {"cmds": cmds},
+                  "hub:kubeconfig": _provider_task(provider, "hub:kubeconfig")}},
+        sort_keys=False))
     res = subprocess.run([TASK, "-s", "-t", str(tf), "run"], cwd=tmp_path, env=env,
                          capture_output=True, text=True, timeout=120)
     st = json.loads(aws.read_text())
@@ -248,6 +276,19 @@ class TestFleetTask:
         assert res.returncode != 0
         assert st["writes"] == []
         assert _meta(st["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
+
+    def test_fetches_hub_kubeconfig_first(self, provider):
+        _, t = _task_shell(provider)
+        assert t["cmds"][0] == {"task": "hub:kubeconfig"}
+
+    def test_every_kubectl_call_targets_the_hub(self, tmp_path, provider):
+        # review #1308 B1: with the Taskfile env KUBECONFIG (kind) the old task found 0 spokes,
+        # deleted the stored union and exited 0. Every kubectl call must carry the hub kubeconfig.
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)))
+        assert res.returncode == 0, res.stdout + res.stderr
+        ks = json.loads((tmp_path / "kubectl.json").read_text())
+        hub = str(tmp_path / "private" / "hub-kubeconfig")
+        assert ks["kubeconfigs"] and set(ks["kubeconfigs"]) == {hub}
 
     def test_calls_eso_refresh_last(self, provider):
         _, t = _task_shell(provider)
