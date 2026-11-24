@@ -227,6 +227,8 @@ BAD_CIDRS = [
     "203.0.113.0/24,,198.51.100.0/24",        # blank entry
     ["2001:db8::/32"],                        # IPv6: the schema promises IPv4 CIDRs
     ["203.0.113.0/08"],                       # leading zero in the mask
+    ["10.0.0.1/8"],                           # host bits set (network is 10.0.0.0/8)
+    ["203.0.113.5/24"],                       # host bits set (network is 203.0.113.0/24)
 ]
 
 
@@ -240,6 +242,12 @@ class TestSeedRejects:
         assert res.returncode != 0, res.stdout + res.stderr
         assert st["writes"] == [], st
         assert key in res.stdout + res.stderr and "not an IPv4 CIDR" in res.stdout + res.stderr
+
+    def test_network_addresses_of_every_mask_are_accepted(self, tmp_path, provider):
+        good = ["203.0.113.5/32", "203.0.113.4/30", "192.0.2.128/25", "198.51.100.0/24",
+                "10.0.0.0/8", "128.0.0.0/1", "0.0.0.0/0"]
+        secret, _ = _seed(tmp_path, provider, _cfg(albInboundCidrs=good))
+        assert _meta(secret)["config_inbound_cidrs"] == ",".join(good)
 
     def test_entries_are_trimmed_and_normalised(self, tmp_path, provider):
         secret, _ = _seed(tmp_path, provider,
@@ -315,6 +323,8 @@ class TestCidrCheckPortable:
         (["203.0.113.0/24", "198.51.100.7/32"], "203.0.113.0/24,198.51.100.7/32"),
         (" 203.0.113.0/24 , 0.0.0.0/0", "203.0.113.0/24,0.0.0.0/0"),
         (["10.0.0.0/33"], None),
+        (["10.0.0.1/8"], None),
+        (["203.0.113.5/32", "0.0.0.0/0", "192.0.2.128/25"], "203.0.113.5/32,0.0.0.0/0,192.0.2.128/25"),
         (["corp-vpn"], None),
         ("203.0.113.0/24;198.51.100.0/24", None),
     ], ids=repr)

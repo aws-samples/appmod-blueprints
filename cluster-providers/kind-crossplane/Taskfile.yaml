@@ -1668,18 +1668,23 @@ tasks:
         # controller cannot parse fails the whole IngressGroup reconcile, so an ALB that is already
         # open stays at 0.0.0.0/0 while the operator thinks it is restricted, and no other ingress
         # change in the group is deployed. Every entry of both keys must be an IPv4 CIDR a.b.c.d/n
-        # (octets 0-255, n 0-32, no leading zeros, no blank entry); entries are trimmed and the
+        # (octets 0-255, n 0-32, no leading zeros, no host bits, no blank entry); entries are trimmed and the
         # normalised comma-separated list is what gets written. awk, not bash: go-task runs this
         # under mvdan/sh, and the same program runs on the macOS (BWK) awk. Keep it BWK-portable:
         # no "/" inside [...] (BWK ends the regex there: write \/) and no {n,m} intervals;
         # test_seed_config_inbound_cidrs.py TestCidrCheckPortable checks both.
         CIDR_CHECK='
-          function ok(c,  p, o, i) {
+          function ok(c,  p, o, i, n, ip) {
             if (c !~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+\/[0-9]+$/) return 0
             split(c, p, "/")
             if (p[2] !~ /^(0|[1-9][0-9]?)$/ || p[2] + 0 > 32) return 0
             split(p[1], o, ".")
             for (i = 1; i <= 4; i++) if (o[i] !~ /^(0|[1-9][0-9]?[0-9]?)$/ || o[i] + 0 > 255) return 0
+            # network address only: the 32-n host bits must be 0 (10.0.0.1/8 is refused, write
+            # 10.0.0.0/8; a /32 is always fine). Exact in awk doubles (< 2^32).
+            n = p[2] + 0; ip = 0
+            for (i = 1; i <= 4; i++) ip = ip * 256 + o[i]
+            for (i = 0; i < 32 - n; i++) { if (ip % 2) return 0; ip = int(ip / 2) }
             return 1
           }
           { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "") }
@@ -1687,11 +1692,11 @@ tasks:
           { b = b " \"" $0 "\"" }
           END { if (b != "") { print b; exit 1 } else print g }'
         if [ -n "$ALB_INBOUND_CIDRS" ] && ! ALB_INBOUND_CIDRS=$(printf '%s' "$ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
-          printf '{{.C_ERR}}✗ albInboundCidrs: not an IPv4 CIDR (a.b.c.d/0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$ALB_INBOUND_CIDRS"
+          printf '{{.C_ERR}}✗ albInboundCidrs: not an IPv4 CIDR (network address a.b.c.d/n, n 0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$ALB_INBOUND_CIDRS"
           exit 1
         fi
         if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ] && ! SPOKE_ALB_INBOUND_CIDRS=$(printf '%s' "$SPOKE_ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
-          printf '{{.C_ERR}}✗ spokeAlbInboundCidrs: not an IPv4 CIDR (a.b.c.d/0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$SPOKE_ALB_INBOUND_CIDRS"
+          printf '{{.C_ERR}}✗ spokeAlbInboundCidrs: not an IPv4 CIDR (network address a.b.c.d/n, n 0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$SPOKE_ALB_INBOUND_CIDRS"
           exit 1
         fi
         # insecure: true => the hub ALB is internal behind CloudFront and only sees the CloudFront
