@@ -304,8 +304,10 @@ re-seeds (like the `spoke_*` observability keys).
 
 - **When it runs.** It needs the spokes provisioned, so it is not part of the base
   `cluster-providers` install, which provisions the hub only. It runs on its own in two places:
-  - the **workshop install** (`workshop:install`, and the CodeBuild half `install:remote`), once
-    `wait-for-spokes` reports the spokes ACTIVE;
+  - the **workshop install** (`task install` run from `workshop/`, and its CodeBuild half
+    `task install:remote`), right after the `wait-for-spokes` step. That step does not gate: it
+    gives up on a spoke after its timeouts and the install goes on, so a slow spoke may not be
+    complete yet when the task runs (see below);
   - the workshop **`spokes:sweep-kro`**, after a spoke is deleted, so its released EIP leaves the
     allowlist.
 
@@ -322,6 +324,15 @@ re-seeds (like the `spoke_*` observability keys).
   task kind-kro-ack:secrets-manager:seed-fleet-nat-egress   # or kind-crossplane:...
   ```
 
+- **A spoke that is not registered yet.** The task takes the spokes from the Argo CD cluster
+  secrets, and also lists every ACK `ElasticIPAddress` on the hub. An EIP in a namespace that no
+  cluster secret names (a spoke still provisioning, or whose secret is briefly absent on a re-run)
+  is **added** with a warning `namespace <spoke>: ACK ElasticIPAddress but no registered Argo CD
+  cluster secret ...`, so a slow spoke is not left out and a re-run does not drop its stored NAT.
+  An EIP that has no public IP yet is reported (`no public IP yet`) and not added: re-run the task
+  once that spoke is up. A spoke whose VPC graph has not created its EIP at all is invisible to the
+  task; `wait-for-spokes` has then already printed `not ACTIVE ... continuing`, and the same re-run
+  applies.
 - The task reads cluster-local resources only — no AWS NAT lookup, no cross-cluster access, no
   extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the
   chart ignores it until one is, so with no allowlist the ALB stays open (unchanged).

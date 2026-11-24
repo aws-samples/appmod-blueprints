@@ -53,8 +53,28 @@ if a[:2] == ["get", "secrets"]:
         sys.stderr.write("Unable to connect to the server: net/http: TLS handshake timeout\n")
         sys.exit(1)
     print(json.dumps(st["secrets"])); sys.exit(0)
+if a[:1] == ["get"] and a[1].startswith("elasticipaddresses") and "-A" in a:
+    # every EIP on the hub, all namespaces (unregistered-spoke detection)
+    if st.get("no_eip_crd"):
+        sys.stderr.write('error: the server doesn\'t have a resource type "elasticipaddresses"\n')
+        sys.exit(1)
+    if st.get("fail_eips_all"):
+        sys.stderr.write("error: the server was unable to return a response\n")
+        sys.exit(1)
+    items = []
+    for ns, ips in st.get("eips", {}).items():
+        items += [{"metadata": {"namespace": ns}, "status": {"publicIP": ip}} for ip in ips]
+    for ns, ips in st.get("eips_deleting", {}).items():
+        items += [{"metadata": {"namespace": ns, "deletionTimestamp": "2026-11-20T00:00:00Z"},
+                   "status": {"publicIP": ip}} for ip in ips]
+    for ns in st.get("eips_pending", []):
+        items.append({"metadata": {"namespace": ns}, "status": {}})
+    print(json.dumps({"items": items})); sys.exit(0)
 if a[:1] == ["get"] and a[1].startswith("elasticipaddresses"):
     ns = a[a.index("-n") + 1]
+    if st.get("no_eip_crd"):
+        sys.stderr.write('error: the server doesn\'t have a resource type "elasticipaddresses"\n')
+        sys.exit(1)
     if ns in st.get("fail_eips", []):
         sys.stderr.write("error: the server was unable to return a response\n")
         sys.exit(1)
@@ -145,7 +165,7 @@ def _provider_task(provider, name):
 
 
 def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
-         eips_deleting=None):
+         eips_deleting=None, **kstate):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "kubectl").write_text(FAKE_KUBECTL.replace("{python}", sys.executable))
@@ -156,7 +176,7 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
     ks = tmp_path / "kubectl.json"
     ks.write_text(json.dumps({"secrets": secrets, "eips": eips,
                               "fail_secrets": fail_secrets, "fail_eips": fail_eips or [],
-                              "eips_deleting": eips_deleting or {}}))
+                              "eips_deleting": eips_deleting or {}, **kstate}))
     aws = tmp_path / "aws.json"
     aws.write_text(json.dumps({"secret": secret, "writes": []}))
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}",
@@ -167,14 +187,14 @@ def _env(tmp_path, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_
 
 
 def _run(tmp_path, provider, secret, secrets=SECRETS, eips=EIPS, fail_secrets=False, fail_eips=None,
-         eips_deleting=None):
+         eips_deleting=None, **kstate):
     # Every cmd of the real task, in order, except the trailing ESO refresh (it talks to the
     # cluster for 60s and is asserted separately), with the provider's own hub:kubeconfig task
     # and its Taskfile-level env KUBECONFIG (the kind bootstrap cluster), so a kubectl call that
     # is not pointed at the hub kubeconfig reaches the "kind" cluster and fails.
     _, t = _task_shell(provider)
     cmds = [c for c in t["cmds"] if c != {"task": "hub:force-eso-refresh"}]
-    aws, env = _env(tmp_path, secret, secrets, eips, fail_secrets, fail_eips, eips_deleting)
+    aws, env = _env(tmp_path, secret, secrets, eips, fail_secrets, fail_eips, eips_deleting, **kstate)
     tf = tmp_path / "Taskfile.yml"
     tf.write_text(yaml.safe_dump({
         "version": "3", "set": ["errexit", "nounset", "pipefail"],
@@ -302,6 +322,60 @@ class TestFleetTask:
     def test_no_size_warning_without_config_allowlist(self, tmp_path, provider):
         res, _ = _run(tmp_path, provider, _secret_string(dict(META_BASE)))
         assert "entries before any overlay" not in res.stdout + res.stderr
+
+    # --- pre-review #1308 correctness 1: a spoke not registered (yet) must not vanish silently
+    HUB_ONLY = {"items": [_cluster_secret("acme-hub", {"fleet_member": "control-plane"}, "acme-hub")]}
+    TWO_EIPS = {"acme-hub": ["203.0.113.1"], "acme-spoke-dev": ["203.0.113.201"],
+                "acme-spoke-prod": ["203.0.113.202"]}
+
+    def test_spoke_with_eip_but_no_cluster_secret_is_added_and_reported(self, tmp_path, provider):
+        # wait-for-spokes gave up before the spokes' cluster secrets were registered: their EIPs
+        # already live on the hub. They used to be skipped silently ("already up to date (<none>)").
+        res, st = _run(tmp_path, provider, _secret_string(dict(
+            META_BASE, config_inbound_cidrs="198.51.100.0/24")),
+            secrets=self.HUB_ONLY, eips=self.TWO_EIPS)
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == "203.0.113.201/32,203.0.113.202/32"
+        assert "203.0.113.1/32" not in _meta(st["writes"][0])["fleet_nat_egress_cidrs"]
+        for ns in ("acme-spoke-dev", "acme-spoke-prod"):
+            assert "namespace %s: ACK ElasticIPAddress but no registered Argo CD cluster secret" % ns in out
+
+    def test_rerun_keeps_the_nat_of_a_spoke_whose_secret_is_briefly_absent(self, tmp_path, provider):
+        secrets = {"items": self.HUB_ONLY["items"] + [
+            _cluster_secret("sdev", {"fleet_member": "spoke"}, "acme-spoke-dev")]}
+        stored = "203.0.113.201/32,203.0.113.202/32"
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=stored)),
+                       secrets=secrets, eips=self.TWO_EIPS)
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert st["writes"] == [], st                        # the stored union is not narrowed
+        assert "namespace acme-spoke-prod: ACK ElasticIPAddress but no registered" in out
+
+    def test_unregistered_eip_without_public_ip_yet_is_reported(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)),
+                       secrets=self.HUB_ONLY, eips={}, eips_pending=["acme-spoke-dev"])
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert "namespace acme-spoke-dev" in out and "no public IP yet" in out
+
+    def test_eip_being_released_in_an_unregistered_namespace_is_not_added(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)), secrets=self.HUB_ONLY,
+                       eips={}, eips_deleting={"acme-spoke-gone": ["203.0.113.209"]})
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert st["writes"] == []
+
+    def test_eip_listing_failure_keeps_stored_key(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
+                       fail_eips_all=True)
+        assert res.returncode != 0
+        assert st["writes"] == []
+
+    def test_hub_without_the_eip_crd_and_no_spoke_is_a_noop(self, tmp_path, provider):
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)),
+                       secrets=self.HUB_ONLY, eips={}, no_eip_crd=True)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert st["writes"] == []
 
     def test_fetches_hub_kubeconfig_first(self, provider):
         _, t = _task_shell(provider)

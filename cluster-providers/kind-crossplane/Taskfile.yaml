@@ -1908,6 +1908,41 @@ tasks:
           fi
           FLEET_ITEMS="$FLEET_ITEMS $IPS"
         done
+        # A kro spoke whose Argo CD cluster secret is not registered (yet: still provisioning, or
+        # wait-for-spokes gave up on it; or briefly absent on a re-run) is not in $SPOKES, but its
+        # ACK ElasticIPAddress already lives on the hub, namespace = spoke name. Reading only the
+        # cluster secrets skipped it silently: on a first install its NAT was never added, on a
+        # re-run its stored NAT was dropped. So also list every EIP on the hub and add the ones
+        # in a namespace that NO cluster secret names (the control plane and spokes being deleted
+        # count as named, so the hub's own EIP and a deleted spoke's are never re-added), with a
+        # warning. Same fail-closed rule as above on a read error; a hub without the ACK EC2 CRD
+        # simply has no such EIP.
+        KNOWN=$(echo "$SECRETS_JSON" | jq -r '.items[] | .metadata.name, (.metadata.annotations["aws_cluster_name"] // empty)' | sort -u)
+        EIP_ERR=$(mktemp)
+        if ! EIP_ALL=$(KUBECONFIG="$KC" kubectl get elasticipaddresses.ec2.services.k8s.aws -A -o json 2>"$EIP_ERR"); then
+          if grep -q "doesn't have a resource type" "$EIP_ERR"; then
+            EIP_ALL='{"items":[]}'
+          else
+            rm -f "$EIP_ERR"
+            printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses -A failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
+        rm -f "$EIP_ERR"
+        ORPHANS=$(echo "$EIP_ALL" | jq -r --arg known "$KNOWN" '($known | split("\n")) as $k
+          | [.items[]? | select(.metadata.deletionTimestamp == null)
+              | select((.metadata.namespace // "") as $n | any($k[]; . == $n) | not)]
+          | group_by(.metadata.namespace)[]
+          | "\(.[0].metadata.namespace)=\([.[] | .status.publicIP // empty | select(. != "") | . + "/32"] | join(","))"')
+        for O in $ORPHANS; do
+          NS=${O%%=*}; OIPS=${O#*=}
+          if [ -n "$OIPS" ]; then
+            printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress but no registered Argo CD cluster secret (a spoke still provisioning?): its NAT %s is added. Re-run this task once the spoke is registered.{{.C_RESET}}\n' "$NS" "$OIPS"
+            FLEET_ITEMS="$FLEET_ITEMS $(echo "$OIPS" | tr ',' ' ')"
+          else
+            printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress with no public IP yet and no registered Argo CD cluster secret: its NAT is NOT added. Re-run this task once the spoke is up.{{.C_RESET}}\n' "$NS"
+          fi
+        done
         # Unquoted on purpose: word-split the accumulated IPs (no spaces in a CIDR) one per line,
         # drop blanks, dedupe, sort, join with commas. Empty -> FLEET="".
         FLEET=$(printf '%s\n' $FLEET_ITEMS | awk 'NF' | sort -u | paste -sd, -)
