@@ -128,8 +128,11 @@ ingressSecurityGroups: ""
 # providers that seed <hub>/config); empty/omitted = unchanged (ALB open unless an overlay
 # sets inboundCidrs later). A YAML list or a comma-separated string of IPv4 CIDRs.
 # Typically just your corporate / VPN source ranges: on kind-kro-ack / kind-crossplane the hub
-# NAT and every kro spoke's NAT are appended automatically (in-cluster and spoke
-# apps reach the public Keycloak issuer through this ALB, so a missing NAT breaks their SSO). Do
+# NAT is appended automatically, and the NAT of every kro spoke is appended by
+# secrets-manager:seed-fleet-nat-egress (in-cluster and spoke apps reach the public Keycloak
+# issuer through this ALB, so a missing NAT breaks their SSO). The workshop install runs that task
+# once its spokes are ACTIVE; after any other spoke add/remove (direct install, Backstage, OAP,
+# delete-spoke) re-run it by hand: task <provider>:secrets-manager:seed-fleet-nat-egress. Do
 # NOT set it with insecure: true (internal ALB behind CloudFront — it would see origin IPs, not
 # clients). Concatenated with any fleet-overlay inboundCidrs / extraInboundCidrs, never overriding
 # them. See docs/platform/alb-ip-allowlist.md.

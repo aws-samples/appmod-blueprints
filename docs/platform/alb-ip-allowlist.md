@@ -288,11 +288,21 @@ and the registry passes it to the chart as `fleetEgressCidrs`, appended to the a
 same gate as the hub NAT (only when an allowlist is set). `hub:seed` preserves the key across
 re-seeds (like the `spoke_*` observability keys).
 
-- **When it runs.** It needs the spokes provisioned, so it runs **after** the spoke phase (the
-  consumer declares spokes — the base `cluster-providers` install provisions the hub only) and is
-  **re-runnable on its own**. It REBUILDS the union from the live resources each run, so a spoke
-  **added** later is included on the next run and a **removed** spoke drops out (an empty union
-  removes the key). Re-run it after adding or removing an OAP spoke:
+- **When it runs.** It needs the spokes provisioned, so it is not part of the base
+  `cluster-providers` install, which provisions the hub only. It runs on its own in two places:
+  - the **workshop install** (`workshop:install`, and the CodeBuild half `install:remote`), once
+    `wait-for-spokes` reports the spokes ACTIVE;
+  - the workshop **`spokes:sweep-kro`**, after a spoke is deleted, so its released EIP leaves the
+    allowlist.
+
+  Both calls are non‑fatal: a failure prints the command to re‑run and the install goes on.
+  **Everywhere else it is a manual step.** Re‑run it after every spoke you add or remove outside
+  those two tasks: a direct install (root `Taskfile.yaml`, hub only), a spoke from the Backstage
+  EKS cluster template, an OAP spoke, a hand‑written `kro-clusters` entry, or the manual
+  [delete‑spoke](../install/delete-spoke.md) sequence. Until then the new spoke's server‑side
+  calls to the hub (Keycloak JWKS/OIDC, OTel) time out, and a deleted spoke's EIP stays
+  allowlisted. The task REBUILDS the union from the live resources each run, so a spoke
+  **added** since is included and a **removed** spoke drops out (an empty union removes the key):
 
   ```bash
   task kind-kro-ack:secrets-manager:seed-fleet-nat-egress   # or kind-crossplane:...

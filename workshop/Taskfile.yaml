@@ -260,6 +260,16 @@ tasks:
       - task: wait-for-spokes
         vars: { SPOKE_APPS: "false" }
       - 'printf "{{.C_INFO}}  [%ds] wait-for-spokes (ACTIVE) done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
+      # Add the NAT EIP of every kro spoke to the hub ALB allowlist (fleet_nat_egress_cidrs), now
+      # that the spokes are ACTIVE (their VPC, NAT and EIP exist). The chart uses it only when the
+      # hub ALB has an allowlist (albInboundCidrs or an overlay inboundCidrs): with none, this
+      # changes nothing. Non-fatal like wait-for-spokes: a failure (or a pinned platform.ref that
+      # predates the task) prints the command to re-run and the install goes on.
+      - '{{.MARK}} step workshop seed-fleet-nat-egress'
+      - |
+        if ! (cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress); then
+          printf '{{.C_ERR}}⚠ secrets-manager:seed-fleet-nat-egress failed: the spoke NATs are NOT in the hub ALB allowlist (spoke SSO/OTel to the hub breaks if it has one). Re-run from %s: task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress{{.C_RESET}}\n' "{{.PLATFORM_DIR}}"
+        fi
       # Background: wait for the spoke apps to sync (same tolerant loop and nudges as
       # before), THEN pre-deploy the Path A Next.js frontend and the Rust dev manifest on
       # spoke-dev (both need the spoke's kro AppmodService CRD, which comes with those
@@ -546,6 +556,13 @@ tasks:
       - '{{.STATE}} "RUNNING step=wait-for-spokes"'
       - task: wait-for-spokes
         vars: { SPOKE_APPS: "false" }
+      # Spoke NATs into the hub ALB allowlist, as in `install` (non-fatal there and here: the
+      # chart uses the value only when the hub ALB has an allowlist).
+      - '{{.STATE}} "RUNNING step=seed-fleet-nat-egress"'
+      - |
+        if ! (cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress); then
+          printf '{{.C_ERR}}⚠ secrets-manager:seed-fleet-nat-egress failed: the spoke NATs are NOT in the hub ALB allowlist. Re-run from %s: task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress{{.C_RESET}}\n' "{{.PLATFORM_DIR}}"
+        fi
       # Hub self-adoption pivot. FATAL here (it is non-fatal in `install`): once this build ends
       # the bootstrap kind cluster is gone, and a hub nobody manages must not look like success.
       - '{{.STATE}} "RUNNING step=hub:pivot"'
@@ -4441,6 +4458,13 @@ tasks:
           fi
         fi
         rm -f "$KC"
+      # 7. The deleted spoke's NAT EIP is released: rebuild the hub allowlist's spoke-NAT union
+      #    (fleet_nat_egress_cidrs) so it does not stay allowlisted. Non-fatal (the sweep is done).
+      - |
+        P=$(yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}})
+        if ! (cd {{.PLATFORM_DIR}} && task "$P:secrets-manager:seed-fleet-nat-egress"); then
+          printf '{{.C_ERR}}⚠ secrets-manager:seed-fleet-nat-egress failed: the deleted spoke NAT may still be in the hub ALB allowlist. Re-run from %s: task %s:secrets-manager:seed-fleet-nat-egress{{.C_RESET}}\n' "{{.PLATFORM_DIR}}" "$P"
+        fi
 
   spokes:disable-all:
     desc: >-

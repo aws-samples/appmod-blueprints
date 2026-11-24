@@ -151,6 +151,25 @@ associations first, then the role; and delete `Local`‑scope policies named `<n
 
 ---
 
+## Phase 5 — drop the spoke's NAT from the hub allowlist
+
+On `kind-kro-ack` / `kind-crossplane` the hub ALB allowlist includes the NAT EIP of every kro
+spoke (`fleet_nat_egress_cidrs`, see
+[Spoke NAT](../platform/alb-ip-allowlist.md#spoke-nat-kro-spokes-on-kind-kro-ack-and-kind-crossplane)).
+The deleted spoke's EIP is released and can be handed to another AWS account, so rebuild that list
+once the spoke's hub namespace is gone (Phase 4):
+
+```bash
+task kind-kro-ack:secrets-manager:seed-fleet-nat-egress   # or kind-crossplane:...
+```
+
+It re-reads the remaining spokes on the hub, rewrites `fleet_nat_egress_cidrs` in `<hub>/config`
+(or removes it when no spoke is left) and forces an ESO refresh. The workshop's
+`spokes:sweep-kro` runs it as its last step. Nothing changes on the ALB when the hub has no
+allowlist.
+
+---
+
 ## Verify the teardown is clean
 
 ```bash

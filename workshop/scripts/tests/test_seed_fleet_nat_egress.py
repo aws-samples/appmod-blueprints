@@ -313,3 +313,82 @@ class TestFleetTask:
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)))
         m = _meta(st["writes"][0])
         assert m["aws_cluster_name"] == HUB and m["ingress_domain_name"] == "idp.example.com"
+
+
+# --- review #1308 B2: the workshop runs the task once spokes exist, and after a delete ------
+WORKSHOP = os.path.join(REPO, "workshop", "Taskfile.yaml")
+STEP = "secrets-manager:seed-fleet-nat-egress"
+
+
+def _ws_cmds(name):
+    with open(WORKSHOP) as f:
+        return yaml.safe_load(f)["tasks"][name]["cmds"]
+
+
+def _idx(cmds, pred):
+    hits = [i for i, c in enumerate(cmds) if pred(c)]
+    assert hits, "no matching cmd"
+    return hits[0]
+
+
+def _is_wfs(c):
+    return isinstance(c, dict) and c.get("task") == "wait-for-spokes"
+
+
+def _is_step(c):
+    return isinstance(c, str) and STEP in c and "task {{.PROVIDER}}:" in c
+
+
+def test_install_runs_it_after_the_spokes_are_active():
+    cmds = _ws_cmds("install")
+    assert _idx(cmds, _is_wfs) < _idx(cmds, _is_step)
+
+
+def test_remote_install_runs_it_after_the_spokes_and_before_the_pivot():
+    cmds = _ws_cmds("install:remote")
+    pivot = _idx(cmds, lambda c: isinstance(c, str) and ":hub:pivot " in c)
+    assert _idx(cmds, _is_wfs) < _idx(cmds, _is_step) < pivot
+
+
+def test_sweep_kro_runs_it_last():
+    last = _ws_cmds("spokes:sweep-kro")[-1]
+    assert isinstance(last, str) and STEP in last
+
+
+def _run_step(tmp_path, cmd_text, fake_task_rc):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "task-calls.log"
+    (bindir / "task").write_text(
+        '#!/bin/sh\nprintf "%%s|%%s\\n" "$PWD" "$*" >> "%s"\nexit %d\n' % (log, fake_task_rc))
+    (bindir / "task").chmod(0o755)
+    pdir = tmp_path / "platform"
+    pdir.mkdir()
+    cfg = tmp_path / "config.local.yaml"
+    cfg.write_text("clusterProvider: kind-crossplane\n")
+    tf = tmp_path / "Taskfile.yml"
+    tf.write_text(yaml.safe_dump({
+        "version": "3", "set": ["errexit", "nounset", "pipefail"],
+        "vars": dict({k: "" for k in COLORS}, PROVIDER="kind-kro-ack",
+                     PLATFORM_DIR=str(pdir), CONFIG_FILE=str(cfg)),
+        "tasks": {"run": {"cmds": [cmd_text]}}}, sort_keys=False))
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}")
+    res = subprocess.run([TASK, "-s", "-t", str(tf), "run"], cwd=tmp_path, env=env,
+                         capture_output=True, text=True, timeout=60)
+    calls = log.read_text().splitlines() if log.exists() else []
+    return res, calls, str(pdir)
+
+
+@needs_task
+@pytest.mark.parametrize("where", ["install", "install:remote", "spokes:sweep-kro"])
+@pytest.mark.parametrize("rc", [0, 1])
+def test_workshop_step_calls_the_provider_task_and_never_fails(tmp_path, where, rc):
+    cmds = _ws_cmds(where)
+    cmd = cmds[-1] if where == "spokes:sweep-kro" else cmds[_idx(cmds, _is_step)]
+    res, calls, pdir = _run_step(tmp_path, cmd, rc)
+    assert res.returncode == 0, res.stdout + res.stderr          # non-fatal either way
+    # install / install:remote use their PROVIDER var; sweep-kro reads clusterProvider.
+    provider = "kind-crossplane" if where == "spokes:sweep-kro" else "kind-kro-ack"
+    assert calls == [f"{pdir}|{provider}:{STEP}"], calls
+    warned = "seed-fleet-nat-egress failed" in res.stdout + res.stderr
+    assert warned == (rc != 0)

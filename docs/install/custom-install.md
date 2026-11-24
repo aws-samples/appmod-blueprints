@@ -179,7 +179,8 @@ resourcePrefix: <prefix>              # lowercase, starts with a letter; prefixe
 
 # Hardening (own-domain mode): restrict the shared platform ALB to known source IPs from install
 # time. YAML list or comma-separated string of IPv4 CIDRs — typically just your corporate/VPN
-# ranges (the hub NAT and every kro spoke's NAT are auto-added on kind-kro-ack/kind-crossplane).
+# ranges (the hub NAT is auto-added on kind-kro-ack/kind-crossplane; kro spoke NATs are added by
+# `task <provider>:secrets-manager:seed-fleet-nat-egress`, to re-run after adding/removing spokes).
 # Omit => ALB open (today's default). Do NOT set with insecure: true. See docs/platform/alb-ip-allowlist.md.
 # albInboundCidrs:
 #   - 203.0.113.0/24
@@ -234,8 +235,11 @@ albInboundCidrs:
 
 It is applied by `kind-kro-ack` / `kind-crossplane`, concatenated with any fleet‑repo
 `inboundCidrs` / `extraInboundCidrs` (never overriding them). On these two providers the hub NAT
-and the NAT of every **kro** spoke are added automatically (not a spoke created as a Crossplane
-composition), so you normally list only your
+is added automatically. The NAT of every **kro** spoke (not a spoke created as a Crossplane
+composition) is added by `task <provider>:secrets-manager:seed-fleet-nat-egress`: a direct install
+provisions the hub only, so **re-run that task after every spoke you add or remove**, or the new
+spoke's SSO/OTel calls to the hub time out (the workshop install runs it for its own spokes). You
+then normally list only your
 corporate/VPN source ranges here; the NAT egress IPs still need re‑checking after each reinstall on
 other providers, or SSO breaks
 ([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
