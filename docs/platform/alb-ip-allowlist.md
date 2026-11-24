@@ -227,8 +227,9 @@ The allowlist must contain, as `/32`s (for example `<nat-eip>/32`):
   kind-crossplane, see below);
 - every NAT gateway Elastic IP of **each fleet spoke**: a spoke's addons also call the hub's
   public ALB (OTel export to `https://<hub-domain>/api/public/otel`, Agent Gateway JWKS from the
-  hub's Keycloak, and any other server-side OIDC/JWKS call). Added automatically on kind-kro-ack /
-  kind-crossplane (see [Spoke NAT](#spoke-nat-added-automatically-on-kind-kro-ack-and-kind-crossplane)).
+  hub's Keycloak, and any other server-side OIDC/JWKS call). Discovered for **kro** spokes on
+  kind-kro-ack / kind-crossplane (see [Spoke NAT](#spoke-nat-kro-spokes-on-kind-kro-ack-and-kind-crossplane));
+  a spoke created as a Crossplane composition is not covered.
 
 #### Hub NAT: added automatically on kind-kro-ack and kind-crossplane
 
@@ -270,10 +271,12 @@ allowlist is complete from the ALB's creation.
   else (a Transit Gateway to a central egress VPC, a proxy, a firewall) gets nothing added: list
   that egress IP yourself in `inboundCidrs` or `extraInboundCidrs`.
 
-#### Spoke NAT: added automatically on kind-kro-ack and kind-crossplane
+#### Spoke NAT: kro spokes on kind-kro-ack and kind-crossplane
 
-The NAT egress IP of **every fleet spoke** is discovered and added to the hub allowlist
-automatically on these two providers — nothing to list by hand. A hub-side task,
+The NAT egress IP of every **kro** spoke (a spoke provisioned by the kro `EksclusterWithVpc` graph:
+`spokes:enable-kro`, the Backstage EKS cluster template, or an entry in the fleet repo's
+`kro-clusters/values.yaml`) is discovered and added to the hub allowlist on these two providers. A
+hub-side task,
 `secrets-manager:seed-fleet-nat-egress`, reads the spoke `ElasticIPAddress` resources the hub
 already holds (the kro `EksclusterWithVpc` graph runs on the hub, so every spoke's ACK
 `ElasticIPAddress` CR lives there), takes **every registered spoke** (all cluster secrets except
@@ -299,9 +302,16 @@ re-seeds (like the `spoke_*` observability keys).
   extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the
   chart ignores it until one is, so with no allowlist the ALB stays open (unchanged).
 
+- **Kro spokes only.** A spoke created as a **Crossplane composition** (`spokes:enable-crossplane`,
+  which the `kind-crossplane` workshop install uses for its two spokes) has a Crossplane `EIP`, not
+  an ACK `ElasticIPAddress`, so the task cannot see its NAT: it contributes nothing, and the task
+  prints `spoke <name>: no ACK ElasticIPAddress ...` for it. List that NAT by hand (below).
+
 #### Still manual
 
 - the hub NAT on other providers (`byoc`, `terraform`);
+- the NAT egress IPs of **Crossplane‑composed spokes** (`spokes:enable-crossplane`), on any
+  provider;
 - the NAT egress IPs of **fleet spokes on `byoc` / `terraform`** (the auto-discovery above is
   `kind-kro-ack` / `kind-crossplane` only): add them to the hub list in `inboundCidrs` or
   `extraInboundCidrs`.
@@ -400,15 +410,19 @@ spokeAlbInboundCidrs:
 # equivalently: spokeAlbInboundCidrs: "203.0.113.0/24"
 ```
 
-On `kind-kro-ack` / `kind-crossplane`, `hub:seed` normalises the value to a comma‑separated string
-and writes it as the `spoke_alb_inbound_cidrs` annotation of the hub cluster secret; the
-`clusters-kro` appset threads it as the default `albInboundCidrs` of every spoke claim, and the
+**Kro spokes only.** On `kind-kro-ack` / `kind-crossplane`, `hub:seed` normalises the value to a
+comma‑separated string and writes it as the `spoke_alb_inbound_cidrs` annotation of the hub cluster
+secret; the `clusters-kro` appset threads it as the default `albInboundCidrs` of every kro spoke
+claim, and the
 `EksCluster` RGD (the single writer of that key) stamps it onto each spoke cluster secret as
 `config_inbound_cidrs`, which the spoke's `ingress-class-alb` addon passes to its chart as
 `configInboundCidrs`. The spoke's own NAT is still added automatically (below). **Empty or omitted
 => the key is not written => every spoke ALB stays open, render byte‑identical.** The participant
 lockout, security‑group rule limit, and internal‑ALB caveats below apply exactly the same — do
-**not** enable it for an open / public event.
+**not** enable it for an open / public event. Only the `clusters-kro` path carries the value: a
+spoke created as a **Crossplane composition** (`spokes:enable-crossplane`, the default spoke type
+of the `kind-crossplane` workshop install) does not get it, nor its own NAT; restrict such a spoke
+with the post‑install overlay below and list its NAT there by hand.
 
 **Per‑spoke override.** A single spoke can override the fleet‑wide default with an `albInboundCidrs`
 key in its own entry of the fleet repo's KRO values file,
@@ -439,8 +453,8 @@ inboundCidrs:
   - 203.0.113.0/24        # the participant / corporate source ranges allowed to reach the app
 ```
 
-- **The spoke's own NAT is added automatically.** On `kind-kro-ack` / `kind-crossplane` the spoke's
-  own NAT egress IP is stamped onto its cluster secret (`nat_egress_cidrs`, from the kro VPC graph's
+- **The spoke's own NAT is added automatically (kro spokes).** On `kind-kro-ack` / `kind-crossplane`
+  a kro spoke's own NAT egress IP is stamped onto its cluster secret (`nat_egress_cidrs`, from the kro VPC graph's
   Elastic IP) and the chart appends it as `clusterEgressCidrs` once an allowlist is set — so a spoke
   app that calls back through the spoke ALB keeps working without listing the spoke NAT by hand.
   Nothing is added while the allowlist is empty.
@@ -457,6 +471,43 @@ inboundCidrs:
   allowlist there — it would see the origin interface IPs, not clients (same as
   [pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)). Today spokes are internet‑facing
   (no domain of their own), so this is a guard for a future spoke‑domain mode.
+
+### Existing spokes (day-2)
+
+A kro spoke receives `spokeAlbInboundCidrs` (as its `config_inbound_cidrs`) and its own
+`nat_egress_cidrs` **when it is created**. A later change does not reach it on its own: kro
+re‑renders the spoke's data Secret, but the ACK Secrets Manager `Secret` behind `<spoke>/config`
+only *references* that data Secret, so ACK never pushes the new content and the spoke's cluster
+secret keeps the old value (see the
+[RGD README, "Day-2"](../../gitops/addons/charts/kro/resource-groups/manifests/eks/README.md)).
+So:
+
+- setting or changing `spokeAlbInboundCidrs` on a running fleet applies to **new** spokes only;
+  every existing spoke ALB stays as it was (open if it had no allowlist). A re‑seed whose value
+  differs from the stored one prints `spokeAlbInboundCidrs changed (stored: ... -> now: ...)`;
+- spokes created before this feature have no `nat_egress_cidrs` either, so an allowlist set on
+  them later (overlay `inboundCidrs`) does not include their own NAT until the same step is done.
+
+To push the new value to an existing spoke, re‑run `secrets-manager:seed` (or the install), let
+the `clusters-kro-<spoke>` app re‑render the claim, then do the RGD README's spec bump for each
+spoke:
+
+```bash
+C=<spoke-cluster-name>
+# 1. confirm kro re-rendered the data Secret (look at the managedFields time)
+kubectl -n $C get secret $C-config-data --show-managed-fields \
+  -o jsonpath='{range .metadata.managedFields[*]}{.manager} {.time}{"\n"}{end}'
+# 2. change the ACK CR spec: generation +1, ACK calls UpdateSecret with the resolved secretString
+kubectl -n $C patch secrets.secretsmanager.services.k8s.aws $C-config --type merge \
+  -p "{\"spec\":{\"description\":\"$C cluster config $(date -u +%Y%m%dT%H%M%SZ)\"}}"
+# 3. refresh the ExternalSecret that builds the Argo CD cluster secret
+kubectl -n argocd annotate externalsecret fleet-secret-$C force-sync=$(date +%s) --overwrite
+# 4. check the spoke cluster secret carries the new value
+kubectl -n argocd get secret $C -o jsonpath='{.metadata.annotations.config_inbound_cidrs}{"\n"}'
+```
+
+The spoke's `ingress-class-alb` app then re‑renders with the new `configInboundCidrs`. A per‑spoke
+overlay `inboundCidrs` (above) is plain GitOps and needs no bump.
 
 ---
 

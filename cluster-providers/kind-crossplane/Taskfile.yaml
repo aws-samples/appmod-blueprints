@@ -1628,6 +1628,9 @@ tasks:
         # the spoke_* observability keys, or a re-install drops the fleet spokes' NAT from the hub
         # allowlist and breaks their SSO/telemetry.
         PREV_FLEET_NAT=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .fleet_nat_egress_cidrs) // empty' 2>/dev/null)
+        # Stored fleet-wide spoke allowlist, only to warn when it changes (not preserved: config.yaml
+        # is authoritative for it).
+        PREV_SCIC=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .spoke_alb_inbound_cidrs) // empty' 2>/dev/null)
         # Build VPC JSON for the aws-resources chart ExternalSecret
         PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n \
@@ -1706,6 +1709,17 @@ tasks:
           echo "           The internet-facing ALB (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana) will accept connections from any source IP."
           echo "           To restrict it from install time, set 'albInboundCidrs' in config.local.yaml"
           echo "           (include the hub and OAP-spoke NAT egress IPs). See docs/platform/alb-ip-allowlist.md."
+        fi
+        # Day-2 (review #1308): a spoke gets spoke_alb_inbound_cidrs only when its EksCluster is
+        # CREATED. The ACK Secret behind <spoke>/config only references the kro data Secret, so ACK
+        # never pushes a later edit (gitops/addons/charts/kro/resource-groups/manifests/eks/README.md,
+        # "Day-2"): a changed value reaches NEW spokes only, existing spoke ALBs stay as they were.
+        # Say so on a re-seed whose value differs from the stored one. Non-fatal.
+        if [ -n "$PREV_SECRET" ] && [ "$PREV_SCIC" != "$SPOKE_ALB_INBOUND_CIDRS" ]; then
+          printf '{{.C_ERR}}[hub:seed] ⚠ WARNING: spokeAlbInboundCidrs changed (stored: %s -> now: %s).{{.C_RESET}}\n' "${PREV_SCIC:-<none>}" "${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
+          echo "           Only spokes created from now on get the new value. Each EXISTING kro spoke keeps its old"
+          echo "           ALB allowlist (open if it had none) until its ACK Secret spec is bumped: see"
+          echo "           docs/platform/alb-ip-allowlist.md, 'Existing spokes (day-2)'."
         fi
         METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","addons_repo_url":"{{.AGENTIC_REPO_URL}}","addons_repo_revision":"{{.AGENTIC_REPO_REVISION}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}'
         if [ -n "$OVL_URL" ]; then
@@ -1858,6 +1872,12 @@ tasks:
           # Skip an EIP that is being released (deletionTimestamp set): its publicIP may still be
           # present but the address is going away, so it must not stay in the allowlist.
           IPS=$(echo "$EIP_JSON" | jq -r '.items[]? | select(.metadata.deletionTimestamp == null) | .status.publicIP // empty | select(. != "") | . + "/32"')
+          # Only kro spokes have an ACK ElasticIPAddress here. A spoke created as a Crossplane
+          # composition (spokes:enable-crossplane) has a Crossplane EIP instead, and is not covered:
+          # say so rather than silently leaving its NAT out of the hub allowlist.
+          if [ -z "$IPS" ]; then
+            printf '{{.C_WARN}}⚠ spoke %s: no ACK ElasticIPAddress with a public IP on the hub, so its NAT is NOT added (a Crossplane-composed spoke, or one still provisioning). If the hub ALB has an allowlist, list that NAT by hand (albInboundCidrs or extraInboundCidrs).{{.C_RESET}}\n' "$SPOKE"
+          fi
           FLEET_ITEMS="$FLEET_ITEMS $IPS"
         done
         # Unquoted on purpose: word-split the accumulated IPs (no spaces in a CIDR) one per line,

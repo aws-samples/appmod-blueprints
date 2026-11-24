@@ -194,6 +194,39 @@ class TestSeedSpokeAlbInbound:
         assert "not-a-real-token" not in res.stdout + res.stderr
 
 
+# --- day-2: a changed fleet-wide value only reaches NEW spokes, say so (review #1308) --------
+def _existing(**extra):
+    meta = dict({"aws_cluster_name": HUB, "ingress_domain_name": "idp.example.com"}, **extra)
+    return json.dumps({"metadata": json.dumps(meta)})
+
+
+@needs_task
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestSeedSpokeDay2Warning:
+    def test_warns_when_the_value_changes_on_reseed(self, tmp_path, provider):
+        secret, res = _seed(tmp_path, provider, _cfg(spokeAlbInboundCidrs=["198.51.100.0/24"]),
+                            existing=_existing(spoke_alb_inbound_cidrs="203.0.113.0/24"))
+        out = res.stdout + res.stderr
+        assert "spokeAlbInboundCidrs changed" in out and "EXISTING" in out
+        assert "203.0.113.0/24" in out and "198.51.100.0/24" in out
+        assert _meta(secret)["spoke_alb_inbound_cidrs"] == "198.51.100.0/24"  # still written
+
+    def test_warns_when_set_on_a_running_fleet(self, tmp_path, provider):
+        # set for the first time on an existing hub: existing spokes stay open.
+        _, res = _seed(tmp_path, provider, _cfg(spokeAlbInboundCidrs=["198.51.100.0/24"]),
+                       existing=_existing())
+        assert "spokeAlbInboundCidrs changed" in res.stdout + res.stderr
+
+    def test_no_warning_when_unchanged(self, tmp_path, provider):
+        _, res = _seed(tmp_path, provider, _cfg(spokeAlbInboundCidrs=["203.0.113.0/24"]),
+                       existing=_existing(spoke_alb_inbound_cidrs="203.0.113.0/24"))
+        assert "spokeAlbInboundCidrs changed" not in res.stdout + res.stderr
+
+    def test_no_warning_on_first_install(self, tmp_path, provider):
+        _, res = _seed(tmp_path, provider, _cfg(spokeAlbInboundCidrs=["203.0.113.0/24"]))
+        assert "spokeAlbInboundCidrs changed" not in res.stdout + res.stderr
+
+
 # --- OAP forwarding into the generated appmod config.local.yaml -----------------------------
 def _oap_taskfile():
     for p in OAP_CANDIDATES:

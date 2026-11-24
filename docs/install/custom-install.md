@@ -179,7 +179,7 @@ resourcePrefix: <prefix>              # lowercase, starts with a letter; prefixe
 
 # Hardening (own-domain mode): restrict the shared platform ALB to known source IPs from install
 # time. YAML list or comma-separated string of IPv4 CIDRs — typically just your corporate/VPN
-# ranges (the hub NAT and every fleet spoke's NAT are auto-added on kind-kro-ack/kind-crossplane).
+# ranges (the hub NAT and every kro spoke's NAT are auto-added on kind-kro-ack/kind-crossplane).
 # Omit => ALB open (today's default). Do NOT set with insecure: true. See docs/platform/alb-ip-allowlist.md.
 # albInboundCidrs:
 #   - 203.0.113.0/24
@@ -234,7 +234,8 @@ albInboundCidrs:
 
 It is applied by `kind-kro-ack` / `kind-crossplane`, concatenated with any fleet‑repo
 `inboundCidrs` / `extraInboundCidrs` (never overriding them). On these two providers the hub NAT
-and **every fleet spoke's** NAT are added automatically, so you normally list only your
+and the NAT of every **kro** spoke are added automatically (not a spoke created as a Crossplane
+composition), so you normally list only your
 corporate/VPN source ranges here; the NAT egress IPs still need re‑checking after each reinstall on
 other providers, or SSO breaks
 ([pitfall 1](../platform/alb-ip-allowlist.md#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)).
@@ -246,7 +247,7 @@ fleet‑repo overlay instead — see
 **Restricting the spoke ALBs too (optional).** `albInboundCidrs` covers only the shared hub platform
 ALB. Each spoke runs its own internet‑facing ALB fronting the **participant applications**; restrict
 those from install time with `spokeAlbInboundCidrs` (same list/comma‑string form; fleet‑wide
-default, overridable per spoke). Because a spoke ALB is participant‑facing, an allowlist blocks any
+default, overridable per spoke; kro spokes only, applied when a spoke is created). Because a spoke ALB is participant‑facing, an allowlist blocks any
 participant whose source IP is not listed — set it only for known corporate/VPN ranges, never for an
 open event — see
 [Restrict a spoke's own ALB](../platform/alb-ip-allowlist.md#restrict-a-spokes-own-alb).

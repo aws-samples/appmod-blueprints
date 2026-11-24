@@ -277,6 +277,21 @@ class TestFleetTask:
         assert st["writes"] == []
         assert _meta(st["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
 
+    def test_spoke_without_ack_eip_is_reported(self, tmp_path, provider):
+        # A Crossplane-composed spoke has no ACK ElasticIPAddress on the hub: it contributes
+        # nothing, and the task says so instead of dropping it silently (review #1308).
+        secrets = {"items": [
+            _cluster_secret("sdev", {"fleet_member": "spoke"}, "acme-spoke-dev"),
+            _cluster_secret("sxp", {"fleet_member": "spoke"}, "acme-spoke-xp"),
+        ]}
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)), secrets=secrets,
+                       eips={"acme-spoke-dev": ["203.0.113.201"]})
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == "203.0.113.201/32"
+        out = res.stdout + res.stderr
+        assert "spoke acme-spoke-xp: no ACK ElasticIPAddress" in out
+        assert "acme-spoke-dev: no ACK" not in out
+
     def test_fetches_hub_kubeconfig_first(self, provider):
         _, t = _task_shell(provider)
         assert t["cmds"][0] == {"task": "hub:kubeconfig"}
