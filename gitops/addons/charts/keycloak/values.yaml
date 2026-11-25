@@ -19,3 +19,8 @@ clientProvisioner:
   identityBackend: crossplane
 keycloak:
   resources: {}
+
+# ExternalSecret refresh interval for keycloak-config (how often External Secrets
+# polls AWS Secrets Manager). Empty = built-in 30s.
+externalSecrets:
+  refreshInterval: ""

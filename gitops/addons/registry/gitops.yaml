@@ -140,7 +140,9 @@ kargo:
             annotations:
               argocd.argoproj.io/sync-wave: '-1'
           spec:
-            refreshInterval: '30s'
+            # Overridable per cluster via the external_secrets_refresh_interval
+            # cluster-secret annotation (e.g. fleet-secret externalSecret.annotations).
+            refreshInterval: '{{default "30s" (index .metadata.annotations "external_secrets_refresh_interval")}}'
             secretStoreRef:
               name: aws-secrets-manager
               kind: ClusterSecretStore
