@@ -1174,8 +1174,182 @@ def test_step_2c_gets_keep_data_and_the_comment_says_so():
     line = c[c.index("sweep-app-resources.py"):].split("|| true")[0]
     assert "$KEEP_DATA_ARGS" in line
     src = open(TASKFILE).read()
-    doc = src[src.index("# DESTROY_KEEP_DATA=true"):src.index("DESTROY_KEEP_DATA: '")]
+    start = src.index("# DESTROY_KEEP_DATA=true")
+    doc = src[start:src.index("DESTROY_KEEP_DATA: '", start)]
     assert "AgentCore memories" in doc
+
+
+# 5. --keep-data keeps the memories in a normal destroy: the Memory CRs are marked
+#    retain/Orphan before step 6c deletes the OAM apps (#1227).
+
+V1 = "memories.bedrockagentcore.aws.upbound.io"
+V2 = "memories.bedrockagentcore.aws.m.upbound.io"
+NOT_FOUND = "error: the server doesn't have a resource type \"memories\""
+
+
+class KeepKubectl:
+    """kubectl for keep-agentcore-memories.py: lists, reads one CR, applies merge patches.
+    `fail` maps a kind to (rc, stderr) for the list call; `revert` undoes every patch."""
+
+    def __init__(self, crs, fail=None, revert=False, ready=True):
+        self.crs, self.fail, self.revert, self.ready = crs, fail or {}, revert, ready
+        self.calls = []
+
+    def __call__(self, args):
+        if args[0] == "get" and args[1] == "--raw":
+            return (0, "ok") if self.ready else (1, "Unable to connect to the server")
+        if args[0] == "get" and "-A" in args:
+            if args[1] in self.fail:
+                return self.fail[args[1]]
+            if args[1] not in self.crs:
+                return 1, NOT_FOUND
+            return 0, json.dumps({"items": self.crs[args[1]]})
+        if args[0] == "get":
+            it = next(i for i in self.crs[args[1]] if i["metadata"]["name"] == args[2])
+            return 0, json.dumps(it)
+        self.calls.append(args)
+        if not self.revert:
+            it = next(i for i in self.crs[args[1]] if i["metadata"]["name"] == args[2])
+            it["spec"].update(json.loads(args[args.index("-p") + 1])["spec"])
+        return 0, ""
+
+
+def test_keep_memories_retains_v1_and_v2_crs_and_leaves_the_retained_ones(capsys):
+    mod = load("keep-agentcore-memories.py")
+    v2 = dict(memory("v2.memory", "Mv2-x"), metadata={"name": "v2.memory", "namespace": "aiops-agent"})
+    kc = KeepKubectl({
+        V1: [
+            memory("aiops-agent.aiops-agent-memory", MID),
+            memory("kept.memory", "Mkept-x", deletionPolicy="Orphan"),
+            memory("observed.memory", "Mobs-x", managementPolicies=["Observe"]),
+        ],
+        V2: [v2],
+    })
+    assert mod.main([], kubectl=kc) == 0
+    assert kc.calls == [
+        ["patch", V1, "aiops-agent.aiops-agent-memory",
+         "--type", "merge", "-p", '{"spec": {"deletionPolicy": "Orphan"}}'],
+        ["patch", V2, "v2.memory", "-n", "aiops-agent",
+         "--type", "merge", "-p", json.dumps({"spec": {"managementPolicies": sl.XP_NO_DELETE}})],
+    ]
+    out = capsys.readouterr().out
+    assert f"keep {V1} kept.memory: already retained" in out
+    assert "4 AgentCore Memory CR(s) kept" in out
+
+
+def test_keep_memories_dry_run_patches_nothing_and_no_cr_is_a_no_op(capsys):
+    mod = load("keep-agentcore-memories.py")
+    kc = KeepKubectl({V1: [memory("m", MID)]})
+    assert mod.main(["--dry-run"], kubectl=kc) == 0
+    assert kc.calls == [] and "would retain" in capsys.readouterr().out
+    assert mod.main([], kubectl=KeepKubectl({})) == 0
+    assert "nothing to keep" in capsys.readouterr().out
+
+
+def test_keep_memories_fails_when_a_cr_cannot_be_retained(capsys):
+    mod = load("keep-agentcore-memories.py")
+
+    class Denied(KeepKubectl):
+        def __call__(self, args):
+            return (1, "") if args[0] == "patch" else super().__call__(args)
+
+    assert mod.main([], kubectl=Denied({V1: [memory("m", MID)]})) == 1
+    assert "its memory would be deleted" in capsys.readouterr().out
+
+
+def test_keep_memories_fails_when_a_get_fails_for_a_reason_other_than_a_missing_crd(capsys):
+    mod = load("keep-agentcore-memories.py")
+    kc = KeepKubectl({V2: [memory("m", MID)]},
+                     fail={V1: (1, "Unable to connect to the server: net/http: TLS handshake timeout")})
+    assert mod.main([], kubectl=kc) == 1
+    assert "could not read" in capsys.readouterr().out
+    kc = KeepKubectl({}, fail={V1: (124, "timeout")})  # a kubectl timeout is a failed read, not an absent CRD
+    assert mod.main([], kubectl=kc) == 1
+
+
+def test_keep_memories_unreachable_hub_is_a_warning_not_a_failure(capsys):
+    mod = load("keep-agentcore-memories.py")
+    kc = KeepKubectl({}, fail={V1: (1, "Unable to connect to the server")}, ready=False)
+    assert mod.main([], kubectl=kc) == 0
+    assert "hub unreachable" in capsys.readouterr().out
+
+
+def test_keep_memories_retries_a_get_once_before_failing():
+    mod = load("keep-agentcore-memories.py")
+
+    class Flaky(KeepKubectl):
+        n = 0
+
+        def __call__(self, args):
+            if args[0] == "get" and "-A" in args and args[1] == V1 and self.n == 0:
+                self.n += 1
+                return 1, "etcdserver: request timed out"
+            return super().__call__(args)
+
+    assert mod.main([], kubectl=Flaky({V1: [memory("m", MID)]})) == 0
+
+
+def test_keep_memories_fails_when_the_patch_does_not_take_effect(capsys):
+    mod = load("keep-agentcore-memories.py")
+    kc = KeepKubectl({V1: [memory("m", MID)]}, revert=True)
+    assert mod.main([], kubectl=kc) == 1
+    assert "its memory would be deleted" in capsys.readouterr().out
+
+
+def test_keep_memories_v1_with_explicit_delete_policy_is_patched_on_both_fields(capsys):
+    mod = load("keep-agentcore-memories.py")
+    explicit = memory("m", MID, deletionPolicy="Delete",
+                      managementPolicies=["Create", "Observe", "Update", "Delete", "LateInitialize"])
+    kc = KeepKubectl({V1: [explicit]})
+    assert mod.main([], kubectl=kc) == 0
+    assert json.loads(kc.calls[0][-1]) == {"spec": {"deletionPolicy": "Orphan", "managementPolicies": sl.XP_NO_DELETE}}
+    # Orphan next to a management policy that still holds Delete is NOT retained
+    orphan_but_delete = memory("m2", MID, deletionPolicy="Orphan", managementPolicies=["*"])
+    kc = KeepKubectl({V1: [orphan_but_delete]})
+    assert mod.main([], kubectl=kc) == 0 and len(kc.calls) == 1
+
+
+def test_keep_memories_refuses_a_memory_composed_by_a_composite(capsys):
+    mod = load("keep-agentcore-memories.py")
+    composed = memory("m-abc", MID)
+    composed["metadata"]["labels"] = {"crossplane.io/composite": "m-xyz"}
+    kc = KeepKubectl({V1: [composed]})
+    assert mod.main([], kubectl=kc) == 1
+    assert kc.calls == [] and "composed by m-xyz" in capsys.readouterr().out
+
+
+def test_keep_memories_also_retains_memory_strategy_crs():
+    mod = load("keep-agentcore-memories.py")
+    kc = KeepKubectl({"memorystrategies.bedrockagentcore.aws.upbound.io": [memory("m-semantic", "S1")]})
+    assert mod.main([], kubectl=kc) == 0
+    assert kc.calls[0][:3] == ["patch", "memorystrategies.bedrockagentcore.aws.upbound.io", "m-semantic"]
+
+
+def test_keep_memories_runs_only_under_keep_data_before_the_drain():
+    cmds = _cmds("hub:destroy-addons")
+    keep = _index(cmds, "keep-agentcore-memories.py")
+    assert keep < _index(cmds, "drain-oam-apps.py"), "retained before 6c deletes the OAM apps"
+    assert _index(cmds, "clusters-kro clusters") < keep
+    assert cmds[keep].lstrip().startswith('if [ "{{.DESTROY_KEEP_DATA}}" = true ]; then')
+    # the script path and the hub kubeconfig are pinned: a wrong one would stop every keep-data destroy
+    assert 'KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 "{{.ROOT_DIR}}/scripts/keep-agentcore-memories.py"' in cmds[keep]
+    assert os.path.isfile(os.path.join(REPO, "scripts", "keep-agentcore-memories.py"))
+    step = next(c for c in yaml.safe_load(open(TASKFILE))["tasks"]["hub:destroy-addons"]["cmds"]
+                if isinstance(c, dict) and "keep-agentcore-memories.py" in c.get("cmd", ""))
+    assert not step.get("ignore_error"), "a CR that cannot be retained must stop destroy before 6c"
+
+
+def test_destroy_addons_comments_do_not_claim_every_step_is_best_effort():
+    src = " ".join(open(TASKFILE).read().split())
+    assert "All steps are best-effort — safe" not in src and "All-best-effort:" not in src
+    assert "except step 6b under DESTROY_KEEP_DATA=true" in src
+
+
+def test_destroy_passes_keep_data_to_destroy_addons():
+    tasks = yaml.safe_load(open(TASKFILE))["tasks"]
+    call = next(c for c in tasks["destroy"]["cmds"] if isinstance(c, dict) and c.get("task") == "hub:destroy-addons")
+    assert call["vars"]["DESTROY_KEEP_DATA"] == "{{.DESTROY_KEEP_DATA}}"
+    assert tasks["hub:destroy-addons"]["vars"]["DESTROY_KEEP_DATA"] == '{{.DESTROY_KEEP_DATA | default "false"}}'
 
 
 # 6. Namespaced Crossplane v2 MRs are listed in every namespace.
