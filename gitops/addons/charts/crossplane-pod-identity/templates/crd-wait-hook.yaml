@@ -77,7 +77,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: wait
-          image: {{ (default dict .Values.crdWait).image | default "bitnami/kubectl:latest" }}
+          image: {{ (default dict .Values.crdWait).image | default "public.ecr.aws/chainguard/kubectl:latest-dev@sha256:974ad6ac68188e44a059a7cea44408adb33f7f28e1763972915fc5c30e1e1729" }}
           command: ["/bin/sh", "-c"]
           args:
             - |

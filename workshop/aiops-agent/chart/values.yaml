@@ -73,6 +73,6 @@ gitlabMrProject: ""
 
 # Optional image override for the PreSync selector-wait Job that gates each spoke AccessEntry
 # (access-chart). Same name as the ack-pod-identity crdWait.image. Empty = the access chart's
-# default (bitnami/kubectl:latest); set it where Docker Hub is not reachable from the hub.
+# default (a pinned kubectl image on ECR Public); set it where that registry is not reachable.
 crdWait:
   image: ""
