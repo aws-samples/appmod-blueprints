@@ -456,6 +456,19 @@ class TestFleetTask:
         assert v == "203.0.113.201/32,203.0.113.250/32", v
         assert "spoke acme-spoke-prod: being deleted (EksclusterWithVpc deletionTimestamp)" in out
 
+    def test_deleting_instance_with_a_similar_name_does_not_drop_a_live_spoke(self, tmp_path, provider):
+        # pre-review round 4, mutation M6: the "being deleted" match is on the whole namespace.
+        # Instances being deleted whose namespaces contain, or are contained in, a live
+        # registered spoke's name must not drop that spoke's NAT.
+        res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE)),
+                       instances={"acme-spoke-dev": "live", "acme-spoke-prod": "live",
+                                  "acme-spoke-plain": "live", "acme-spoke-prod2": "deleting",
+                                  "spoke-prod": "deleting", "old-acme-spoke-prod": "deleting"})
+        out = res.stdout + res.stderr
+        assert res.returncode == 0, out
+        assert _meta(st["writes"][0])["fleet_nat_egress_cidrs"] == EXPECTED
+        assert "being deleted" not in out
+
     def test_registered_spoke_being_deleted_leaves_a_stored_union(self, tmp_path, provider):
         res, st = _run(tmp_path, provider, _secret_string(dict(META_BASE, fleet_nat_egress_cidrs=EXPECTED)),
                        instances={"acme-spoke-prod": "deleting"})
