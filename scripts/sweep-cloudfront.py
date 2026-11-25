@@ -11,6 +11,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sweep_lib as sl  # noqa: E402
 
+# The disable -> wait for Deployed -> delete sequence is shared with the workshop
+# reaper (#1299, #1301) so the two teardown paths cannot drift apart again.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'workshop', 'scripts'))
+from sweep.reapers.cloudfront import disable_and_delete  # noqa: E402
+
 hub = sys.argv[1] if len(sys.argv) > 1 else 'peeks-hub'
 try:
     # Same profile as the aws CLI calls of the task, credentials checked up front:
@@ -54,25 +60,11 @@ if not vo_ids and not dist_ids:
     print('  No CloudFront resources to clean up.')
     sys.exit(0)
 
-# Disable then delete distributions
+# Disable then delete distributions: waits up to ~20 min for Deployed, also when the
+# distribution was already Enabled=False but still InProgress, and retries a
+# DistributionNotDisabled refusal. Never raises.
 for dist_id in dist_ids:
-    try:
-        resp = cf.get_distribution_config(Id=dist_id)
-        etag = resp['ETag']
-        cfg = resp['DistributionConfig']
-        if cfg.get('Enabled', True):
-            cfg['Enabled'] = False
-            cf.update_distribution(Id=dist_id, DistributionConfig=cfg, IfMatch=etag)
-            print(f'  Disabling distribution {dist_id} (waiting for Deployed)...')
-            for _ in range(20):
-                if cf.get_distribution(Id=dist_id)['Distribution']['Status'] == 'Deployed':
-                    break
-                time.sleep(15)
-        etag2 = cf.get_distribution(Id=dist_id)['ETag']
-        cf.delete_distribution(Id=dist_id, IfMatch=etag2)
-        print(f'  ✓ deleted distribution {dist_id}')
-    except Exception as e:
-        print(f'  distribution {dist_id}: {e}', file=sys.stderr)
+    disable_and_delete(cf, dist_id, print)
 
 time.sleep(5)
 for vo_id in vo_ids:
