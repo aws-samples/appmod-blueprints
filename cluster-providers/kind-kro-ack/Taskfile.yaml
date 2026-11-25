@@ -3201,8 +3201,13 @@ tasks:
           #     the internal ALB ingress. After the ALB is deleted, CloudFront VPC origin
           #     ENIs remain in the private subnets, blocking VPC deletion via CFN.
           #     Strategy: delete all ${HUB}-* VPC origins and their distributions.
-          #     It can wait ~5 min for a distribution to be disabled: skipped past the deadline.
-          if [ "$(dl_left)" -gt 330 ]; then
+          #     Per distribution it waits up to 20 min for the disable to be Deployed, plus
+          #     2 x 2 min after a DistributionNotDisabled refusal (~24 min: scripts/sweep-cloudfront.py
+          #     shares disable_and_delete with the workshop reaper, #1301). dl_left here has no tail
+          #     reserve and SSM kills destroy 5 min after the deadline, so the step only starts with
+          #     more than 1500 s left (24 min + a margin). Otherwise it is skipped and the stack sweep
+          #     (sweep-workshop-resources.py, same helper) removes the distribution.
+          if [ "$(dl_left)" -gt 1500 ]; then
             python3 "{{.ROOT_DIR}}/scripts/sweep-cloudfront.py" "{{.HUB_CLUSTER_NAME}}" 2>&1 || true
           else
             echo "  6a: deadline: CloudFront not swept here (the caller's cleanup removes it)"

@@ -11,7 +11,9 @@ Run:  python -m pytest workshop/scripts/tests/test_destroy_sweep_cloudfront_wait
 import contextlib
 import io
 import os
+import re
 import runpy
+import subprocess
 import sys
 
 import pytest
@@ -143,6 +145,41 @@ def test_wait_is_bounded_and_vpc_origin_still_attempted(monkeypatch):
     assert cf.delete_calls == cloudfront.DELETE_TRIES, out
     assert "CannotDeleteEntityWhileInUse" in out  # VPC origin delete still attempted
     assert cf.clock["t"] <= 1200 + 2 * 8 * 15 + 60, out  # ~24 min worst case
+
+
+# ── The deadline guard of step 6a in the kind-kro-ack Taskfile ──────────────────────────
+TASKFILE = os.path.join(REPO, "cluster-providers", "kind-kro-ack", "Taskfile.yaml")
+
+
+def _guard():
+    """(threshold, the `if ... fi` text of step 6a) read verbatim from the Taskfile."""
+    yaml = pytest.importorskip("yaml")
+    with open(TASKFILE) as f:
+        cmds = yaml.safe_load(f)["tasks"]["destroy"]["cmds"]
+    cmd = next(c["cmd"] for c in cmds if isinstance(c, dict) and "# 6a." in c.get("cmd", ""))
+    m = re.search(r'if \[ "\$\(dl_left\)" -gt (\d+) \]; then\n.*?\nfi\n', cmd, re.S)
+    assert m, "step 6a deadline guard not found"
+    return int(m.group(1)), m.group(0)
+
+
+def test_step6a_guard_covers_the_helper_worst_case():
+    # Per distribution: the Deployed wait, then (DELETE_TRIES - 1) short waits after a refusal.
+    worst = (cloudfront.DEPLOYED_ATTEMPTS + (cloudfront.DELETE_TRIES - 1) * cloudfront.RETRY_ATTEMPTS) \
+        * cloudfront.DEPLOYED_DELAY
+    assert worst == 1440
+    assert _guard()[0] == 1500 and _guard()[0] > worst
+
+
+@pytest.mark.parametrize("left, runs", [(1501, True), (1500, False), (331, False), (0, False)])
+def test_step6a_runs_only_with_more_than_the_worst_case_left(tmp_path, left, runs):
+    guard = _guard()[1].replace("{{.ROOT_DIR}}", str(tmp_path)).replace("{{.HUB_CLUSTER_NAME}}", HUB)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "sweep-cloudfront.py").write_text("print('SWEEP-RAN')\n")
+    res = subprocess.run(["bash", "-c", f"dl_left() {{ echo {left}; }}\n{guard}"],
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    assert ("SWEEP-RAN" in res.stdout) is runs, res.stdout
+    assert ("6a: deadline" in res.stdout) is (not runs), res.stdout
 
 
 if __name__ == "__main__":
