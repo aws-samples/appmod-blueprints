@@ -276,7 +276,11 @@ IAMRoleSelectors derive that name from the prefix; the install fails otherwise.
 `task destroy`). Existing associations are not repointed: on an existing hub, setting it has
 no effect until the PIAs are recreated, and the default `<hub>-crossplane-provider` keeps its
 policies; `hub:crossplane-provider-role` prints a warning when that role still exists. Under `privilegedSteps: external`, the read-only
-`hub:create-mgmt-roles:verify` only checks that a role set here exists: its policies are yours.
+`hub:create-mgmt-roles:verify` only checks that a role set here exists: its policies are yours. Carry the `DenyAttachAwsManagedPolicyOutsideAllowlist` statement from
+`cluster-providers/common/iam/cluster-mgmt-iam-policy.json` in a BYO `iam` role, or that role keeps
+the unguarded AWS managed attach path. Under `privilegedSteps: external`, `hub:create-mgmt-roles:verify`
+warns when the attached scoped policy lacks the statement; an existing hub gets it only when the
+privileged runner re-applies the roles.
 
 ### Keycloak client-provisioner identity: Crossplane to ACK on an existing hub
 
