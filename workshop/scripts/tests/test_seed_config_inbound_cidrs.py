@@ -282,10 +282,11 @@ class TestSeedRejects:
 #      CIDR_CHECK program. A denylist: it cannot prove the program portable;
 #   2. dynamic, when a BWK awk is available: run hub:seed with it as `awk` on PATH. A candidate
 #      ($BWK_AWK, then bwkawk / original-awk / one-true-awk / nawk on PATH, then the PATH `awk`)
-#      counts only if `--version` prints "awk version YYYYMMDD", BWK's format: a Debian `nawk`
-#      that links to mawk or gawk is not BWK. $BWK_AWK set to something else FAILS the test
-#      instead of skipping it. Skipped otherwise, and nothing else runs it: this repo has no CI
-#      for these tests.
+#      counts only if `--version` prints "awk version YYYYMMDD", BWK's format, AND it refuses
+#      the NOT_BWK_PROGRAMS below: a Debian `nawk` that links to mawk or gawk, or a wrapper that
+#      prints BWK's version, is not BWK. $BWK_AWK set to something else FAILS the test instead
+#      of skipping it. Skipped otherwise, and nothing else runs it: this repo has no CI for
+#      these tests.
 import re as _re
 
 
@@ -296,14 +297,105 @@ def _cidr_check_program(provider):
     return m.group(1)
 
 
+# The version string is self-declared: a short shell script around gawk printed
+# "awk version 20200816" and passed. So a candidate must also BEHAVE like BWK: refuse each of
+# these programs. gensub and strtonum are gawk-only functions; "[/]" is the BWK trait the CIDR
+# check was broken by (the regex ends at that "/"), and gawk parses it in every mode, even
+# --traditional, which drops gensub and strtonum.
+NOT_BWK_PROGRAMS = (
+    'BEGIN { print gensub(/a/, "b", "g", "a") }',
+    'BEGIN { print strtonum("0x10") }',
+    'BEGIN { if ("a/b" ~ /[/]/) print 1 }',
+)
+
+
 def _is_bwk(path):
     if not (path and os.access(path, os.X_OK)):
         return False
     try:
         v = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
+        if not _re.match(r"awk version \d{8}", v):
+            return False
+        return all(subprocess.run([path, p], capture_output=True, text=True, timeout=10,
+                                  stdin=subprocess.DEVNULL).returncode != 0
+                   for p in NOT_BWK_PROGRAMS)
     except (OSError, subprocess.SubprocessError):
         return False
-    return bool(_re.match(r"awk version \d{8}", v))
+
+
+def _awk_views(prog):
+    """(without comments, code only) of an awk program: its # comments removed, and the same
+    with the contents of its "..." strings and /.../ regex literals also blanked, so a word in a
+    comment, a message or a regex does not trip a check meant for code.
+    shortcut: a "/" starts a regex only after one of ( , ~ ! { } ; & | ? : or at a line start,
+    which covers the CIDR program (its divisions follow a name); tokenise properly if a regex
+    ever follows anything else."""
+    keep, code = [], []
+    i, n, prev = 0, len(prog), "\n"
+    while i < n:
+        ch = prog[i]
+        if ch == "#":
+            j = prog.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if ch == '"' or (ch == "/" and prev in "(,~!{};&|?:\n"):
+            j, bracket = i + 1, False
+            while j < n and (bracket or prog[j] != ch):
+                if prog[j] == "\\":
+                    j += 1
+                elif ch == "/" and prog[j] == "[":
+                    bracket = True
+                elif bracket and prog[j] == "]":
+                    bracket = False
+                j += 1
+            keep.append(prog[i:j + 1])
+            code.append(ch + ch)
+            i, prev = j + 1, ch
+            continue
+        keep.append(ch)
+        code.append(ch)
+        if not ch.isspace() or ch == "\n":
+            prev = ch
+        i += 1
+    return "".join(keep), "".join(code)
+
+
+# (pattern, what, view): view 0 = without comments (regex escapes live in regexes and strings),
+# 1 = code only.
+GAWK_ONLY = [
+    (r"\\[sSwWyB<>`']", "gawk regex escape", 0),
+    (r"\b(gensub|asort|asorti|strftime|systime|mktime|patsplit|isarray|typeof"
+     r"|strtonum|and|or|xor|compl|lshift|rshift)\s*\(", "gawk-only function", 1),
+    (r"\bmatch\s*\([^()]*,[^()]*,", "3-argument match()", 1),
+    (r"\bsplit\s*\([^()]*,[^()]*,[^()]*,", "4-argument split()", 1),
+    (r"\b(IGNORECASE|FPAT|RT|BEGINFILE|ENDFILE)\b", "gawk-only variable", 1),
+    (r"\bswitch\s*\(", "switch statement", 1),
+    (r"\|&", "|& coprocess", 1),
+    (r"\[[^\[\]]*\]\s*\[", "array of arrays a[i][j]", 1),
+]
+
+
+def _gawk_only_hits(prog):
+    views = _awk_views(prog)
+    return [f"{what} {m.group(0)!r}" for pat, what, v in GAWK_ONLY
+            for m in [_re.search(pat, views[v])] if m]
+
+
+@pytest.mark.parametrize("snippet", [
+    'x = gensub(/a/, "b", "g", c)', "n = strtonum(c)", "if (and(n, 1)) next",
+    "switch (c) { case 1: next }", 'print c |& "cat"', "q[1][2] = c", "q[i] [j] = c",
+    "match(c, /a/, m)", 'split(c, p, ".", s)', "IGNORECASE = 1", r"if (c ~ /\s/) next",
+])
+def test_denylist_catches_gawk_only_construct(snippet):
+    assert _gawk_only_hits(snippet), snippet
+
+
+@pytest.mark.parametrize("snippet", [
+    'split(c, p, ",")', "if (match(c, /[,]/)) next", "# a host or (a range)\nx = 1",
+    'b = b "a and (b)"', "ip = int(ip / 2)", "if (c ~ /^[0-9]+[.][0-9]+$/) next", "q[i, j] = c",
+])
+def test_denylist_passes_bwk_construct(snippet):
+    assert not _gawk_only_hits(snippet), snippet
 
 
 def _bwk_awk():
@@ -312,6 +404,22 @@ def _bwk_awk():
         if c and _is_bwk(c):
             return c
     return None
+
+
+GAWK = shutil.which("gawk")
+
+
+@pytest.mark.skipif(GAWK is None, reason="gawk not on PATH")
+@pytest.mark.parametrize("flags", ["", "--traditional"])
+def test_a_gawk_wrapper_that_prints_the_bwk_version_is_not_bwk(tmp_path, flags):
+    # Round 5: such a wrapper counted as BWK, so the BWK runs below would have run under gawk.
+    w = tmp_path / "bwkawk"
+    w.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo "awk version 20200816"; exit 0; fi\n'
+                 f'exec {GAWK} {flags} "$@"\n')
+    w.chmod(0o755)
+    v = subprocess.run([str(w), "--version"], capture_output=True, text=True, timeout=10).stdout
+    assert v.startswith("awk version 20200816")
+    assert not _is_bwk(str(w))
 
 
 BWK_ENV = os.environ.get("BWK_AWK", "")
@@ -328,15 +436,8 @@ class TestCidrCheckPortable:
             assert "/" not in b, f"{provider}: {b!r} ends the regex on BWK awk; write \\/"
 
     def test_no_gawk_only_construct(self, provider):
-        prog = _cidr_check_program(provider)
-        for pat, what in [(r"\\[sSwWyB<>`']", "gawk regex escape"),
-                          (r"\b(gensub|asort|asorti|strftime|systime|mktime|patsplit|isarray|typeof"
-                           r"|strtonum|and|or|xor|compl|lshift|rshift)\s*\(", "gawk-only function"),
-                          (r"\bmatch\s*\([^()]*,[^()]*,", "3-argument match()"),
-                          (r"\bsplit\s*\([^()]*,[^()]*,[^()]*,", "4-argument split()"),
-                          (r"\b(IGNORECASE|FPAT|RT|BEGINFILE|ENDFILE)\b", "gawk-only variable")]:
-            m = _re.search(pat, prog)
-            assert not m, f"{provider}: {what} {m.group(0)!r} is not in BWK awk"
+        hits = _gawk_only_hits(_cidr_check_program(provider))
+        assert not hits, f"{provider}: not in BWK awk: {hits}"
 
     def test_no_interval_expression(self, provider):
         assert not _re.search(r"\{\d", _cidr_check_program(provider)), \
@@ -357,7 +458,8 @@ class TestCidrCheckPortable:
     ], ids=repr)
     def test_seed_under_bwk_awk(self, tmp_path, provider, value, expected):
         if BWK is None:
-            pytest.fail(f"BWK_AWK={BWK_ENV!r} is not a BWK awk (--version is not 'awk version YYYYMMDD')")
+            pytest.fail(f"BWK_AWK={BWK_ENV!r} is not a BWK awk (--version is not 'awk version "
+                        f"YYYYMMDD', or it runs one of NOT_BWK_PROGRAMS)")
         (tmp_path / "bin").mkdir()
         os.symlink(BWK, tmp_path / "bin" / "awk")
         res, st = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=value))
