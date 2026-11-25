@@ -2262,6 +2262,9 @@ tasks:
       # own cleanup must remove what is still being deleted in AWS at that point.
       DESTROY_DEADLINE: '{{.DESTROY_DEADLINE | default "0"}}'
       DESTROY_TAIL_RESERVE: '{{.DESTROY_TAIL_RESERVE | default "240"}}'
+      # Passed on by destroy (see there). With keep-data on (DESTROY_KEEP_DATA=true), step 6b marks the
+      # AgentCore Memory CRs retain/Orphan before step 6c deletes the OAM apps. Default false.
+      DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
       # Shell helpers, prepended to the cmds that wait: dl_left = seconds left before the
       # waits must stop (999999 without a deadline); dl_cap N = min(N, dl_left), >= 0.
       DL_FN: >-
@@ -2508,6 +2511,21 @@ tasks:
             {{.KC}} delete application $app -n argocd --wait=false 2>/dev/null || true
           done
         ignore_error: true
+      # 6b. DESTROY_KEEP_DATA=true: mark the hub's AgentCore Memory CRs retain/Orphan
+      #     (Crossplane v1 deletionPolicy, v2 managementPolicies without Delete) BEFORE step
+      #     6c. Step 6c deletes the OAM apps while the crossplane-agentcore provider still
+      #     runs, and a Memory CR with the default policy makes it call DeleteMemory (the
+      #     agent's session and long-term memory, cannot be undone). Retained, deleting the
+      #     CR only makes the provider forget the memory; step 2c lists it as kept. Not
+      #     ignore_error: when a CR cannot be marked the task stops here, before anything
+      #     deletes that memory (re-running destroy is safe). Nothing runs when keep-data is
+      #     off. No-op when the hub is unreachable or has no Memory CR.
+      #     See scripts/keep-agentcore-memories.py.
+      - cmd: |
+          if [ "{{.DESTROY_KEEP_DATA}}" = true ]; then
+            printf '{{.C_STEP}}▸ DESTROY_KEEP_DATA=true: keeping the AgentCore memories...{{.C_RESET}}\n'
+            KUBECONFIG={{.ROOT_DIR}}/private/hub-kubeconfig python3 "{{.ROOT_DIR}}/scripts/keep-agentcore-memories.py" 2>&1
+          fi
       # 6c. Drain the hub's KubeVela (OAM) apps BEFORE step 7, while every controller
       #     they need to delete their AWS resources is alive: KubeVela, the kro RGD of
       #     their kro instances (AmpIncident -> ACK SNS/SQS), the Crossplane providers of
@@ -2759,15 +2777,13 @@ tasks:
         dl_left() { if [ "{{.DESTROY_DEADLINE}}" -gt 0 ] 2>/dev/null; then
         echo $(( {{.DESTROY_DEADLINE}} - $(date +%s) )); else echo 999999; fi; }
       # DESTROY_KEEP_DATA=true: keep the available EBS volumes of Retain-class PVCs
-      # (step 2b), keep the Ray model bucket and Ray ECR repos (step 2d), and take a final
-      # snapshot of the DevLake databases before they are
-      # deleted (6eii). It does NOT protect AgentCore memories in a normal destroy:
-      # step 6c (hub:destroy-addons) deletes the OAM apps while Crossplane still runs,
-      # and their Memory CRs (deletionPolicy Delete) delete the memories (session and
-      # long-term memory, DeleteMemory cannot be undone) before step 2c. Under
-      # keep-data, step 2c only keeps the memories the hub's Crossplane did not delete
-      # (stranded ones). Tracked in https://github.com/aws-samples/appmod-blueprints/issues/1227. Default false: all deleted, the
-      # databases without a snapshot, as before.
+      # (step 2b), keep the Ray model bucket and Ray ECR repos (step 2d), keep the
+      # AgentCore memories (session and long-term memory, DeleteMemory cannot be undone),
+      # and take a final snapshot of the DevLake databases before they are deleted (6eii).
+      # The memories: hub:destroy-addons step 6b marks the hub's Memory CRs retain/Orphan
+      # before step 6c deletes the OAM apps (while Crossplane still runs), so deleting the CR
+      # leaves the memory in AWS; step 2c then lists it as kept. Default false: all deleted,
+      # the databases without a snapshot, as before.
       DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA | default "false"}}'
       # privilegedSteps (config.yaml): external = no direct AWS delete in this task (the
       # steps from "Deleting EKS Capabilities" to the security-group cleanup are skipped);
@@ -2970,6 +2986,7 @@ tasks:
       - task: hub:destroy-addons
         vars:
           DESTROY_DEADLINE: '{{.DESTROY_DEADLINE}}'
+          DESTROY_KEEP_DATA: '{{.DESTROY_KEEP_DATA}}'
       # Delete EKS Capabilities (ack, argocd, kro) directly via AWS API.
       # aws eks delete-cluster fails with ResourceInUseException if capabilities exist.
       - if: '{{ne .AWS_DELETES "external"}}'
@@ -3093,9 +3110,9 @@ tasks:
           #     ${PREFIX}-amp-incidents and the SQS queues ${PREFIX}-amp-incidents and
           #     ${PREFIX}-amp-incidents-dlq (the exact names the aiops-agent app renders).
           #     Only recorded ids and these exact names, never a pattern; nothing while
-          #     the hub is live. DESTROY_KEEP_DATA=true keeps the memories this step still
-          #     finds (listed, not deleted); it cannot bring back those step 6c already
-          #     deleted (see the DESTROY_KEEP_DATA note, https://github.com/aws-samples/appmod-blueprints/issues/1227).
+          #     the hub is live. DESTROY_KEEP_DATA=true keeps the memories (listed, not
+          #     deleted): hub:destroy-addons step 6b retained their CRs, so step 6c did not
+          #     delete them either.
           #     See scripts/sweep-app-resources.py.
           python3 "{{.ROOT_DIR}}/scripts/sweep-app-resources.py" "$PREFIX" "$REGION" "{{.HUB_CLUSTER_NAME}}" \
             --inventory "{{.ROOT_DIR}}/private/destroy-inventory.json" $KEEP_DATA_ARGS 2>&1 || true
