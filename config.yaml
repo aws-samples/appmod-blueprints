@@ -131,8 +131,9 @@ ingressSecurityGroups: ""
 # NAT is appended automatically, and the NAT of every kro spoke is appended by
 # secrets-manager:seed-fleet-nat-egress (in-cluster and spoke apps reach the public Keycloak
 # issuer through this ALB, so a missing NAT breaks their SSO). The workshop install runs that task
-# once its spokes are ACTIVE; after any other spoke add/remove (direct install, Backstage, OAP,
-# delete-spoke) re-run it by hand: task <provider>:secrets-manager:seed-fleet-nat-egress. Do
+# once its spokes are ACTIVE, and again at the end of its background spoke job; after any other
+# spoke add/remove (direct install, Backstage, OAP, delete-spoke) re-run it by hand:
+# task <provider>:secrets-manager:seed-fleet-nat-egress. Do
 # NOT set it with insecure: true (internal ALB behind CloudFront — it would see origin IPs, not
 # clients). Concatenated with any fleet-overlay inboundCidrs / extraInboundCidrs, never overriding
 # them. See docs/platform/alb-ip-allowlist.md.

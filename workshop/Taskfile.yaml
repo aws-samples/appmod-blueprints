@@ -1391,7 +1391,10 @@ tasks:
   # final check. The Rust prewarm also needs rust-dev-cd, which the foreground
   # prewarm (Phase A scaffold, Phase B) creates meanwhile; the task waits for it.
   spoke-apps-bg:
-    desc: "Install background job: wait-for-spokes:apps, then prewarm-pathA-frontend and prewarm-pathA-rust-kro (non-fatal)"
+    desc: "Install background job: wait-for-spokes:apps, then prewarm-pathA-frontend and prewarm-pathA-rust-kro, then seed-fleet-nat-egress again (non-fatal)"
+    vars:
+      PROVIDER:
+        sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
     cmds:
       - '{{.MARK}} start "spoke apps + Path A prewarms (bg)"'
       - task: wait-for-spokes:apps
@@ -1405,6 +1408,17 @@ tasks:
           INSTALL_START: '{{.INSTALL_START | default ""}}'
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
         ignore_error: true
+      # Second run of seed-fleet-nat-egress (review #1308). The first one (`install`, and the
+      # CodeBuild `install:remote` for `install:ide`) is non-fatal, races seed-observability on
+      # <hub>/config with no lock, and runs before a slow spoke may have its EIP; nothing else
+      # runs it again. This one, minutes later in both `install` and `install:ide`, adds a NAT
+      # the first run missed or lost. It rebuilds the union and writes only when the stored value
+      # differs, so after a good first run it writes nothing to <hub>/config. Non-fatal, like the
+      # first.
+      - |
+        if ! (cd {{.PLATFORM_DIR}} && task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress); then
+          printf '{{.C_ERR}}⚠ secrets-manager:seed-fleet-nat-egress failed (second run): a spoke NAT may be missing from the hub ALB allowlist (spoke SSO/OTel to the hub breaks if it has one; a pinned platform.ref older than the task has no allowlist feature, ignore it then). Re-run from %s: task {{.PROVIDER}}:secrets-manager:seed-fleet-nat-egress{{.C_RESET}}\n' "{{.PLATFORM_DIR}}"
+        fi
       - echo 0 > /tmp/spoke-apps-bg.rc
       - '{{.MARK}} done "spoke apps + Path A prewarms (bg)" rc=0'
 

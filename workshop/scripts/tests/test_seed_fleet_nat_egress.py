@@ -517,6 +517,51 @@ class TestFleetTask:
         assert m["aws_cluster_name"] == HUB and m["ingress_domain_name"] == "idp.example.com"
 
 
+# --- review #1308 (second review): the install runs the task a second time ------------------
+# The first run is non-fatal and races seed-observability (get/modify/put of <hub>/config, no
+# lock); spoke-apps-bg runs the task again minutes later. These are the three cases it covers,
+# plus the one where it must stay quiet (a second writer only when something changed).
+@needs_task
+@pytest.mark.parametrize("provider", sorted(PROVIDERS))
+class TestSecondRun:
+    def test_after_a_good_first_run_it_writes_nothing(self, tmp_path, provider):
+        _, st1 = _run(_sub(tmp_path, "r1"), provider, _secret_string(dict(META_BASE)))
+        assert len(st1["writes"]) == 1
+        res, st2 = _run(_sub(tmp_path, "r2"), provider, st1["secret"])
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert st2["writes"] == []
+        assert "already up to date" in res.stdout
+
+    def test_restores_a_union_lost_to_a_concurrent_writer(self, tmp_path, provider):
+        _, st1 = _run(_sub(tmp_path, "r1"), provider, _secret_string(dict(META_BASE)))
+        assert _meta(st1["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
+        # seed-observability read <hub>/config before that write and put its copy after it.
+        lost = _secret_string(dict(META_BASE, spoke_dev_cluster_name="acme-spoke-dev"))
+        res, st2 = _run(_sub(tmp_path, "r2"), provider, lost)
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert len(st2["writes"]) == 1
+        m = _meta(st2["secret"])
+        assert m["fleet_nat_egress_cidrs"] == EXPECTED
+        assert m["spoke_dev_cluster_name"] == "acme-spoke-dev"    # the other writer's key kept
+
+    def test_adds_a_spoke_whose_eip_was_not_there_on_the_first_run(self, tmp_path, provider):
+        late = {k: v for k, v in EIPS.items() if k != "acme-spoke-prod"}
+        res1, st1 = _run(_sub(tmp_path, "r1"), provider, _secret_string(dict(META_BASE)), eips=late)
+        assert "spoke acme-spoke-prod: no ACK ElasticIPAddress" in res1.stdout + res1.stderr
+        assert _meta(st1["secret"])["fleet_nat_egress_cidrs"] == "203.0.113.201/32,203.0.113.250/32"
+        res, st2 = _run(_sub(tmp_path, "r2"), provider, st1["secret"])
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _meta(st2["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
+
+    def test_writes_after_a_failed_first_run(self, tmp_path, provider):
+        res1, st1 = _run(_sub(tmp_path, "r1"), provider, _secret_string(dict(META_BASE)),
+                         fail_secrets=True)
+        assert res1.returncode != 0 and st1["writes"] == []
+        res, st2 = _run(_sub(tmp_path, "r2"), provider, st1["secret"])
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert _meta(st2["secret"])["fleet_nat_egress_cidrs"] == EXPECTED
+
+
 # --- review #1308 B2: the workshop runs the task once spokes exist, and after a delete ------
 WORKSHOP = os.path.join(REPO, "workshop", "Taskfile.yaml")
 STEP = "secrets-manager:seed-fleet-nat-egress"
@@ -581,8 +626,29 @@ def _run_step(tmp_path, cmd_text, fake_task_rc):
     return res, calls, str(pdir)
 
 
+def test_spoke_apps_bg_runs_it_again_after_the_prewarms():
+    # review #1308 (second review): the second run, at the end of the background job, before
+    # its rc file (the install's final check reads it).
+    cmds = _ws_cmds("spoke-apps-bg")
+    rust = _idx(cmds, lambda c: isinstance(c, dict) and c.get("task") == "prewarm-pathA-rust-kro")
+    rc = _idx(cmds, lambda c: isinstance(c, str) and "> /tmp/spoke-apps-bg.rc" in c)
+    assert rust < _idx(cmds, _is_step) < rc
+
+
+@pytest.mark.parametrize("where", ["install", "install:ide"])
+def test_both_installs_start_spoke_apps_bg_after_the_spokes_are_active(where):
+    cmds = _ws_cmds(where)
+    assert _idx(cmds, _is_wfs) < _idx(cmds, lambda c: isinstance(c, str) and "task spoke-apps-bg" in c)
+
+
+def test_spoke_apps_bg_reads_the_provider_like_install():
+    with open(WORKSHOP) as f:
+        t = yaml.safe_load(f)["tasks"]
+    assert t["spoke-apps-bg"]["vars"]["PROVIDER"] == t["install"]["vars"]["PROVIDER"]
+
+
 @needs_task
-@pytest.mark.parametrize("where", ["install", "install:remote", "spokes:sweep-kro"])
+@pytest.mark.parametrize("where", ["install", "install:remote", "spokes:sweep-kro", "spoke-apps-bg"])
 @pytest.mark.parametrize("rc", [0, 1])
 def test_workshop_step_calls_the_provider_task_and_never_fails(tmp_path, where, rc):
     cmds = _ws_cmds(where)

@@ -308,11 +308,17 @@ re-seeds (like the `spoke_*` observability keys).
   - the **workshop install** (`task install` run from `workshop/`, and its CodeBuild half
     `task install:remote`), right after the `wait-for-spokes` step. That step does not gate: it
     gives up on a spoke after its timeouts and the install goes on, so a slow spoke may not be
-    complete yet when the task runs (see below);
+    complete yet when the task runs (see below). The install's background job
+    (`spoke-apps-bg`, started by `task install` and by the IDE half `task install:ide`) runs it
+    **a second time** once the spoke apps have synced and the Path A prewarms are done, so a NAT
+    that the first run missed is added: the first run failed, its write was lost to a concurrent
+    writer of `<hub>/config` (see below), or a spoke's EIP did not exist yet. After a good first
+    run the second one finds the stored value up to date and writes nothing to `<hub>/config`;
   - the workshop **`spokes:sweep-kro`**, after a spoke is deleted, so its released EIP leaves the
     allowlist.
 
-  Both calls are non‑fatal: a failure prints the command to re‑run and the install goes on.
+  Every call is non‑fatal: a failure prints the command to re‑run and the install goes on (the
+  second run prints it in `/tmp/spoke-apps-bg.log`).
   **Everywhere else it is a manual step.** Re‑run it after every spoke you add or remove outside
   those two tasks: a direct install (root `Taskfile.yaml`, hub only), a spoke from the Backstage
   EKS cluster template, an OAP spoke, a hand‑written `kro-clusters` entry, or the manual
@@ -353,6 +359,13 @@ re-seeds (like the `spoke_*` observability keys).
   ```bash
   task kind-kro-ack:secrets-manager:seed-fleet-nat-egress FLEET_NAT_FORCE=true
   ```
+
+- **Concurrent writers.** `secrets-manager:seed-observability`, which the hub install starts in
+  the background and which can also run on a schedule, reads, changes and writes back
+  `<hub>/config` too, with no lock. When both tasks write within the same few seconds, one key
+  can be lost. A lost observability key comes back on the next run of that seed. A
+  `fleet_nat_egress_cidrs` lost before the workshop install's second run (above) comes back with
+  it; in any other case, re‑run `seed-fleet-nat-egress`.
 - The task reads cluster-local resources only — no AWS NAT lookup, no cross-cluster access, no
   extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the
   chart ignores it until one is, so with no allowlist the ALB stays open (unchanged).
