@@ -5,8 +5,8 @@
 
   Names are otherwise ARBITRARY: there is deliberately no <resourcePrefix>-spoke-*
   requirement. Authorization is by target service and ownership tag, not by name.
-  Only two real limits remain, and both used to surface as a confusing failure long
-  after a VPC and NAT gateway had been created:
+  Only three real limits remain, and all used to surface as a confusing failure long
+  after a VPC and NAT gateway had been created (or, for 3, as a bare ACK error):
 
     1. The name is used verbatim as a Kubernetes namespace throughout the
        EksCluster/Vpc resource graphs, so it must be a DNS-1123 label
@@ -17,6 +17,13 @@
        at 64 characters. The longest suffix is '-cloudwatch-observability-role'
        (30 chars), so the name must be at most 34.
 
+    3. vpcBlockPublicAccessExclusion: true only works in the hub's own account. The
+       Vpc graph creates its ACK Role and PodIdentityAssociation with this
+       namespace's IAMRoleSelectors, which point a cross-account spoke at the spoke
+       account, where the hub cluster does not exist: the Job and the guard are never
+       created, the public load balancers stay blocked, and the only sign is an ACK
+       error.
+
   Failing here means the Application does not render, so nothing is created. The
   check is inside the targetCluster gate so one bad declaration fails only its own
   Application rather than the whole fleet.
@@ -26,6 +33,11 @@
 {{- end }}
 {{- if gt (len $name) 34 }}
 {{-   fail (printf "cluster name %q is %d characters; the maximum is 34. Every IAM role is named <cluster><suffix> and the longest suffix, '-cloudwatch-observability-role', is 30 characters, so a longer name would exceed the 64-character IAM role name limit and fail at CreateCluster after the VPC already exists." $name (len $name)) }}
+{{- end }}
+{{- /* Limit 3. Skipped when global.accountId is unset (nothing to compare with, e.g. a bare
+     helm template): clusters-kro always threads it. */ -}}
+{{- if and $.Values.global.accountId (eq (toString ($cluster.vpcBlockPublicAccessExclusion | default false)) "true") (ne (toString ($cluster.accountId | default $.Values.global.accountId)) (toString $.Values.global.accountId)) }}
+{{-   fail (printf "cluster %q sets vpcBlockPublicAccessExclusion: true with accountId %q, which differs from global.accountId. The exclusion Job and its guard run on the hub with Pod Identity and ACK resources reconciled through the spoke account's IAMRoleSelectors, so they cannot be created for a cross-account spoke. Remove vpcBlockPublicAccessExclusion for this cluster, or create the exclusions in the spoke account by hand." $name (toString ($cluster.accountId | default $.Values.global.accountId))) }}
 {{- end }}
 ---
 apiVersion: kro.run/v1alpha1
@@ -131,7 +143,8 @@ spec:
        cluster's VPC (rg-vpc.yaml). Per-cluster only, no global: each environment
        declares its own exception. Rendered only when true, so a hub whose RGD
        predates the field never receives it ("field not declared in schema").
-       Accepts a YAML boolean or the string "true". */}}
+       Accepts a YAML boolean or the string "true". Refused for a cross-account
+       spoke (see the checks at the top of this file). */}}
   {{- if eq (toString ($cluster.vpcBlockPublicAccessExclusion | default false)) "true" }}
   vpcBlockPublicAccessExclusion: true
   {{- end }}
