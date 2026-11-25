@@ -215,7 +215,7 @@ Authorization and teardown therefore key on something other than the name:
   `<prefix>-ray-vllm-custom` / `<prefix>-ray-neuron-custom`; `kind-crossplane` destroy runs
   the same two sweeps (deliveries, Ray) in its Phase 6b (skipped, with a message, when
   `python3` or `boto3` is missing). `DESTROY_KEEP_DATA=true task destroy`
-  keeps those EBS volumes, the Ray bucket and repos, and the AgentCore memories (step 6b of
+  keeps those EBS volumes, the Ray bucket and repos, and, on kind-kro-ack, the AgentCore memories (step 6b of
   `hub:destroy-addons`, `scripts/keep-agentcore-memories.py`, marks the hub's Memory CRs
   retain/Orphan before step 6c deletes the OAM apps; the task stops there if a CR cannot be
   marked), and takes a
