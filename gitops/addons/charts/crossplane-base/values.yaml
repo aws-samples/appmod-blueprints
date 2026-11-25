@@ -8,6 +8,9 @@ aws:
 # because spoke clusters have no "argocd" namespace and would fail to sync.
 hubClusterName: hub
 
+# Image of the provider-credential-check PostSync Job (needs /bin/sh and kubectl).
+kubectlImage: "public.ecr.aws/chainguard/kubectl:latest-dev@sha256:974ad6ac68188e44a059a7cea44408adb33f7f28e1763972915fc5c30e1e1729"
+
 providerConfig:
   enabled: true
   name: default

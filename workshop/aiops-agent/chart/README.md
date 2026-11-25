@@ -154,8 +154,8 @@ the discovery calls.
 >   prompt tells the agent so.
 
 The PreSync Job that waits for the `incident-bridge-eks` selector before each spoke
-AccessEntry uses `bitnami/kubectl:latest` by default. On a hub that cannot pull from Docker
-Hub, set `crdWait.image` (same name as the ack-pod-identity crd-wait hook) in the overlay
+AccessEntry uses a version-pinned kubectl image from Amazon ECR Public by default (see
+`access-chart/values.yaml`). On a hub that cannot pull from it, set `crdWait.image` (same name as the ack-pod-identity crd-wait hook) in the overlay
 values; it is passed to the access chart. Unset, the render is unchanged.
 
 ## Per-cluster overrides (fleet-config overlay)

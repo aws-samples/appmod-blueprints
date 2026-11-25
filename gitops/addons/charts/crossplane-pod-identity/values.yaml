@@ -10,7 +10,7 @@ aws:
 crdWait:
   enabled: true
   timeoutSeconds: 600
-  image: bitnami/kubectl:latest
+  image: public.ecr.aws/chainguard/kubectl:latest-dev@sha256:974ad6ac68188e44a059a7cea44408adb33f7f28e1763972915fc5c30e1e1729
   crds:
     - policies.iam.aws.upbound.io
     - roles.iam.aws.upbound.io

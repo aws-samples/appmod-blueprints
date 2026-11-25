@@ -41,22 +41,26 @@ ACK = CHARTS / "ack-pod-identity/values.yaml"
 SCALAR_FIELDS = ["roleName", "namespace", "serviceAccount"]
 
 
-def load(path):
+def load(path, key="identities"):
     if not path.is_file():
         sys.exit(f"ERROR: missing values file: {path}")
     with path.open() as fh:
-        return (yaml.safe_load(fh) or {}).get("identities", {}) or {}
+        return (yaml.safe_load(fh) or {}).get(key, {}) or {}
 
 
 def main():
     xp = load(CROSSPLANE)
     ack = load(ACK)
 
+    failures = []
+    # The crd-wait hook image must be the same in both mirrors.
+    xp_img, ack_img = load(CROSSPLANE, "crdWait").get("image"), load(ACK, "crdWait").get("image")
+    if not xp_img or xp_img != ack_img:
+        failures.append(f"crdWait.image: crossplane={xp_img!r} ack={ack_img!r}")
+
     shared = sorted(set(xp) & set(ack))
     if not shared:
         sys.exit("ERROR: the two charts share no identities -- that cannot be right.")
-
-    failures = []
 
     for name in shared:
         a, b = xp[name], ack[name]
