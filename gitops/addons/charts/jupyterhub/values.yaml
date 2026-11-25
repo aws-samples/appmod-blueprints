@@ -11,3 +11,8 @@ jupyterhub:
   proxy:
     service:
       type: ClusterIP
+
+# ExternalSecret refresh interval for jupyterhub-oidc-secret (how often External Secrets
+# polls AWS Secrets Manager). Empty = built-in 30s.
+externalSecrets:
+  refreshInterval: ""

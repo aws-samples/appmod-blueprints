@@ -12,6 +12,9 @@ externalSecret:
   creationPolicy: Owner
   secretStoreRefKind: ClusterSecretStore
   secretStoreRefName: aws-secrets-manager
+  # How often External Secrets re-reads the cluster config from AWS Secrets Manager.
+  # Empty = built-in 1m.
+  refreshInterval: ""
 
 # Direct mode fields — populated from hub cluster secret annotations
 hub:
