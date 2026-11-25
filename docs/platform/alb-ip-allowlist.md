@@ -354,11 +354,17 @@ re-seeds (like the `spoke_*` observability keys).
   not tell a spoke being deleted from a live one. If the hub reports that the `ElasticIPAddress`
   or `EksclusterWithVpc` type does not exist while a list is stored, the task also leaves it
   unchanged (most likely an API discovery gap). Once that type is really gone on purpose (every
-  kro spoke deleted, then the controller removed), re‑run it with `FLEET_NAT_FORCE=true`:
+  kro spoke deleted, then the controller removed), re‑run it once with `FLEET_NAT_FORCE=true` as
+  an argument of that one command:
 
   ```bash
   task kind-kro-ack:secrets-manager:seed-fleet-nat-egress FLEET_NAT_FORCE=true
   ```
+
+  Do not `export` it: the task also reads it from the environment, so an exported
+  `FLEET_NAT_FORCE=true` stays on for every later run in that shell, including the ones the
+  workshop install and `spokes:sweep-kro` start, and each of them could then shrink the list on
+  a discovery gap.
 
 - **Concurrent writers.** `secrets-manager:seed-observability`, which the hub install starts in
   the background and which can also run on a schedule, reads, changes and writes back

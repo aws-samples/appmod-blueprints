@@ -2018,7 +2018,7 @@ tasks:
           if [ "{{.FLEET_NAT_FORCE | default "false"}}" = "true" ]; then
             printf '{{.C_WARN}}⚠ the hub reports no %s type; FLEET_NAT_FORCE=true: fleet_nat_egress_cidrs %s -> %s.{{.C_RESET}}\n' "$MISSING" "$STORED" "${FLEET:-<none>}"
           else
-            printf '{{.C_ERR}}⚠ the hub reports no %s type, but %s holds fleet_nat_egress_cidrs (%s) — left unchanged. Check the ACK EC2 controller / kro, then re-run; if that type is really gone on purpose, re-run with FLEET_NAT_FORCE=true.{{.C_RESET}}\n' "$MISSING" "$SECRET_KEY" "$STORED"
+            printf '{{.C_ERR}}⚠ the hub reports no %s type, but %s holds fleet_nat_egress_cidrs (%s) — left unchanged. Check the ACK EC2 controller / kro, then re-run; if that type is really gone on purpose, re-run once with: task kind-crossplane:secrets-manager:seed-fleet-nat-egress FLEET_NAT_FORCE=true (an argument of that one run; do not export it).{{.C_RESET}}\n' "$MISSING" "$SECRET_KEY" "$STORED"
             exit 1
           fi
         fi

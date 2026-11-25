@@ -438,7 +438,9 @@ class TestFleetTask:
         assert res.returncode != 0, res.stdout + res.stderr
         assert st["writes"] == []
         assert "reports no ElasticIPAddress type" in res.stdout + res.stderr
-        assert "FLEET_NAT_FORCE=true" in res.stdout + res.stderr
+        # the way out is one run's argument, not an exported variable (pre-review round 4)
+        assert "seed-fleet-nat-egress FLEET_NAT_FORCE=true (an argument of that one run; " \
+               "do not export it)" in res.stdout + res.stderr
 
     # --- pre-review round 3 of #1308: a REGISTERED spoke being deleted -----------------------
     def test_registered_spoke_being_deleted_is_not_added(self, tmp_path, provider):
