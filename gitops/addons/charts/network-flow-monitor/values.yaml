@@ -1,0 +1,61 @@
+# Amazon CloudWatch Network Flow Monitor agent for a fleet cluster.
+#
+# The chart renders two ACK CRs on the HUB, in a namespace named after the target
+# cluster (the CARM IAMRoleSelector convention of ack-pod-identity / the EksCluster
+# RGD): an IAM role carrying the AWS managed publish policy, and the EKS managed
+# add-on wired to that role through an add-on-owned Pod Identity association.
+#
+# Nothing is rendered into the target cluster itself -- EKS installs the agent
+# DaemonSet on every node as part of the managed add-on.
+aws:
+  region: ''
+  clusterName: ''
+
+addon:
+  # EKS add-on name. Fixed by the service; exposed only so an overlay can follow a
+  # rename without a chart change.
+  name: aws-network-flow-monitoring-agent
+
+  # Service account the add-on creates and that the Pod Identity association must
+  # target. Read from `aws eks describe-addon-configuration` (podIdentityConfiguration),
+  # not guessed -- a mismatch yields an association that no pod ever uses, and the
+  # agent falls back to the node role and logs publish denials.
+  serviceAccount: aws-network-flow-monitor-agent-service-account
+
+  # EMPTY ON PURPOSE: EKS then installs the default version compatible with the
+  # cluster's Kubernetes version, which differs per region and per cluster. A hard pin
+  # here would break every cluster whose region has not yet received that build. Pin it
+  # from an environment/cluster overlay when a specific version is required, e.g.
+  #   addon:
+  #     version: v1.1.9-eksbuild.2
+  version: ''
+
+  # OVERWRITE so the add-on adopts, and takes field ownership of, a self-managed or
+  # console-installed agent instead of failing creation on conflict.
+  resolveConflicts: OVERWRITE
+
+  # Optional add-on configuration, rendered as the configurationValues JSON string.
+  # The documented use is exposing the agent's OpenMetrics endpoint for Prometheus
+  # scraping (add-on v1.1.0+):
+  #   env:
+  #     OPEN_METRICS: "on"
+  #     OPEN_METRICS_ADDRESS: 127.0.0.1
+  #     OPEN_METRICS_PORT: 9109
+  # 0.0.0.0 exposes the endpoint on every interface -- keep 127.0.0.1 unless a
+  # scraper outside the pod needs it and a NetworkPolicy restricts who may reach it.
+  configurationValues: {}
+
+iam:
+  # Suffix of the IAM role name; the rendered name is <clusterName>-<roleNameSuffix>,
+  # matching the ack-pod-identity naming convention.
+  roleNameSuffix: NetworkFlowMonitorAgentRole
+
+  # The AWS managed policy EKS itself recommends for this add-on, as returned by
+  # describe-addon-configuration. Grants only the Network Flow Monitor ingestion
+  # (publish) calls -- no CloudWatch read, no other service.
+  managedPolicyArns:
+    - arn:aws:iam::aws:policy/CloudWatchNetworkFlowMonitorAgentPublishPolicy
+
+  tags:
+    managed-by: ack
+    purpose: network-flow-monitor-pod-identity

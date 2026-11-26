@@ -1,0 +1,46 @@
+{{- /*
+The EKS managed add-on itself.
+
+podIdentityAssociations is an ADD-ON-OWNED association: EKS creates it, picks the
+add-on's own namespace, and deletes it with the add-on. That is why this chart ships
+no PodIdentityAssociation CR of its own -- doing both would put two owners on one
+(namespace, serviceAccount) pair, the 409 ResourceInUseException failure mode that
+pod_identities / ack_pod_identities are mutually exclusive to avoid.
+
+roleRef resolves the Role CR above by name instead of building the role ARN from the
+account id, which also gives correct ordering for free: ACK waits until the role
+exists before creating the add-on.
+
+addonVersion is omitted when values leave it empty, so EKS selects the default
+version compatible with the cluster -- see values.yaml for why it is not pinned.
+*/ -}}
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: Addon
+metadata:
+  name: {{ .Values.aws.clusterName }}-{{ .Values.addon.name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    services.k8s.aws/region: {{ .Values.aws.region }}
+    # EKS add-ons are per-cluster singletons keyed by (clusterName, addonName), both
+    # of which are in spec, so adopt-or-create takes over a console- or CLI-installed
+    # add-on in place rather than failing on create.
+    services.k8s.aws/adoption-policy: adopt-or-create
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  name: {{ .Values.addon.name }}
+  clusterName: {{ .Values.aws.clusterName }}
+  {{- with .Values.addon.version }}
+  addonVersion: {{ . | quote }}
+  {{- end }}
+  resolveConflicts: {{ .Values.addon.resolveConflicts | quote }}
+  {{- with .Values.addon.configurationValues }}
+  # configurationValues is a JSON *string* on the EKS API. Built with toJson rather
+  # than hand-written JSON so quoting and escaping are always well-formed.
+  configurationValues: {{ toJson . | quote }}
+  {{- end }}
+  podIdentityAssociations:
+    - serviceAccount: {{ .Values.addon.serviceAccount }}
+      roleRef:
+        from:
+          name: {{ .Values.aws.clusterName }}-network-flow-monitor-pod-identity-role

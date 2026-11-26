@@ -1,0 +1,5 @@
+apiVersion: v2
+name: network-flow-monitor
+description: Amazon CloudWatch Network Flow Monitor agent, installed as an EKS managed add-on with its ACK-managed IAM role and EKS Pod Identity association
+type: application
+version: 0.1.0

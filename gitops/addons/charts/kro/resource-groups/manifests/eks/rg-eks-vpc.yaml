@@ -124,6 +124,7 @@ spec:
         enable_external_dns: string | default="false"
         enable_adot_collector: string | default="false"
         enable_cw_prometheus: string | default="false"
+        enable_network_flow_monitor: string | default="false"
         enable_kyverno: string | default="true"
         enable_kyverno_policies: string | default="true"
         enable_kyverno_policy_reporter: string | default="true"
@@ -281,6 +282,7 @@ spec:
             enable_external_dns: ${schema.spec.addons.enable_external_dns}
             enable_adot_collector: ${schema.spec.addons.enable_adot_collector}
             enable_cw_prometheus: ${schema.spec.addons.enable_cw_prometheus}
+            enable_network_flow_monitor: ${schema.spec.addons.enable_network_flow_monitor}
             enable_kyverno: ${schema.spec.addons.enable_kyverno}
             enable_kyverno_policies: ${schema.spec.addons.enable_kyverno_policies}
             enable_kyverno_policy_reporter: ${schema.spec.addons.enable_kyverno_policy_reporter}
