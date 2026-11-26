@@ -310,7 +310,7 @@ re-seeds (like the `spoke_*` observability keys).
     gives up on a spoke after its timeouts and the install goes on, so a slow spoke may not be
     complete yet when the task runs (see below). The install's background job
     (`spoke-apps-bg`, started by `task install` and by the IDE half `task install:ide`) runs it
-    **a second time** once the spoke apps have synced and the Path A prewarms are done, so a NAT
+    **a second time** after the spoke-apps wait and the Path A prewarms, so a NAT
     that the first run missed is added: the first run failed, its write was lost to a concurrent
     writer of `<hub>/config` (see below), or a spoke's EIP did not exist yet. After a good first
     run the second one finds the stored value up to date and writes nothing to `<hub>/config`;
