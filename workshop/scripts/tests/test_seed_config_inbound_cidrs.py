@@ -471,16 +471,38 @@ def test_a_refused_candidate_is_named(tmp_path, monkeypatch):
     assert _bwk_awk() == (None, [str(w)])
 
 
+def test_a_non_bwk_awk_is_not_named(tmp_path, monkeypatch):
+    # Round 7: only a candidate that prints BWK's version is named. Without that filter, gawk as
+    # the PATH awk is named on every host, and "no BWK awk found" never shows.
+    w = tmp_path / "awk"
+    w.write_text('#!/bin/sh\necho "GNU Awk 5.1.0"\nexit 2\n')
+    w.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert _bwk_awk() == (None, [])
+
+
+def _skip_reason(refused):
+    # Python's conditional binds looser than +: the prefix belongs to the "refused" branch only.
+    found = ("no BWK awk accepted by the probes; refused despite printing 'awk version YYYYMMDD': "
+             + ", ".join(refused) if refused else "no BWK awk found")
+    return found + " (set BWK_AWK=<path> to run)"
+
+
+@pytest.mark.parametrize("refused, want", [
+    ([], "no BWK awk found (set BWK_AWK=<path> to run)"),
+    (["/a/bwkawk", "/b/nawk"], "no BWK awk accepted by the probes; refused despite printing "
+     "'awk version YYYYMMDD': /a/bwkawk, /b/nawk (set BWK_AWK=<path> to run)"),
+], ids=["none-found", "two-refused"])
+def test_the_skip_reason_tells_none_found_from_refused(refused, want):
+    assert _skip_reason(refused) == want
+
+
 BWK_ENV = os.environ.get("BWK_AWK", "")
 if BWK_ENV:
     BWK, BWK_REFUSED = (BWK_ENV if _is_bwk(BWK_ENV) else None), []
 else:
     BWK, BWK_REFUSED = _bwk_awk()
-needs_bwk = pytest.mark.skipif(
-    BWK is None and not BWK_ENV,
-    reason=("no BWK awk accepted by the probes; refused despite printing 'awk version YYYYMMDD': "
-            + ", ".join(BWK_REFUSED) if BWK_REFUSED else "no BWK awk found")
-    + " (set BWK_AWK=<path> to run)")
+needs_bwk = pytest.mark.skipif(BWK is None and not BWK_ENV, reason=_skip_reason(BWK_REFUSED))
 
 
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
