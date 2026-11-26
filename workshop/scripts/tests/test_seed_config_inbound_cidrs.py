@@ -286,8 +286,9 @@ class TestSeedRejects:
 #      way hub:seed calls awk, it runs BWK_PROGRAM and refuses the NOT_BWK_PROGRAMS below: a
 #      Debian `nawk` that links to mawk or gawk, or a wrapper that prints BWK's version, is not
 #      BWK. $BWK_AWK set to something else FAILS the test instead
-#      of skipping it. Skipped otherwise, and nothing else runs it: this repo has no CI for
-#      these tests.
+#      of skipping it. Skipped otherwise (the reason names any PATH candidate that prints BWK's
+#      version but fails the probes), and nothing else runs it: this repo has no CI for these
+#      tests.
 import re as _re
 
 
@@ -321,18 +322,26 @@ def _probe(path, prog):
                           text=True, timeout=10)
 
 
+def _says_bwk(path):
+    # --version prints BWK's format, "awk version YYYYMMDD". Self-declared: see _is_bwk.
+    if not (path and os.access(path, os.X_OK)):
+        return False
+    try:
+        v = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(_re.match(r"awk version \d{8}", v))
+
+
 def _is_bwk(path):
     # shortcut: this filters accidents, not adversaries. It refuses a non-BWK awk that is there
     # by mistake (a Debian nawk that is mawk or gawk, gawk in any mode, a script around gawk that
     # prints BWK's version), but a wrapper written to pass these probes (one that keys on their
     # text, say) still counts, and then only the static tests below guard the CIDR check. Pin the
     # BWK build by checksum instead if the BWK runs ever need to resist a deliberate fake.
-    if not (path and os.access(path, os.X_OK)):
+    if not _says_bwk(path):
         return False
     try:
-        v = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
-        if not _re.match(r"awk version \d{8}", v):
-            return False
         prog, want = BWK_PROGRAM
         good = _probe(path, prog)
         if good.returncode != 0 or good.stdout.strip() != want:
@@ -418,11 +427,16 @@ def test_denylist_passes_bwk_construct(snippet):
 
 
 def _bwk_awk():
+    """(the first BWK awk on PATH or None, the candidates that print BWK's version but fail the
+    probes), so a skip names a refused candidate (a future BWK, a wrapper) instead of hiding it."""
+    refused = []
     for n in ("bwkawk", "original-awk", "one-true-awk", "nawk", "awk"):
         c = shutil.which(n)
         if c and _is_bwk(c):
-            return c
-    return None
+            return c, refused
+        if c and _says_bwk(c):
+            refused.append(c)
+    return None, refused
 
 
 GAWK = shutil.which("gawk")
@@ -446,10 +460,27 @@ def test_a_wrapper_that_prints_the_bwk_version_is_not_bwk(tmp_path, body):
     assert not _is_bwk(str(w))
 
 
+def test_a_refused_candidate_is_named(tmp_path, monkeypatch):
+    # Round 6: a candidate that prints BWK's version but fails the probes (a future BWK without
+    # length(array), say) skipped the BWK runs as "no BWK awk found", with no hint it was seen.
+    w = tmp_path / "bwkawk"
+    w.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo "awk version 20200816"; fi\n'
+                 "exit 2\n")
+    w.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert _bwk_awk() == (None, [str(w)])
+
+
 BWK_ENV = os.environ.get("BWK_AWK", "")
-BWK = BWK_ENV if _is_bwk(BWK_ENV) else (None if BWK_ENV else _bwk_awk())
-needs_bwk = pytest.mark.skipif(BWK is None and not BWK_ENV,
-                               reason="no BWK awk found (set BWK_AWK=<path> to run)")
+if BWK_ENV:
+    BWK, BWK_REFUSED = (BWK_ENV if _is_bwk(BWK_ENV) else None), []
+else:
+    BWK, BWK_REFUSED = _bwk_awk()
+needs_bwk = pytest.mark.skipif(
+    BWK is None and not BWK_ENV,
+    reason=("no BWK awk accepted by the probes; refused despite printing 'awk version YYYYMMDD': "
+            + ", ".join(BWK_REFUSED) if BWK_REFUSED else "no BWK awk found")
+    + " (set BWK_AWK=<path> to run)")
 
 
 @pytest.mark.parametrize("provider", sorted(PROVIDERS))
