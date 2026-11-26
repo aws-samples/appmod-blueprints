@@ -104,11 +104,12 @@
       "customType": "regex",
       "description": "Update Helm chart versions in addons.yaml (chartName + chartRepository + defaultVersion)",
       "managerFilePatterns": [
-        "/addons\\.ya?ml$/"
+        "/addons\\.ya?ml$/",
+        "/gitops/addons/registry/.+\\.ya?ml$/"
       ],
       "matchStrings": [
-        "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>https://[^\\s'\"]+)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?",
-        "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>https://[^\\s'\"]+)['\"]?"
+        "chartName:\\s*(?<depName>[^\\s]+)[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*chartRepository:\\s*['\"]?(?<registryUrl>https://[^\\s'\"]+)['\"]?[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?",
+        "chartName:\\s*(?<depName>[^\\s]+)[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*chartRepository:\\s*['\"]?(?<registryUrl>https://[^\\s'\"]+)['\"]?"
       ],
       "datasourceTemplate": "helm"
     },
@@ -122,6 +123,32 @@
         "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>ghcr\\.io/[^\\s'\"]+)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?",
         "chartName:\\s*(?<depName>[^\\s]+)\\s*\\n(?:[^\\n]*\\n){0,15}?\\s*chartRepository:\\s*['\"]?(?<registryUrl>public\\.ecr\\.aws[^\\s'\"]*)['\"]?\\s*\\n(?:[^\\n]*\\n){0,5}?\\s*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?"
       ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update OCI Helm chart versions in gitops/addons/registry where the path comes from chartNamespace (public.ecr.aws, registry.k8s.io)",
+      "managerFilePatterns": [
+        "/gitops/addons/registry/.+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "chartName:\\s*(?<chart>[^\\s]+)[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*chartNamespace:\\s*['\"]?(?<ns>[^\\s'\"]+)['\"]?[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*chartRepository:\\s*['\"]?(?<host>public\\.ecr\\.aws|registry\\.k8s\\.io)['\"]?[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?"
+      ],
+      "depNameTemplate": "{{{ns}}}/{{{chart}}}",
+      "registryUrlTemplate": "https://{{{host}}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update OCI Helm chart versions in gitops/addons/registry where chartRepository already carries the path (ghcr.io/<org>/<repo>)",
+      "managerFilePatterns": [
+        "/gitops/addons/registry/.+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "chartName:\\s*(?<chart>[^\\s]+)[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*chartRepository:\\s*['\"]?(?<host>ghcr\\.io)/(?<path>[^\\s'\"]+)['\"]?[ \\t]*\\r?\\n(?:[ \\t#][^\\n]*\\n|\\r?\\n){0,20}?[ \\t]*defaultVersion:\\s*['\"]?(?<currentValue>v?[0-9][0-9\\.]+)['\"]?"
+      ],
+      "depNameTemplate": "{{{path}}}/{{{chart}}}",
+      "registryUrlTemplate": "https://{{{host}}}",
       "datasourceTemplate": "docker"
     }
   ],
