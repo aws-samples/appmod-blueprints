@@ -17,11 +17,22 @@
 
 backstage_get_token() (
   set -euo pipefail
-  local COOKIE_JAR
+  local COOKIE_JAR BS_TMP
   COOKIE_JAR=$(mktemp)
+  # One private directory per call for the login steps. Fixed /tmp paths let two
+  # concurrent calls overwrite each other's files, and the first call's trap deleted
+  # the second's. The explicit check is needed because set -e cannot be relied on
+  # here: backstage_template_status calls this function with `|| true`, where every
+  # shell ignores set -e, and bash 4.3 to 5.2 and zsh 5.9 also ignore it in
+  # the `if` condition of the source block below (bash 3.2 honours it there). An empty
+  # BS_TMP would put the files at the filesystem root.
+  if ! BS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/backstage-auth.XXXXXX") || [ -z "${BS_TMP}" ] || [ ! -d "${BS_TMP}" ]; then
+    echo "backstage-auth: cannot create a temporary directory" >&2; rm -f "${COOKIE_JAR}"; exit 1
+  fi
   # The body is a subshell, so an EXIT trap cleans up on return in both bash and
-  # zsh (`trap ... RETURN` is bash-only).
-  trap "rm -f ${COOKIE_JAR} /tmp/_bs_s2.txt /tmp/_bs_s3.txt /tmp/_bs_s4.txt /tmp/_bs_frame.txt" EXIT
+  # zsh (`trap ... RETURN` is bash-only). The paths are expanded now and quoted
+  # with printf %q, so a TMPDIR that contains spaces or quotes is removed too.
+  trap "rm -f $(printf %q "${COOKIE_JAR}"); rm -rf $(printf %q "${BS_TMP}")" EXIT
 
   # Step 1: Session cookie
   curl -sLk -c "${COOKIE_JAR}" "${BACKSTAGE_URL}" -o /dev/null
@@ -34,30 +45,30 @@ backstage_get_token() (
   curl -sLk -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" \
     "${BACKSTAGE_URL}/api/auth/keycloak-oidc/start?scope=openid%20profile%20email&env=production" \
     -H "X-Requested-With: XMLHttpRequest" \
-    --max-redirs 0 -D /tmp/_bs_s2.txt -o /dev/null 2>/dev/null || true
+    --max-redirs 0 -D "${BS_TMP}/_bs_s2.txt" -o /dev/null 2>/dev/null || true
 
   local KC_URL FORM_ACTION CALLBACK
-  KC_URL=$(grep -i "^location:" /tmp/_bs_s2.txt | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
+  KC_URL=$(grep -i "^location:" "${BS_TMP}/_bs_s2.txt" | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
 
   # Step 3: Get Keycloak login form
-  curl -sLk "${KC_URL}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o /tmp/_bs_s3.txt
-  FORM_ACTION=$(grep -oP 'action="[^"]*"' /tmp/_bs_s3.txt | head -1 | sed 's/action="//;s/"//' | sed 's/&amp;/\&/g')
+  curl -sLk "${KC_URL}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o "${BS_TMP}/_bs_s3.txt"
+  FORM_ACTION=$(grep -oP 'action="[^"]*"' "${BS_TMP}/_bs_s3.txt" | head -1 | sed 's/action="//;s/"//' | sed 's/&amp;/\&/g')
 
   # Step 4: Submit credentials -> Keycloak issues a 302 back to the Backstage callback
   curl -sLk -X POST "${FORM_ACTION}" \
     -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" \
     --data-urlencode "username=user1" \
     --data-urlencode "password=${USER1_PASSWORD}" \
-    --max-redirs 0 -D /tmp/_bs_s4.txt -o /dev/null 2>/dev/null || true
-  CALLBACK=$(grep -i "^location:" /tmp/_bs_s4.txt | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
+    --max-redirs 0 -D "${BS_TMP}/_bs_s4.txt" -o /dev/null 2>/dev/null || true
+  CALLBACK=$(grep -i "^location:" "${BS_TMP}/_bs_s4.txt" | sed 's/^[Ll]ocation: //' | tr -d '\r\n')
 
   # Step 5: Hit the callback (handler/frame) with the preserved session cookie. Backstage
   # exchanges the code and embeds the identity token in the returned HTML frame, which the
   # browser flow would postMessage back to the opener.
-  curl -sLk "${CALLBACK}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o /tmp/_bs_frame.txt 2>/dev/null || true
+  curl -sLk "${CALLBACK}" -b "${COOKIE_JAR}" -c "${COOKIE_JAR}" -o "${BS_TMP}/_bs_frame.txt" 2>/dev/null || true
 
   # Step 6: Extract the Backstage identity token from the frame's authResponse payload.
-  python3 -c "import urllib.parse,re,json; html=open('/tmp/_bs_frame.txt').read(); m=re.search(r\"decodeURIComponent\('([^']+)'\)\", html); d=json.loads(urllib.parse.unquote(m.group(1))); print(d.get('response',{}).get('backstageIdentity',{}).get('token',''))"
+  python3 -c "import sys,urllib.parse,re,json; html=open(sys.argv[1]).read(); m=re.search(r\"decodeURIComponent\('([^']+)'\)\", html); d=json.loads(urllib.parse.unquote(m.group(1))); print(d.get('response',{}).get('backstageIdentity',{}).get('token',''))" "${BS_TMP}/_bs_frame.txt"
 )
 
 backstage_scaffolder() (
