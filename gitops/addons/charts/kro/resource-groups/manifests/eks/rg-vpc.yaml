@@ -29,6 +29,18 @@ spec:
       # Optional extra AWS tags merged into every EC2 resource below (SpringClean
       # auto-delete=no, cost allocation, compliance). Passed down from EksclusterWithVpc.
       awsTags: "map[string]string"
+      # Opt-in VPC Block Public Access (BPA) exclusion for
+      # this VPC. When true, a Job on the cluster running kro creates one exclusion in
+      # mode allow-bidirectional per PUBLIC subnet (publicSubnet1/2: internet-facing
+      # load balancers). The private subnets keep BPA: NAT egress is already allowed
+      # under block-ingress. That is 2 of the 50 exclusions per account and region for
+      # each opted-in VPC. A guard Pod deletes them when this instance is deleted
+      # (unless deletionPolicy is retain) or the flag is turned off. Needed when the
+      # account sets VPC BPA to block-ingress (only
+      # allow-bidirectional exclusions take effect in that mode). ACK ec2-controller has
+      # no VpcBlockPublicAccessExclusion CRD (generator.yaml ignore.resource_names), hence
+      # the Job. Default false: no resource below is rendered, existing VPCs unchanged.
+      vpcBlockPublicAccessExclusion: boolean | default=false
     status:
       vpcID: ${vpc.status.vpcID}
       publicSubnet1ID: ${publicSubnet1.status.subnetID}
@@ -334,3 +346,417 @@ spec:
             value: ${schema.spec.name}-private-subnet2
           - key: kubernetes.io/role/internal-elb
             value: '1'
+  ###########################################################
+  # VPC Block Public Access exclusion (opt-in)
+  #
+  # Gated on schema.spec.vpcBlockPublicAccessExclusion (default false). Every resource
+  # below runs on the cluster where kro runs (the hub; kind during the hub bootstrap),
+  # in this instance's namespace. Credentials: EKS Pod Identity on that cluster, same
+  # pattern as cicd-pipeline (ACK iam Role trusting pods.eks.amazonaws.com + ACK eks
+  # PodIdentityAssociation + ServiceAccount annotated with the association ARN).
+  #
+  # Scope: one subnet-level exclusion per public subnet, never a VPC-level one. A VPC
+  # exclusion applies to every subnet, so a private subnet with a stray igw route and a
+  # public IP would become reachable. Each opted-in VPC uses 2 of the 50 exclusions per
+  # account and region.
+  #
+  # Limitations:
+  # - The association targets cluster "<resourcePrefix>-hub", the same convention
+  #   rg-eks.yaml already uses for hub_cluster_name. A hub named otherwise needs a
+  #   hubClusterName field (not added: one knob only). Upgrade when hub names become
+  #   arbitrary for this path.
+  # - Same account as the hub only: the ACK Role and association are reconciled with
+  #   the namespace's IAMRoleSelector, which points a cross-account spoke at the spoke
+  #   account, where "<resourcePrefix>-hub" does not exist. kro-clusters refuses the
+  #   flag for a cluster whose accountId differs from global.accountId.
+  #
+  # Lifecycle:
+  #   create   Job vpcBpaExclusionJob: per public subnet, idempotent describe -> create
+  #            -> wait.
+  #   delete   Pod vpcBpaExclusionGuard: preStop deletes both exclusions, but only when
+  #            the flag is false (includeWhen prune), or when this Vpc instance is being
+  #            deleted (deletionTimestamp / 404) and deletionPolicy is not retain: a
+  #            retained VPC keeps running in AWS and its public load balancers still need
+  #            the exclusions. An eviction or a manual pod delete keeps them.
+  #   (guard)  A bare Pod (not a Deployment) on purpose: kro deletes in apply-order
+  #            waves and waits for a wave to disappear before the next one, and a Pod
+  #            object stays until its preStop has finished, so the Role/association
+  #            this preStop needs are still there. A Deployment deleted with the default
+  #            background propagation would disappear at once and let kro delete the
+  #            credentials while the pod is still terminating.
+  #   update   A Job and a bare Pod cannot be changed in place, so their names carry a
+  #            version suffix (-v1). Bump it with any change to their spec (script, env,
+  #            image) so the new object replaces the old one instead of failing the apply.
+  #            From the kro v0.9.4 source (instance/applyset): the old object is no longer
+  #            in the applied set, so the instance's prune deletes it as an orphan. Not
+  #            tested live, and the EKS managed kro build is not checked against it.
+  #            The guard's eviction branch keeps the exclusions while the old Pod goes.
+  # No readyWhen on the Job or the Pod: the exclusion only matters for inbound traffic
+  # (ALBs). Blocking the Vpc instance on it would block the EKS cluster on kind, where
+  # no Pod Identity exists. Check it with: kubectl -n <ns> get job <name>-vpc-bpa-exclusion-v1
+  ###########################################################
+  - id: vpcBpaExclusionRole
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    readyWhen:
+      - ${vpcBpaExclusionRole.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+    template:
+      apiVersion: iam.services.k8s.aws/v1alpha1
+      kind: Role
+      metadata:
+        namespace: ${schema.spec.name}
+        name: ${schema.spec.name}-vpc-bpa-exclusion
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/adoption-policy: adopt-or-create
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+      spec:
+        # <name>-vpc-bpa-exclusion: 18-char suffix, within the 34-char name cap of
+        # kro-clusters (longest suffix there is 30).
+        name: ${schema.spec.name}-vpc-bpa-exclusion
+        description: "VPC BPA exclusion Job and guard for the VPC of ${schema.spec.name} (kro)"
+        assumeRolePolicyDocument: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {"Service": "pods.eks.amazonaws.com"},
+                "Action": ["sts:AssumeRole","sts:TagSession"]
+              }
+            ]
+          }
+        # Least privilege. Create is allowed only on this VPC's two public subnets (by
+        # ARN: no VPC resource, so no VPC-level exclusion and no private subnet), and
+        # only with this instance's platform.gitops.io/cluster tag and managed-by=kro on
+        # the new exclusion; delete only on an exclusion carrying both. Describe has no
+        # resource-level scope (Resource "*", per the VPC BPA IAM examples).
+        inlinePolicies:
+          VpcBpaExclusion: '{"Version":"2012-10-17","Statement":[{"Sid":"DescribeExclusions","Effect":"Allow","Action":"ec2:DescribeVpcBlockPublicAccessExclusions","Resource":"*"},{"Sid":"CreateOnOwnPublicSubnets","Effect":"Allow","Action":"ec2:CreateVpcBlockPublicAccessExclusion","Resource":["arn:*:ec2:${schema.spec.region}:*:subnet/${publicSubnet1.status.subnetID}","arn:*:ec2:${schema.spec.region}:*:subnet/${publicSubnet2.status.subnetID}"]},{"Sid":"CreateTaggedExclusion","Effect":"Allow","Action":"ec2:CreateVpcBlockPublicAccessExclusion","Resource":"arn:*:ec2:${schema.spec.region}:*:vpc-block-public-access-exclusion/*","Condition":{"StringEquals":{"aws:RequestTag/platform.gitops.io/cluster":"${schema.spec.name}","aws:RequestTag/managed-by":"kro"}}},{"Sid":"TagOnCreate","Effect":"Allow","Action":"ec2:CreateTags","Resource":"arn:*:ec2:${schema.spec.region}:*:vpc-block-public-access-exclusion/*","Condition":{"StringEquals":{"ec2:CreateAction":"CreateVpcBlockPublicAccessExclusion"}}},{"Sid":"DeleteOwnExclusion","Effect":"Allow","Action":"ec2:DeleteVpcBlockPublicAccessExclusion","Resource":"arn:*:ec2:${schema.spec.region}:*:vpc-block-public-access-exclusion/*","Condition":{"StringEquals":{"aws:ResourceTag/platform.gitops.io/cluster":"${schema.spec.name}","aws:ResourceTag/managed-by":"kro"}}}]}'
+        tags:
+          - key: platform.gitops.io/prefix
+            value: ${schema.spec.resourcePrefix}
+          - key: platform.gitops.io/cluster
+            value: ${schema.spec.name}
+  - id: vpcBpaExclusionPodIdentity
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    readyWhen:
+      - ${vpcBpaExclusionPodIdentity.status.conditions.exists(x, x.type == 'ACK.ResourceSynced' && x.status == "True")}
+    template:
+      apiVersion: eks.services.k8s.aws/v1alpha1
+      kind: PodIdentityAssociation
+      metadata:
+        namespace: ${schema.spec.name}
+        name: ${schema.spec.name}-vpc-bpa-exclusion
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          services.k8s.aws/region: ${schema.spec.region}
+          services.k8s.aws/adoption-policy: adopt-or-create
+          services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
+      spec:
+        # The cluster where kro (and therefore the Job) runs, not the cluster this VPC
+        # is for. See the limitation note above.
+        clusterName: ${schema.spec.resourcePrefix}-hub
+        namespace: ${schema.spec.name}
+        serviceAccount: ${schema.spec.name}-vpc-bpa
+        roleARN: ${vpcBpaExclusionRole.status.ackResourceMetadata.arn}
+        tags:
+          managedBy: kro
+          application: vpc-bpa-exclusion
+  - id: vpcBpaExclusionServiceAccount
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    template:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        namespace: ${schema.spec.name}
+        name: ${schema.spec.name}-vpc-bpa
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          # Pod Identity only, like cicd-pipeline: no IRSA annotation. Referencing the
+          # association makes kro create the SA (and the pods using it) after it, so the
+          # Pod Identity webhook injects credentials at pod admission.
+          eks.amazonaws.com/pod-identity-association: ${vpcBpaExclusionPodIdentity.status.ackResourceMetadata.arn}
+  # Read-only access to this Vpc instance, for the guard's preStop decision. The Role
+  # and its binding live in the INSTANCE's namespace (where the preStop reads it),
+  # which is not always spec.name (a standalone Vpc in another namespace). The bound
+  # ServiceAccount stays in spec.name, with the Job and the guard.
+  - id: vpcBpaExclusionGuardRole
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    template:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        namespace: ${schema.metadata.namespace}
+        name: ${schema.spec.name}-vpc-bpa-guard
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+      rules:
+        - apiGroups: ["kro.run"]
+          resources: ["vpcs"]
+          resourceNames: ["${schema.metadata.name}"]
+          verbs: ["get"]
+  - id: vpcBpaExclusionGuardRoleBinding
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    template:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        namespace: ${schema.metadata.namespace}
+        name: ${schema.spec.name}-vpc-bpa-guard
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: ${vpcBpaExclusionGuardRole.metadata.name}
+      subjects:
+        - kind: ServiceAccount
+          name: ${vpcBpaExclusionServiceAccount.metadata.name}
+          namespace: ${vpcBpaExclusionServiceAccount.metadata.namespace}
+  - id: vpcBpaExclusionJob
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    template:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        namespace: ${schema.spec.name}
+        # -v1: bump with any change to this Job's spec (see "update" above).
+        name: ${schema.spec.name}-vpc-bpa-exclusion-v1
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        labels:
+          app.kubernetes.io/name: vpc-bpa-exclusion
+          app.kubernetes.io/instance: ${schema.spec.name}
+          app.kubernetes.io/managed-by: kro
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+      spec:
+        # No ttlSecondsAfterFinished: a TTL delete makes kro recreate and re-run the Job
+        # (same note as cicd-pipeline). A Job pod template is immutable, hence the -v1
+        # name suffix: a changed template under a new name replaces the Job.
+        backoffLimit: 10
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: vpc-bpa-exclusion
+              app.kubernetes.io/instance: ${schema.spec.name}
+          spec:
+            serviceAccountName: ${vpcBpaExclusionServiceAccount.metadata.name}
+            restartPolicy: OnFailure
+            containers:
+              - name: create-exclusion
+                image: amazon/aws-cli:latest
+                env:
+                  - name: VPC_ID
+                    value: ${vpc.status.vpcID}
+                  # The two public subnets, space separated: one exclusion each.
+                  - name: SUBNET_IDS
+                    value: ${publicSubnet1.status.subnetID} ${publicSubnet2.status.subnetID}
+                  - name: AWS_REGION
+                    value: ${schema.spec.region}
+                  - name: CLUSTER
+                    value: ${schema.spec.name}
+                  - name: PREFIX
+                    value: ${schema.spec.resourcePrefix}
+                  - name: INSTANCE
+                    value: ${schema.metadata.name}
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 64Mi
+                command: ["/bin/bash", "-c"]
+                # Shell variables use $VAR, never the brace form: kro parses every
+                # dollar-brace as a CEL expression.
+                args:
+                  - |
+                    set -euo pipefail
+                    INACTIVE="['delete-in-progress','delete-complete','disable-in-progress','disable-complete','create-failed']"
+                    ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+                    # One exclusion per public subnet. Idempotent per subnet: the native
+                    # resource-arn filter finds a live exclusion on that subnet whoever made it
+                    # (this Job on an earlier run, or by hand), so a re-run or a pre-existing
+                    # exclusion never creates a second one.
+                    # --max-results is mandatory: without --exclusion-ids the API answers
+                    # MissingParameter (verified on AWS 2026-11-23). 1000 is the API max; the
+                    # account quota is 50 exclusions.
+                    IDS=""
+                    for SUBNET in $SUBNET_IDS; do
+                      ARN="arn:aws:ec2:$AWS_REGION:$ACCOUNT:subnet/$SUBNET"
+                      ID=$(aws ec2 describe-vpc-block-public-access-exclusions --max-results 1000 \
+                        --filters Name=resource-arn,Values="$ARN" \
+                        --query "VpcBlockPublicAccessExclusions[?!contains($INACTIVE, State)] | [0].ExclusionId" --output text)
+                      if [ "$ID" != "None" ] && [ -n "$ID" ]; then
+                        echo "existing exclusion $ID on $SUBNET, reusing it"
+                      else
+                        ID=$(aws ec2 create-vpc-block-public-access-exclusion \
+                          --subnet-id "$SUBNET" \
+                          --internet-gateway-exclusion-mode allow-bidirectional \
+                          --tag-specifications "ResourceType=vpc-block-public-access-exclusion,Tags=[{Key=Name,Value=$CLUSTER-vpc-bpa},{Key=managed-by,Value=kro},{Key=kro.run/instance-name,Value=$INSTANCE},{Key=platform.gitops.io/prefix,Value=$PREFIX},{Key=platform.gitops.io/cluster,Value=$CLUSTER},{Key=platform.gitops.io/vpc-id,Value=$VPC_ID},{Key=platform.gitops.io/subnet-id,Value=$SUBNET}]" \
+                          --query VpcBlockPublicAccessExclusion.ExclusionId --output text)
+                        echo "created exclusion $ID on $SUBNET"
+                      fi
+                      IDS="$IDS $ID"
+                    done
+                    for ID in $IDS; do
+                      for i in $(seq 1 60); do
+                        read -r STATE MODE < <(aws ec2 describe-vpc-block-public-access-exclusions \
+                          --exclusion-ids "$ID" \
+                          --query "VpcBlockPublicAccessExclusions[0].[State,InternetGatewayExclusionMode]" --output text)
+                        echo "exclusion $ID state=$STATE mode=$MODE"
+                        case "$STATE" in
+                          create-complete|update-complete)
+                            [ "$MODE" = "allow-bidirectional" ] || echo "WARNING: mode $MODE has no effect under account BPA block-ingress"
+                            continue 2 ;;
+                          create-failed|update-failed)
+                            aws ec2 describe-vpc-block-public-access-exclusions --exclusion-ids "$ID" \
+                              --query "VpcBlockPublicAccessExclusions[0].Reason" --output text
+                            exit 1 ;;
+                        esac
+                        sleep 10
+                      done
+                      echo "timed out waiting for $ID"; exit 1
+                    done
+  - id: vpcBpaExclusionGuard
+    includeWhen:
+      - ${schema.spec.vpcBlockPublicAccessExclusion}
+    template:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        namespace: ${schema.spec.name}
+        # -v1: bump with any change to this Pod's spec (see "update" above).
+        name: ${schema.spec.name}-vpc-bpa-guard-v1
+        ownerReferences:
+          - apiVersion: kro.run/v1alpha1
+            kind: ${schema.kind}
+            name: ${schema.metadata.name}
+            uid: ${schema.metadata.uid}
+            blockOwnerDeletion: true
+            controller: false
+        labels:
+          app.kubernetes.io/name: vpc-bpa-guard
+          app.kubernetes.io/instance: ${schema.spec.name}
+          app.kubernetes.io/managed-by: kro
+        annotations:
+          argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
+          # Puts the guard in a later apply-order wave than its RBAC binding, so kro
+          # deletes the guard (and waits for its preStop) before the binding.
+          peeks/depends-on: ${vpcBpaExclusionGuardRoleBinding.metadata.name}
+      spec:
+        serviceAccountName: ${vpcBpaExclusionServiceAccount.metadata.name}
+        restartPolicy: Always
+        # Upper bound for the preStop delete + wait below.
+        terminationGracePeriodSeconds: 300
+        containers:
+          - name: guard
+            image: amazon/aws-cli:latest
+            env:
+              - name: VPC_ID
+                value: ${vpc.status.vpcID}
+              - name: AWS_REGION
+                value: ${schema.spec.region}
+              - name: CLUSTER
+                value: ${schema.spec.name}
+              - name: INSTANCE
+                value: ${schema.metadata.name}
+              - name: INSTANCE_NAMESPACE
+                value: ${schema.metadata.namespace}
+              - name: DELETION_POLICY
+                value: ${schema.spec.deletionPolicy}
+            resources:
+              requests:
+                cpu: 5m
+                memory: 32Mi
+            command: ["/bin/bash", "-c"]
+            args:
+              - trap 'exit 0' TERM; while true; do sleep 3600 & wait $!; done
+            lifecycle:
+              preStop:
+                exec:
+                  command:
+                    - /bin/bash
+                    - -c
+                    - |
+                      exec >/proc/1/fd/1 2>&1
+                      SA=/var/run/secrets/kubernetes.io/serviceaccount
+                      CODE=$(curl -s -o /tmp/instance.json -w '%{http_code}' --cacert "$SA/ca.crt" \
+                        -H "Authorization: Bearer $(cat "$SA/token")" \
+                        "https://kubernetes.default.svc/apis/kro.run/v1alpha1/namespaces/$INSTANCE_NAMESPACE/vpcs/$INSTANCE")
+                      if [ "$CODE" = "200" ] && grep -Eq '"vpcBlockPublicAccessExclusion": *false' /tmp/instance.json; then
+                        # Flag turned off: delete whatever the deletionPolicy.
+                        echo "Vpc $INSTANCE has its exclusions turned off: deleting the exclusions of $VPC_ID"
+                      elif [ "$CODE" = "404" ] \
+                        || { [ "$CODE" = "200" ] && grep -q '"deletionTimestamp"' /tmp/instance.json; }; then
+                        if [ "$DELETION_POLICY" = "retain" ]; then
+                          # The VPC outlives the instance and its public load balancers still
+                          # need the exclusions.
+                          echo "Vpc $INSTANCE is being deleted with deletionPolicy retain: keeping the exclusions of $VPC_ID"
+                          exit 0
+                        fi
+                        echo "Vpc $INSTANCE is being deleted: deleting the exclusions of $VPC_ID"
+                      else
+                        # Eviction, node drain, manual pod delete, API error: keep them.
+                        echo "Vpc $INSTANCE still wants its exclusions (HTTP $CODE): keeping them"
+                        exit 0
+                      fi
+                      # Only exclusions this graph created (tags), never one made by hand.
+                      # Both subnet exclusions carry the vpc-id tag.
+                      for ID in $(aws ec2 describe-vpc-block-public-access-exclusions --max-results 1000 \
+                        --filters Name=tag:platform.gitops.io/vpc-id,Values="$VPC_ID" Name=tag:managed-by,Values=kro Name=tag:platform.gitops.io/cluster,Values="$CLUSTER" \
+                        --query "VpcBlockPublicAccessExclusions[?State=='create-complete' || State=='update-complete' || State=='create-in-progress'].ExclusionId" --output text); do
+                        aws ec2 delete-vpc-block-public-access-exclusion --exclusion-id "$ID" >/dev/null && echo "delete requested for $ID"
+                        for i in $(seq 1 25); do
+                          STATE=$(aws ec2 describe-vpc-block-public-access-exclusions --exclusion-ids "$ID" \
+                            --query "VpcBlockPublicAccessExclusions[0].State" --output text 2>/dev/null || echo gone)
+                          echo "exclusion $ID state=$STATE"
+                          case "$STATE" in delete-complete|gone|None) break ;; esac
+                          sleep 10
+                        done
+                      done

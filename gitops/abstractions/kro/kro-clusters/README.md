@@ -68,6 +68,30 @@ Commit and push — ArgoCD will sync and KRO creates the cluster.
 | `cidr` | object | defaults | VPC/subnet CIDR configuration |
 | `gitops` | object | defaults | GitOps repo URLs and revisions |
 | `addons` | object | defaults | Addon enablement flags |
+| `vpcBlockPublicAccessExclusion` | bool | `false` | Opt in to VPC Block Public Access exclusions for this cluster's VPC: one `allow-bidirectional` exclusion on each of the 2 public subnets (internet-facing load balancers), none on the private subnets. See [VPC Block Public Access exclusion](#vpc-block-public-access-exclusion) |
+
+## VPC Block Public Access exclusion
+
+`vpcBlockPublicAccessExclusion: true` on a cluster entry makes the `Vpc` graph create one
+VPC Block Public Access (BPA) exclusion, mode `allow-bidirectional`, on **each of the two
+public subnets** of the cluster's VPC. It is needed when the account sets VPC BPA to
+`block-ingress`: only `allow-bidirectional` exclusions take effect in that mode, and
+without one the internet-facing load balancers in the public subnets are unreachable.
+
+- **What it opens:** internet ingress and egress through the internet gateway for the two
+  public subnets only. The private subnets keep BPA (NAT egress is already allowed under
+  `block-ingress`). It is deliberately not a VPC-level exclusion, which would apply to every
+  subnet of the VPC.
+- **Why the default is `false`:** it weakens an account-level protection. With the field
+  absent or `false` nothing is rendered and existing VPCs are unchanged.
+- **Quota:** each opted-in cluster uses 2 of the 50 exclusions per account and region.
+- **Lifecycle:** a Job creates the exclusions (idempotent per subnet) and a guard Pod deletes
+  them when the cluster's `Vpc` is deleted or the flag is turned off. With
+  `deletionPolicy: retain` the exclusions are kept on delete, because the retained VPC keeps
+  running in AWS and its public load balancers still need them; they then keep counting
+  against the quota until deleted by hand or by the teardown sweep.
+- **Limits:** same account as the hub only (the render fails for a cluster whose `accountId`
+  differs from `global.accountId`), and the hub cluster must be named `<resourcePrefix>-hub`.
 
 ## ACK CARM coverage (IAMRoleSelectors)
 

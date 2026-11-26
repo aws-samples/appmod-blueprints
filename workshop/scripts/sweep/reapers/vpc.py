@@ -6,11 +6,66 @@ import time
 from ..resilience import poll_until, retry_aws
 
 
+# Exclusion states that need no delete: already going or gone. delete-complete
+# exclusions stay listed for a while after the delete (measured on AWS), so they are
+# treated as gone rather than re-deleted.
+_BPA_EXCLUSION_INACTIVE = (
+    "delete-in-progress", "delete-complete", "disable-in-progress", "disable-complete",
+)
+
+
+def delete_bpa_exclusions(ctx, vpc_id):
+    """Delete every VPC Block Public Access exclusion on this VPC or on one of its
+    subnets, whoever created it (matched on ResourceArn, not on tags). The kro Vpc
+    graph deletes its own exclusions from a guard Pod, but a skipped guard (preStop past
+    its grace period, missing Pod, API error, destroy after a failed disable-kro) leaks
+    them, and the account quota is 50 exclusions.
+
+    Measured on AWS: DeleteVpc succeeds while a VPC-level exclusion is active, and AWS
+    then deletes the exclusion itself. Whether DeleteSubnet does the same for a
+    subnet-level exclusion is not verified, so this runs before the subnet deletes.
+    It does not wait for delete-complete: reap_single_vpc re-drives the whole clear
+    until the VPC is gone. Returns the exclusion ids a delete was requested for."""
+    log, ec2 = ctx.log, ctx.ec2
+    try:
+        subnets = ec2.describe_subnets(
+            Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+        ).get("Subnets", [])
+        suffixes = [f":vpc/{vpc_id}"] + [f":subnet/{s['SubnetId']}" for s in subnets]
+        # MaxResults is mandatory when ExclusionIds is absent (MissingParameter
+        # otherwise). The list is per account and region, so a ResourceArn suffix match
+        # needs no account id or partition.
+        # shortcut: one page of 1000, the API maximum, against a quota of 50; follow
+        # NextToken if that quota is ever raised past 1000.
+        exclusions = ec2.describe_vpc_block_public_access_exclusions(
+            MaxResults=1000
+        ).get("VpcBlockPublicAccessExclusions", [])
+    except Exception as e:
+        log(f"  VPC BPA exclusions for {vpc_id}: {e}")
+        return []
+    requested = []
+    for ex in exclusions:
+        arn = ex.get("ResourceArn", "")
+        if not any(arn.endswith(s) for s in suffixes):
+            continue
+        if ex.get("State") in _BPA_EXCLUSION_INACTIVE:
+            continue
+        try:
+            ec2.delete_vpc_block_public_access_exclusion(ExclusionId=ex["ExclusionId"])
+            requested.append(ex["ExclusionId"])
+            log(f"  Deleted VPC BPA exclusion {ex['ExclusionId']} ({arn})")
+        except Exception as e:
+            log(f"  VPC BPA exclusion {ex['ExclusionId']}: {e}")
+    return requested
+
+
 def clear_vpc_deps(ctx, vpc_id):
     """One pass of dependency clearing for a VPC. Safe to call repeatedly — subnet
     and VPC deletion only succeed once NAT gateways finish deleting and release
     their service-managed ENIs, so reap_single_vpc re-drives this each retry."""
     ec2 = ctx.ec2
+    # First: the subnet-level exclusions are found through the subnet ids.
+    delete_bpa_exclusions(ctx, vpc_id)
     for eni in ec2.describe_network_interfaces(
         Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
     )["NetworkInterfaces"]:
@@ -106,6 +161,7 @@ def reap_spoke_vpcs(ctx):
 
         for v in spoke_vpcs:
             vpc_id = v["VpcId"]
+            delete_bpa_exclusions(ctx, vpc_id)
             for igw in ec2.describe_internet_gateways(
                 Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
             )["InternetGateways"]:

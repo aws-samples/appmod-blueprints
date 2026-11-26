@@ -75,6 +75,12 @@ spec:
       # retention (auto-delete=no), cost allocation and compliance tagging from a
       # single source. Optional: existing instances that omit it are unaffected.
       awsTags: "map[string]string"
+      # Opt-in, forwarded to the nested Vpc. true = one VPC Block Public Access exclusion
+      # (allow-bidirectional) on each public subnet of this cluster's VPC (2 per cluster,
+      # none on the private subnets), created by a Job and removed on delete unless
+      # deletionPolicy is retain. Same account as the hub only. See rg-vpc.yaml. Default
+      # false: no change.
+      vpcBlockPublicAccessExclusion: boolean | default=false
       argocdCapability:
         enabled: string | default="false"
         idcInstanceArn: string | default=""
@@ -190,6 +196,7 @@ spec:
         # [#1033 N1] propagate deletionPolicy so the hub VPC is born with the same
         # retain/delete posture as the nested EksCluster (eks sub-instance below).
         deletionPolicy: ${schema.spec.deletionPolicy}
+        vpcBlockPublicAccessExclusion: ${schema.spec.vpcBlockPublicAccessExclusion}
         cidr:
           vpcCidr: ${schema.spec.cidr.vpcCidr}
           publicSubnet1Cidr: ${schema.spec.cidr.publicSubnet1Cidr}
