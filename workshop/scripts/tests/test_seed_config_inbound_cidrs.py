@@ -282,9 +282,10 @@ class TestSeedRejects:
 #      CIDR_CHECK program. A denylist: it cannot prove the program portable;
 #   2. dynamic, when a BWK awk is available: run hub:seed with it as `awk` on PATH. A candidate
 #      ($BWK_AWK, then bwkawk / original-awk / one-true-awk / nawk on PATH, then the PATH `awk`)
-#      counts only if `--version` prints "awk version YYYYMMDD", BWK's format, AND it refuses
-#      the NOT_BWK_PROGRAMS below: a Debian `nawk` that links to mawk or gawk, or a wrapper that
-#      prints BWK's version, is not BWK. $BWK_AWK set to something else FAILS the test instead
+#      counts only if `--version` prints "awk version YYYYMMDD", BWK's format, AND, called the
+#      way hub:seed calls awk, it runs BWK_PROGRAM and refuses the NOT_BWK_PROGRAMS below: a
+#      Debian `nawk` that links to mawk or gawk, or a wrapper that prints BWK's version, is not
+#      BWK. $BWK_AWK set to something else FAILS the test instead
 #      of skipping it. Skipped otherwise, and nothing else runs it: this repo has no CI for
 #      these tests.
 import re as _re
@@ -303,22 +304,40 @@ def _cidr_check_program(provider):
 # check was broken by (the regex ends at that "/"), and gawk parses it in every mode, even
 # --traditional, which drops gensub and strtonum.
 NOT_BWK_PROGRAMS = (
-    'BEGIN { print gensub(/a/, "b", "g", "a") }',
-    'BEGIN { print strtonum("0x10") }',
-    'BEGIN { if ("a/b" ~ /[/]/) print 1 }',
+    '{ print gensub(/a/, "b", "g", $0) }',
+    '{ print strtonum("0x10") }',
+    '{ if ($0 ~ /[/]/) print 1 }',
 )
+# ...and run this valid BWK program correctly, so an awk that refuses every program does not
+# count either. length() of an array also leaves out mawk 1.3.3, which refuses the three above.
+BWK_PROGRAM = ('{ n = split($0, p, "/"); if ($0 ~ /^[a-z]\\/[a-z]$/) print n length(p) p[2] }',
+               "22b")
+
+
+def _probe(path, prog):
+    # Called the way hub:seed calls awk: a record piped on stdin, -v RS=, then the program. A
+    # wrapper that runs gawk only for that call shape (round 5) cannot tell a probe from it.
+    return subprocess.run([path, "-v", "RS=,", prog], input="a/b,", capture_output=True,
+                          text=True, timeout=10)
 
 
 def _is_bwk(path):
+    # shortcut: this filters accidents, not adversaries. It refuses a non-BWK awk that is there
+    # by mistake (a Debian nawk that is mawk or gawk, gawk in any mode, a script around gawk that
+    # prints BWK's version), but a wrapper written to pass these probes (one that keys on their
+    # text, say) still counts, and then only the static tests below guard the CIDR check. Pin the
+    # BWK build by checksum instead if the BWK runs ever need to resist a deliberate fake.
     if not (path and os.access(path, os.X_OK)):
         return False
     try:
         v = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10).stdout
         if not _re.match(r"awk version \d{8}", v):
             return False
-        return all(subprocess.run([path, p], capture_output=True, text=True, timeout=10,
-                                  stdin=subprocess.DEVNULL).returncode != 0
-                   for p in NOT_BWK_PROGRAMS)
+        prog, want = BWK_PROGRAM
+        good = _probe(path, prog)
+        if good.returncode != 0 or good.stdout.strip() != want:
+            return False
+        return all(_probe(path, p).returncode != 0 for p in NOT_BWK_PROGRAMS)
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -410,12 +429,17 @@ GAWK = shutil.which("gawk")
 
 
 @pytest.mark.skipif(GAWK is None, reason="gawk not on PATH")
-@pytest.mark.parametrize("flags", ["", "--traditional"])
-def test_a_gawk_wrapper_that_prints_the_bwk_version_is_not_bwk(tmp_path, flags):
-    # Round 5: such a wrapper counted as BWK, so the BWK runs below would have run under gawk.
+@pytest.mark.parametrize("body", [
+    f'exec {GAWK} "$@"',
+    f'exec {GAWK} --traditional "$@"',
+    f'[ -p /dev/stdin ] || exit 2\nexec {GAWK} "$@"',  # gawk only when called like hub:seed
+    "exit 2",                                         # refuses every program
+], ids=["gawk", "gawk-traditional", "gawk-on-a-pipe-only", "refuses-everything"])
+def test_a_wrapper_that_prints_the_bwk_version_is_not_bwk(tmp_path, body):
+    # Round 5: such wrappers counted as BWK, so the BWK runs below would have run under gawk.
     w = tmp_path / "bwkawk"
     w.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo "awk version 20200816"; exit 0; fi\n'
-                 f'exec {GAWK} {flags} "$@"\n')
+                 f'{body}\n')
     w.chmod(0o755)
     v = subprocess.run([str(w), "--version"], capture_output=True, text=True, timeout=10).stdout
     assert v.startswith("awk version 20200816")
@@ -459,7 +483,7 @@ class TestCidrCheckPortable:
     def test_seed_under_bwk_awk(self, tmp_path, provider, value, expected):
         if BWK is None:
             pytest.fail(f"BWK_AWK={BWK_ENV!r} is not a BWK awk (--version is not 'awk version "
-                        f"YYYYMMDD', or it runs one of NOT_BWK_PROGRAMS)")
+                        f"YYYYMMDD', it runs one of NOT_BWK_PROGRAMS, or not BWK_PROGRAM)")
         (tmp_path / "bin").mkdir()
         os.symlink(BWK, tmp_path / "bin" / "awk")
         res, st = _seed_raw(tmp_path, provider, _cfg(albInboundCidrs=value))
