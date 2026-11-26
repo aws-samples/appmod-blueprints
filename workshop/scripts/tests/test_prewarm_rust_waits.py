@@ -18,6 +18,7 @@ Run:  python -m pytest workshop/scripts/tests/test_prewarm_rust_waits.py -q
 """
 import os
 import re
+import shlex
 import shutil
 import subprocess
 
@@ -43,7 +44,9 @@ def render(task, plat, text=None):
     b = yaml.safe_load(text if text is not None else open(TASKFILE))["tasks"][task]["cmds"][0]
     b = b.replace("{{.PLATFORM_DIR}}", str(plat))
     b = re.sub(r"\{\{\s*\.C_[A-Z]+\s*\}\}", "", b)
-    return re.sub(r"\{\{\s*\.([A-Z_]+)\s*\}\}", lambda m: VARS.get(m.group(1), ""), b)
+    # `{{.X | shellQuote}}` gets a shell-quoted value, as go-task's shellQuote gives.
+    return re.sub(r"\{\{\s*\.([A-Z_]+)\s*(\|\s*shellQuote\s*)?\}\}",
+                  lambda m: shlex.quote(VARS.get(m.group(1), "")) if m.group(2) else VARS.get(m.group(1), ""), b)
 
 
 # Fake authenticated catalog read: 200 once Backstage is up. Tests that need another

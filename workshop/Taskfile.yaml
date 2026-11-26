@@ -90,7 +90,28 @@ tasks:
         sh: 'if [ "$(yq ''.clusterProvider // "kind-kro-ack"'' {{.CONFIG_FILE}})" = "kind-kro-ack" ]; then echo "kro"; else echo "crossplane"; fi'
       INSTALL_START:
         sh: date +%s
+      # Private directory of this run's prewarm Phase A: pid, exit code and log (#1328).
+      # Fixed /tmp paths let a second install on the host take over the first one's pid,
+      # overwrite its exit code and append to its log. Each cmd runs in its own shell, so
+      # a shell variable cannot carry the path to the join and to Phase B: this var is
+      # evaluated once per `task` process and every cmd below gets the same value. It is not an
+      # `env:` entry because a variable already set in the caller's shell would win.
+      # Empty when mktemp fails: the launcher then does not start Phase A.
+      PHASE_A_DIR:
+        sh: mktemp -d "${TMPDIR:-/tmp}/prewarm-phase-a.XXXXXX" 2>/dev/null || true
     cmds:
+      # First cmd, so it is registered before anything can fail: removes PHASE_A_DIR
+      # when the install ends, unless Phase A is still running or did not end with rc 0
+      # (its log is then kept, and its path printed).
+      - defer: |
+          D={{.PHASE_A_DIR | shellQuote}}
+          case "$D" in */prewarm-phase-a.??????) ;; *) exit 0 ;; esac
+          [ -d "$D" ] || exit 0
+          if [ ! -e "$D/prewarm-phase-a.log" ] || [ "$(cat "$D/prewarm-phase-a.rc" 2>/dev/null || true)" = "0" ]; then
+            rm -rf "$D" || true
+          else
+            printf '{{.C_INFO}}  prewarm Phase A had not ended with rc=0 when the install finished; its log is kept: %s{{.C_RESET}}\n' "$D/prewarm-phase-a.log"
+          fi
       - printf '{{.C_STEP}}▸ Workshop install starting...{{.C_RESET}}\n'
       # Timing log for the whole install (foreground, background jobs, waiters):
       # /tmp/install-timing.log, printed at the end. T0 = INSTALL_START.
@@ -248,11 +269,19 @@ tasks:
       # go-task's shell interpreter sets `$!` to a job id (e.g. "g1"), not a PID, and
       # each cmd runs in its own interpreter, so `echo $!` + `wait` in a later cmd
       # returned at once and the join below never waited.
+      # The pid, rc and log files live in this run's PHASE_A_DIR (#1328), passed to the
+      # wrapper as $1. The explicit check matters: an empty PHASE_A_DIR would put the
+      # files at the filesystem root. The wrapper opens its own log under umask 077 (the
+      # go-task shell has no umask builtin), so the files are 0600 in a 0700 directory.
       - |
-        rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
-        sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > /tmp/prewarm-phase-a.rc; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
-          > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
-        printf '{{.C_INFO}}  prewarm Phase A started in background (log: /tmp/prewarm-phase-a.log){{.C_RESET}}\n'
+        D={{.PHASE_A_DIR | shellQuote}}
+        if [ -z "$D" ] || [ ! -d "$D" ]; then
+          printf '{{.C_ERR}}  ⚠ prewarm Phase A not started: could not create its temporary directory — Phase B will scaffold (non-fatal).{{.C_RESET}}\n'
+          exit 0
+        fi
+        sh -c 'umask 077; exec > "$1/prewarm-phase-a.log" 2>&1 < /dev/null; echo $$ > "$1/prewarm-phase-a.pid"; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > "$1/prewarm-phase-a.rc"; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
+          _ "$D" > /dev/null 2>&1 < /dev/null &
+        printf '{{.C_INFO}}  prewarm Phase A started in background (log: %s){{.C_RESET}}\n' "$D/prewarm-phase-a.log"
       # [perf O3] Gate the install on spokes ACTIVE (+ their Argo CD cluster secrets)
       # only. The ~10 min of spoke addon sync then runs in the background, next to the
       # tail below, instead of blocking it.
@@ -311,24 +340,29 @@ tasks:
       # Phase B / the pivot. Non-fatal: a failed or still-running Phase A is logged and
       # install continues (Phase B re-enters idempotently).
       - cmd: |
-          APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
+          # This run's files only (PHASE_A_DIR, #1328). Empty paths when mktemp returned
+          # nothing: cat and -s then find nothing, and nothing is read at the root.
+          D={{.PHASE_A_DIR | shellQuote}}
+          PF=""; RF=""; LOG="none"
+          if [ -n "$D" ]; then PF="$D/prewarm-phase-a.pid"; RF="$D/prewarm-phase-a.rc"; LOG="$D/prewarm-phase-a.log"; fi
+          APID=$(cat "$PF" 2>/dev/null || echo '')
           MAXW=900
           LEFT=$(( {{.INSTALL_START}} + {{.INSTALL_BUDGET_SEC | default "6600"}} - 300 - 120 - $(date +%s) ))
           if [ "$LEFT" -lt 0 ]; then LEFT=0; fi
           if [ "$LEFT" -lt "$MAXW" ]; then MAXW=$LEFT; fi
           E=0
-          while [ ! -s /tmp/prewarm-phase-a.rc ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt "$MAXW" ]; do
+          while [ ! -s "$RF" ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt "$MAXW" ]; do
             sleep 5; E=$((E + 5))
           done
-          ARC=$(cat /tmp/prewarm-phase-a.rc 2>/dev/null || echo '')
+          ARC=$(cat "$RF" 2>/dev/null || echo '')
           if [ "$ARC" = "0" ]; then
-            printf '{{.C_INFO}}  prewarm Phase A joined after %ss (rc=0, log: /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$E"
+            printf '{{.C_INFO}}  prewarm Phase A joined after %ss (rc=0, log: %s).{{.C_RESET}}\n' "$E" "$LOG"
           elif [ -n "$ARC" ]; then
-            printf '{{.C_ERR}}  ⚠ prewarm Phase A exited rc=%s after %ss wait — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$ARC" "$E"
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A exited rc=%s after %ss wait — continuing (non-fatal; see %s).{{.C_RESET}}\n' "$ARC" "$E" "$LOG"
           elif [ -n "$APID" ] && [ -d "/proc/$APID" ]; then
-            printf '{{.C_ERR}}  ⚠ prewarm Phase A still running after %ss join budget — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$E"
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A still running after %ss join budget — continuing (non-fatal; see %s).{{.C_RESET}}\n' "$E" "$LOG"
           else
-            printf '{{.C_ERR}}  ⚠ prewarm Phase A left no exit status (not started or killed) — continuing (non-fatal; see /tmp/prewarm-phase-a.log).{{.C_RESET}}\n'
+            printf '{{.C_ERR}}  ⚠ prewarm Phase A left no exit status (not started or killed) — continuing (non-fatal; see %s).{{.C_RESET}}\n' "$LOG"
           fi
         ignore_error: true
       # Prewarm Phase B: wait for CICDPipeline ACTIVE + ECR image publish.
@@ -342,6 +376,10 @@ tasks:
           # remaining budget (review C1) and never starve the #1033 pivot below.
           INSTALL_START: '{{.INSTALL_START}}'
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+          # This run's Phase A files (#1328); empty when Phase A was not started.
+          PHASE_A_PID_FILE: '{{if .PHASE_A_DIR}}{{.PHASE_A_DIR}}/prewarm-phase-a.pid{{end}}'
+          PHASE_A_RC_FILE: '{{if .PHASE_A_DIR}}{{.PHASE_A_DIR}}/prewarm-phase-a.rc{{end}}'
+          PHASE_A_LOG: '{{if .PHASE_A_DIR}}{{.PHASE_A_DIR}}/prewarm-phase-a.log{{end}}'
         ignore_error: true
       - 'printf "{{.C_INFO}}  [%ds] prewarm-rust-cicd done{{.C_RESET}}\n" "$(($(date +%s) - {{.INSTALL_START}}))"'
       # The Rust dev pre-deploy (prewarm-pathA-rust-kro) is NOT run here: it needs the
@@ -606,10 +644,23 @@ tasks:
         sh: yq '.clusterProvider // "kind-kro-ack"' {{.CONFIG_FILE}}
       INSTALL_START:
         sh: date +%s
+      # This run's prewarm Phase A directory: see `install` (#1328).
+      PHASE_A_DIR:
+        sh: mktemp -d "${TMPDIR:-/tmp}/prewarm-phase-a.XXXXXX" 2>/dev/null || true
     preconditions:
       - sh: '[ "$(yq ''.gitlabInit // "local"'' {{.CONFIG_FILE}})" != "remote" ]'
         msg: "install:ide runs on the IDE with the config published by the remote install (workshop/fetch-install-config.sh), not the build's own."
     cmds:
+      # Same cleanup as in `install`.
+      - defer: |
+          D={{.PHASE_A_DIR | shellQuote}}
+          case "$D" in */prewarm-phase-a.??????) ;; *) exit 0 ;; esac
+          [ -d "$D" ] || exit 0
+          if [ ! -e "$D/prewarm-phase-a.log" ] || [ "$(cat "$D/prewarm-phase-a.rc" 2>/dev/null || true)" = "0" ]; then
+            rm -rf "$D" || true
+          else
+            printf '{{.C_INFO}}  prewarm Phase A had not ended with rc=0 when the install finished; its log is kept: %s{{.C_RESET}}\n' "$D/prewarm-phase-a.log"
+          fi
       - printf '{{.C_STEP}}▸ IDE install starting (the platform install runs in CodeBuild)...{{.C_RESET}}\n'
       - '{{.MARK}} reset {{.INSTALL_START}}'
       # GitLab init in the background, as in `install`. The build waits for the PAT it writes.
@@ -630,10 +681,15 @@ tasks:
       # The Ray setup and the Kargo controller identity create IAM roles and Pod Identity
       # associations: this host has no IAM write, so they run in the CodeBuild install
       # (install:remote-extras), not here.
+      # Prewarm Phase A in the background, into this run's PHASE_A_DIR (as in `install`).
       - |
-        rm -f /tmp/prewarm-phase-a.pid /tmp/prewarm-phase-a.rc
-        sh -c 'echo $$ > /tmp/prewarm-phase-a.pid; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > /tmp/prewarm-phase-a.rc; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
-          > /tmp/prewarm-phase-a.log 2>&1 < /dev/null &
+        D={{.PHASE_A_DIR | shellQuote}}
+        if [ -z "$D" ] || [ ! -d "$D" ]; then
+          printf '{{.C_ERR}}  ⚠ prewarm Phase A not started: could not create its temporary directory — Phase B will scaffold (non-fatal).{{.C_RESET}}\n'
+          exit 0
+        fi
+        sh -c 'umask 077; exec > "$1/prewarm-phase-a.log" 2>&1 < /dev/null; echo $$ > "$1/prewarm-phase-a.pid"; {{.MARK}} start "prewarm Phase A (bg)"; task prewarm-rust-cicd-phase-a INSTALL_START={{.INSTALL_START}} INSTALL_BUDGET_SEC={{.INSTALL_BUDGET_SEC | default "6600"}}; rc=$?; echo $rc > "$1/prewarm-phase-a.rc"; {{.MARK}} done "prewarm Phase A (bg)" "rc=$rc"' \
+          _ "$D" > /dev/null 2>&1 < /dev/null &
       - '{{.MARK}} step workshop wait-for-spokes:active'
       - task: wait-for-spokes
         vars: { SPOKE_APPS: "false" }
@@ -652,18 +708,24 @@ tasks:
         fi
       - '{{.MARK}} step workshop join prewarm Phase A'
       - cmd: |
-          APID=$(cat /tmp/prewarm-phase-a.pid 2>/dev/null || echo '')
+          D={{.PHASE_A_DIR | shellQuote}}
+          PF=""; RF=""; LOG="none"
+          if [ -n "$D" ]; then PF="$D/prewarm-phase-a.pid"; RF="$D/prewarm-phase-a.rc"; LOG="$D/prewarm-phase-a.log"; fi
+          APID=$(cat "$PF" 2>/dev/null || echo '')
           E=0
-          while [ ! -s /tmp/prewarm-phase-a.rc ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt 900 ]; do
+          while [ ! -s "$RF" ] && [ -n "$APID" ] && [ -d "/proc/$APID" ] && [ "$E" -lt 900 ]; do
             sleep 5; E=$((E + 5))
           done
-          printf '{{.C_INFO}}  prewarm Phase A: rc=%s after %ss (log: /tmp/prewarm-phase-a.log).{{.C_RESET}}\n' "$(cat /tmp/prewarm-phase-a.rc 2>/dev/null || echo none)" "$E"
+          printf '{{.C_INFO}}  prewarm Phase A: rc=%s after %ss (log: %s).{{.C_RESET}}\n' "$(cat "$RF" 2>/dev/null || echo none)" "$E" "$LOG"
         ignore_error: true
       - '{{.MARK}} step workshop prewarm-rust-cicd'
       - task: prewarm-rust-cicd
         vars:
           INSTALL_START: '{{.INSTALL_START}}'
           INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
+          PHASE_A_PID_FILE: '{{if .PHASE_A_DIR}}{{.PHASE_A_DIR}}/prewarm-phase-a.pid{{end}}'
+          PHASE_A_RC_FILE: '{{if .PHASE_A_DIR}}{{.PHASE_A_DIR}}/prewarm-phase-a.rc{{end}}'
+          PHASE_A_LOG: '{{if .PHASE_A_DIR}}{{.PHASE_A_DIR}}/prewarm-phase-a.log{{end}}'
         ignore_error: true
       - '{{.MARK}} step workshop -'
       - '{{.MARK}} dump'
@@ -1739,9 +1801,12 @@ tasks:
       # INSTALL_START empty (review S3), which skips the cap entirely (full timeouts apply).
       INSTALL_START: '{{.INSTALL_START | default ""}}'
       INSTALL_BUDGET_SEC: '{{.INSTALL_BUDGET_SEC | default "6600"}}'
-      # Written by the install DAG's Phase A launcher; read to avoid a second scaffold.
-      PHASE_A_PID_FILE: '{{.PHASE_A_PID_FILE | default "/tmp/prewarm-phase-a.pid"}}'
-      PHASE_A_RC_FILE: '{{.PHASE_A_RC_FILE | default "/tmp/prewarm-phase-a.rc"}}'
+      # Written by the install DAG's Phase A launcher into that install's own directory
+      # (#1328), and passed in by the install; read to avoid a second scaffold. Empty for
+      # a standalone run: there is no Phase A of its own to look at.
+      PHASE_A_PID_FILE: '{{.PHASE_A_PID_FILE | default ""}}'
+      PHASE_A_RC_FILE: '{{.PHASE_A_RC_FILE | default ""}}'
+      PHASE_A_LOG: '{{.PHASE_A_LOG | default "the Phase A log"}}'
       PHASE_A_SCAFFOLD_LOG: '{{.PHASE_A_SCAFFOLD_LOG | default "/tmp/prewarm-phase-a-scaffold.log"}}'
     cmds:
       - |
@@ -1751,6 +1816,12 @@ tasks:
         SCAFFOLD_SUBMITTED=""
         APP="{{.APP_NAME}}"; NS="{{.APP_NS}}"; PREFIX="{{.RESOURCE_PREFIX}}"
         ECR_REPO="${PREFIX}/${APP}"
+        # This install's Phase A files (#1328). They come from TMPDIR, so they are quoted
+        # once here and only used as "$PA_*" below: pasted into the shell text, a quote in
+        # TMPDIR would stop go-task from parsing this whole cmd.
+        PA_PID_FILE={{.PHASE_A_PID_FILE | shellQuote}}
+        PA_RC_FILE={{.PHASE_A_RC_FILE | shellQuote}}
+        PA_RUN_LOG={{.PHASE_A_LOG | shellQuote}}
 
         if [ "{{.ENABLED}}" != "true" ]; then
           printf '{{.C_INFO}}▸ prewarm-rust-cicd: disabled (prewarmRustCicd=false / PREWARM_RUST_CICD=false) — skipping.{{.C_RESET}}\n'
@@ -1896,21 +1967,21 @@ tasks:
         # pipeline it should create. The pid only counts if its cmdline is the Phase A
         # launcher (`sh -c '… task prewarm-rust-cicd-phase-a …'`): a pid file left by an
         # aborted install can point at a reused pid.
-        PA_PID=$(cat "{{.PHASE_A_PID_FILE}}" 2>/dev/null || true)
-        if [ -n "$PA_PID" ] && [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] \
+        PA_PID=$(cat "$PA_PID_FILE" 2>/dev/null || true)
+        if [ -n "$PA_PID" ] && [ ! -s "$PA_RC_FILE" ] && [ -d "/proc/$PA_PID" ] \
            && tr '\0' ' ' < "/proc/$PA_PID/cmdline" 2>/dev/null | grep -q 'prewarm-rust-cicd-phase-a' \
            && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
           PA_T=$(( $(left) - SCAFFOLD_RESERVE )); [ "$PA_T" -lt 0 ] && PA_T=0; [ "$PA_T" -gt 900 ] && PA_T=900
           printf '{{.C_INFO}}  ↩ prewarm Phase A still running (pid %s) — not scaffolding a second time; waiting up to %ss for it to finish.{{.C_RESET}}\n' "$PA_PID" "$PA_T"
           PA_S=$(date +%s)
-          while [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ] && [ $(( $(date +%s) - PA_S )) -lt "$PA_T" ]; do
+          while [ ! -s "$PA_RC_FILE" ] && [ -d "/proc/$PA_PID" ] && [ $(( $(date +%s) - PA_S )) -lt "$PA_T" ]; do
             sleep 15
           done
-          if [ ! -s "{{.PHASE_A_RC_FILE}}" ] && [ -d "/proc/$PA_PID" ]; then
+          if [ ! -s "$PA_RC_FILE" ] && [ -d "/proc/$PA_PID" ]; then
             printf '{{.C_INFO}}  ↩ prewarm Phase A still running after %ss — waiting for its CICDPipeline instead of scaffolding.{{.C_RESET}}\n' "$(( $(date +%s) - PA_S ))"
             REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
           else
-            printf '{{.C_INFO}}  ↩ prewarm Phase A finished (rc=%s) — re-checking repo/pipeline.{{.C_RESET}}\n' "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || echo '?')"
+            printf '{{.C_INFO}}  ↩ prewarm Phase A finished (rc=%s) — re-checking repo/pipeline.{{.C_RESET}}\n' "$(cat "$PA_RC_FILE" 2>/dev/null || echo '?')"
             PSTATE=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
             PIPELINE_EXISTS=$($KUBE get cicdpipeline "${APP}-cicd-pipeline" -n "$NS" --ignore-not-found -o name 2>/dev/null)
             if [ -n "{{.GIT_DOMAIN}}" ] && [ -n "{{.GIT_TOKEN}}" ]; then
@@ -1944,17 +2015,19 @@ tasks:
           fi
         fi
         if [ -n "$PA_INFLIGHT" ] && [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ]; then
-          printf '{{.C_INFO}}  ↩ prewarm Phase A may already have a scaffold in flight (%s, Phase A rc=%s) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n' "$PA_INFLIGHT" "$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || echo none)"
+          printf '{{.C_INFO}}  ↩ prewarm Phase A may already have a scaffold in flight (%s, Phase A rc=%s) — not scaffolding a second time; waiting for its CICDPipeline.{{.C_RESET}}\n' "$PA_INFLIGHT" "$(cat "$PA_RC_FILE" 2>/dev/null || echo none)"
           REPO_EXISTS=phase-a; SCAFFOLD_SUBMITTED=phase-a
         fi
         if [ "$PSTATE" != "ACTIVE" ] && [ -z "$PIPELINE_EXISTS" ] && [ -z "$REPO_EXISTS" ] && [ -n "$BUDGET_OK" ]; then
           # Phase A is the primary path during an install. Reaching a fresh scaffold here
           # after it ran means it failed: say so loudly so the run is not read as clean.
-          # Only during an install (INSTALL_START set) and for a non-zero rc: the rc file
-          # stays in /tmp, so a later standalone re-run must not claim a fallback.
-          PA_RC=$(cat "{{.PHASE_A_RC_FILE}}" 2>/dev/null || true)
+          # Only during an install (INSTALL_START set) and for a non-zero rc. Since #1328
+          # the rc file lives in this run's private directory and a standalone Phase B run
+          # gets no Phase A paths, so $PA_RC is already empty there; INSTALL_START stays as
+          # the second barrier against a re-run claiming someone else's fallback.
+          PA_RC=$(cat "$PA_RC_FILE" 2>/dev/null || true)
           if [ -n "{{.INSTALL_START}}" ] && [ -n "$PA_RC" ] && [ "$PA_RC" != "0" ]; then
-            printf '{{.C_ERR}}  ⚠ PREWARM FALLBACK: Phase A did not scaffold %s (rc=%s, see /tmp/prewarm-phase-a.log and {{.PHASE_A_SCAFFOLD_LOG}}) — Phase B scaffolding now.{{.C_RESET}}\n' "$APP" "$PA_RC"
+            printf '{{.C_ERR}}  ⚠ PREWARM FALLBACK: Phase A did not scaffold %s (rc=%s, see %s and {{.PHASE_A_SCAFFOLD_LOG}}) — Phase B scaffolding now.{{.C_RESET}}\n' "$APP" "$PA_RC" "$PA_RUN_LOG"
           fi
           BSAUTH="{{.PLATFORM_DIR}}/scripts/validation/backstage-auth.sh"
           if [ ! -f "$BSAUTH" ]; then
