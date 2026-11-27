@@ -77,7 +77,8 @@ crossplane-provider and Ray roles moved to `privileged:pre`.
 above from the host. The host still needs:
 
 - Read access to those roles: `iam:GetRole`, `iam:ListAttachedRolePolicies`,
-  `iam:GetRolePolicy`.
+  `iam:GetRolePolicy`, and `iam:GetPolicy` / `iam:GetPolicyVersion` to read the
+  `<prefix>-cluster-mgmt-iam` scoped policy (all in `ReadOnlyAccess`).
 - `eks:CreatePodIdentityAssociation` and `iam:PassRole` on the roles it associates: the
   `<hub>-crossplane-provider` role, or the bring-your-own `hub.iam.crossplaneProviderRoleArn`
   role (`kind-kro-ack`, with `iam:GetRole` on it), and the two Ray roles.
