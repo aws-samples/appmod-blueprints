@@ -40,10 +40,14 @@ COMPOSITION = os.path.join(REPO, "gitops", "abstractions", "crossplane", "platfo
                            "templates", "composition.yaml")
 CLUSTER_MGMT_IAM = os.path.join(REPO, "cluster-providers", "common", "iam",
                                 "cluster-mgmt-iam-policy.json")
-# ACK IAM RGD directories: iam.services.k8s.aws CRs here are reconciled under an ACK IAM
-# identity (cluster-mgmt-iam, or the fallback capability role).
-ACK_RGD_DIRS = [os.path.join(REPO, "gitops", "addons", "charts", "kro"),
-                os.path.join(REPO, "gitops", "abstractions", "kro")]
+# Repo-relative globs of the dirs whose iam.services.k8s.aws CRs are reconciled under an ACK
+# IAM identity (cluster-mgmt-iam, or the fallback capability role): the kro RGDs, and the
+# ack-pod-identity chart, whose Role template renders identities[*].managedPolicyArns into
+# `policies:`, with the per-environment overlays that feed it.
+ACK_RGD_DIRS = ["gitops/addons/charts/kro",
+                "gitops/abstractions/kro",
+                "gitops/addons/charts/ack-pod-identity",
+                "gitops/overlays/environments/*/ack-pod-identities"]
 ACCT = "111111111111"
 ADMIN_LIKE = ["AdministratorAccess", "PowerUserAccess", "IAMFullAccess"]
 
@@ -244,9 +248,20 @@ def test_cluster_mgmt_iam_deny_covers_user_and_group_attach():
 ARN = re.compile(r"arn:(?:[^:\"'\s]*|\$\{[^}]+\}):iam::aws:policy/(service-role/)?([\w+=,.@-]+)")
 
 
-def ack_attached_aws_managed():
+def _ack_rgd_roots(repo):
+    import glob
+    return [d for pat in ACK_RGD_DIRS for d in sorted(glob.glob(os.path.join(repo, pat)))]
+
+
+def test_ack_rgd_dirs_exist():
+    roots = _ack_rgd_roots(REPO)
+    for pat in ACK_RGD_DIRS:
+        assert any(fnmatch.fnmatchcase(os.path.relpath(r, REPO), pat) for r in roots), pat
+
+
+def ack_attached_aws_managed(repo=REPO):
     names = set()
-    for root in ACK_RGD_DIRS:
+    for root in _ack_rgd_roots(repo):
         for dp, _, fs in os.walk(root):
             for fn in fs:
                 if not fn.endswith((".yaml", ".yml", ".tpl")):
@@ -278,6 +293,28 @@ def test_scanner_matches_partition_variable_form():
     sample = 'policyArn: "arn:${schema.spec.aws_partition}:iam::aws:policy/AmazonS3FullAccess"'
     m = ARN.search(sample.split("#", 1)[0])
     assert m and m.group(2) == "AmazonS3FullAccess"
+
+
+ACK_POD_IDENTITY_VALUES = [
+    "gitops/addons/charts/ack-pod-identity/values.yaml",
+    "gitops/overlays/environments/dev/ack-pod-identities/values.yaml",
+    "gitops/overlays/environments/prod/ack-pod-identities/values.yaml",
+]
+
+
+@pytest.mark.parametrize("rel", ACK_POD_IDENTITY_VALUES)
+def test_scanner_sees_ack_pod_identity_managed_policy_arns(tmp_path, rel):
+    """ack-pod-identity renders managedPolicyArns into the ACK Role `policies:`, so an AWS
+    managed policy added there is attached by cluster-mgmt-iam and must be allowlisted. Copy the
+    file into a scratch tree, add such an entry, and check the coverage scan sees it."""
+    import shutil
+    dst = tmp_path / rel
+    dst.parent.mkdir(parents=True)
+    shutil.copy(os.path.join(REPO, rel), dst)
+    with open(dst, "a") as f:
+        f.write("\n  zz-coverage-probe:\n    enabled: true\n    managedPolicyArns:\n"
+                "      - arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy\n")
+    assert "service-role/AmazonEBSCSIDriverPolicy" in ack_attached_aws_managed(str(tmp_path))
 
 
 # Allowlist entries no ACK CR in this repo attaches: shared with the Crossplane guard list or kept
