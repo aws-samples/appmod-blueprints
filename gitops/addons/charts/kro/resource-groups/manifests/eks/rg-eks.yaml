@@ -187,118 +187,12 @@ spec:
 
   resources:
 
-    ###########################################################
-    # Security Groups for Ingress
-    ###########################################################
-    - id: ingressHttpSecurityGroup
-      template:
-        apiVersion: ec2.services.k8s.aws/v1alpha1
-        kind: SecurityGroup
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ingress-http"
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of EC2 security groups that may be protecting production workloads
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            # #775 hub self-adoption pivot: adopt an existing ingress SG instead of a
-            # bare Create that fails Terminal "Resource already exists" on a pivot/re-run
-            # (EC2 rejects a duplicate group-name in a VPC). NO adoption-fields are needed:
-            # ACK's SecurityGroup find resolves the live sg-id from (group-name, vpc-id)
-            # when Status.ID is unset (ec2-controller getSecurityGroupID), and both are in
-            # spec — so the same manifest CREATES on a fresh cluster and ADOPTS on pivot.
-            services.k8s.aws/adoption-policy: adopt-or-create
-            # Honored only on a graceful kubectl-delete (task destroy); the pivot never
-            # graceful-deletes, so this does not affect adoption.
-            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
-        spec:
-          name: "${schema.spec.name}-ingress-http"
-          description: "HTTP from anywhere"
-          vpcID: ${schema.spec.network.vpcID}
-          ingressRules:
-            - fromPort: 80
-              toPort: 80
-              ipProtocol: tcp
-              ipRanges:
-                - cidrIP: "0.0.0.0/0"
-          egressRules:
-            - fromPort: 0
-              toPort: 0
-              ipProtocol: "-1"
-              ipRanges:
-                - cidrIP: "0.0.0.0/0"
-          tags:
-            - key: Name
-              value: "${schema.spec.name}-ingress-http"
-            - key: tenant
-              value: ${schema.spec.tenant}
-            - key: environment
-              value: ${schema.spec.environment}
-
-    - id: ingressHttpsSecurityGroup
-      template:
-        apiVersion: ec2.services.k8s.aws/v1alpha1
-        kind: SecurityGroup
-        metadata:
-          namespace: "${schema.spec.name}"
-          name: "${schema.spec.name}-ingress-https"
-          # PRODUCTION SAFETY: Uncomment the annotation below to retain AWS resources when deleting this Kro instance
-          # This prevents accidental deletion of EC2 security groups that may be protecting production workloads
-          # annotations:
-          #   services.k8s.aws/deletion-policy: retain
-          ownerReferences:
-            - apiVersion: kro.run/v1alpha1
-              kind: ${schema.kind}
-              name: ${schema.metadata.name}
-              uid: ${schema.metadata.uid}
-              blockOwnerDeletion: true
-              controller: false
-          annotations:
-            argocd.argoproj.io/tracking-id: ${schema.metadata.?annotations["argocd.argoproj.io/tracking-id"].orValue("")}
-            services.k8s.aws/region: ${schema.spec.region}
-            # #775 hub self-adoption pivot: adopt an existing ingress SG instead of a
-            # bare Create that fails Terminal "Resource already exists" on a pivot/re-run
-            # (EC2 rejects a duplicate group-name in a VPC). NO adoption-fields are needed:
-            # ACK's SecurityGroup find resolves the live sg-id from (group-name, vpc-id)
-            # when Status.ID is unset (ec2-controller getSecurityGroupID), and both are in
-            # spec — so the same manifest CREATES on a fresh cluster and ADOPTS on pivot.
-            services.k8s.aws/adoption-policy: adopt-or-create
-            # Honored only on a graceful kubectl-delete (task destroy); the pivot never
-            # graceful-deletes, so this does not affect adoption.
-            services.k8s.aws/deletion-policy: "${schema.spec.deletionPolicy}"
-        spec:
-          name: "${schema.spec.name}-ingress-https"
-          description: "HTTPS from anywhere"
-          vpcID: ${schema.spec.network.vpcID}
-          ingressRules:
-            - fromPort: 443
-              toPort: 443
-              ipProtocol: tcp
-              ipRanges:
-                - cidrIP: "0.0.0.0/0"
-          egressRules:
-            - fromPort: 0
-              toPort: 0
-              ipProtocol: "-1"
-              ipRanges:
-                - cidrIP: "0.0.0.0/0"
-          tags:
-            - key: Name
-              value: "${schema.spec.name}-ingress-https"
-            - key: tenant
-              value: ${schema.spec.tenant}
-            - key: environment
-              value: ${schema.spec.environment}
+    # No ingress SecurityGroups here. This RGD used to create <name>-ingress-http and
+    # <name>-ingress-https, each open to 0.0.0.0/0, that nothing attached: the platform ALB
+    # uses the SG the load balancer controller manages from IngressClassParams.inboundCIDRs
+    # (ingress-class-alb), and their IDs only reached the ingress_security_groups annotation
+    # below, which nothing reads. Unattached, they still bypassed the albInboundCidrs /
+    # spokeAlbInboundCidrs allowlist the moment anything attached one.
 
     ###########################################################
     # EKS Cluster
@@ -702,7 +596,9 @@ spec:
             # to "auto" -> eks.amazonaws.com/alb (Auto Mode), which does NOT support the
             # transforms/URL-rewrite annotation the workshop relies on.
             alb_controller_mode: "oss"
-            ingress_security_groups: "${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}"
+            # Kept, empty, for the metadata contract (the other providers write it from config
+            # ingressSecurityGroups, default ""). Nothing reads it; this RGD creates no ingress SG.
+            ingress_security_groups: ""
             # This spoke's own NAT egress CIDR(s); the ingress-class-alb registry entry passes it
             # as clusterEgressCidrs so the spoke ALB allows its own NAT once an allowlist is set.
             nat_egress_cidrs: "${schema.spec.natEgressCidrs}"
@@ -818,7 +714,7 @@ spec:
         type: Opaque
         stringData:
           config: |
-            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"aws_private_subnet_ids\":\"${schema.spec.network.subnets.workers.subnet1ID},${schema.spec.network.subnets.workers.subnet2ID}\",\"aws_cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"insecure\":\"${schema.spec.insecure}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"${ingressHttpSecurityGroup.status.id},${ingressHttpsSecurityGroup.status.id}\",\"nat_egress_cidrs\":\"${schema.spec.natEgressCidrs}\",\"config_inbound_cidrs\":\"${schema.spec.albInboundCidrs}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"enable_general_purpose_nodepool\":\"${schema.spec.enableGeneralPurposeNodePool}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"${schema.spec.fleetMember}\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
+            {"metadata":"{\"accountId\":\"${schema.spec.accountId}\",\"aws_account_id\":\"${schema.spec.accountId}\",\"region\":\"${schema.spec.region}\",\"aws_region\":\"${schema.spec.region}\",\"aws_central_region\":\"${schema.spec.region}\",\"oidcProvider\":\"${ekscluster.status.identity.oidc.issuer}\",\"eks_oidc_issuer\":\"${ekscluster.status.identity.oidc.issuer}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"hub_cluster_name\":\"${schema.spec.resourcePrefix}-hub\",\"aws_vpc_id\":\"${schema.spec.network.vpcID}\",\"aws_private_subnet_ids\":\"${schema.spec.network.subnets.workers.subnet1ID},${schema.spec.network.subnets.workers.subnet2ID}\",\"aws_cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"addonsRepoBasepath\":\"${schema.spec.gitops.addonsRepoBasePath}\",\"addonsRepoPath\":\"${schema.spec.gitops.addonsRepoPath}\",\"addonsRepoRevision\":\"${schema.spec.gitops.addonsRepoRevision}\",\"addonsRepoURL\":\"${schema.spec.gitops.addonsRepoUrl}\",\"fleetRepoBasepath\":\"${schema.spec.gitops.fleetRepoBasePath}\",\"fleetRepoPath\":\"${schema.spec.gitops.fleetRepoPath}\",\"fleetRepoRevision\":\"${schema.spec.gitops.fleetRepoRevision}\",\"fleetRepoURL\":\"${schema.spec.gitops.fleetRepoUrl}\",\"platformRepoBasepath\":\"${schema.spec.gitops.platformRepoBasePath}\",\"platformRepoPath\":\"${schema.spec.gitops.platformRepoPath}\",\"platformRepoRevision\":\"${schema.spec.gitops.platformRepoRevision}\",\"platformRepoURL\":\"${schema.spec.gitops.platformRepoUrl}\",\"workloadRepoBasepath\":\"${schema.spec.gitops.workloadRepoBasePath}\",\"workloadRepoPath\":\"${schema.spec.gitops.workloadRepoPath}\",\"workloadRepoRevision\":\"${schema.spec.gitops.workloadRepoRevision}\",\"workloadRepoURL\":\"${schema.spec.gitops.workloadRepoUrl}\",\"external_dns_domain_filters\":\"${schema.spec.domainName}\",\"external_dns_namespace\":\"${schema.spec.addons.external_dns_namespace}\",\"external_dns_policy\":\"${schema.spec.addons.external_dns_policy}\",\"external_dns_service_account\":\"${schema.spec.addons.external_dns_service_account}\",\"external_secrets_namespace\":\"${schema.spec.addons.external_secrets_namespace}\",\"external_secrets_service_account\":\"${schema.spec.addons.external_secrets_service_account}\",\"adot_collector_namespace\":\"${schema.spec.addons.adot_collector_namespace}\",\"adot_collector_service_account\":\"${schema.spec.addons.adot_collector_service_account}\",\"amp_endpoint_url\":\"${schema.spec.addons.amp_endpoint_url}\",\"fleet_secret_manager_secret_name\":\"${schema.spec.name}-${schema.spec.fleetSecretManagerSecretNameSuffix}\",\"ingress_name\":\"${schema.spec.name}-ingress\",\"ingress_domain_name\":\"${schema.spec.domainName}\",\"insecure\":\"${schema.spec.insecure}\",\"alb_controller_mode\":\"oss\",\"ingress_security_groups\":\"\",\"nat_egress_cidrs\":\"${schema.spec.natEgressCidrs}\",\"config_inbound_cidrs\":\"${schema.spec.albInboundCidrs}\",\"resource_prefix\":\"${schema.spec.resourcePrefix}\",\"enable_general_purpose_nodepool\":\"${schema.spec.enableGeneralPurposeNodePool}\",\"git_username\":\"${schema.spec.git_username}\"}","config":"{\"awsAuthConfig\":{\"clusterName\":\"${schema.spec.name}\"},\"tlsClientConfig\":{\"caData\":\"${ekscluster.status.certificateAuthority.data}\",\"insecure\":false}}","server":"${ekscluster.status.ackResourceMetadata.arn}","addons":"{\"fleet_member\":\"${schema.spec.fleetMember}\",\"tenant\":\"${schema.spec.tenant}\",\"environment\":\"${schema.spec.environment}\",\"provider\":\"${schema.spec.provider}\",\"aws_cluster_name\":\"${schema.spec.name}\",\"workloads\":\"${schema.spec.workloads}\"}","vpc":"{\"id\":\"${schema.spec.network.vpcID}\",\"cluster_security_group_id\":\"${ekscluster.status.clusterSecurityGroupID}\",\"subnet_ids\":[\"${schema.spec.network.subnets.workers.subnet1ID}\",\"${schema.spec.network.subnets.workers.subnet2ID}\"]}"}
 
     - id: clusterConfigSecretFleet
       includeWhen:
@@ -1246,7 +1142,8 @@ spec:
     # (adopted by derived ARN) — so a hub re-apply ADOPTS the live resources in place
     # instead of colliding with EC2/IAM "already exists". See
     # https://github.com/aws-samples/appmod-blueprints/issues/775 ("adopt existing
-    # cluster"). Every ACK resource in this RGD is now adopt-or-create.
+    # cluster"). Every ACK resource in this RGD is now adopt-or-create. (The ingress
+    # SecurityGroups were later removed: nothing attached them.)
     ###########################################################
     - id: externalSecretsPodIdentityAssociation
       readyWhen:
