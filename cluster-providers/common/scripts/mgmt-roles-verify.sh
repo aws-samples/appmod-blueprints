@@ -2,8 +2,10 @@
 # Read-only check of the <prefix>-cluster-mgmt-* IAM roles that `hub:create-mgmt-roles`
 # creates, plus any role named as an argument (existence only). Used when config.yaml
 # sets `privilegedSteps: external`: a separate, more privileged runner (e.g. a CodeBuild
-# project running `task privileged:pre`) created the roles, and the install host only needs iam:GetRole / ListAttachedRolePolicies /
-# GetRolePolicy (all in the AWS ReadOnlyAccess managed policy) to confirm they are there.
+# project running `task privileged:pre`) created the roles, and the install host only needs
+# iam:GetRole / ListAttachedRolePolicies / GetRolePolicy, plus iam:GetPolicy /
+# GetPolicyVersion to read the cluster-mgmt-iam scoped policy (all in the AWS ReadOnlyAccess
+# managed policy) to confirm they are there.
 #
 # Fails (exit 1) listing every missing role/policy, so an install that depends on the
 # external runner stops at once instead of leaving ACK stuck on "data pending" later.
@@ -63,6 +65,7 @@ MISSING=""
 ERRORS=""
 WARNINGS=""
 NOGUARD=""
+UNREADABLE=""
 add_error() { ERRORS="${ERRORS}    - $1: $(printf '%s' "$2" | tr '\n' ' ')
 "; }
 for svc in $SERVICES; do
@@ -103,7 +106,7 @@ for svc in $SERVICES; do
           *) NOGUARD="$NOGUARD $ROLE" ;;
         esac
       else
-        NOGUARD="$NOGUARD $ROLE(unreadable)"
+        UNREADABLE="$UNREADABLE $ROLE"
       fi
     fi
     case "$ATTACHED" in *policy/IAMFullAccess*)
@@ -167,7 +170,10 @@ for w in $WARNINGS; do
   fi
 done
 for r in $NOGUARD; do
-  echo "  ⚠ ${r%%(*} scoped policy has no DenyAttachAwsManagedPolicyOutsideAllowlist statement (older install, or policy not readable); re-run task privileged:pre on the runner to update it" >&2
+  echo "  ⚠ $r scoped policy has no DenyAttachAwsManagedPolicyOutsideAllowlist statement (older install); re-run task privileged:pre on the runner to update it" >&2
+done
+for r in $UNREADABLE; do
+  echo "  ⚠ $r: could not read the scoped policy (needs iam:GetPolicy and iam:GetPolicyVersion), so its DenyAttachAwsManagedPolicyOutsideAllowlist statement was not checked" >&2
 done
 if [ -n "$ERRORS" ]; then
   echo "✗ could not read the IAM roles (an AWS error, not a missing role):" >&2

@@ -418,7 +418,7 @@ def test_cross_account_script_fails_closed_without_jq_or_policy(tmp_path):
         assert "put-role-policy" not in log and not docs, sub
 
 
-def _run_verify(tmp_path, doc):
+def _run_verify(tmp_path, doc, get_policy_denied=False):
     """Run mgmt-roles-verify.sh for the iam role against a fake aws; return (rc, stdout, stderr)."""
     import shutil
     import subprocess
@@ -430,13 +430,14 @@ def _run_verify(tmp_path, doc):
         "case \"$1 $2\" in\n"
         "  'iam get-role') echo peeks-cluster-mgmt-iam;;\n"
         "  'iam list-attached-role-policies') echo arn:aws:iam::111111111111:policy/peeks-cluster-mgmt-iam-scoped;;\n"
-        "  'iam get-policy') echo v1;;\n"
+        "  'iam get-policy') [ -n \"$DENY\" ] && { echo AccessDenied >&2; exit 254; }; echo v1;;\n"
         "  'iam get-policy-version') printf '%s' \"$DOC\";;\n"
         "esac\n")
     fake.chmod(0o755)
     script = os.path.join(REPO, "cluster-providers", "common", "scripts", "mgmt-roles-verify.sh")
     env = {"PATH": str(bindir) + os.pathsep + os.environ["PATH"], "RESOURCE_PREFIX": "peeks",
-           "MGMT_SERVICES": "iam", "DOC": doc, "HOME": str(tmp_path)}
+           "MGMT_SERVICES": "iam", "DOC": doc, "HOME": str(tmp_path),
+           "DENY": "1" if get_policy_denied else ""}
     r = subprocess.run(["sh", script], env=env, capture_output=True, text=True)
     return r.returncode, r.stdout, r.stderr
 
@@ -452,3 +453,26 @@ def test_external_verify_silent_when_scoped_policy_has_the_deny(tmp_path):
     shared = open(CLUSTER_MGMT_IAM).read()
     rc, out, err = _run_verify(tmp_path, shared)
     assert rc == 0 and "DenyAttachAwsManagedPolicyOutsideAllowlist" not in err
+
+
+def test_external_verify_reports_unreadable_scoped_policy_separately(tmp_path):
+    """A failed scoped-policy read is a missing read permission, not a missing Deny:
+    re-running privileged:pre cannot clear it, so it gets its own message."""
+    rc, out, err = _run_verify(tmp_path, open(CLUSTER_MGMT_IAM).read(), get_policy_denied=True)
+    assert rc == 0
+    assert "could not read the scoped policy" in err
+    assert "iam:GetPolicy" in err and "iam:GetPolicyVersion" in err
+    assert "has no DenyAttachAwsManagedPolicyOutsideAllowlist" not in err
+
+
+def test_external_verify_read_set_documented():
+    """The reads the verify makes are listed in the script header and the install doc."""
+    script = open(os.path.join(REPO, "cluster-providers", "common", "scripts",
+                               "mgmt-roles-verify.sh")).read()
+    header = script.split("set -eu", 1)[0]
+    doc = open(os.path.join(REPO, "docs", "install", "privileged-steps.md")).read()
+    section = doc.split("## IAM the install host still needs in external mode", 1)[1]
+    for action in ("GetRole", "ListAttachedRolePolicies", "GetRolePolicy", "GetPolicy",
+                   "GetPolicyVersion"):
+        assert action in header, action
+        assert f"iam:{action}" in section, action
