@@ -131,8 +131,11 @@ echo ""
 
 # Step 1: Create roles in target account
 echo "--- Step 1: Target account roles ---"
-CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/${RESOURCE_PREFIX}-cluster-mgmt-iam" --role-session-name setup 2>/dev/null ||
-  aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole" --role-session-name setup 2>/dev/null ||
+# Assume only OrganizationAccountAccessRole. create_target_roles attaches AWS managed policies
+# (IAMFullAccess, AmazonEC2FullAccess, ...) that the DenyAttachAwsManagedPolicyOutsideAllowlist
+# statement on <prefix>-cluster-mgmt-iam refuses, so a run under that role would stop part-way
+# and leave the target account half configured.
+CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::${TARGET_ACCOUNT_ID}:role/OrganizationAccountAccessRole" --role-session-name setup 2>/dev/null ||
   echo "")
 
 if [ -z "$CREDS" ]; then

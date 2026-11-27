@@ -476,3 +476,13 @@ def test_external_verify_read_set_documented():
                    "GetPolicyVersion"):
         assert action in header, action
         assert f"iam:{action}" in section, action
+
+
+def test_cross_account_full_mode_does_not_start_from_cluster_mgmt_iam():
+    """Full mode must not assume <prefix>-cluster-mgmt-iam in the target account to create the
+    target roles: its attach Deny refuses the AWS managed policies create_target_roles attaches."""
+    script = open(os.path.join(REPO, "scripts", "create-cross-account-roles.sh")).read()
+    code = "\n".join(l.split("#", 1)[0] for l in script.splitlines())
+    targets = re.findall(r"assume-role\s+--role-arn\s+\"([^\"]+)\"", code)
+    assert targets, "no assume-role call found, the check broke"
+    assert not [t for t in targets if "cluster-mgmt-iam" in t], targets
