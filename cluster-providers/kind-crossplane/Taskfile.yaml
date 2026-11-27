@@ -1631,6 +1631,10 @@ tasks:
         # Stored fleet-wide spoke allowlist, only to warn when it changes (not preserved: config.yaml
         # is authoritative for it).
         PREV_SCIC=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .spoke_alb_inbound_cidrs) // empty' 2>/dev/null)
+        # Only a previous seed stores that value: compare only against a secret a seed wrote
+        # (every seed writes ingress_domain_name). A <hub>/config written by the EksCluster RGD
+        # bootstrap path (kind-kro-ack hub:claim) never has it and must not warn "stored: <none>".
+        SEEDED_BEFORE=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | has("ingress_domain_name")) // false' 2>/dev/null || true)
         # Build VPC JSON for the aws-resources chart ExternalSecret
         PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n \
@@ -1724,7 +1728,7 @@ tasks:
         # never pushes a later edit (gitops/addons/charts/kro/resource-groups/manifests/eks/README.md,
         # "Day-2"): a changed value reaches NEW spokes only, existing spoke ALBs stay as they were.
         # Say so on a re-seed whose value differs from the stored one. Non-fatal.
-        if [ -n "$PREV_SECRET" ] && [ "$PREV_SCIC" != "$SPOKE_ALB_INBOUND_CIDRS" ]; then
+        if [ "$SEEDED_BEFORE" = "true" ] && [ "$PREV_SCIC" != "$SPOKE_ALB_INBOUND_CIDRS" ]; then
           printf '{{.C_ERR}}[hub:seed] ⚠ WARNING: spokeAlbInboundCidrs changed (stored: %s -> now: %s).{{.C_RESET}}\n' "${PREV_SCIC:-<none>}" "${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
           echo "           Only spokes created from now on get the new value. Each EXISTING kro spoke keeps its old"
           echo "           ALB allowlist (open if it had none) until its ACK Secret spec is bumped: see"

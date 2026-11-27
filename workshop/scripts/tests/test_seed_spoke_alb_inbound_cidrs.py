@@ -20,6 +20,7 @@ Run:  python -m pytest workshop/scripts/tests/test_seed_spoke_alb_inbound_cidrs.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -225,6 +226,38 @@ class TestSeedSpokeDay2Warning:
     def test_no_warning_on_first_install(self, tmp_path, provider):
         _, res = _seed(tmp_path, provider, _cfg(spokeAlbInboundCidrs=["203.0.113.0/24"]))
         assert "spokeAlbInboundCidrs changed" not in res.stdout + res.stderr
+
+    def test_no_warning_over_the_rgd_bootstrap_secret(self, tmp_path, provider):
+        # Fresh kro-ack install: <hub>/config already exists before the first seed, written by
+        # the hub's own EksCluster RGD (bootstrap path). No seed has stored anything yet.
+        secret, res = _seed(tmp_path, provider, _cfg(spokeAlbInboundCidrs=["203.0.113.0/24"]),
+                            existing=_rgd_bootstrap_secret())
+        assert "spokeAlbInboundCidrs changed" not in res.stdout + res.stderr
+        assert _meta(secret)["spoke_alb_inbound_cidrs"] == "203.0.113.0/24"  # still written
+
+    def test_reseed_after_bootstrap_still_warns_on_a_real_change(self, tmp_path, provider):
+        first, _ = _seed(_sub(tmp_path, "a"), provider, _cfg(spokeAlbInboundCidrs=["203.0.113.0/24"]),
+                         existing=_rgd_bootstrap_secret())
+        _, res = _seed(_sub(tmp_path, "b"), provider, _cfg(spokeAlbInboundCidrs=["198.51.100.0/24"]),
+                       existing=first)
+        out = res.stdout + res.stderr
+        assert "spokeAlbInboundCidrs changed" in out
+        assert "203.0.113.0/24" in out and "198.51.100.0/24" in out
+
+
+RGD_EKS = os.path.join(REPO, "gitops", "addons", "charts", "kro", "resource-groups", "manifests",
+                       "eks", "rg-eks.yaml")
+
+
+def _rgd_bootstrap_secret():
+    """The <hub>/config value the EksCluster RGD writes on the createArgocdClusterSecret=="true"
+    path (hub:claim, kind bootstrap), read from the RGD itself with every ${...} filled in."""
+    with open(RGD_EKS) as f:
+        res = {r["id"]: r for r in yaml.safe_load(f)["spec"]["resources"]}
+    tmpl = res["clusterConfigK8sSecret"]["template"]["stringData"]["config"]
+    value = json.loads(re.sub(r"\$\{[^}]*\}", "x", tmpl))
+    assert "ingress_domain_name" not in json.dumps(value)  # what tells it apart from a seed
+    return json.dumps(value)
 
 
 # --- OAP forwarding into the generated appmod config.local.yaml -----------------------------

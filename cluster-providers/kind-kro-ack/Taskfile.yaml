@@ -1622,7 +1622,7 @@ tasks:
         EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
           --query SecretString --output text 2>/dev/null || echo "")
         PRESERVED_OVERLAY_URL=""; PRESERVED_OVERLAY_REV=""; PRESERVED_OVERLAY_BASE=""; PRESERVED_ARGOCD=""; PRESERVED_NAT=""
-        PRESERVED_OBS='{}'; PRESERVED_EDF=""; PRESERVED_FLEET_NAT=""; PRESERVED_SCIC=""
+        PRESERVED_OBS='{}'; PRESERVED_EDF=""; PRESERVED_FLEET_NAT=""; PRESERVED_SCIC=""; SEEDED_BEFORE=""
         if [ -n "$EXISTING" ]; then
           EMETA=$(echo "$EXISTING" | jq -r '.metadata // "{}"' | jq -c '. as $m | (if ($m|type)=="string" then ($m|fromjson) else $m end)' 2>/dev/null || echo "{}")
           PRESERVED_OVERLAY_URL=$(echo "$EMETA"  | jq -r '.overlay_repo_url // ""')
@@ -1638,6 +1638,12 @@ tasks:
           # Stored fleet-wide spoke allowlist, only to warn when it changes (it is NOT preserved:
           # config.yaml is authoritative for it).
           PRESERVED_SCIC=$(echo "$EMETA"         | jq -r '.spoke_alb_inbound_cidrs // ""')
+          # Only a previous seed stores that value. On a fresh install <hub>/config already
+          # exists before the first seed: the hub's EksCluster RGD writes its bootstrap config
+          # there (clusterConfigK8sSecret: cluster_name/region/account_id), so comparing against
+          # it warned "changed (stored: <none>)" with nothing stored. Every seed writes
+          # ingress_domain_name and that bootstrap never does.
+          SEEDED_BEFORE=$(echo "$EMETA" | jq -r 'try has("ingress_domain_name") // false' 2>/dev/null || true)
           # Same key list as seed-observability writes (non-empty values only).
           PRESERVED_OBS=$(echo "$EMETA" | jq -c '[ "aws_grafana_url",
               "spoke_dev_cluster_arn", "spoke_dev_private_subnet_ids", "spoke_dev_security_group_id",
@@ -1691,7 +1697,7 @@ tasks:
         # never pushes a later edit (gitops/addons/charts/kro/resource-groups/manifests/eks/README.md,
         # "Day-2"): a changed value reaches NEW spokes only, existing spoke ALBs stay as they were.
         # Say so on a re-seed whose value differs from the stored one. Non-fatal.
-        if [ -n "$EXISTING" ] && [ "$PRESERVED_SCIC" != "$SPOKE_ALB_INBOUND_CIDRS" ]; then
+        if [ "$SEEDED_BEFORE" = "true" ] && [ "$PRESERVED_SCIC" != "$SPOKE_ALB_INBOUND_CIDRS" ]; then
           printf '{{.C_ERR}}[hub:seed] ⚠ WARNING: spokeAlbInboundCidrs changed (stored: %s -> now: %s).{{.C_RESET}}\n' "${PRESERVED_SCIC:-<none>}" "${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
           echo "           Only spokes created from now on get the new value. Each EXISTING kro spoke keeps its old"
           echo "           ALB allowlist (open if it had none) until its ACK Secret spec is bumped: see"
