@@ -75,27 +75,39 @@ resolution`). It is not a failure, but a workshop participant will see it.
 
 ## Scraping it into Prometheus / AMP instead of the console
 
-The add-on can expose an OpenMetrics endpoint (v1.1.0+) through
-`addon.configurationValues`, which is the route to seeing flow metrics in Grafana
-without creating a CloudWatch monitor. Two things decide whether that is cheap:
+The add-on can expose an OpenMetrics endpoint (v1.1.0+), which is the route to flow
+metrics in Grafana without creating a CloudWatch monitor. It needs **no scrape-config
+change**: `observability-aws/files/scraper-config.yaml` already ships a generic
+`kubernetes-pods` job that keeps pods annotated `prometheus.io/scrape=true` and
+rewrites the target from `prometheus.io/port`, and the add-on schema does expose
+`podAnnotations` (confirmed against `describe-addon-configuration`, whose schema is
+closed — `additionalProperties: false`). The whole recipe:
 
-1. **The address is node-scoped, not pod-scoped.** The agent runs with
-   `hostNetwork: true`, so the default `OPEN_METRICS_ADDRESS=127.0.0.1` is reachable
-   only from the node and **cannot** be scraped. `0.0.0.0` binds the port on the
-   node's interfaces. Treat enabling it as an exposure decision and gate it with a
-   security group or NetworkPolicy that admits only the scraper.
-2. **Discovery may be free, or may need a scrape job.** The AMP scraper config in
-   `observability-aws/files/scraper-config.yaml` already carries a generic
-   `kubernetes-pods` job keyed on the `prometheus.io/scrape` pod annotation. If the
-   add-on permits setting pod annotations, scraping is zero-config; if it does not,
-   a dedicated job has to be added there. **Unverified** — it depends on the add-on's
-   `configurationSchema`, which one `eks describe-addon-configuration` call settles.
+```yaml
+addon:
+  configurationValues:
+    env:
+      OPEN_METRICS: "on"
+      OPEN_METRICS_ADDRESS: 0.0.0.0
+      OPEN_METRICS_PORT: 9109
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9109"
+```
 
-Note that this does not remove the CloudWatch side: the agent publishes to the
-Network Flow Monitor ingestion endpoint regardless, so the IAM role and its publish
-policy stay required. What the console gives on top of the raw agent metrics is the
-service-side aggregation — Workload insights / top contributors, and attribution of
-flows to an AZ, a VPC, another Region or an AWS service.
+`0.0.0.0` is required rather than lazy: the agent runs with `hostNetwork: true`, so its
+pod IP **is** the node IP and the scrape target resolves to `<nodeIP>:9109`. A
+`127.0.0.1` bind answers nothing from the collector. The flip side is a port open on the
+node's own interfaces, so gate it with a security group or NetworkPolicy admitting only
+the scraper.
+
+This does not make the add-on CloudWatch-free. The agent publishes to the Network Flow
+Monitor ingestion endpoint regardless — no schema knob disables publishing — so the IAM
+role and its publish policy stay required. `env.CUSTOM_INGESTION_ENDPOINT` exists and
+redirects that destination, but redirecting is not disabling and its accepted targets
+are untested here. What the console adds over the raw agent metrics is the service-side
+aggregation: Workload insights / top contributors, and attribution of flows to an AZ, a
+VPC, another Region or an AWS service.
 
 ## Scope and open points
 

@@ -35,22 +35,30 @@ addon:
   resolveConflicts: OVERWRITE
 
   # Optional add-on configuration, rendered as the configurationValues JSON string.
-  # The documented use is exposing the agent's OpenMetrics endpoint for Prometheus
-  # scraping (add-on v1.1.0+):
+  # The schema is CLOSED (additionalProperties: false). Read from
+  # describe-addon-configuration on v1.1.9-eksbuild.2, the full knob set is:
+  #   env: OPEN_METRICS (on|off), OPEN_METRICS_ADDRESS, OPEN_METRICS_PORT,
+  #        CUSTOM_INGESTION_ENDPOINT, RUST_LOG (off|trace|debug|info|warn|error)
+  #   podAnnotations, podLabels, additionalLabels, nodeSelector, affinity,
+  #   tolerations, resources, priorityClassName, rmemMax, caCerts
+  #
+  # To read the metrics in Grafana rather than the CloudWatch console, this is the
+  # whole recipe -- no scrape-config change is needed, because observability-aws
+  # already ships a generic `kubernetes-pods` job that keeps pods annotated
+  # prometheus.io/scrape=true and rewrites the target from prometheus.io/port:
   #   env:
   #     OPEN_METRICS: "on"
-  #     OPEN_METRICS_ADDRESS: 127.0.0.1
+  #     OPEN_METRICS_ADDRESS: 0.0.0.0
   #     OPEN_METRICS_PORT: 9109
-  # READ THIS BEFORE OPENING THE ENDPOINT. The agent DaemonSet runs with
-  # hostNetwork: true (observed live, not inferred), so the address is NOT
-  # pod-scoped:
-  #   * 127.0.0.1 (the default) is reachable only from the node itself, which means
-  #     a Prometheus or AMP scraper CANNOT reach it. The safe default is also the
-  #     useless one for scraping.
-  #   * 0.0.0.0 binds port OPEN_METRICS_PORT on the NODE's interfaces, not on a pod
-  #     IP. Anything that can route to the node can reach it.
-  # So enabling this for AMP/Grafana is a deliberate exposure decision: pair it with
-  # a security-group or NetworkPolicy rule that admits only the scraper.
+  #   podAnnotations:
+  #     prometheus.io/scrape: "true"
+  #     prometheus.io/port: "9109"
+  #
+  # 0.0.0.0 is REQUIRED here, not a lazy default: the agent runs with
+  # hostNetwork: true (observed live), so its pod IP IS the node IP and the scrape
+  # target resolves to <nodeIP>:9109. A 127.0.0.1 bind answers nothing from the
+  # collector. The flip side is a port open on the node's own interfaces, so pair it
+  # with a security-group or NetworkPolicy rule that admits only the scraper.
   configurationValues: {}
 
 iam:
