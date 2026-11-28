@@ -114,13 +114,20 @@ VPC, another Region or an AWS service.
 - **kro-ack only.** The registry selector requires `provider In ["kro-ack"]`. A
   crossplane twin (`eks.aws.upbound.io/Addon`, `iam.aws.upbound.io/Role`) is a
   mechanical port if a crossplane cluster ever needs it.
-- **One gap left: ACK adoption.** A second `CreateAddon` returns
-  `ResourceInUseException: Addon already exists`, which is exactly what
-  `adoption-policy: adopt-or-create` has to absorb — but that the ACK controller resolves
-  an existing `Addon` by `(clusterName, name)` **without** `adoption-fields` is still
-  unproven, because the validation cluster had no EKS ACK capability. It needs one run on
-  a hub. If adoption turns out to need `adoption-fields`, the fix is local to
-  `templates/addon.yaml`.
+- **ACK adoption: validated, no `adoption-fields` needed.** Tested on 2026-11-28 with a
+  kind cluster running `eks-controller` 1.27.0 and `iam-controller` 1.12.0 against a
+  pre-existing EKS Auto Mode cluster, with `adoption-policy: adopt-or-create` and no
+  `adoption-fields`:
+  - `eks.services.k8s.aws/Addon`, keyed by `(clusterName, name)`: the controller logged
+    `is_adopted:true`, set `ACK.ResourceSynced=True` and returned the ARN of the add-on
+    created beforehand with `aws eks create-addon`. Same add-on ARN and creation time,
+    one add-on and one Pod Identity association afterwards, no `ResourceInUseException`.
+  - `iam.services.k8s.aws/Role`, keyed by `name`: `is_adopted:true`,
+    `ACK.ResourceSynced=True`, ARN of the existing role, no `EntityAlreadyExists`.
+  - Side effect to expect: adoption rewrites the tags of the adopted role and add-on to
+    the CR's tags (plus the `services.k8s.aws/*` controller tags).
+  - Not covered: the test ran with `spec.policies` omitted, so managed-policy attachment
+    through the Role CR was not exercised on an adopted role.
 - Kubernetes 1.25+ is required by the add-on, which every cluster in this repo exceeds.
 
 ## References
