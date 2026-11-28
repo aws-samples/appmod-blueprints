@@ -73,6 +73,30 @@ Expect one benign log line on an IPv4-only VPC: the agent logs `ERROR` for an IM
 `.../vpc-ipv6-cidr-blocks`, then continues normally (`Loaded VPC CIDRs for NAT
 resolution`). It is not a failure, but a workshop participant will see it.
 
+## Scraping it into Prometheus / AMP instead of the console
+
+The add-on can expose an OpenMetrics endpoint (v1.1.0+) through
+`addon.configurationValues`, which is the route to seeing flow metrics in Grafana
+without creating a CloudWatch monitor. Two things decide whether that is cheap:
+
+1. **The address is node-scoped, not pod-scoped.** The agent runs with
+   `hostNetwork: true`, so the default `OPEN_METRICS_ADDRESS=127.0.0.1` is reachable
+   only from the node and **cannot** be scraped. `0.0.0.0` binds the port on the
+   node's interfaces. Treat enabling it as an exposure decision and gate it with a
+   security group or NetworkPolicy that admits only the scraper.
+2. **Discovery may be free, or may need a scrape job.** The AMP scraper config in
+   `observability-aws/files/scraper-config.yaml` already carries a generic
+   `kubernetes-pods` job keyed on the `prometheus.io/scrape` pod annotation. If the
+   add-on permits setting pod annotations, scraping is zero-config; if it does not,
+   a dedicated job has to be added there. **Unverified** — it depends on the add-on's
+   `configurationSchema`, which one `eks describe-addon-configuration` call settles.
+
+Note that this does not remove the CloudWatch side: the agent publishes to the
+Network Flow Monitor ingestion endpoint regardless, so the IAM role and its publish
+policy stay required. What the console gives on top of the raw agent metrics is the
+service-side aggregation — Workload insights / top contributors, and attribution of
+flows to an AZ, a VPC, another Region or an AWS service.
+
 ## Scope and open points
 
 - **kro-ack only.** The registry selector requires `provider In ["kro-ack"]`. A

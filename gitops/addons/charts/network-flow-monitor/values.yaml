@@ -41,8 +41,16 @@ addon:
   #     OPEN_METRICS: "on"
   #     OPEN_METRICS_ADDRESS: 127.0.0.1
   #     OPEN_METRICS_PORT: 9109
-  # 0.0.0.0 exposes the endpoint on every interface -- keep 127.0.0.1 unless a
-  # scraper outside the pod needs it and a NetworkPolicy restricts who may reach it.
+  # READ THIS BEFORE OPENING THE ENDPOINT. The agent DaemonSet runs with
+  # hostNetwork: true (observed live, not inferred), so the address is NOT
+  # pod-scoped:
+  #   * 127.0.0.1 (the default) is reachable only from the node itself, which means
+  #     a Prometheus or AMP scraper CANNOT reach it. The safe default is also the
+  #     useless one for scraping.
+  #   * 0.0.0.0 binds port OPEN_METRICS_PORT on the NODE's interfaces, not on a pod
+  #     IP. Anything that can route to the node can reach it.
+  # So enabling this for AMP/Grafana is a deliberate exposure decision: pair it with
+  # a security-group or NetworkPolicy rule that admits only the scraper.
   configurationValues: {}
 
 iam:
