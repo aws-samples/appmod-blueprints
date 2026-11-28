@@ -148,6 +148,14 @@ spec:
                 # empty value as "no platform tags" (awsTags: {}). Same pattern as the
                 # overlay_repo_* annotations read via `index` above.
                 platformTags: '{{ index .metadata.annotations "platform_tags" }}'
+                # Fleet-wide default source-IP allowlist for every spoke's own platform ALB,
+                # threaded from config.local.yaml spokeAlbInboundCidrs -> hub cluster-secret
+                # `spoke_alb_inbound_cidrs` annotation. kro-clusters/templates/clusters.yaml uses
+                # it as the default `albInboundCidrs` for each spoke claim (a spoke entry's own
+                # `albInboundCidrs` wins), which the EksCluster RGD stamps as the spoke secret
+                # config_inbound_cidrs annotation (-> chart configInboundCidrs). `index` so a hub
+                # without the annotation yields "" (no spoke allowlist), same pattern as above.
+                spokeAlbInboundCidrs: '{{ index .metadata.annotations "spoke_alb_inbound_cidrs" }}'
             valueFiles:
               - '$values/{{ .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'
               - '$overlay/{{ or (index .metadata.annotations "overlay_repo_basepath") .metadata.annotations.fleetRepoBasepath }}fleet/spoke-values/tenants/{{ index (splitList "/" .path.path) 4 }}/kro-clusters/values.yaml'

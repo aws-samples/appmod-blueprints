@@ -64,6 +64,11 @@ spec:
       # insecure setting rather than requiring every spoke declaration to
       # repeat it. See kro-clusters/templates/clusters.yaml.
       insecure: string | default="false"
+      # Optional source-IP allowlist for this spoke's own platform ALB (comma-separated CIDRs),
+      # passed through to the nested EksCluster which stamps the spoke cluster-secret
+      # config_inbound_cidrs annotation. Empty (default) = spoke ALB open (unchanged). Set via the
+      # fleet entry or the hub's spokeAlbInboundCidrs default (kro-clusters/templates/clusters.yaml).
+      albInboundCidrs: string | default=""
       # Forwarded to the nested EksCluster. "true" (default) keeps the built-in
       # Built-in general-purpose NodePool toggle; "false" keeps only the "system"
       # built-in (drops general-purpose). See rg-eks.yaml for the full rationale.
@@ -162,6 +167,14 @@ spec:
         # karpenter_service_account: string | default="karpenter-sa"
         # karpenter_sqs_queue_name: string | default=""
 
+    # Surface the nested Vpc's public NAT egress CIDR(s) (list of /32s, one per NAT; a single
+    # NAT today) so a consumer can read them from this top-level claim. On the hub the
+    # seed-fleet-nat-egress task reads the ACK ElasticIPAddress CRs directly, but exposing the
+    # value here keeps it available GitOps-natively. See rg-vpc.yaml and
+    # docs/platform/alb-ip-allowlist.md pitfall 1.
+    status:
+      natEgressCidrs: ${vpc.status.natEgressCidrs}
+
   resources:
   - id: vpc
     template:
@@ -237,9 +250,19 @@ spec:
           createArgocdClusterSecret: ${schema.spec.createArgocdClusterSecret}
           domainName: ${schema.spec.domainName}
           insecure: ${schema.spec.insecure}
+          # Spoke ALB source-IP allowlist, forwarded to the EksCluster (stamped as the spoke
+          # cluster-secret config_inbound_cidrs annotation). A plain schema value (not a VPC
+          # status ref), so it never gates cluster creation.
+          albInboundCidrs: ${schema.spec.albInboundCidrs}
           enableGeneralPurposeNodePool: ${schema.spec.enableGeneralPurposeNodePool}
           resourcePrefix: ${schema.spec.resourcePrefix}
           git_username: ${schema.spec.git_username}
+          # Spoke NAT egress CIDR(s) (comma-separated), from the nested Vpc graph's
+          # ElasticIPAddress status, so the EksCluster can stamp them onto the spoke cluster
+          # secret (nat_egress_cidrs) for its own ingress-class-alb allowlist. The EIP's public IP
+          # resolves early (alongside the subnets the cluster already waits on), so this adds no
+          # material delay to cluster creation.
+          natEgressCidrs: ${vpc.status.natEgressCidrs}
           awsTags: ${schema.spec.?awsTags.orValue({})}
           argocdCapability:
             enabled: ${schema.spec.argocdCapability.enabled}

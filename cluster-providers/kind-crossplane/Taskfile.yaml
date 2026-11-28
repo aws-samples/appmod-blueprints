@@ -1623,6 +1623,18 @@ tasks:
         # Keep the optional external-dns scope widening set by hand on <hub>/config
         # (docs/install/prerequisites.md); without it a re-install narrows domainFilters back.
         PREV_EDF=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .external_dns_domain_filters) // empty | tostring' 2>/dev/null || true)
+        # fleet_nat_egress_cidrs is written AFTER this seed by secrets-manager:seed-fleet-nat-egress
+        # (it needs the spokes provisioned), so preserve it across re-seeds like nat_egress_cidrs /
+        # the spoke_* observability keys, or a re-install drops the fleet spokes' NAT from the hub
+        # allowlist and breaks their SSO/telemetry.
+        PREV_FLEET_NAT=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .fleet_nat_egress_cidrs) // empty' 2>/dev/null)
+        # Stored fleet-wide spoke allowlist, only to warn when it changes (not preserved: config.yaml
+        # is authoritative for it).
+        PREV_SCIC=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | .spoke_alb_inbound_cidrs) // empty' 2>/dev/null)
+        # Only a previous seed stores that value: compare only against a secret a seed wrote
+        # (every seed writes ingress_domain_name). A <hub>/config written by the EksCluster RGD
+        # bootstrap path (kind-kro-ack hub:claim) never has it and must not warn "stored: <none>".
+        SEEDED_BEFORE=$(echo "$PREV_SECRET" | jq -r 'try (.metadata | fromjson | has("ingress_domain_name")) // false' 2>/dev/null || true)
         # Build VPC JSON for the aws-resources chart ExternalSecret
         PRIVATE_SUBNETS_JSON=$(echo "{{.PRIVATE_SUBNET_IDS}}" | tr ',' '\n' | jq -R . | jq -s .)
         VPC_JSON=$(jq -n \
@@ -1636,6 +1648,111 @@ tasks:
           echo "       Without a domain, ingress_domain_name in the cluster secret will be empty and all ArgoCD addon apps will misconfigure."
           exit 1
         fi
+        # Install-time source-IP allowlist for the shared "platform" ALB, from config.yaml
+        # (albInboundCidrs: a YAML list OR a comma-separated string). Normalised to a
+        # comma-separated string and written as the config_inbound_cidrs metadata key below;
+        # ESO turns it into a cluster-secret annotation that the ingress-class-alb registry
+        # entry passes to the chart as configInboundCidrs, concatenated with the overlay's
+        # inboundCidrs/extraInboundCidrs. Empty/absent -> key not written -> unchanged (ALB
+        # open unless a post-install overlay sets inboundCidrs). config.yaml is authoritative.
+        ALB_INBOUND_CIDRS=$(yq -r '[.albInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
+        if [ "$ALB_INBOUND_CIDRS" = "null" ]; then ALB_INBOUND_CIDRS=""; fi
+        echo "[hub:seed] config_inbound_cidrs=${ALB_INBOUND_CIDRS:-<none>}"
+        # Fleet-wide default source-IP allowlist for every spoke's OWN platform ALB
+        # (spokeAlbInboundCidrs: YAML list OR comma string). Written as the spoke_alb_inbound_cidrs
+        # metadata key; the clusters-kro appset threads it as the default albInboundCidrs for every
+        # spoke claim (a spoke's own fleet entry can override it), which the EksCluster RGD stamps
+        # onto the spoke cluster secret as config_inbound_cidrs -> configInboundCidrs. Empty/absent
+        # -> key not written -> spoke ALBs unchanged. config.yaml is authoritative.
+        SPOKE_ALB_INBOUND_CIDRS=$(yq -r '[.spokeAlbInboundCidrs] | flatten | map(select(. != null)) | join(",")' {{.CONFIG_FILE}} 2>/dev/null || echo "")
+        if [ "$SPOKE_ALB_INBOUND_CIDRS" = "null" ]; then SPOKE_ALB_INBOUND_CIDRS=""; fi
+        echo "[hub:seed] spoke_alb_inbound_cidrs=${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
+        # Reject a bad allowlist BEFORE anything is written (review #1308). The chart renders both
+        # values unchanged into IngressClassParams.inboundCIDRs; an entry the load balancer
+        # controller cannot parse fails the whole IngressGroup reconcile, so an ALB that is already
+        # open stays at 0.0.0.0/0 while the operator thinks it is restricted, and no other ingress
+        # change in the group is deployed. Every entry of both keys must be an IPv4 CIDR a.b.c.d/n
+        # (octets 0-255, n 0-32, no leading zeros, no host bits, no blank entry); entries are trimmed and the
+        # normalised comma-separated list is what gets written. A "," is appended before awk so a
+        # trailing comma yields a blank last record, refused like any blank entry (RS=, drops an
+        # unterminated empty last record). awk, not bash: go-task runs this
+        # under mvdan/sh, and the same program runs on the macOS (BWK) awk. Keep it BWK-portable:
+        # no "/" inside [...] (BWK ends the regex there: write \/) and no {n,m} intervals;
+        # test_seed_config_inbound_cidrs.py TestCidrCheckPortable checks both.
+        CIDR_CHECK='
+          function ok(c,  p, o, i, n, ip) {
+            if (c !~ /^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+\/[0-9]+$/) return 0
+            split(c, p, "/")
+            if (p[2] !~ /^(0|[1-9][0-9]?)$/ || p[2] + 0 > 32) return 0
+            split(p[1], o, ".")
+            for (i = 1; i <= 4; i++) if (o[i] !~ /^(0|[1-9][0-9]?[0-9]?)$/ || o[i] + 0 > 255) return 0
+            # network address only: the 32-n host bits must be 0 (10.0.0.1/8 is refused, write
+            # 10.0.0.0/8; a /32 is always fine). Exact in awk doubles (< 2^32).
+            n = p[2] + 0; ip = 0
+            for (i = 1; i <= 4; i++) ip = ip * 256 + o[i]
+            for (i = 0; i < 32 - n; i++) { if (ip % 2) return 0; ip = int(ip / 2) }
+            return 1
+          }
+          { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "") }
+          ok($0) { g = g (g == "" ? "" : ",") $0; next }
+          { b = b " \"" $0 "\"" }
+          END { if (b != "") { print b; exit 1 } else print g }'
+        if [ -n "$ALB_INBOUND_CIDRS" ] && ! ALB_INBOUND_CIDRS=$(printf '%s,' "$ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
+          printf '{{.C_ERR}}✗ albInboundCidrs: not an IPv4 CIDR (network address a.b.c.d/n, n 0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$ALB_INBOUND_CIDRS"
+          exit 1
+        fi
+        if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ] && ! SPOKE_ALB_INBOUND_CIDRS=$(printf '%s,' "$SPOKE_ALB_INBOUND_CIDRS" | awk -v RS=, "$CIDR_CHECK"); then
+          printf '{{.C_ERR}}✗ spokeAlbInboundCidrs: not an IPv4 CIDR (network address a.b.c.d/n, n 0-32):%s — fix config.local.yaml; nothing was written.{{.C_RESET}}\n' "$SPOKE_ALB_INBOUND_CIDRS"
+          exit 1
+        fi
+        # insecure: true => the hub ALB is internal behind CloudFront and only sees the CloudFront
+        # VPC-origin IPs, so a client allowlist cuts CloudFront off and every hub URL fails
+        # (docs/platform/alb-ip-allowlist.md pitfall 4). Refuse it instead of writing it.
+        if [ "{{.INSECURE}}" = "true" ] && [ -n "$ALB_INBOUND_CIDRS" ]; then
+          printf '{{.C_ERR}}✗ albInboundCidrs is set with insecure: true. The hub ALB is then internal behind CloudFront and would block CloudFront itself.{{.C_RESET}}\n'
+          printf '{{.C_ERR}}  Remove albInboundCidrs and filter clients at the edge (AWS WAF IP set). See docs/platform/alb-ip-allowlist.md pitfall 4. Nothing was written.{{.C_RESET}}\n'
+          exit 1
+        fi
+        # Non-fatal hardening warning: an own-domain (internet-facing) hub whose shared
+        # "platform" ALB has no install-time allowlist is reachable from any source IP. Only
+        # when insecure != true (insecure=true => internal ALB behind an upstream edge, where
+        # a client allowlist must NOT be set, see docs/platform/alb-ip-allowlist.md pitfall 4).
+        if [ -n "{{.INGRESS_DOMAIN}}" ] && [ "{{.INSECURE}}" != "true" ] && [ -z "$ALB_INBOUND_CIDRS" ]; then
+          echo "[hub:seed] ⚠ WARNING: domain is set and the shared platform ALB has no source-IP allowlist."
+          echo "           The internet-facing ALB (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana) will accept connections from any source IP."
+          echo "           To restrict it from install time, set 'albInboundCidrs' in config.local.yaml"
+          echo "           (the hub NAT is added for you, kro spoke NATs by seed-fleet-nat-egress). See docs/platform/alb-ip-allowlist.md."
+        fi
+        # Day-2 (review #1308): a spoke gets spoke_alb_inbound_cidrs only when its EksCluster is
+        # CREATED. The ACK Secret behind <spoke>/config only references the kro data Secret, so ACK
+        # never pushes a later edit (gitops/addons/charts/kro/resource-groups/manifests/eks/README.md,
+        # "Day-2"): a changed value reaches NEW spokes only, existing spoke ALBs stay as they were.
+        # Say so on a re-seed whose value differs from the stored one. Non-fatal.
+        if [ "$SEEDED_BEFORE" = "true" ] && [ "$PREV_SCIC" != "$SPOKE_ALB_INBOUND_CIDRS" ]; then
+          printf '{{.C_ERR}}[hub:seed] ⚠ WARNING: spokeAlbInboundCidrs changed (stored: %s -> now: %s).{{.C_RESET}}\n' "${PREV_SCIC:-<none>}" "${SPOKE_ALB_INBOUND_CIDRS:-<none>}"
+          echo "           Only spokes created from now on get the new value. Each EXISTING kro spoke keeps its old"
+          echo "           ALB allowlist (open if it had none) until its ACK Secret spec is bumped: see"
+          echo "           docs/platform/alb-ip-allowlist.md, 'Existing spokes (day-2)'."
+        fi
+        # Two non-fatal checks on the hub allowlist built from config.yaml (review #1308):
+        # - no hub NAT known (lookup failed on a first install, or egress through a TGW/proxy):
+        #   the hub apps' own server-side Keycloak calls through this ALB are then blocked;
+        # - size: each entry is two security-group rules (HTTP + HTTPS) and the default limit is
+        #   60, so above ~28 entries the load balancer controller's SG update fails, which only
+        #   shows as an Ingress event. Counted before any overlay inboundCidrs/extraInboundCidrs.
+        if [ -n "$ALB_INBOUND_CIDRS" ]; then
+          if [ -z "$NAT_FINAL" ]; then
+            printf '{{.C_WARN}}[hub:seed] ⚠ WARNING: albInboundCidrs is set but no hub NAT egress IP is known (NAT lookup failed, or the hub egresses through a Transit Gateway/proxy).{{.C_RESET}}\n'
+            echo "           The hub apps' own SSO calls to Keycloak through this ALB will time out: add that egress IP to albInboundCidrs."
+            echo "           See docs/platform/alb-ip-allowlist.md pitfall 1."
+          fi
+          N_ALLOW=$(printf '%s,%s,%s' "$ALB_INBOUND_CIDRS" "$NAT_FINAL" "$PREV_FLEET_NAT" | tr ',' '\n' | awk 'NF' | sort -u | wc -l | tr -d ' ')
+          if [ "$N_ALLOW" -gt 28 ]; then
+            printf '{{.C_WARN}}[hub:seed] ⚠ WARNING: the hub ALB allowlist has %s entries before any overlay entries (albInboundCidrs + hub NAT + spoke NATs).{{.C_RESET}}\n' "$N_ALLOW"
+            echo "           Each entry is 2 security-group rules (HTTP + HTTPS) and the default limit is 60: beyond ~28 entries the"
+            echo "           ALB security-group update fails (only visible as an Ingress event). Summarise ranges or use AWS WAF (pitfall 3)."
+          fi
+        fi
         METADATA='{"addonsRepoURL":"{{.REPO_URL}}","addonsRepoRevision":"{{.REPO_REVISION}}","addonsRepoBasepath":"{{.REPO_BASEPATH}}","addons_repo_url":"{{.AGENTIC_REPO_URL}}","addons_repo_revision":"{{.AGENTIC_REPO_REVISION}}","fleetRepoURL":"{{.FLEET_REPO_URL}}","fleetRepoRevision":"{{.FLEET_REPO_REVISION}}","fleetRepoBasepath":"{{.FLEET_REPO_BASEPATH}}","aws_region":"{{.AWS_REGION}}","aws_account_id":"{{.AWS_ACCOUNT_ID}}","aws_cluster_name":"{{.HUB_CLUSTER_NAME}}","aws_cluster_arn":"{{.CLUSTER_ARN}}","aws_vpc_id":"{{.VPC_ID}}","aws_subnet_ids":"{{.SUBNET_IDS}}","aws_private_subnet_ids":"{{.PRIVATE_SUBNET_IDS}}","aws_cluster_security_group_id":"{{.CLUSTER_SG}}","alb_controller_mode":"oss","ingress_domain_name":"{{.INGRESS_DOMAIN}}","ingress_name":"{{.INGRESS_NAME}}","ingress_security_groups":"{{.INGRESS_SECURITY_GROUPS}}","insecure":"{{.INSECURE}}","certificate_arn":"{{.CERTIFICATE_ARN}}","resource_prefix":"{{.RESOURCE_PREFIX}}","admin_role_name":"{{.ADMIN_ROLE_NAME}}","gitlab_domain_name":"{{.GITLAB_DOMAIN}}","git_token":"{{.USER_PASSWORD}}","aws_argocd_url":"'"$ARGOCD_FINAL"'"}'
         if [ -n "$OVL_URL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg u "$OVL_URL" --arg r "$OVL_REV" --arg b "$OVL_BP" '. + {overlay_repo_url:$u, overlay_repo_revision:$r, overlay_repo_basepath:$b}')
@@ -1643,6 +1760,15 @@ tasks:
         fi
         if [ -n "$NAT_FINAL" ]; then
           METADATA=$(echo "$METADATA" | jq -c --arg n "$NAT_FINAL" '. + {nat_egress_cidrs:$n}')
+        fi
+        if [ -n "$ALB_INBOUND_CIDRS" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg c "$ALB_INBOUND_CIDRS" '. + {config_inbound_cidrs:$c}')
+        fi
+        if [ -n "$SPOKE_ALB_INBOUND_CIDRS" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg s "$SPOKE_ALB_INBOUND_CIDRS" '. + {spoke_alb_inbound_cidrs:$s}')
+        fi
+        if [ -n "$PREV_FLEET_NAT" ]; then
+          METADATA=$(echo "$METADATA" | jq -c --arg f "$PREV_FLEET_NAT" '. + {fleet_nat_egress_cidrs:$f}')
         fi
         if [ "$PREV_OBS" != "{}" ]; then
           METADATA=$(echo "$METADATA" | jq -c --argjson o "$PREV_OBS" '$o + .')
@@ -1714,6 +1840,204 @@ tasks:
           --secret-string "$CONFIG_UPDATED" \
           --region {{.AWS_REGION}} >/dev/null
         printf '{{.C_OK}}✓ nat_egress_cidrs in %s: %s -> %s{{.C_RESET}}\n' "$SECRET_KEY" "${STORED:-<none>}" "${NAT:-<none>}"
+      - task: hub:force-eso-refresh
+
+  secrets-manager:seed-fleet-nat-egress:
+    desc: Union the NAT egress IP(s) of all registered fleet spokes into fleet_nat_egress_cidrs of <hub>/config, then force an ESO refresh
+    cmds:
+      # The spoke cluster secrets and ElasticIPAddress CRs live on the HUB. The Taskfile-level
+      # env KUBECONFIG is the kind bootstrap cluster (or gone after the pivot), so fetch the hub
+      # kubeconfig and pass it to every kubectl call, as hub:force-eso-refresh does.
+      - task: hub:kubeconfig
+      - |
+        # A spoke's addons can call THIS hub's public Keycloak (OIDC/JWKS) and OTel endpoint
+        # server-side, egressing through the spoke's own VPC NAT, so the hub ALB must allow those
+        # NAT EIPs (docs/platform/alb-ip-allowlist.md pitfall 1). We allow EVERY registered spoke's
+        # NAT, not a per-addon subset: any addon may make such a call, and a few extra /32s of our
+        # own NAT gateways cost nothing while a missed one breaks that spoke's SSO. The hub holds
+        # every spoke's ACK ElasticIPAddress CR — the kro EksclusterWithVpc graph runs on the hub,
+        # namespace = spoke name — so this reads them locally: no AWS NAT lookup, no cross-cluster
+        # access, nothing in git, no extra IAM.
+        #
+        # WHEN: runs AFTER the spokes are provisioned. The base cluster-providers install is
+        # hub-only (spokes are a consumer concern), so it is not in this provider's install DAG:
+        # the workshop install runs it once wait-for-spokes reports the spokes ACTIVE, and
+        # workshop spokes:sweep-kro runs it after deleting a spoke. Spokes added or removed any
+        # other way (a direct install, the Backstage EKS template, OAP, a hand-written
+        # kro-clusters entry) need a manual re-run. It REBUILDS the union from the live resources
+        # every run, so a spoke added later is included on the next run and a removed spoke drops out (its
+        # EIP CR and cluster secret are gone -> its IP is no longer in the union; an empty union
+        # removes the key). The value is written to fleet_nat_egress_cidrs in <hub>/config
+        # (preserved across re-seeds by secrets-manager:seed); the registry passes it to
+        # ingress-class-alb as fleetEgressCidrs, which the chart appends to the allowlist ONLY when
+        # one is set — so with no allowlist this changes nothing.
+        SECRET_KEY="{{.HUB_CLUSTER_NAME}}/config"
+        # Spoke selection (generic, no cluster name / prefix / IP hard-coded): EVERY registered
+        # spoke cluster secret (label argocd.argoproj.io/secret-type=cluster) that is NOT the
+        # control-plane and is not being deleted. No per-addon filter: ANY addon on a spoke may
+        # call the hub's public Keycloak server-side (OIDC/JWKS) or the hub OTel endpoint, so the
+        # cheap, robust rule is to allow every spoke's own NAT EIP — a few extra /32s of our own
+        # NAT gateways cost nothing on the ALB security group, a broken spoke SSO does. A spoke
+        # with no resolved EIP (or whose EIP is being released) contributes nothing (handled below).
+        #
+        # A kubectl READ FAILURE must never masquerade as "zero spokes": that would let the empty
+        # union DELETE a stored fleet_nat_egress_cidrs on a transient apiserver/token/throttle error
+        # and silently drop every spoke's NAT from the allowlist (breaking their SSO/OTel). So FAIL
+        # CLOSED — warn, keep the stored value, exit non-zero — on any non-zero kubectl rc. Only a
+        # SUCCESSFUL read that finds no eligible spoke (or no EIP) yields an empty union that
+        # legitimately clears the key.
+        KC={{.ROOT_DIR}}/private/hub-kubeconfig
+        if ! SECRETS_JSON=$(KUBECONFIG="$KC" kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null); then
+          printf '{{.C_ERR}}⚠ kubectl get secrets failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
+          exit 1
+        fi
+        SPOKES=$(echo "$SECRETS_JSON" | jq -r '
+          .items[]
+          | select((.metadata.labels["fleet_member"] // "") != "control-plane")
+          | select(.metadata.deletionTimestamp == null)
+          | (.metadata.annotations["aws_cluster_name"] // .metadata.name)' | sort -u)
+        # The kro spoke instances (EksclusterWithVpc, namespace = spoke name) say which spokes are
+        # being deleted: kro keeps the instance's deletionTimestamp until its whole graph is gone,
+        # and deletes the EIP last, after the NAT gateway. The cluster Secret's own
+        # deletionTimestamp (filtered above) is no such signal: it has no finalizer, so it never
+        # lingers, and spokes:disable-kro keeps the Secret up to 180 s after the prune (for good
+        # when the appsets do not refresh). Read on every run, registered spokes or not. A read
+        # error fails closed with no bypass: without it a spoke being deleted cannot be told from
+        # a live one, so fix the access first. A missing type means "no kro spoke", but never
+        # shrinks a stored union without FLEET_NAT_FORCE=true (checked below).
+        INST_ERR=$(mktemp); INST_TYPE_MISSING=""
+        if ! INST_ALL=$(KUBECONFIG="$KC" kubectl get eksclusterwithvpcs.kro.run -A -o json 2>"$INST_ERR"); then
+          if grep -q "doesn't have a resource type" "$INST_ERR"; then
+            INST_ALL='{"items":[]}'; INST_TYPE_MISSING=1
+          else
+            rm -f "$INST_ERR"
+            printf '{{.C_ERR}}⚠ kubectl get eksclusterwithvpcs -A failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
+        rm -f "$INST_ERR"
+        # Namespaces (space-delimited) whose kro spoke instance is live (LIVE) or being deleted (DELETING).
+        LIVE=" $(echo $(echo "$INST_ALL" | jq -r '.items[]? | select(.metadata.deletionTimestamp == null) | .metadata.namespace // empty' | sort -u)) "
+        DELETING=" $(echo $(echo "$INST_ALL" | jq -r '.items[]? | select(.metadata.deletionTimestamp != null) | .metadata.namespace // empty' | sort -u)) "
+        FLEET_ITEMS=""
+        for SPOKE in $SPOKES; do
+          [ -n "$SPOKE" ] || continue
+          case "$DELETING" in
+            *" $SPOKE "*)
+              printf '{{.C_WARN}}⚠ spoke %s: being deleted (EksclusterWithVpc deletionTimestamp): its NAT is NOT added.{{.C_RESET}}\n' "$SPOKE"
+              continue ;;
+          esac
+          if ! EIP_JSON=$(KUBECONFIG="$KC" kubectl get elasticipaddresses.ec2.services.k8s.aws -n "$SPOKE" -o json 2>/dev/null); then
+            printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses failed for spoke %s — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n' "$SPOKE"
+            exit 1
+          fi
+          # Skip an EIP that is being released (deletionTimestamp set): its publicIP may still be
+          # present but the address is going away, so it must not stay in the allowlist.
+          IPS=$(echo "$EIP_JSON" | jq -r '.items[]? | select(.metadata.deletionTimestamp == null) | .status.publicIP // empty | select(. != "") | . + "/32"')
+          # Only kro spokes have an ACK ElasticIPAddress here. A spoke created as a Crossplane
+          # composition (spokes:enable-crossplane) has a Crossplane EIP instead, and is not covered:
+          # say so rather than silently leaving its NAT out of the hub allowlist.
+          if [ -z "$IPS" ]; then
+            printf '{{.C_WARN}}⚠ spoke %s: no ACK ElasticIPAddress with a public IP on the hub, so its NAT is NOT added (a Crossplane-composed spoke, or one still provisioning). If the hub ALB has an allowlist, list that NAT by hand (albInboundCidrs or extraInboundCidrs).{{.C_RESET}}\n' "$SPOKE"
+          fi
+          FLEET_ITEMS="$FLEET_ITEMS $IPS"
+        done
+        # A kro spoke whose Argo CD cluster secret is not registered (yet: still provisioning, or
+        # wait-for-spokes gave up on it; or briefly absent on a re-run) is not in $SPOKES, but its
+        # ACK ElasticIPAddress already lives on the hub, namespace = spoke name. Reading only the
+        # cluster secrets skipped it silently: on a first install its NAT was never added, on a
+        # re-run its stored NAT was dropped. So also list every EIP on the hub. An EIP in a
+        # namespace that no cluster secret names is added ONLY when that namespace holds a live
+        # EksclusterWithVpc (no deletionTimestamp): a spoke being provisioned. A spoke being
+        # deleted never qualifies, with or without its cluster secret: the main loop above skips
+        # a registered one, and here a deleting instance is not live, so its EIP (deleted last
+        # by kro) is not re-added before it is released. An EIP in a namespace with no live kro
+        # instance is not a spoke's: reported, NOT added. Fail closed on a read error. A missing
+        # CRD means "no such object", except that a missing type never shrinks a stored union
+        # without FLEET_NAT_FORCE=true (checked below).
+        KNOWN=$(echo "$SECRETS_JSON" | jq -r '.items[] | .metadata.name, (.metadata.annotations["aws_cluster_name"] // empty)' | sort -u)
+        EIP_ERR=$(mktemp); EIP_TYPE_MISSING=""
+        if ! EIP_ALL=$(KUBECONFIG="$KC" kubectl get elasticipaddresses.ec2.services.k8s.aws -A -o json 2>"$EIP_ERR"); then
+          if grep -q "doesn't have a resource type" "$EIP_ERR"; then
+            EIP_ALL='{"items":[]}'; EIP_TYPE_MISSING=1
+          else
+            rm -f "$EIP_ERR"
+            printf '{{.C_ERR}}⚠ kubectl get elasticipaddresses -A failed — fleet_nat_egress_cidrs left unchanged.{{.C_RESET}}\n'
+            exit 1
+          fi
+        fi
+        rm -f "$EIP_ERR"
+        ORPHANS=$(echo "$EIP_ALL" | jq -r --arg known "$KNOWN" '($known | split("\n")) as $k
+          | [.items[]? | select(.metadata.deletionTimestamp == null)
+              | select((.metadata.namespace // "") as $n | any($k[]; . == $n) | not)]
+          | group_by(.metadata.namespace)[]
+          | "\(.[0].metadata.namespace)=\([.[] | .status.publicIP // empty | select(. != "") | . + "/32"] | join(","))"')
+        for O in $ORPHANS; do
+          NS=${O%%=*}; OIPS=${O#*=}
+          case "$LIVE" in *" $NS "*) LIVE_NS=true ;; *) LIVE_NS=false ;; esac
+          if [ "$LIVE_NS" != true ]; then
+            printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress (%s) with no registered Argo CD cluster secret and no EksclusterWithVpc that is not being deleted (a spoke being deleted, or not a spoke): NOT added.{{.C_RESET}}\n' "$NS" "${OIPS:-no public IP}"
+          elif [ -n "$OIPS" ]; then
+            printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress but no registered Argo CD cluster secret (a spoke still provisioning?): its NAT %s is added. Re-run this task once the spoke is registered.{{.C_RESET}}\n' "$NS" "$OIPS"
+            FLEET_ITEMS="$FLEET_ITEMS $(echo "$OIPS" | tr ',' ' ')"
+          else
+            printf '{{.C_WARN}}⚠ namespace %s: ACK ElasticIPAddress with no public IP yet and no registered Argo CD cluster secret: its NAT is NOT added. Re-run this task once the spoke is up.{{.C_RESET}}\n' "$NS"
+          fi
+        done
+        # Unquoted on purpose: word-split the accumulated IPs (no spaces in a CIDR) one per line,
+        # drop blanks, dedupe, sort, join with commas. Empty -> FLEET="".
+        FLEET=$(printf '%s\n' $FLEET_ITEMS | awk 'NF' | sort -u | paste -sd, -)
+        echo "[seed-fleet-nat-egress] spokes: $(echo $SPOKES | tr '\n' ' ')"
+        echo "[seed-fleet-nat-egress] fleet_nat_egress_cidrs=${FLEET:-<none>}"
+        CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$SECRET_KEY" --region {{.AWS_REGION}} \
+          --query SecretString --output text 2>/dev/null) || CONFIG_EXISTING=""
+        if [ -z "$CONFIG_EXISTING" ]; then
+          printf '{{.C_ERR}}⚠ %s not readable — run the install (secrets-manager:seed) first.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        fi
+        STORED=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .fleet_nat_egress_cidrs // ""') || {
+          printf '{{.C_ERR}}⚠ %s metadata is not JSON — fleet_nat_egress_cidrs not updated.{{.C_RESET}}\n' "$SECRET_KEY"
+          exit 1
+        }
+        # Size check (non-fatal, review #1308): with an allowlist set, every entry is two
+        # security-group rules (HTTP + HTTPS) and the default limit is 60, so above ~28 entries the
+        # ALB security-group update fails (only visible as an Ingress event). Counted before any
+        # overlay inboundCidrs/extraInboundCidrs.
+        ALLOW_CFG=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .config_inbound_cidrs // ""' 2>/dev/null) || ALLOW_CFG=""
+        if [ -n "$ALLOW_CFG" ]; then
+          HUB_NAT=$(echo "$CONFIG_EXISTING" | jq -r '.metadata // "{}" | (if type == "string" then fromjson else . end) | .nat_egress_cidrs // ""' 2>/dev/null) || HUB_NAT=""
+          N_ALLOW=$(printf '%s,%s,%s' "$ALLOW_CFG" "$HUB_NAT" "$FLEET" | tr ',' '\n' | awk 'NF' | sort -u | wc -l | tr -d ' ')
+          if [ "$N_ALLOW" -gt 28 ]; then
+            printf '{{.C_WARN}}⚠ the hub ALB allowlist has %s entries before any overlay entries (albInboundCidrs + hub NAT + spoke NATs): beyond ~28 the ALB security-group update fails (60-rule default, 2 rules per entry). Summarise ranges or use AWS WAF (docs/platform/alb-ip-allowlist.md pitfall 3).{{.C_RESET}}\n' "$N_ALLOW"
+          fi
+        fi
+        # The hub said it has no ElasticIPAddress or no EksclusterWithVpc type while a union is
+        # stored: most likely an API discovery gap, not "no spoke". Never shrink the stored union
+        # on that (fail closed), unless the operator says the type is really gone (every kro
+        # spoke deleted, then the controller removed): FLEET_NAT_FORCE=true.
+        MISSING=""
+        [ -z "$EIP_TYPE_MISSING" ] || MISSING="ElasticIPAddress"
+        [ -z "$INST_TYPE_MISSING" ] || MISSING="${MISSING:+$MISSING and }EksclusterWithVpc"
+        if [ -n "$MISSING" ] && [ -n "$STORED" ] && [ "$STORED" != "$FLEET" ]; then
+          if [ "{{.FLEET_NAT_FORCE | default "false"}}" = "true" ]; then
+            printf '{{.C_WARN}}⚠ the hub reports no %s type; FLEET_NAT_FORCE=true: fleet_nat_egress_cidrs %s -> %s.{{.C_RESET}}\n' "$MISSING" "$STORED" "${FLEET:-<none>}"
+          else
+            printf '{{.C_ERR}}⚠ the hub reports no %s type, but %s holds fleet_nat_egress_cidrs (%s) — left unchanged. Check the ACK EC2 controller / kro, then re-run; if that type is really gone on purpose, re-run once with: task kind-crossplane:secrets-manager:seed-fleet-nat-egress FLEET_NAT_FORCE=true (an argument of that one run; do not export it).{{.C_RESET}}\n' "$MISSING" "$SECRET_KEY" "$STORED"
+            exit 1
+          fi
+        fi
+        if [ "$STORED" = "$FLEET" ]; then
+          printf '{{.C_OK}}✓ fleet_nat_egress_cidrs already up to date in %s (%s).{{.C_RESET}}\n' "$SECRET_KEY" "${FLEET:-<none>}"
+          exit 0
+        fi
+        CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq --arg f "$FLEET" \
+          '.metadata = (.metadata // "{}" | (if type == "string" then fromjson else . end)
+             | (if $f == "" then del(.fleet_nat_egress_cidrs) else .fleet_nat_egress_cidrs = $f end) | tojson)')
+        aws secretsmanager put-secret-value \
+          --secret-id "$SECRET_KEY" \
+          --secret-string "$CONFIG_UPDATED" \
+          --region {{.AWS_REGION}} >/dev/null
+        printf '{{.C_OK}}✓ fleet_nat_egress_cidrs in %s: %s -> %s{{.C_RESET}}\n' "$SECRET_KEY" "${STORED:-<none>}" "${FLEET:-<none>}"
       - task: hub:force-eso-refresh
 
   secrets-manager:seed-keycloak:
@@ -2154,6 +2478,11 @@ tasks:
           fi
         done
         if [ -n "$SPOKE_DEV_ARN" ] || [ -n "$SPOKE_PROD_ARN" ]; then
+          # Re-read <hub>/config right before writing it: the spoke loop above can wait many
+          # minutes for a CREATING spoke, and other tasks merge their own keys into this secret
+          # meanwhile (the workshop install runs seed-fleet-nat-egress as soon as the spokes are
+          # ACTIVE). Writing back the copy read before the wait would drop those keys.
+          CONFIG_EXISTING=$(aws secretsmanager get-secret-value --secret-id "$CONFIG_KEY" --region {{.AWS_REGION}} --query "SecretString" --output text)
           CONFIG_UPDATED=$(echo "$CONFIG_EXISTING" | jq \
             --arg sda "$SPOKE_DEV_ARN" \
             --arg sds "$SPOKE_DEV_SUBNETS" \

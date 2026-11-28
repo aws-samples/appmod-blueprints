@@ -24,6 +24,10 @@ The `ingress-class-alb` chart accepts two optional values that you set:
 A third value, `clusterEgressCidrs`, is filled automatically and only matters once an allowlist
 is set: see [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes).
 
+A fourth value, `configInboundCidrs`, carries the install‑time allowlist set from `config.yaml`
+(see [Set it from install time](#set-it-from-install-time-configyaml)); it is concatenated with
+`inboundCidrs` + `extraInboundCidrs`, so the two sources add up rather than override each other.
+
 Each key accepts a **YAML list** *or* a **comma‑separated string**; blank entries are dropped. The
 two lists are concatenated and rendered into `IngressClassParams.spec.inboundCIDRs` of the
 `platform` IngressClassParams:
@@ -44,6 +48,57 @@ inboundCidrs + extraInboundCidrs (+ clusterEgressCidrs, only when the first two 
   Mode (`alb_controller_mode` unset or `auto`, the default) and `elbv2.k8s.aws/v1beta1` with the
   open‑source AWS Load Balancer Controller (`alb_controller_mode: oss`). Both support
   `inboundCIDRs`; the same values work in either mode.
+
+---
+
+## Set it from install time (config.yaml)
+
+The two keys above live in your fleet repo, so they take effect only **after** the first install —
+the shared ALB is open for the window between its creation and your overlay landing. To restrict it
+**from the moment it is created**, set `albInboundCidrs` in `config.local.yaml` before `task install`:
+
+```yaml
+# config.local.yaml (appmod-blueprints) — or the OAP config.local.yaml, which forwards it
+albInboundCidrs:
+  - 203.0.113.0/24        # corporate / VPN egress range (example)
+  - 203.0.113.10/32       # extra operator source IP (example)
+# equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.10/32"
+# Hub NAT and kro spoke NATs are added for you (pitfall 1); list only NATs that are not
+# discovered (Crossplane-composed spokes, byoc/terraform spokes, egress through a TGW/proxy).
+```
+
+- **Providers.** Applied by `kind-kro-ack` and `kind-crossplane`: `hub:seed` normalises the value
+  (list or comma‑separated string) and writes it as the `config_inbound_cidrs` metadata key of
+  `<hub>/config`. ESO turns it into a hub cluster‑secret annotation, and the `ingress-class-alb`
+  registry entry passes it to the chart as `configInboundCidrs`. On `byoc` / `terraform` the key is
+  not written (see [Other internet‑facing surfaces](#other-internet-facing-surfaces)); use the
+  fleet‑repo overlay there.
+- **Adds up with the overlay.** `configInboundCidrs` is concatenated (and deduplicated) with
+  `inboundCidrs` + `extraInboundCidrs`; it uses its own chart key rather than `inboundCidrs` because
+  the registry `valuesObject` wins over overlay value files in ArgoCD, so reusing `inboundCidrs`
+  would clobber an operator's overlay list. You can set it from `config.yaml`, from the overlay, or
+  both.
+- **NAT egress.** The hub NAT is appended automatically on these two providers, and kro spoke
+  NATs by `secrets-manager:seed-fleet-nat-egress` (the workshop install runs it; elsewhere re-run
+  it after adding or removing spokes). List by hand only the NATs that are not discovered (see
+  [pitfall 1](#1-include-the-nat-egress-ips-of-the-hub-and-of-oap-spokes)). `hub:seed` warns
+  when no hub NAT is known, and when the list exceeds about 28 entries
+  ([pitfall 3](#3-securitygroup-rule-limits)).
+- **Validated.** Every entry must be an IPv4 network address `a.b.c.d/n`: `hub:seed` fails, before
+  writing anything, on an entry such as `203.0.113.5` (no mask), `10.0.0.0/33`, `corp-vpn` or
+  `10.0.0.1/8` (host bits set: write `10.0.0.0/8`), on a blank entry (`a,,b` or a trailing comma),
+  and when `albInboundCidrs` is set together with
+  `insecure: true`. The same rules apply to `spokeAlbInboundCidrs`. IPv6 entries are refused here;
+  on a dual‑stack ALB put them in the overlay `inboundCidrs`.
+- **CloudFront mode.** Leave it unset with `insecure: true`
+  ([pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)). `hub:seed` prints a non‑fatal
+  warning when a domain is set, `insecure` is not `true`, and `albInboundCidrs` is empty — the ALB
+  is then open; the warning is a reminder, not a failure.
+- **OAP entrypoint.** When you install through OAP, set `albInboundCidrs` in the OAP
+  `config.local.yaml`: OAP's `platform:configure` forwards it into the appmod `config.local.yaml` it
+  generates.
+- **Empty = unchanged.** Omitted or empty: nothing is written and the behaviour is exactly today's
+  (the ALB is open unless an overlay sets `inboundCidrs`).
 
 ---
 
@@ -77,13 +132,13 @@ set). Create:
 # overlays/clusters/<hub-name>/ingress-class-alb/values.yaml
 #
 # Source-IP allowlist for the shared "platform" ALB (all hub UIs).
-# IPv4 CIDRs. The hub's own NAT egress IP(s) are added automatically on kind-kro-ack and
-# kind-crossplane installs; elsewhere, list them here. The NAT egress IP(s) of every OAP spoke
-# always go here, and must be updated after each reinstall (see pitfall 1).
+# IPv4 CIDRs. On kind-kro-ack / kind-crossplane the hub NAT and the kro spoke NATs are added for
+# you (pitfall 1); list here only the NATs that are not discovered, and update them after each
+# reinstall.
 inboundCidrs:
   - 203.0.113.0/25        # corporate / VPN egress range
   # - 203.0.113.200/32    # hub NAT egress IP -- only outside kind-kro-ack / kind-crossplane
-  # - 203.0.113.201/32    # NAT egress IP of a spoke running OAP addons, if any
+  # - 203.0.113.201/32    # NAT of a spoke that is not discovered (Crossplane-composed, byoc/terraform)
 # Optional ad-hoc additions, appended after the base (list or comma-separated string):
 extraInboundCidrs: "203.0.113.10/32,203.0.113.11/32"
 ```
@@ -153,8 +208,12 @@ inboundCidrs: []
 extraInboundCidrs: ""
 ```
 
-Commit, push to the tracked revision and sync as above. The `inboundCIDRs` field disappears from
-the IngressClassParams and the controller restores the default `0.0.0.0/0` inbound rules. Verify
+Commit, push to the tracked revision and sync as above. This only removes the **overlay** entries:
+if `albInboundCidrs` is set in `config.local.yaml`, the ALB stays restricted to it (plus the NATs).
+To open the ALB fully, also remove `albInboundCidrs` (or set it empty) and re‑run
+`secrets-manager:seed` (or the install), which then drops `config_inbound_cidrs`. With no entry
+left, the `inboundCIDRs` field disappears from the IngressClassParams and the controller restores
+the default `0.0.0.0/0` inbound rules. Verify
 with the same two commands: `inboundCIDRs` no longer appears, and the security group shows
 `0.0.0.0/0` on the listener ports.
 
@@ -179,10 +238,13 @@ get 401). The app logs show timeouts to `https://<domain>/keycloak/...`.
 
 The allowlist must contain, as `/32`s (for example `<nat-eip>/32`):
 
-- every NAT gateway Elastic IP of the **hub** VPC;
-- every NAT gateway Elastic IP of **each spoke that runs agentic platform (OAP) addons**: those
-  spokes also call the hub's public ALB (OTel export to `https://<hub-domain>/api/public/otel`,
-  Agent Gateway JWKS from the hub's Keycloak).
+- every NAT gateway Elastic IP of the **hub** VPC (added automatically on kind-kro-ack /
+  kind-crossplane, see below);
+- every NAT gateway Elastic IP of **each fleet spoke**: a spoke's addons also call the hub's
+  public ALB (OTel export to `https://<hub-domain>/api/public/otel`, Agent Gateway JWKS from the
+  hub's Keycloak, and any other server-side OIDC/JWKS call). Discovered for **kro** spokes on
+  kind-kro-ack / kind-crossplane (see [Spoke NAT](#spoke-nat-kro-spokes-on-kind-kro-ack-and-kind-crossplane));
+  a spoke created as a Crossplane composition is not covered.
 
 #### Hub NAT: added automatically on kind-kro-ack and kind-crossplane
 
@@ -224,11 +286,109 @@ allowlist is complete from the ALB's creation.
   else (a Transit Gateway to a central egress VPC, a proxy, a firewall) gets nothing added: list
   that egress IP yourself in `inboundCidrs` or `extraInboundCidrs`.
 
+#### Spoke NAT: kro spokes on kind-kro-ack and kind-crossplane
+
+The NAT egress IP of every **kro** spoke (a spoke provisioned by the kro `EksclusterWithVpc` graph:
+`spokes:enable-kro`, the Backstage EKS cluster template, or an entry in the fleet repo's
+`kro-clusters/values.yaml`) is discovered and added to the hub allowlist on these two providers. A
+hub-side task,
+`secrets-manager:seed-fleet-nat-egress`, reads the spoke `ElasticIPAddress` resources the hub
+already holds (the kro `EksclusterWithVpc` graph runs on the hub, so every spoke's ACK
+`ElasticIPAddress` CR lives there), takes **every registered spoke** (all cluster secrets except
+the control-plane and any being deleted — no per-addon filter, because any spoke addon may call
+the hub server-side, and allowing a few extra of our own NAT `/32`s is cheaper than a missed one
+breaking a spoke's SSO), and writes the sorted, deduplicated union into the
+`fleet_nat_egress_cidrs` key of `<hub>/config`. ESO turns it into the hub cluster-secret annotation
+and the registry passes it to the chart as `fleetEgressCidrs`, appended to the allowlist on the
+same gate as the hub NAT (only when an allowlist is set). `hub:seed` preserves the key across
+re-seeds (like the `spoke_*` observability keys).
+
+- **When it runs.** It needs the spokes provisioned, so it is not part of the base
+  `cluster-providers` install, which provisions the hub only. It runs on its own in two places:
+  - the **workshop install** (`task install` run from `workshop/`, and its CodeBuild half
+    `task install:remote`), right after the `wait-for-spokes` step. That step does not gate: it
+    gives up on a spoke after its timeouts and the install goes on, so a slow spoke may not be
+    complete yet when the task runs (see below). The install's background job
+    (`spoke-apps-bg`, started by `task install` and by the IDE half `task install:ide`) runs it
+    **a second time** after the spoke-apps wait and the Path A prewarms, so a NAT
+    that the first run missed is added: the first run failed, its write was lost to a concurrent
+    writer of `<hub>/config` (see below), or a spoke's EIP did not exist yet. After a good first
+    run the second one finds the stored value up to date and writes nothing to `<hub>/config`;
+  - the workshop **`spokes:sweep-kro`**, after a spoke is deleted, so its released EIP leaves the
+    allowlist.
+
+  Every call is non‑fatal: a failure prints the command to re‑run and the install goes on (the
+  second run prints it in `/tmp/spoke-apps-bg.log`).
+  **Everywhere else it is a manual step.** Re‑run it after every spoke you add or remove outside
+  those two tasks: a direct install (root `Taskfile.yaml`, hub only), a spoke from the Backstage
+  EKS cluster template, an OAP spoke, a hand‑written `kro-clusters` entry, or the manual
+  [delete‑spoke](../install/delete-spoke.md) sequence. Until then the new spoke's server‑side
+  calls to the hub (Keycloak JWKS/OIDC, OTel) time out, and a deleted spoke's EIP stays
+  allowlisted. The task REBUILDS the union from the live resources each run, so a spoke
+  **added** since is included and a **removed** spoke drops out (an empty union removes the key):
+
+  ```bash
+  task kind-kro-ack:secrets-manager:seed-fleet-nat-egress   # or kind-crossplane:...
+  ```
+
+- **A spoke that is not registered yet.** The task takes the spokes from the Argo CD cluster
+  secrets, and also lists every ACK `ElasticIPAddress` and every kro `EksclusterWithVpc` on the
+  hub. An EIP in a namespace that no cluster secret names is **added**, with a warning
+  `namespace <spoke>: ACK ElasticIPAddress but no registered Argo CD cluster secret ...`, only when
+  that namespace holds an `EksclusterWithVpc` that is not being deleted: a spoke still
+  provisioning, or whose secret is briefly absent on a re‑run. So a slow spoke is not left out and
+  a re‑run does not drop its stored NAT. Any other such EIP is reported (`... NOT added`) and left
+  out: a spoke being deleted (`spokes:disable-kro` removes the cluster secret while kro is still
+  deleting the graph, and the EIP goes last), or an EIP that is not a spoke's. An EIP that has no
+  public IP yet is reported (`no public IP yet`) and not added: re‑run the task once that spoke is
+  up. A spoke whose VPC graph has not created its EIP at all is invisible to the task;
+  `wait-for-spokes` has then already printed `not ACTIVE ... continuing`, and the same re‑run
+  applies.
+- **A spoke being deleted.** A kro spoke whose `EksclusterWithVpc` carries a deletionTimestamp is
+  left out **with or without** its cluster secret (`spoke <name>: being deleted ...: its NAT is NOT
+  added`): `spokes:disable-kro` keeps the secret for up to 180 s after the prune, or until it is
+  re‑run when the ApplicationSets do not refresh, and kro deletes the EIP last. So a run during a
+  deletion drops that NAT instead of keeping an address about to be released.
+- **When a read fails.** Any failed read (cluster secrets, EIPs, kro instances) leaves
+  `fleet_nat_egress_cidrs` unchanged and exits non‑zero; there is no bypass, since the task could
+  not tell a spoke being deleted from a live one. If the hub reports that the `ElasticIPAddress`
+  or `EksclusterWithVpc` type does not exist while a list is stored, the task also leaves it
+  unchanged (most likely an API discovery gap). Once that type is really gone on purpose (every
+  kro spoke deleted, then the controller removed), re‑run it once with `FLEET_NAT_FORCE=true` as
+  an argument of that one command:
+
+  ```bash
+  task kind-kro-ack:secrets-manager:seed-fleet-nat-egress FLEET_NAT_FORCE=true
+  ```
+
+  Do not `export` it: the task also reads it from the environment, so an exported
+  `FLEET_NAT_FORCE=true` stays on for every later run in that shell, including the ones the
+  workshop install and `spokes:sweep-kro` start, and each of them could then shrink the list on
+  a discovery gap.
+
+- **Concurrent writers.** `secrets-manager:seed-observability`, which the hub install starts in
+  the background and which can also run on a schedule, reads, changes and writes back
+  `<hub>/config` too, with no lock. When both tasks write within the same few seconds, one key
+  can be lost. A lost observability key comes back on the next run of that seed. A
+  `fleet_nat_egress_cidrs` lost before the workshop install's second run (above) comes back with
+  it; in any other case, re‑run `seed-fleet-nat-egress`.
+- The task reads cluster-local resources only — no AWS NAT lookup, no cross-cluster access, no
+  extra IAM. It writes `fleet_nat_egress_cidrs` regardless of whether an allowlist is set, but the
+  chart ignores it until one is, so with no allowlist the ALB stays open (unchanged).
+
+- **Kro spokes only.** A spoke created as a **Crossplane composition** (`spokes:enable-crossplane`,
+  which the `kind-crossplane` workshop install uses for its two spokes) has a Crossplane `EIP`, not
+  an ACK `ElasticIPAddress`, so the task cannot see its NAT: it contributes nothing, and the task
+  prints `spoke <name>: no ACK ElasticIPAddress ...` for it. List that NAT by hand (below).
+
 #### Still manual
 
 - the hub NAT on other providers (`byoc`, `terraform`);
-- the NAT egress IPs of **spokes running OAP**, on every provider: add them to the hub list in
-  `inboundCidrs` or `extraInboundCidrs`.
+- the NAT egress IPs of **Crossplane‑composed spokes** (`spokes:enable-crossplane`), on any
+  provider;
+- the NAT egress IPs of **fleet spokes on `byoc` / `terraform`** (the auto-discovery above is
+  `kind-kro-ack` / `kind-crossplane` only): add them to the hub list in `inboundCidrs` or
+  `extraInboundCidrs`.
 
 To list the NAT gateway Elastic IPs of a VPC:
 
@@ -258,7 +418,7 @@ address is the IP you need to allow.
 ### 3. Security‑group rule limits
 
 Each CIDR becomes one inbound rule **per listener port**: with HTTP + HTTPS listeners that is two
-rules per CIDR. A security group allows 60 inbound rules by default, so plan for **about 30 CIDRs
+rules per CIDR. A security group allows 60 inbound rules by default, so plan for **about 28 CIDRs
 at most** (about 60 with an HTTP‑only ALB). Summarise ranges, or move to AWS WAF, beyond that. The
 platform ALB is IPv4 by default, so list IPv4 CIDRs; IPv6 entries are only useful on a dual‑stack
 ALB.
@@ -281,6 +441,150 @@ the NAT egress IPs you must list by hand, see [pitfall 1](#1-include-the-nat-egr
 endpoint is not behind this ALB) so you can revert from the cluster if needed: removing the keys in
 Git and syncing, or as a last resort editing the IngressClassParams directly (ArgoCD will reconcile
 it back to Git on the next sync).
+
+---
+
+## Other internet-facing surfaces
+
+`inboundCidrs` / `configInboundCidrs` restrict **one** load balancer: the shared hub `platform`
+ALB (the IngressGroup that fronts Backstage, Keycloak, Grafana, Argo Workflows, Kargo, JupyterHub
+and the other hub UIs). Two surfaces are exposed **separately** and are not covered by it:
+
+- **GitLab** is published through its own internet‑facing **NLB** (a `LoadBalancer` Service), not
+  the `platform` ALB. Restrict its source IPs by attaching a security group that allows only your
+  ranges: set the `security_groups` value of the `gitlab` chart (rendered as the
+  `service.beta.kubernetes.io/aws-load-balancer-security-groups` annotation) through your fleet
+  overlay, or front GitLab with your own edge. The `albInboundCidrs` / `inboundCidrs` keys do **not**
+  reach it.
+- **Each spoke cluster** has its **own** internet‑facing `platform` ALB (the spoke's own
+  `ingress-class-alb` addon). It fronts the **participant applications**, so it is open to
+  `0.0.0.0/0` by default and the hub's `config.yaml` `albInboundCidrs` does **not** propagate to
+  spokes. Restrict it per spoke — see [Restrict a spoke's own ALB](#restrict-a-spokes-own-alb).
+
+---
+
+## Restrict a spoke's own ALB
+
+Each spoke runs its own `ingress-class-alb` (same chart as the hub) and therefore its own
+internet‑facing `platform` ALB. Unlike the hub ALB — which fronts operator UIs — a **spoke ALB
+fronts the participant applications**, so restricting it by source IP restricts **who can open the
+app**. Treat it as an explicit, operator‑chosen, opt‑in decision.
+
+**From install time (fleet‑wide default).** Set `spokeAlbInboundCidrs` in `config.yaml` — the
+install‑time counterpart of `albInboundCidrs` ([Set it from install time](#set-it-from-install-time-configyaml)),
+but applied to **every** spoke's own ALB instead of the hub ALB. It is a YAML list or a
+comma‑separated string of IPv4 CIDRs, and it is the fleet‑wide default; a single spoke can override
+it (see the per‑spoke override below). The OAP config forwards an identically named key into the
+generated platform config.
+
+```yaml
+# config.local.yaml (appmod-blueprints) — or the OAP config.local.yaml, which forwards it
+spokeAlbInboundCidrs:
+  - 203.0.113.0/24        # participant / corporate source ranges allowed to reach the spoke apps
+# equivalently: spokeAlbInboundCidrs: "203.0.113.0/24"
+```
+
+**Kro spokes only.** On `kind-kro-ack` / `kind-crossplane`, `hub:seed` normalises the value to a
+comma‑separated string and writes it as the `spoke_alb_inbound_cidrs` annotation of the hub cluster
+secret; the `clusters-kro` appset threads it as the default `albInboundCidrs` of every kro spoke
+claim, and the
+`EksCluster` RGD (the single writer of that key) stamps it onto each spoke cluster secret as
+`config_inbound_cidrs`, which the spoke's `ingress-class-alb` addon passes to its chart as
+`configInboundCidrs`. The spoke's own NAT is still added automatically (below). **Empty or omitted
+=> the key is not written => every spoke ALB stays open.** The kro-clusters claim then carries no
+`albInboundCidrs` field (it is rendered only when non‑empty, so the claim render is unchanged), and
+the spoke `ingress-class-alb` render is unchanged; a spoke created by the new RGD has an empty
+`config_inbound_cidrs` in its cluster‑secret metadata, which the chart ignores. The participant
+lockout, security‑group rule limit, and internal‑ALB caveats below apply exactly the same — do
+**not** enable it for an open / public event. Only the `clusters-kro` path carries the value: a
+spoke created as a **Crossplane composition** (`spokes:enable-crossplane`, the default spoke type
+of the `kind-crossplane` workshop install) does not get it, nor its own NAT; restrict such a spoke
+with the post‑install overlay below and list its NAT there by hand.
+
+**Per‑spoke override.** A single spoke can override the fleet‑wide default with an `albInboundCidrs`
+key in its own entry of the fleet repo's KRO values file,
+`fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml` (the `clusters.<spoke>` block the
+claim is rendered from). `clusters/<spoke>.json` is only the ApplicationSet trigger: a field there
+is never read. The per‑spoke value wins whenever the key is present, as a YAML list or a
+comma‑separated string; an empty value (`""`, `[]`) disables the allowlist for that one spoke;
+without the key the spoke gets `spokeAlbInboundCidrs`.
+
+```yaml
+# fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml
+clusters:
+  <spoke-a>:
+    albInboundCidrs:            # this spoke only: replaces the fleet-wide default
+      - 198.51.100.0/24
+      - 198.51.100.7/32
+  <spoke-b>:
+    albInboundCidrs: ""         # this spoke stays open, whatever spokeAlbInboundCidrs says
+```
+
+**Post‑install, per spoke (overlay).** You can also set `inboundCidrs` (and optionally
+`extraInboundCidrs`) in the spoke's fleet overlay after install, exactly as for the hub in
+[Where to put it](#where-to-put-it):
+
+```yaml
+# overlays/clusters/<spoke-name>/ingress-class-alb/values.yaml
+inboundCidrs:
+  - 203.0.113.0/24        # the participant / corporate source ranges allowed to reach the app
+```
+
+- **The spoke's own NAT is added automatically (kro spokes).** On `kind-kro-ack` / `kind-crossplane`
+  a kro spoke's own NAT egress IP is stamped onto its cluster secret (`nat_egress_cidrs`, from the kro VPC graph's
+  Elastic IP) and the chart appends it as `clusterEgressCidrs` once an allowlist is set — so a spoke
+  app that calls back through the spoke ALB keeps working without listing the spoke NAT by hand.
+  Nothing is added while the allowlist is empty.
+- **Participant lockout — the main caveat.** Because the spoke ALB is participant‑facing, an
+  allowlist that omits a participant's source range blocks that participant from the app. In a
+  corporate/VPN event the ranges are known and this is useful hardening; in an **open / public
+  workshop** they are not, so leave the spoke allowlist unset there. It must always be opt‑in and
+  operator‑chosen — never a silent default.
+- **Security‑group rule limit.** Each CIDR becomes one inbound rule per listener port; the managed
+  security group allows ~60 rules by default, so plan for roughly 28 CIDRs with HTTP + HTTPS
+  — summarise ranges or move to AWS WAF beyond that (same as the hub, pitfall 3).
+- **Internal‑ALB / edge case.** If a spoke is ever given its own domain with `insecure: true` it
+  gets an **internal** ALB behind an edge (e.g. CloudFront); do **not** set a client source‑IP
+  allowlist there — it would see the origin interface IPs, not clients (same as
+  [pitfall 4](#4-cloudfront-mode-do-not-apply-a-client-allowlist)). Today spokes are internet‑facing
+  (no domain of their own), so this is a guard for a future spoke‑domain mode.
+
+### Existing spokes (day-2)
+
+A kro spoke receives `spokeAlbInboundCidrs` (as its `config_inbound_cidrs`) and its own
+`nat_egress_cidrs` **when it is created**. A later change does not reach it on its own: kro
+re‑renders the spoke's data Secret, but the ACK Secrets Manager `Secret` behind `<spoke>/config`
+only *references* that data Secret, so ACK never pushes the new content and the spoke's cluster
+secret keeps the old value (see the
+[RGD README, "Day-2"](../../gitops/addons/charts/kro/resource-groups/manifests/eks/README.md)).
+So:
+
+- setting or changing `spokeAlbInboundCidrs` on a running fleet applies to **new** spokes only;
+  every existing spoke ALB stays as it was (open if it had no allowlist). A re‑seed whose value
+  differs from the stored one prints `spokeAlbInboundCidrs changed (stored: ... -> now: ...)`;
+- spokes created before this feature have no `nat_egress_cidrs` either, so an allowlist set on
+  them later (overlay `inboundCidrs`) does not include their own NAT until the same step is done.
+
+To push the new value to an existing spoke, re‑run `secrets-manager:seed` (or the install), let
+the `clusters-kro-<spoke>` app re‑render the claim, then do the RGD README's spec bump for each
+spoke:
+
+```bash
+C=<spoke-cluster-name>
+# 1. confirm kro re-rendered the data Secret (look at the managedFields time)
+kubectl -n $C get secret $C-config-data --show-managed-fields \
+  -o jsonpath='{range .metadata.managedFields[*]}{.manager} {.time}{"\n"}{end}'
+# 2. change the ACK CR spec: generation +1, ACK calls UpdateSecret with the resolved secretString
+kubectl -n $C patch secrets.secretsmanager.services.k8s.aws $C-config --type merge \
+  -p "{\"spec\":{\"description\":\"$C cluster config $(date -u +%Y%m%dT%H%M%SZ)\"}}"
+# 3. refresh the ExternalSecret that builds the Argo CD cluster secret
+kubectl -n argocd annotate externalsecret fleet-secret-$C force-sync=$(date +%s) --overwrite
+# 4. check the spoke cluster secret carries the new value
+kubectl -n argocd get secret $C -o jsonpath='{.metadata.annotations.config_inbound_cidrs}{"\n"}'
+```
+
+The spoke's `ingress-class-alb` app then re‑renders with the new `configInboundCidrs`. A per‑spoke
+overlay `inboundCidrs` (above) is plain GitOps and needs no bump.
 
 ---
 

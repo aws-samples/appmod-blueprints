@@ -322,6 +322,18 @@
       "default": "",
       "description": "Comma-separated security group IDs for the ALB"
     },
+    "albInboundCidrs": {
+      "type": ["array", "string"],
+      "items": { "type": "string" },
+      "default": "",
+      "description": "Install-time source-IP allowlist for the shared \"platform\" ALB (all hub platform UIs). A YAML list or a comma-separated string of IPv4 CIDRs. Applied by kind-kro-ack / kind-crossplane: hub:seed normalises it to a comma-separated string and writes it as the config_inbound_cidrs metadata key of <hub>/config, which ESO turns into a cluster-secret annotation that the ingress-class-alb addon passes to its chart as configInboundCidrs, CONCATENATED (deduplicated) with any fleet-overlay inboundCidrs/extraInboundCidrs and with the auto-appended NAT egress IPs. Empty or omitted => no install-time entries and the key is not written => unchanged behaviour (the ALB stays open to 0.0.0.0/0 unless a post-install overlay sets inboundCidrs). Typically just the corporate/VPN source ranges: on these two providers the hub NAT is appended automatically and every kro spoke's NAT is appended by the secrets-manager:seed-fleet-nat-egress task, which the workshop install runs once its spokes are ACTIVE and which must be re-run by hand after any other spoke add/remove (a Crossplane-composed spoke's NAT is never discovered: list it here) (in-cluster and spoke apps reach the public Keycloak issuer through this ALB, so a missing NAT breaks their SSO). Do NOT set with insecure=true: the ALB is then internal behind an upstream edge (e.g. CloudFront) and would see origin IPs, not clients. See docs/platform/alb-ip-allowlist.md."
+    },
+    "spokeAlbInboundCidrs": {
+      "type": ["array", "string"],
+      "items": { "type": "string" },
+      "default": "",
+      "description": "Install-time source-IP allowlist applied to EVERY fleet SPOKE's own \"platform\" ALB (each spoke runs its own internet-facing ALB fronting the participant applications). A YAML list or comma-separated string of IPv4 CIDRs; this is the fleet-wide default, and a spoke may override it with an albInboundCidrs key under clusters.<spoke> in the fleet repo's fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml (an empty value turns it off for that spoke). kind-kro-ack / kind-crossplane, kro spokes only (a spoke created as a Crossplane composition, spokes:enable-crossplane, does not get it): the value is stamped (RGD = single writer) onto each spoke cluster secret when the spoke is created (a later change reaches existing spokes only after the ACK Secret spec bump in docs/platform/alb-ip-allowlist.md) as the config_inbound_cidrs annotation, which the ingress-class-alb addon passes to its chart as configInboundCidrs; when set, the spoke's own NAT egress IP is appended automatically. Empty or omitted => not written => unchanged (every spoke ALB stays open to 0.0.0.0/0). WARNING: a spoke ALB is participant-facing, so an allowlist blocks any participant whose source IP is not listed - do NOT enable it for an open/public event, only when the participant source ranges are known (corporate/VPN); it is opt-in and operator-chosen. Each CIDR is one security-group rule per listener port (60-rule default, HTTP + HTTPS => about 28 CIDRs; hub:seed warns above 28 for the hub ALB). Do NOT use on an internal ALB (a spoke with its own domain + insecure behind an edge such as CloudFront - it would see origin IPs, not clients). See docs/platform/alb-ip-allowlist.md."
+    },
     "adminRoleName": {
       "type": "string",
       "description": "IAM role name added as a cluster-admin access entry and used by Backstage templates for cluster access."

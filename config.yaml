@@ -120,6 +120,55 @@ fleetScopeByPrefix: false
 ingressName: ""                              # Defaults to {clusterName}-ingress if empty
 ingressSecurityGroups: ""
 
+# Source-IP allowlist for the shared "platform" ALB, applied FROM INSTALL TIME (hardening).
+# All hub platform UIs (Backstage, Keycloak, Argo Workflows, Kargo, JupyterHub, Grafana, …)
+# share one internet-facing ALB; by default it accepts connections from any source IP. Set
+# this to restrict it to known networks from the moment the ALB is created, instead of only
+# after a post-install fleet-repo overlay edit. kind-kro-ack / kind-crossplane only (the
+# providers that seed <hub>/config); empty/omitted = unchanged (ALB open unless an overlay
+# sets inboundCidrs later). A YAML list or a comma-separated string of IPv4 CIDRs.
+# Typically just your corporate / VPN source ranges: on kind-kro-ack / kind-crossplane the hub
+# NAT is appended automatically, and the NAT of every kro spoke is appended by
+# secrets-manager:seed-fleet-nat-egress (in-cluster and spoke apps reach the public Keycloak
+# issuer through this ALB, so a missing NAT breaks their SSO). The workshop install runs that task
+# once its spokes are ACTIVE, and again at the end of its background spoke job; after any other
+# spoke add/remove (direct install, Backstage, OAP, delete-spoke) re-run it by hand:
+# task <provider>:secrets-manager:seed-fleet-nat-egress. Do
+# NOT set it with insecure: true (internal ALB behind CloudFront — it would see origin IPs, not
+# clients). Concatenated with any fleet-overlay inboundCidrs / extraInboundCidrs, never overriding
+# them. See docs/platform/alb-ip-allowlist.md.
+# albInboundCidrs:
+#   - 203.0.113.0/24      # example corporate / VPN egress range (RFC 5737 doc range)
+#   - 203.0.113.10/32     # example extra operator source IP
+# # equivalently: albInboundCidrs: "203.0.113.0/24,203.0.113.10/32"
+
+# Source-IP allowlist applied FROM INSTALL TIME to EVERY fleet SPOKE's own "platform" ALB
+# (hardening). Each spoke runs its own internet-facing ALB fronting the PARTICIPANT applications;
+# by default it accepts any source IP. This is the fleet-wide default for all spokes; a spoke can
+# override it with an `albInboundCidrs` key under `clusters.<spoke>` in the fleet repo's
+# fleet/spoke-values/tenants/<tenant>/kro-clusters/values.yaml (not in clusters/<name>.json, which
+# only triggers the appset); an empty value there turns it off for that spoke. YAML list or
+# comma-separated string of IPv4 CIDRs.
+# kind-kro-ack / kind-crossplane, kro spokes only: a spoke created as a Crossplane composition
+# (spokes:enable-crossplane) does not get it. When set, the spoke's own NAT egress IP is added
+# automatically (so app-to-ALB callbacks keep working). Empty/omitted = every spoke ALB stays open:
+# the kro-clusters claim and the spoke ingress-class-alb renders are unchanged (a new spoke's cluster
+# secret carries an empty config_inbound_cidrs, which the chart ignores). Applied when a spoke is
+# CREATED: changing it later does
+# not reach existing spokes on its own (docs/platform/alb-ip-allowlist.md, "Existing spokes").
+#
+#   ⚠ A spoke ALB is PARTICIPANT-FACING: an allowlist blocks any participant whose source IP is
+#     not listed. Do NOT enable it for an open / public event — only when the participant source
+#     ranges are known (corporate / VPN). It is opt-in and operator-chosen.
+#   ⚠ Each CIDR is one security-group rule per listener port (60-rule default, HTTP + HTTPS =>
+#     about 28 CIDRs including the spoke NAT);
+#     summarise ranges or use AWS WAF beyond that.
+#   ⚠ Do NOT use it on an internal ALB (a spoke given its own domain + insecure: true, behind an
+#     edge such as CloudFront): it would see origin IPs, not clients. Spokes are internet-facing
+#     by default (no domain of their own), so this guard only matters for a future spoke-domain mode.
+# spokeAlbInboundCidrs:
+#   - 203.0.113.0/24      # example participant / corporate source range (RFC 5737 doc range)
+
 # Platform-wide AWS tags applied to every AWS resource the platform creates:
 #   - hub resources (EKS cluster, VPC, NAT, EIP) via CDK Tags.of(stack).add() in
 #     platform-engineering-on-eks (Layer 1);

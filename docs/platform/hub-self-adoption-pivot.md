@@ -48,7 +48,12 @@ All already annotated `adoption-policy: adopt-or-create` (✅ = #855):
 | `AccessEntry` ×N | cluster+principalARN | ✅ |
 | `PodIdentityAssociation` ×N | cluster+ns+sa | ✅ |
 | `Capability` (ack, kro, argocd) | cluster+name | ✅ |
-| `SecurityGroup` (ingress http/https) | AWS ID | ⚠️ Class 2 (see below) |
+| `SecurityGroup` (ingress http/https) | AWS ID | removed from the RGD (see below) |
+
+> **Update:** the RGD no longer creates the ingress SecurityGroups. They were open to
+> `0.0.0.0/0`, nothing attached them, and their IDs only reached the unread
+> `ingress_security_groups` annotation, so the pivot has nothing to adopt there. The
+> caveat below is kept as history.
 
 > **Caveat — ingress SecurityGroups are Class 2.** `ingressHttpSecurityGroup` /
 > `ingressHttpsSecurityGroup` are ec2 (AWS-ID-keyed) and today carry **no**
