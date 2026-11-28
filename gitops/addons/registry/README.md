@@ -102,7 +102,7 @@ When `type: manifest` is set, the Helm rendering block is skipped entirely -- Ar
 | 2 | Certificates | cert-manager |
 | 3 | Security / Observability | kyverno, argo-rollouts, argo-events, grafana-operator, kube-state-metrics, otel, cni-metrics-helper, aws-for-fluentbit |
 | 4 | Platform / GitOps | efs-csi, grafana, kyverno-policies, kyverno-policy-reporter, kargo, flux, crossplane-aws |
-| 5 | ML/AI / Dashboards / Networking | lbc, external-dns, jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus |
+| 5 | ML/AI / Dashboards / Networking | lbc, external-dns, jupyterhub, kubeflow, mlflow, ray-operator, spark-operator, airflow, grafana-dashboards, cw-prometheus, network-flow-monitor |
 | 6 | Security (late) | keycloak |
 | 7 | GitOps (late) | argo-workflows |
 

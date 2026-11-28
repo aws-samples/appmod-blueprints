@@ -1,0 +1,61 @@
+{{- /*
+IAM role the Network Flow Monitor agent assumes through EKS Pod Identity.
+
+Trust policy is pods.eks.amazonaws.com with sts:AssumeRole + sts:TagSession, the
+Pod Identity trust shape used by ack-pod-identity -- not an OIDC/IRSA trust: the
+add-on is installed with a Pod Identity association, and EKS Auto Mode provides the
+Pod Identity agent natively, so no eks-pod-identity-agent add-on is involved.
+
+Permission comes from the single AWS managed policy EKS recommends for this add-on
+(describe-addon-configuration -> podIdentityConfiguration.recommendedManagedPolicies),
+referenced by ARN rather than copied into an inline policy document, so it tracks the
+service's own definition.
+*/ -}}
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
+metadata:
+  name: {{ .Values.aws.clusterName }}-network-flow-monitor-pod-identity-role
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    services.k8s.aws/region: {{ .Values.aws.region }}
+    # IAM roles are keyed by name, which ACK derives from spec.name, so
+    # adopt-or-create alone is sufficient -- no adoption-fields needed.
+    services.k8s.aws/adoption-policy: adopt-or-create
+    # Never delete the underlying IAM role on prune: an operator may have attached it
+    # to a console-installed add-on on the same cluster, and pruning here must not
+    # silently stop that agent from publishing.
+    services.k8s.aws/deletion-policy: retain
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    # One wave ahead of the Addon below, which resolves this role by roleRef.
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  name: {{ .Values.aws.clusterName }}-{{ .Values.iam.roleNameSuffix }}
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "Service": "pods.eks.amazonaws.com"
+          },
+          "Action": [
+            "sts:AssumeRole",
+            "sts:TagSession"
+          ]
+        }
+      ]
+    }
+  {{- with .Values.iam.managedPolicyArns }}
+  policies:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.iam.tags }}
+  tags:
+    {{- range $k, $v := . }}
+    - key: {{ $k }}
+      value: {{ $v | quote }}
+    {{- end }}
+  {{- end }}

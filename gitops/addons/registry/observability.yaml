@@ -270,6 +270,46 @@ cw-prometheus:
         operator: In
         values: ["true"]
 
+# Amazon CloudWatch Network Flow Monitor agent, as the EKS managed add-on
+# aws-network-flow-monitoring-agent plus the IAM role it publishes with.
+#
+# namespace = cluster name and destinationHub: true, for the same reason as
+# ack_pod_identities (core.yaml): the chart renders ACK CRs, which reconcile on the
+# HUB, and ACK resolves the IAM role to assume per namespace via IAMRoleSelector
+# (CARM). The existing selectors are keyed on namespaceSelector.names = <cluster
+# name> -- multi-acct for the hub, clusters-kro-<spoke> for each spoke. In any other
+# namespace the CRs are created and then never reconciled, and the failure mode is
+# silence rather than an error.
+#
+# kro-ack only, hence `provider In ["kro-ack"]`: the repo models the
+# crossplane / kro-ack duality as one chart per backend, and only kro-ack is on the
+# forward path. A crossplane twin (eks.aws.upbound.io/Addon,
+# iam.aws.upbound.io/Role) is a mechanical port if a crossplane cluster ever needs it.
+#
+# Wave 5, with the other pod-identity consumers: the add-on owns its own Pod Identity
+# association, so it does not wait on pod_identities / ack_pod_identities, but it does
+# need the ACK iam + eks CRDs that the EKS capability serves.
+network-flow-monitor:
+  namespace: '{{.metadata.annotations.aws_cluster_name}}'
+  path: "{{.metadata.annotations.addonsRepoBasepath}}addons/charts/network-flow-monitor"
+  destinationHub: true
+  goTemplateOptions:
+    - "missingkey=zero"
+  annotationsAppSet:
+    argocd.argoproj.io/sync-wave: "5"
+  selector:
+    matchExpressions:
+      - key: enable_network_flow_monitor
+        operator: In
+        values: ["true"]
+      - key: provider
+        operator: In
+        values: ["kro-ack"]
+  valuesObject:
+    aws:
+      region: '{{.metadata.annotations.aws_region}}'
+      clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+
 aws-for-fluentbit:
   namespace: kube-system
   chartName: aws-for-fluent-bit
